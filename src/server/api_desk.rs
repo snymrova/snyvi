@@ -40,7 +40,7 @@ pub(crate) async fn home(
             .clocked(|c, now| {
                 Ok((
                     crate::thread::waiting(c)?,
-                    crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN, now)?,
+                    crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN)?,
                 ))
             })
             .map(|(t, th)| (json!(t), json!(th)))

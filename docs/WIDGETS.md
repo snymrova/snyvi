@@ -14,7 +14,7 @@ widget file snyvi runs on a timer.
 | Side | Sections, in today's order |
 |---|---|
 | Left, on every page | Inbox · Desks · Folders · Widgets (the global ones) |
-| Right, on a desk | **Your turn** (fixed) · Panels · Resting · Points · Documents · Notes · Widgets (this desk's) |
+| Right, on a desk | **Your turn** (fixed) · Panels · Points · Documents · Notes · Widgets (this desk's) |
 
 - Drag a row on `/sidebars`, or move it with Alt+↑ ↓. Each change is saved
   as you make it, and the sidebars move with it, in every window.

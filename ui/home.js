@@ -634,13 +634,13 @@ function onYou(j) {
     `<ul class="hm-list">${turns.map(row).join("")}${said}</ul></section>`;
 }
 
-/** A thread a panel is moving: not shipped, and not resting -- parked, its
- *  panel closed, or its panel took up another (src/thread.rs `mark_rest`). */
+/** A thread a panel is moving: not shipped. One no panel is moving --
+ *  parked, its panel closed, or its panel took up another -- the daemon
+ *  lists nowhere (#109). */
 const isMoving = t => t.stage !== "shipped" && !t.rest;
 
-/** The threads, by where they are: what is moving, what rests (parked with
- *  its next step, or left by its panel), and what shipped this week. The
- *  daemon lists a resting one for a day, a parked one for a week. */
+/** The threads, by where they are: what is moving, and what shipped this
+ *  week. */
 function threadsList(j) {
   const { esc } = c, ts = j.threads || [];
   const name = id => j.desks?.find(d => d.id === id)?.name || "";
@@ -649,7 +649,6 @@ function threadsList(j) {
     `<span class="hm-age fact">${esc(t.stage === "shipped" ? `shipped ${age(t.shipped_at || t.moved_at)}` : t.rest && t.stage !== "parked" ? `${t.stage} · ${t.rest}` : t.stage)}</span></li>`;
   const group = (title, xs) => xs.length ? `<h3 class="hm-sub">${title}</h3><ul class="hm-list">${xs.map(row).join("")}</ul>` : "";
   return group("Moving", ts.filter(isMoving)) +
-    group("Resting", ts.filter(t => t.stage !== "shipped" && t.rest)) +
     group("Shipped this week", ts.filter(t => t.stage === "shipped"));
 }
 

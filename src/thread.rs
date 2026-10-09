@@ -102,14 +102,6 @@ pub const TAKEN_COLUMN: &str = "ALTER TABLE threads ADD COLUMN taken_at INTEGER 
 /// Every thread there before 1.26 was last taken when it last moved.
 pub const TAKEN_FILL: &str = "UPDATE threads SET taken_at = moved_at WHERE taken_at = 0";
 
-/// How long a thread no panel is moving -- its panel took up another, or
-/// closed -- is listed after its last move. Kept after that, off the lists:
-/// a panel that starts it again by its name brings it back.
-pub const RESTING_SHOWN: i64 = 86400;
-/// A parked thread is listed longer: it was parked on purpose, with a next
-/// step to pick it up by.
-pub const PARKED_SHOWN: i64 = 7 * 86400;
-
 /// Where a thread is. Every move is allowed -- the reader and the agent both
 /// know better than a state machine -- and only `shipped` stamps a date.
 /// `parked` carries the next step to pick it up by.
@@ -411,22 +403,19 @@ fn mark_rest(conn: &Connection, threads: &mut [Thread]) -> Result<()> {
     Ok(())
 }
 
-/// Whether a list still names a thread: one a panel holds, or shipped, always
-/// (the page and Home keep their own windows for shipped); a resting one for
-/// `RESTING_SHOWN` after its last move, a parked one for `PARKED_SHOWN`.
-fn listed(t: &Thread, now: i64) -> bool {
-    match t.rest.as_str() {
-        "" => true,
-        _ if t.stage == "shipped" => true,
-        "parked" => now - t.moved_at < PARKED_SHOWN,
-        _ => now - t.moved_at < RESTING_SHOWN,
-    }
+/// Whether a list names a thread: one a panel holds, or shipped (the page
+/// and Home keep their own windows for shipped). One no panel is moving --
+/// parked, its panel closed, or its panel took up another -- is on no list
+/// (#109): kept, and a panel that starts it again by its name brings it
+/// back.
+fn listed(t: &Thread) -> bool {
+    t.rest.is_empty() || t.stage == "shipped"
 }
 
-/// A desk's threads, the most recently moved first, each marked with why it
-/// rests. Put-away ones are left out, and resting ones once their time is
-/// up; shipped ones stay, and the page shows the last few.
-pub fn for_desk(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<Thread>> {
+/// A desk's threads, the most recently moved first: the ones its panels
+/// hold, and shipped ones, which the page shows the last few of. Put-away
+/// ones are left out, and so are the ones no panel is moving.
+pub fn for_desk(conn: &Connection, desk_id: i64) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {THREAD_COLS} FROM threads WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY moved_at DESC, id DESC LIMIT 40"
@@ -435,14 +424,14 @@ pub fn for_desk(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<Thread>
         .query_map(params![desk_id], row_to_thread)?
         .collect::<rusqlite::Result<_>>()?;
     mark_rest(conn, &mut v)?;
-    v.retain(|t| listed(t, now));
+    v.retain(listed);
     fill_notes(conn, &mut v)?;
     Ok(v)
 }
 
-/// Every open desk's threads, for Home, marked and left out as `for_desk`
-/// does: what is moving, what rests, and what shipped since `shipped_since`.
-pub fn across_desks(conn: &Connection, shipped_since: i64, now: i64) -> Result<Vec<Thread>> {
+/// Every open desk's threads, for Home, left out as `for_desk` does: what
+/// is moving, and what shipped since `shipped_since`.
+pub fn across_desks(conn: &Connection, shipped_since: i64) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {} FROM threads t JOIN desks d ON d.id = t.desk_id
          WHERE t.removed_at = 0 AND d.closed_at = 0 AND (t.stage != 'shipped' OR t.shipped_at >= ?1)
@@ -457,7 +446,7 @@ pub fn across_desks(conn: &Connection, shipped_since: i64, now: i64) -> Result<V
         .query_map(params![shipped_since], row_to_thread)?
         .collect::<rusqlite::Result<_>>()?;
     mark_rest(conn, &mut v)?;
-    v.retain(|t| listed(t, now));
+    v.retain(listed);
     fill_notes(conn, &mut v)?;
     Ok(v)
 }

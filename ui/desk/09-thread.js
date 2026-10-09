@@ -20,7 +20,7 @@ let filed = { threads: [], turns: [], suggestions: [] }, filedAt = null, filedGe
 /** A row just put away, holding its Undo: { k: "t" | "w" | "s", id, text,
  *  pane }, a thread's pane when it was that panel's, so its Undo stays there. */
 let filedGone = null, filedTimer = 0;
-/** The field open on a thread or a turn: { kind: "park" | "rename" | "other" | "change", id }. */
+/** The field open on a thread or a turn: { kind: "rename" | "other" | "change", id }. */
 let thField = null, thDraft = "";
 /** Answers given here, kept for Send now until sent or the panel moves on. */
 const sendable = new Map();
@@ -32,7 +32,7 @@ function filedNow(d) {
 }
 
 /** Your turn and Suggested, above the panels. A thread is on its panel's row
- *  (`threadChip`), and one no panel is moving under the panels (`restSec`). */
+ *  (`threadChip`); one no panel is moving is on no list (#109). */
 function filedSecs(d) {
   const f = filedNow(d);
   return turnSec(d, f) + sugSec(f);
@@ -70,12 +70,10 @@ function threadSub(t) {
   ].filter(Boolean).join(" · ") || `filed by ${t.by || "an agent"}`;
 }
 
-/** The ⋯ a thread's line or row has: the same menu a right-click opens. */
-const moreBtn = (t, esc) => `<button type="button" class="th-more" data-a="th-menu" data-t="${t.id}" data-tip="Done, park, rename or remove" aria-label="What to do with ${esc(t.name)}">⋯</button>`;
 
-/** The field a thread's Park… or Rename… opens, in its line or row. */
-const thInput = t => thField && thField.id === t.id && (thField.kind === "park" || thField.kind === "rename")
-  ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "park" ? "The next step, to pick it up by" : "The thread's name"}" aria-label="${thField.kind === "park" ? "The next step" : "A new name"}" spellcheck="false">` : "";
+/** The field a thread's Rename… opens, in its line. */
+const thInput = t => thField && thField.id === t.id && thField.kind === "rename"
+  ? `<input class="th-in" data-for="rename" placeholder="The thread's name" aria-label="A new name" spellcheck="false">` : "";
 
 /** A panel's thread, on the panel's own row: its stage, as a small chip
  *  beside the name, and the rest -- the thread's name, the PR, the checks
@@ -99,7 +97,7 @@ function threadChip(d, pane, esc) {
 }
 
 /** Under a panel's row, only for a moment: a thread just removed, with its
- *  Undo, or the field its Park… or Rename… opened. */
+ *  Undo, or the field its Rename… opened. */
 function threadLine(d, pane, esc) {
   const gone = filedGone && filedGone.k === "t" && filedGone.pane === pane ? filedGone : null;
   if (gone) return goneRow("t", gone.id, gone.text, esc);
@@ -107,32 +105,6 @@ function threadLine(d, pane, esc) {
   if (!t) return "";
   const field = thInput(t);
   return (field ? `<li class="th-edit" data-t="${t.id}">${field}</li>` : "") + errLine(`t${t.id}`, esc);
-}
-
-/** Under the panels, folded to one line: the threads no panel is moving --
- *  parked, their panel closed, or their panel took up another -- so a panel
- *  that goes from one piece of work to the next leaves nothing to tidy. Done
- *  or Remove closes one; left alone, it goes by itself, kept: the daemon
- *  lists a resting thread for a day, a parked one for a week (src/thread.rs
- *  `RESTING_SHOWN`, `PARKED_SHOWN`). */
-function restSec(d) {
-  const { esc } = ctx, f = filedNow(d);
-  const resting = f.threads.filter(t => t.stage !== "shipped" && restOf(d, t));
-  const gone = filedGone && filedGone.k === "t" && !slotOf(d, filedGone.pane) ? filedGone : null;
-  if (!resting.length && !gone) return "";
-  return sec("rest", "rail.threads", "Resting", {
-    cls: "th-rest", open: !!gone, count: resting.length,
-    tip: "Resting", sub: "Threads no panel is moving: parked, their panel closed, or their panel took up another. Done or Remove closes one; otherwise it leaves the rail after a day, or a week if parked, and is kept",
-  }, `<ul class="dk-threads">${resting.map(t => restRow(d, t, esc)).join("")}${gone ? goneRow("t", gone.id, gone.text, esc) : ""}</ul>`);
-}
-
-/** A resting thread: one line, its name and why it rests, and its ⋯. */
-function restRow(d, t, esc) {
-  const why = t.stage === "parked" ? "parked" : restOf(d, t);
-  return `<li class="dk-thread rest" data-t="${t.id}"><div class="th-top">` +
-    `<span class="th-name" data-tip="${esc(t.name)}" data-tip-sub="${esc(t.stage)} · ${esc(why)} · ${esc(threadSub(t))}" data-tip-overflow>${esc(t.name)}</span>` +
-    `<span class="th-why">${t.stage === "parked" ? "parked" : `${esc(t.stage)} · ${esc(why)}`}</span>` +
-    moreBtn(t, esc) + `</div>${thInput(t)}</li>` + errLine(`t${t.id}`, esc);
 }
 
 /** What the turn's buttons say, by its kind. */
@@ -276,16 +248,15 @@ function putAway(k, id, text, pane = "") {
 
 const PATH = { t: "threads", w: "turns", s: "suggestions" };
 
-/** The menu on a thread, its line or its resting row: right-click, or its ⋯.
- *  What a reader does to a thread, not the agent's stages: Done, for work
- *  that shipped where the panel did not see it, and Park with a next step.
- *  The panel hears either at its next prompt. */
+/** The menu on a thread, on its panel's row: right-click, or its ⋯. What a
+ *  reader does to a thread, not the agent's stages: Done, for work that
+ *  shipped where the panel did not see it, which the panel hears at its next
+ *  prompt. No Park: a thread no panel is moving is on no list (#109). */
 function threadMenu(card) {
   const t = filed.threads.find(x => x.id === +card.dataset.t), d = current();
   if (!t || !d) return null;
   return { head: t.name, items: [
     t.stage !== "shipped" && { label: "Done", run: () => act({ dataset: { a: "th-move", t: String(t.id), stage: "shipped" } }) },
-    t.stage !== "parked" && t.stage !== "shipped" && { label: "Park…", moves: 1, run: () => { thField = { kind: "park", id: t.id }; thDraft = t.next || ""; rail(); } },
     { label: "Rename…", moves: 1, run: () => { thField = { kind: "rename", id: t.id }; thDraft = t.name; rail(); } },
     "rule",
     { label: "Remove", danger: true, run: () => act({ dataset: { a: "th-x", t: String(t.id) } }) },
@@ -299,7 +270,7 @@ function threadItems(v) {
   const d = current(), t = d && paneThread(d, v.id);
   const m = t && threadMenu({ dataset: { t: String(t.id) } });
   if (!m) return [];
-  const say = { "Done": "Thread done", "Park…": "Park thread…", "Rename…": "Rename thread…", "Remove": "Remove thread" };
+  const say = { "Done": "Thread done", "Rename…": "Rename thread…", "Remove": "Remove thread" };
   return ["rule", ...m.items.filter(Boolean).map(x => x === "rule" ? x : { ...x, label: say[x.label] || x.label }), "rule"];
 }
 
@@ -382,10 +353,7 @@ async function filedAct(a, b, d) {
   const t = filed.threads.find(x => x.id === +b.dataset.t);
   const w = filed.turns.find(x => x.id === +b.dataset.w);
   const s = filed.suggestions.find(x => x.id === +b.dataset.s);
-  if (a === "th-menu") {
-    const card = b.closest(".dk-thread"), r = b.getBoundingClientRect();
-    if (card) ctx.menu?.(card, r.left, r.bottom + 4, false);
-  } else if (a === "th-move" && t) { if (b.dataset.stage) await moveThread(d, t, { stage: b.dataset.stage }); }
+  if (a === "th-move" && t) { if (b.dataset.stage) await moveThread(d, t, { stage: b.dataset.stage }); }
   else if (a === "th-x" && t) {
     filed.threads = filed.threads.filter(x => x !== t);
     putAway("t", t.id, t.name, restOf(d, t) ? "" : t.pane); rail();
@@ -466,10 +434,7 @@ async function saveField() {
   const d = current(), f = thField, text = thDraft.trim();
   thField = null; thDraft = "";
   if (!d || !f) return;
-  if (f.kind === "park") {
-    const t = filed.threads.find(x => x.id === f.id);
-    if (t) await moveThread(d, t, { stage: "parked", next: text });
-  } else if (f.kind === "rename") {
+  if (f.kind === "rename") {
     const t = filed.threads.find(x => x.id === f.id);
     if (t && text) await moveThread(d, t, { name: text }); else rail();
   } else {
@@ -480,16 +445,7 @@ async function saveField() {
 
 const THREAD_CSS = `
 .dk-threads, .dk-turn-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.dk-thread, .dk-turn, .dk-sugcard { padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
-/* Resting: a section under the panels, folded until opened; each thread in it a row. */
-.th-rest .dk-threads { gap: 2px; }
-.dk-thread.rest { padding: 3px 4px 3px 8px; background: none; border-style: dashed; }
-.dk-thread.rest .th-name { font-weight: 500; color: var(--fg-2); }
-.th-why { flex: none; font-size: var(--fs-micro); color: var(--fg-3); }
-.th-top { display: flex; align-items: center; gap: 6px; }
-.th-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.th-more { flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; font: inherit; line-height: 1; }
-.th-more:hover { background: var(--rule-2); color: var(--fg); }
+.dk-turn, .dk-sugcard { padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
 /* A panel's thread: its stage, a chip on the panel's row between the name
    and the context, in the rail's quiet ink; the name gives way before it does. */
 .dk-pth { flex: none; margin-left: auto; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 500; line-height: 16px; color: var(--fg-2); }

@@ -58,7 +58,7 @@ fn normalize_keeps_the_readers_order_and_mends_the_rest() {
     // Your turn is first whatever was sent.
     assert_eq!(
         l.right,
-        ids(&["turn", "notes", "widgets", "panels", "rest", "points", "docs"])
+        ids(&["turn", "notes", "widgets", "panels", "points", "docs"])
     );
     // Your turn can't be hidden, a bare `widgets` names no side.
     assert_eq!(l.hidden, ids(&["folders", "left:widgets"]));
@@ -66,7 +66,8 @@ fn normalize_keeps_the_readers_order_and_mends_the_rest() {
 
 #[test]
 fn a_section_from_a_later_version_lands_in_its_place() {
-    // A layout saved before `points` existed.
+    // A layout saved before `points` existed, naming `rest`, which went in
+    // 1.31 (#109): the one arrives in its place, the other is dropped.
     let l = Layout {
         left: ids(&LEFT),
         right: ids(&["turn", "docs", "panels", "rest", "notes", "widgets"]),
@@ -75,7 +76,7 @@ fn a_section_from_a_later_version_lands_in_its_place() {
     .normalize();
     assert_eq!(
         l.right,
-        ids(&["turn", "docs", "panels", "rest", "points", "notes", "widgets"])
+        ids(&["turn", "docs", "panels", "points", "notes", "widgets"])
     );
 }
 

@@ -27,23 +27,21 @@
    * a class on #trees rather than a redraw, so it survives every render and
    * costs none; it is remembered per reader. */
   const folded = saved("snyvi.fold");
-  /* A section that starts folded -- Resting, which a panel moving on to its
-   * next piece of work fills -- is in the set while the reader has it open:
-   * the set is what differs from where each section starts, so a reader who
-   * never folds anything stores nothing. */
-  const FOLDED_FIRST = new Set(["rest"]);
-  const isFolded = k => folded.has(k) !== FOLDED_FIRST.has(k);
+  const isFolded = k => folded.has(k);
   /* The desk's rail kept its folds apart, one key a section, until its
    * sections became these (docs/DESIGN.md §8.4): carried over, and the old
-   * keys taken out, so it happens once and leaves nothing behind. */
+   * keys taken out, so it happens once and leaves nothing behind. Resting,
+   * which started folded, is gone (#109): its key and its place in the set
+   * with it. */
   {
-    const old = [["panels", "panels"], ["docs", "docs"], ["notes", "notes"], ["rest", "threads-rest"]].filter(([, was]) => store.get(`snyvi.dk.fold-${was}`) != null);
+    const old = [["panels", "panels"], ["docs", "docs"], ["notes", "notes"]].filter(([, was]) => store.get(`snyvi.dk.fold-${was}`) != null);
     for (const [k, was] of old) {
-      const shut = store.get(`snyvi.dk.fold-${was}`) === "1" || (k === "rest" && store.get(`snyvi.dk.fold-${was}`) !== "0");
-      if (shut !== FOLDED_FIRST.has(k)) folded.add(k);
+      if (store.get(`snyvi.dk.fold-${was}`) === "1") folded.add(k);
       store.del(`snyvi.dk.fold-${was}`);
     }
-    if (old.length && folded.size) save("snyvi.fold", folded);
+    if (store.get("snyvi.dk.fold-threads-rest") != null) store.del("snyvi.dk.fold-threads-rest");
+    const rest = folded.delete("rest");
+    if (old.length || rest) save("snyvi.fold", folded);
   }
   /* A project the reader has taken out of the sidebar. Nothing is deleted --
    * snyvi deletes nothing on this path -- so the project keeps every document

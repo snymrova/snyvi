@@ -645,7 +645,7 @@ pub(crate) async fn desk_threads(
     }
     let r = app.store.clocked(|c, now| {
         Ok((
-            thread::for_desk(c, id, now)?,
+            thread::for_desk(c, id)?,
             thread::turns(c, id, now - ANSWERED_SHOWN)?,
             thread::suggestions(c, id)?,
         ))

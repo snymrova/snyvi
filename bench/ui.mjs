@@ -3079,23 +3079,24 @@ async function panelRows(cdp, base, token) {
         `${lay.h} px tall against ${lay.bare}, text ${Math.round(lay.w)} of ${Math.round(lay.row)} px in ${lay.lines} lines, ${lay.beside} beside it, ${lay.marks} marks, tip "${lay.tip}"`]);
 
     // #105: a panel's thread is a chip on its row, not a line under it; a
-    // second thread the panel starts rests the first, and the chip's menu is
-    // what a reader does -- Done, Park, Rename, Remove -- not stages.
+    // second thread the panel starts rests the first, which is then on no
+    // list (#109: no Resting), and the chip's menu is what a reader does --
+    // Done, Rename, Remove -- not stages, and no Park.
     const thLine = `.dk-pth[data-tip="bench thread with a long name"]`;
     const thOnRow = threaded.ok && await until(`!!document.querySelector('${thLine}')?.closest(".dk-pane") && !document.querySelector(".dk-pane + li.dk-pth")`, 40);
     await agent("thread", { name: "bench second thread", by: "bench-agent" });
     const thRested = await until(`!!document.querySelector('.dk-pane .dk-pth[data-tip="bench second thread"]') && !document.querySelector('${thLine}')
-      && [...document.querySelectorAll('.th-rest .dk-thread.rest .th-name')].some(e => e.textContent === "bench thread with a long name")`, 40);
-    const thWhy = await q.ev(`[...document.querySelectorAll('.th-rest .dk-thread.rest')].find(e => e.querySelector(".th-name")?.textContent === "bench thread with a long name")?.querySelector(".th-why")?.textContent || ""`);
+      && !document.querySelector('[data-part="rail.threads"]')`, 40);
+    const thListed = (await (await fetch(`${base}/api/desks/${desk}/threads`, { headers: H })).json().catch(() => ({}))).threads?.map(t => t.name) || [];
     await rightOn('.dk-pth[data-tip="bench second thread"]');
     const thMenu = await q.ev(menu);
     const thSaid = thMenu ? thMenu.items.join(" · ") : "";
     if (thMenu) await pick("Done");
     const thDone = !!thMenu && await until(`document.querySelector('.dk-pth[data-tip="bench second thread"] .th-word')?.textContent === "✓ shipped"`, 40);
-    rows.push(["a panel's thread is a chip on its row; the next one rests it; Done ships it",
-      thOnRow && thRested && thWhy.endsWith("moved on") && !!thMenu && !/Move to/.test(thSaid) && thSaid.startsWith("Done") && thDone,
-      !thOnRow ? "no chip on the panel's row, or a line under it" : !thRested ? "the second thread did not take the line, or the first did not rest" : !thWhy.endsWith("moved on") ? `the first rests as "${thWhy}"` :
-        !thMenu ? "no menu on the line" : /Move to|^(?!Done)/.test(thSaid) ? `the menu: ${thSaid}` : !thDone ? "Done left it unshipped" : `rests "${thWhy}"; menu ${thSaid}; ✓ shipped`]);
+    rows.push(["a panel's thread is a chip on its row; the next one files the first away, on no list; Done ships it",
+      thOnRow && thRested && !thListed.includes("bench thread with a long name") && !!thMenu && !/Move to|Park/.test(thSaid) && thSaid.startsWith("Done") && thDone,
+      !thOnRow ? "no chip on the panel's row, or a line under it" : !thRested ? "the second thread did not take the line, or a Resting section is drawn" : thListed.includes("bench thread with a long name") ? `the first is still listed: ${thListed.join(", ")}` :
+        !thMenu ? "no menu on the line" : /Move to|Park|^(?!Done)/.test(thSaid) ? `the menu: ${thSaid}` : !thDone ? "Done left it unshipped" : `off the lists; menu ${thSaid}; ✓ shipped`]);
 
     // #95: a command handed over is a card with the whole command; one that
     // could close the paste early is refused at the door; Run types it into

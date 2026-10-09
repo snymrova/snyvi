@@ -505,8 +505,8 @@ fn a_pr_is_a_number() {
 }
 
 /// A panel holds one thread, the one it last took up; the rest rest, each
-/// saying why, and leave the lists when their time is up. A reader's click
-/// on an old one does not take the panel's thread from it.
+/// marked with why, and are on no list (#109). A reader's click on an old
+/// one does not take the panel's thread from it.
 #[test]
 fn a_panel_holds_one_thread_and_the_rest_rest() {
     let mut conn = db();
@@ -527,8 +527,25 @@ fn a_panel_holds_one_thread_and_the_rest_rest() {
         ..Move::default()
     };
     move_thread(&mut conn, d, None, &park, 10).unwrap();
-    let rest = |conn: &Connection, now: i64| -> Vec<(String, String, String)> {
-        let mut v: Vec<_> = for_desk(conn, d, now)
+    // Every thread, marked as the lists mark them, and what the lists keep.
+    let all = |conn: &Connection| -> Vec<(String, String, String)> {
+        let mut st = conn
+            .prepare(&format!(
+                "SELECT {THREAD_COLS} FROM threads WHERE desk_id = ?1 AND removed_at = 0"
+            ))
+            .unwrap();
+        let mut v: Vec<Thread> = st
+            .query_map(params![d], row_to_thread)
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        mark_rest(conn, &mut v).unwrap();
+        let mut v: Vec<_> = v.into_iter().map(|t| (t.name, t.stage, t.rest)).collect();
+        v.sort();
+        v
+    };
+    let rest = |conn: &Connection| -> Vec<(String, String, String)> {
+        let mut v: Vec<_> = for_desk(conn, d)
             .unwrap()
             .into_iter()
             .map(|t| (t.name, t.stage, t.rest))
@@ -538,7 +555,7 @@ fn a_panel_holds_one_thread_and_the_rest_rest() {
     };
     let row = |n: &str, s: &str, r: &str| (n.to_string(), s.to_string(), r.to_string());
     assert_eq!(
-        rest(&conn, 20),
+        all(&conn),
         [
             row("A", "planned", "moved on"),
             row("B", "planned", ""),
@@ -546,31 +563,29 @@ fn a_panel_holds_one_thread_and_the_rest_rest() {
             row("D", "planned", "panel closed"),
         ]
     );
+    // Only the one a panel holds is listed.
+    assert_eq!(rest(&conn), [row("B", "planned", "")]);
     // Done on the rail, for work that shipped somewhere the panel did not see.
     let done = Move {
         stage: "shipped".into(),
         reader: true,
         ..Move::default()
     };
-    let a = for_desk(&conn, d, 20)
-        .unwrap()
-        .into_iter()
-        .find(|t| t.name == "A")
+    let a = conn
+        .query_row(
+            "SELECT id FROM threads WHERE desk_id = ?1 AND name = 'A'",
+            params![d],
+            |r| r.get::<_, i64>(0),
+        )
         .unwrap();
-    move_thread(&mut conn, d, Some(a.id), &done, 30).unwrap();
+    move_thread(&mut conn, d, Some(a), &done, 30).unwrap();
     assert_eq!(of_pane(&conn, d, "p1").unwrap().unwrap().name, "B");
-    assert_eq!(rest(&conn, 40)[0], row("A", "shipped", "moved on"));
-    // A day on, the resting one has left the list; parked and shipped stay.
+    // Shipped, it is listed again, as shipped ones are.
     assert_eq!(
-        rest(&conn, 30 + RESTING_SHOWN),
-        [
-            row("A", "shipped", "moved on"),
-            row("B", "planned", ""),
-            row("C", "parked", "parked"),
-        ]
+        rest(&conn),
+        [row("A", "shipped", "moved on"), row("B", "planned", "")]
     );
-    // A week on, the parked one has too. Kept: started again, it is back.
-    assert_eq!(rest(&conn, 10 + PARKED_SHOWN).len(), 2);
+    // Kept off the lists: started again by its name, it is back.
     assert!(matches!(
         start_as(&mut conn, d, "D", "p1", &[]),
         Started::Again(_)

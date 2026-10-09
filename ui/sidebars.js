@@ -72,12 +72,11 @@ const SECS = {
   widgets: ["Widgets", "global widgets"],
   turn: ["Your turn", "what only you can do"],
   panels: ["Panels", "this desk's panels"],
-  rest: ["Resting", "threads no panel is moving"],
   points: ["Points", "passages kept for a panel"],
   docs: ["Documents", "what this desk's panels sent"],
   notes: ["Notes", "this desk's list"],
 };
-const DEFAULT = { left: ["inbox", "desks", "folders", "widgets"], right: ["turn", "panels", "rest", "points", "docs", "notes", "widgets"], hidden: [] };
+const DEFAULT = { left: ["inbox", "desks", "folders", "widgets"], right: ["turn", "panels", "points", "docs", "notes", "widgets"], hidden: [] };
 
 let c = null, data = null, styled = false;
 

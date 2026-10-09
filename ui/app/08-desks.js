@@ -312,7 +312,7 @@
    * document, for its Copy. Anywhere else in the window, WebKit's Back,
    * Forward and Reload are not snyvi's, and do not show. */
   const MENU_AT = ".brand-mark, .b-root > summary, .b-dir > details > summary, a[data-browse], .t-proj > summary, a[data-id], a[data-desk], " +
-    ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone), .dk-pth, .dk-thread, .nv-b, #side .sec-head, #rail .sec-head";
+    ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone), .dk-pth, .nv-b, #side .sec-head, #rail .sec-head";
   const menuFor = (el, x, y, byKey) => act("open", el, x, y, byKey);
   document.addEventListener("contextmenu", e => {
     if (e.target.closest("input, textarea, [contenteditable]")) return;

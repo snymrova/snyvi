@@ -1038,16 +1038,13 @@ the top.
   PR, the checks or the merge as they come, the folder, the branch and its
   commits, and *Decided*: the questions you answered on it. A
   shipped thread shows ✓ until its panel takes up another, or for 12 hours.
-  When a panel starts a new thread, or closes, the one it had **rests**:
-  folded under the panels as *Resting*, saying why -- *moved on*, *panel
-  closed*, *parked*. Nothing needs tidying: a resting thread leaves the rail
-  after a day, a parked one after a week, and both are kept; a panel that
-  starts one again by its name brings it back. Right-click a thread -- its
-  chip, a resting one's row or ⋯, or the panel's row, where the same four
-  are named as the thread's -- for **Done** (work that shipped where the panel did not see it),
-  **Park…** with a next step, **Rename…** or **Remove**; the panel hears a
-  Done or a Park at its next prompt, and ✕ leaves its Undo in the row, as
-  everywhere. A note's tip says which thread it is in and who has it; the
+  When a panel starts a new thread, or closes, the one it had is filed
+  away: on no list, so nothing needs tidying, and kept -- a panel that
+  starts it again by its name brings it back. Right-click a thread -- its
+  chip, or the panel's row, where the same three are named as the
+  thread's -- for **Done** (work that shipped where the panel did not see
+  it), **Rename…** or **Remove**; the panel hears a Done at its next
+  prompt, and ✕ leaves its Undo in the row, as everywhere. A note's tip says which thread it is in and who has it; the
   note itself keeps its row for its own two lines, and under them one quiet
   line: its number, then its small marks -- the stage in a word, the
   pictures.

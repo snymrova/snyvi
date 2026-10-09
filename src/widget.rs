@@ -79,9 +79,7 @@ CREATE TABLE IF NOT EXISTS widget_bodies (
 pub const LEFT: [&str; 4] = ["inbox", "desks", "folders", "widgets"];
 /// The right's, on a desk. `turn` is Your turn with Suggested under it, and
 /// is always first; `widgets` is the slot the desk's widgets sit in.
-pub const RIGHT: [&str; 7] = [
-    "turn", "panels", "rest", "points", "docs", "notes", "widgets",
-];
+pub const RIGHT: [&str; 6] = ["turn", "panels", "points", "docs", "notes", "widgets"];
 /// The one section that never moves and is never hidden.
 pub const FIXED: &str = "turn";
 
