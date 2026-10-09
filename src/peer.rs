@@ -1551,6 +1551,18 @@ pub fn rename(conn: &Connection, id: i64, name: &str) -> Result<bool> {
     )? > 0)
 }
 
+/// A friend's row takes their name, whatever it was labelled: one name
+/// everywhere. The project's id, for the `renamed` event, if it has one.
+pub fn rename_project(conn: &Connection, root: &str, name: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "UPDATE projects SET name = ?2, renamed = 0 WHERE root = ?1 RETURNING id",
+            params![root, name],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 pub fn mute(conn: &Connection, id: i64, muted: bool) -> Result<bool> {
     Ok(conn.execute(
         "UPDATE peers SET muted = ?2 WHERE id = ?1",
