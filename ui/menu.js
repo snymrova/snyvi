@@ -500,6 +500,11 @@ export async function seatAct(ctx, b) {
     b.textContent = b.dataset.wretry ? "Running…" : "Turned off";
   } catch { b.disabled = false; b.textContent = "Could not · again"; }
 }
+/** A cut body or line opened where it is, or closed again. */
+export function seatOpen(ctx, x) {
+  const o = x.classList.toggle("open"), b = x.lastElementChild;
+  if (b?.matches(".wg-more")) { b.ariaExpanded = o; b.textContent = o ? "less" : "more"; }
+}
 
 /** Desk `id` one place up (-1) or down (1), or to the top ("top"): its menu
  *  and ⌥↑ ⌥↓ on its row. */

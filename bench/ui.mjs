@@ -2819,6 +2819,8 @@ async function widgetBoxRows(cdp, base, tmp) {
     if (more) {
       const h0 = await p.ev(`document.querySelector("${lbox} .wg-body").clientHeight`);
       await p.clickOn(`${lbox} .wg-body > .wg-more`);
+      // menu.js opens it, fetched on the first such click.
+      await until(`document.querySelector("${lbox} .wg-body").clientHeight > ${h0}`, 20);
       const h1 = await p.ev(`document.querySelector("${lbox} .wg-body").clientHeight`);
       rows.push(["and more opens it where it is", h1 > h0, `${h0} px → ${h1} px`]);
     }

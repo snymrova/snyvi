@@ -254,11 +254,6 @@
    *  "more" shows: measured after they are drawn, and again when the seat
    *  is unfolded, since a folded one measures nothing. */
   function markCut(el) { requestAnimationFrame(() => el.querySelectorAll(".wg-body:not(.open), .wg-why:not(.open)").forEach(x => x.classList.toggle("cut", x.scrollHeight > x.clientHeight + 1))); }
-  /** A cut body or line opened where it is, or closed again. */
-  function seatOpen(x) {
-    const o = x.classList.toggle("open"), b = x.lastElementChild;
-    if (b?.matches(".wg-more")) { b.ariaExpanded = o; b.textContent = o ? "less" : "more"; }
-  }
   /** The global widgets, drawn whole: on the first paint, and when one
    *  comes or goes. A body that changed is patched (`patchSeat`). */
   function drawWidgets() {
@@ -267,9 +262,10 @@
     for (const w of seats) { const el = document.getElementById(`wg-0-${w.name}`); if (el) patchSeat(el, w); }
     placeLeft();
   }
-  /** A box's buttons -- Allow, Try again, Turn off here, Tell the agent --
-   *  are menu.js's, fetched on the first such click (`act`, 08-desks.js). */
-  const allowWidget = b => act("allowWidget", b), seatAct = b => act("seatAct", b);
+  /** A box's buttons -- Allow, Try again, Turn off here, Tell the agent,
+   *  more -- are menu.js's, fetched on the first such click (`act`,
+   *  08-desks.js). */
+  const allowWidget = b => act("allowWidget", b), seatAct = b => act("seatAct", b), seatOpen = x => act("seatOpen", x);
   /** A global widget changed (the `widget` event): patched where it stands,
    *  or the slot drawn again when one came, went or was switched off. */
   function widgetSaid(j) {
