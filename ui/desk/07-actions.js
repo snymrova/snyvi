@@ -366,11 +366,12 @@ function click(e) {
   if (fd) { ctx.fold(fd.dataset.fold); return; }
   const wa = e.target.closest("[data-wallow]");
   if (wa) { ctx.allowWidget(wa); return; }
-  const ws = e.target.closest("[data-wretry], [data-wnot]");
+  const ws = e.target.closest("[data-wretry], [data-wnot], [data-wtell]");
   if (ws) { ctx.seatAct(ws); return; }
-  // A widget's body past its room opens where it is, and closes again.
-  const wb = !e.target.closest("a") && e.target.closest(".wg-body");
-  if (wb) { wb.classList.toggle("open"); return; }
+  // A widget's body or failed line past its room opens where it is, and
+  // closes again.
+  const wb = !e.target.closest("a") && e.target.closest(".wg-body, .wg-why");
+  if (wb) { ctx.seatOpen(wb); return; }
   const m = e.target.closest("[data-desk-menu]");
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   const f = e.target.closest("[data-focus]");

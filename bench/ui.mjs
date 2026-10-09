@@ -287,6 +287,7 @@ async function main() {
     await section("desks that hold still", () => deskRows(cdp, base, token));
     await section("a desk for each project", () => projectDeskRows(cdp, base, token, tmp));
     await section("nothing lost on a desk when snyvi says no", () => deskLossRows(cdp, base, token));
+    await section("a widget's box, failing and long", () => widgetBoxRows(cdp, base, tmp));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -2756,6 +2757,79 @@ async function projectDeskRows(cdp, base, token, tmp) {
  *  field with the reason under it; the rail puts back what it changed when
  *  the daemon says no, and says which thing failed, in that thing's row. In
  *  a tab of its own, with the capability, as `deskRows` is. */
+/** A widget's box (#112): its own title, how often it runs, a failure
+ *  in two lines with more and Tell the agent, no room kept for a body
+ *  it never printed, and a body past its room that says so with "more". */
+async function widgetBoxRows(cdp, base, tmp) {
+  if (process.platform === "win32") return [["a widget's box (its scripts are sh here)", true, "not on Windows"]];
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}) => (await fetch(base + path, { method: "POST", headers: H, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "boxes" });
+  const desk = d.desk ? d.desk.id : d.id;
+  // One that cannot reach its script from a desk: refused before it runs,
+  // so its box has the line and nothing it ever printed.
+  const widgets = join(tmp, "config", "widgets");
+  const put = (name, spec, script) => {
+    mkdirSync(join(widgets, name), { recursive: true });
+    writeFileSync(join(widgets, name, "widget.json"), JSON.stringify({ name, ...spec }));
+    writeFileSync(join(widgets, name, "run.sh"), script, { mode: 0o755 });
+  };
+  put("wbox", { title: "Box title", scope: "desk", run: { command: "sh run.sh", every: 5 } }, "#!/bin/sh\necho hi\n");
+  // And a global one that prints more than its one line holds.
+  put("wlong", { title: "Long one", scope: "global", run: { command: "run.sh", every: 5 }, lines: 1 },
+    `#!/bin/sh\necho '${"A line that goes on. ".repeat(12)}'\n`);
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 80) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    const box = `#wg-${desk}-wbox`;
+    const came = await until(`!!document.querySelector("${box} .wg-why")`);
+    const b = came && await p.ev(`(() => { const el = document.querySelector("${box}");
+      return { head: el.querySelector(".sec-head").textContent, by: el.querySelector(".wg-by").textContent,
+        body: !!el.querySelector(".wg-body"), tell: !!el.querySelector("[data-wtell]"),
+        cut: el.querySelector(".wg-why").classList.contains("cut"), more: __ui.vis("${box} .wg-why > .wg-more"),
+        whole: el.querySelector(".wg-why").textContent.includes("runs by itself") }; })()`);
+    rows.push(["a widget's box says its own title, and how often it runs", !!b && /Box title/.test(b.head) && /^every 5 s/.test(b.by),
+      !came ? "no box with a line came for a widget that cannot reach its script" : `head "${b.head.trim()}", by-line "${b.by}"`]);
+    rows.push(["a failed one keeps no room for a body it never printed", !!b && !b.body, !b ? "no box" : b.body ? "an empty body still holds its lines under the line" : "the line, and nothing under it"]);
+    rows.push(["its reason is kept whole, two lines of it shown with more", !!b && b.whole && b.cut && b.more,
+      !b ? "no box" : !b.whole ? "the reason is cut short" : !b.cut ? "the line is not cut to two lines" : !b.more ? "no more on a cut line" : "two lines, and more"]);
+    if (b && b.more) {
+      await p.clickOn(`${box} .wg-why > .wg-more`);
+      const open = await until(`document.querySelector("${box} .wg-why").classList.contains("open") && document.querySelector("${box} .wg-why > .wg-more").textContent === "less"`, 20);
+      rows.push(["more opens the reason where it is", open, open ? "open, and its button says less" : "the click did not open it"]);
+    }
+    if (b && b.tell) {
+      await p.clickOn(`${box} [data-wtell]`);
+      const said = await until(`/No agent proposed it|Told/.test(document.querySelector("${box} [data-wtell]")?.textContent || "")`, 30);
+      rows.push(["Tell the agent answers in its button", said, said ? `"${await p.ev(`document.querySelector("${box} [data-wtell]").textContent`)}"` : "the button said nothing"]);
+    } else rows.push(["Tell the agent answers in its button", false, "no Tell the agent on a failed widget file"]);
+
+    // The long one, allowed: its body is cut at one line, says more, and
+    // opens where it is.
+    await post("/api/widgets/wlong/allow", {});
+    const lbox = "#wg-0-wlong";
+    const drew = await until(`!!document.querySelector("${lbox} .wg-body") && document.querySelector("${lbox} .wg-body").classList.contains("cut")`);
+    const more = drew && await p.ev(`__ui.vis("${lbox} .wg-body > .wg-more")`);
+    rows.push(["a body past its room says more", !!more, !drew ? "the long body never came, or was not measured as cut" : !more ? "cut, but no more to see" : "cut at its line, with more"]);
+    if (more) {
+      const h0 = await p.ev(`document.querySelector("${lbox} .wg-body").clientHeight`);
+      await p.clickOn(`${lbox} .wg-body > .wg-more`);
+      const h1 = await p.ev(`document.querySelector("${lbox} .wg-body").clientHeight`);
+      rows.push(["and more opens it where it is", h1 > h0, `${h0} px → ${h1} px`]);
+    }
+  } finally {
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+    rmSync(join(widgets, "wbox"), { recursive: true, force: true });
+    rmSync(join(widgets, "wlong"), { recursive: true, force: true });
+  }
+  return rows;
+}
+
 async function deskLossRows(cdp, base, token) {
   const rows = [];
   const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;

@@ -6,6 +6,7 @@ fn db() -> Connection {
     for c in PREFS_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(TITLE_COLUMN_1_31).unwrap();
     conn
 }
 
@@ -24,11 +25,13 @@ const PUSH: Writer<'static> = Writer {
     source: Source::Push,
     writer: "panel 2",
     pane: "p2",
+    title: "",
 };
 const FILE: Writer<'static> = Writer {
     source: Source::File,
-    writer: "run.sh",
+    writer: "every 2 min",
     pane: "",
+    title: "Git",
 };
 
 #[test]
@@ -216,7 +219,7 @@ fn a_widget_files_name_is_its_own() {
 fn a_failed_run_keeps_the_last_good_body() {
     let c = db();
     put(&c, 3, "git", &body("ok"), "<p>ok</p>", &FILE, 1).unwrap();
-    fail(&c, 3, "git", "exit 1: not a git repository", "run.sh", 2).unwrap();
+    fail(&c, 3, "git", "exit 1: not a git repository", &FILE, 2).unwrap();
     let s = seat_of(&c, 3, "git").unwrap().unwrap();
     assert_eq!(
         (s.html.as_str(), s.error.as_str()),
@@ -227,8 +230,54 @@ fn a_failed_run_keeps_the_last_good_body() {
     assert_eq!(seat_of(&c, 3, "git").unwrap().unwrap().error, "");
     // A pushed seat is not a file's to fail.
     put(&c, 3, "deploy", &body("x"), "", &PUSH, 1).unwrap();
-    fail(&c, 3, "deploy", "nope", "run.sh", 2).unwrap();
+    fail(&c, 3, "deploy", "nope", &FILE, 2).unwrap();
     assert_eq!(seat_of(&c, 3, "deploy").unwrap().unwrap().error, "");
+}
+
+#[test]
+fn a_file_seat_has_its_title_and_how_often_it_runs() {
+    let c = db();
+    fail(&c, 3, "git", "exit 1", &FILE, 1).unwrap();
+    let s = seat_of(&c, 3, "git").unwrap().unwrap();
+    assert_eq!(
+        (s.title.as_str(), s.writer.as_str()),
+        ("Git", "every 2 min")
+    );
+    // A seat failed before this release said its command's first word: the
+    // next line says how often instead.
+    c.execute("UPDATE widget_bodies SET writer = 'sh', title = ''", [])
+        .unwrap();
+    fail(&c, 3, "git", "exit 2", &FILE, 2).unwrap();
+    let s = seat_of(&c, 3, "git").unwrap().unwrap();
+    assert_eq!(
+        (s.title.as_str(), s.writer.as_str()),
+        ("Git", "every 2 min")
+    );
+    put(&c, 3, "deploy", &body("x"), "", &PUSH, 1).unwrap();
+    assert_eq!(seat_of(&c, 3, "deploy").unwrap().unwrap().title, "");
+}
+
+#[test]
+fn a_long_reason_is_cut_where_it_says_so() {
+    let c = db();
+    let long = "x".repeat(ERROR_MAX + 50);
+    fail(&c, 3, "git", &long, &FILE, 1).unwrap();
+    let e = seat_of(&c, 3, "git").unwrap().unwrap().error;
+    assert_eq!(e.chars().count(), ERROR_MAX);
+    assert!(e.ends_with('…'));
+    let short = "y".repeat(ERROR_MAX);
+    fail(&c, 3, "git", &short, &FILE, 2).unwrap();
+    assert_eq!(seat_of(&c, 3, "git").unwrap().unwrap().error, short);
+}
+
+#[test]
+fn how_often_reads_as_a_person_says_it() {
+    assert_eq!(every_words(30), "every 30 s");
+    assert_eq!(every_words(120), "every 2 min");
+    assert_eq!(every_words(90), "every 1 min 30 s");
+    assert_eq!(every_words(3600), "every hour");
+    assert_eq!(every_words(7200), "every 2 h");
+    assert_eq!(every_words(5400), "every 90 min");
 }
 
 #[test]
@@ -306,11 +355,11 @@ fn a_stopped_widget_runs_again_on_try_again() {
         3,
         "ci",
         &format!("{STOPPED}after 3 failures, exit 2"),
-        "run.sh",
+        &FILE,
         1,
     )
     .unwrap();
-    fail(&c, 4, "ci", "exit 2", "run.sh", 1).unwrap();
+    fail(&c, 4, "ci", "exit 2", &FILE, 1).unwrap();
     assert_eq!(unstop(&c, "ci", None).unwrap(), vec![3]);
     assert_eq!(seat_of(&c, 3, "ci").unwrap().unwrap().error, "");
     assert_eq!(seat_of(&c, 4, "ci").unwrap().unwrap().error, "exit 2");

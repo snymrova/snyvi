@@ -154,7 +154,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
         // every time: not run, and the seat says how to write it.
         if let Err(why) = files::lint(spec, &f.folder) {
             for (desk, _) in &seats {
-                say(app, r, *desk, &f.name, &why);
+                say(app, r, *desk, spec, &why);
             }
             continue;
         }
@@ -163,7 +163,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             Ok(h) => h,
             Err(why) => {
                 for (desk, _) in &seats {
-                    say(app, r, *desk, &f.name, &why);
+                    say(app, r, *desk, spec, &why);
                 }
                 continue;
             }
@@ -187,7 +187,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
                     format!("changed: {} changed since you allowed it", spec.title)
                 };
                 for (desk, _) in &seats {
-                    say(app, r, *desk, &f.name, &why);
+                    say(app, r, *desk, spec, &why);
                 }
                 continue;
             }
@@ -240,7 +240,7 @@ fn start_seats(
         let cwd = match &root {
             None => f.folder.clone(),
             Some(root) if root.is_empty() || !Path::new(root).is_dir() => {
-                say(app, r, desk, &f.name, "this desk has no folder");
+                say(app, r, desk, spec, "this desk has no folder");
                 continue;
             }
             Some(root) => PathBuf::from(root),
@@ -304,18 +304,29 @@ fn folder_hash(r: &mut Runner, f: &files::Found) -> Result<String, String> {
 }
 
 /// A line in a seat instead of a run: said once, until it changes.
-fn say(app: &Arc<App>, r: &mut Runner, desk: i64, name: &str, why: &str) {
-    let key = (desk, name.to_string());
+fn say(app: &Arc<App>, r: &mut Runner, desk: i64, spec: &files::Spec, why: &str) {
+    let key = (desk, spec.name.clone());
     if r.said.get(&key).is_some_and(|w| w == why) {
         return;
     }
     r.said.insert(key, why.to_string());
+    let every = widget::every_words(spec.run.every);
     if app
         .store
-        .clocked(|c, now| widget::fail(c, desk, name, why, "widget file", now))
+        .clocked(|c, now| widget::fail(c, desk, &spec.name, why, &file_writer(spec, &every), now))
         .is_ok()
     {
-        announce(app, desk, name);
+        announce(app, desk, &spec.name);
+    }
+}
+
+/// A widget file as its seat's writer: how often it runs, under its title.
+fn file_writer<'a>(spec: &'a files::Spec, every: &'a str) -> widget::Writer<'a> {
+    widget::Writer {
+        source: widget::Source::File,
+        writer: every,
+        pane: "",
+        title: &spec.title,
     }
 }
 
@@ -500,27 +511,16 @@ fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, cwd: &Path, fails: &Fails
             }
         }
     };
-    let who = spec
-        .run
-        .command
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim_start_matches("./")
-        .to_string();
-    let w = widget::Writer {
-        source: widget::Source::File,
-        writer: &who,
-        pane: "",
-    };
+    let every = widget::every_words(spec.run.every);
+    let w = file_writer(spec, &every);
     let wrote = match ran {
         Ran::Failed(why) => app
             .store
-            .clocked(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
+            .clocked(|c, now| widget::fail(c, desk, &spec.name, &why, &w, now)),
         Ran::Printed(out) => match widget::Body::parse(&out) {
             Err(why) => app
                 .store
-                .clocked(|c, now| widget::fail(c, desk, &spec.name, &why, &who, now)),
+                .clocked(|c, now| widget::fail(c, desk, &spec.name, &why, &w, now)),
             Ok(sent) => {
                 let mut b = match sent {
                     widget::Sent::Body(b) => b,
@@ -550,9 +550,13 @@ fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, cwd: &Path, fails: &Fails
     }
 }
 
-/// The reader's PATH as their login shell has it, read once: a daemon
-/// started by systemd or launchd has almost none, and a login shell on
-/// every run would be slow. The daemon's own when the shell does not say.
+/// The reader's PATH as their shell has it, read once: a daemon started
+/// by systemd or launchd has almost none, and a shell on every run would be
+/// slow. Interactive as well as login, because a version manager -- nvm,
+/// pyenv, asdf -- is loaded in `.zshrc` or `.bashrc`, which a login shell
+/// alone skips (#112). An interactive shell may print a greeting, so the
+/// PATH comes between markers. A login shell when that says nothing, and
+/// the daemon's own when neither does.
 async fn login_path() -> String {
     let own = std::env::var("PATH").unwrap_or_default();
     if cfg!(windows) {
@@ -562,23 +566,38 @@ async fn login_path() -> String {
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "/bin/sh".into());
-    let ask = tokio::process::Command::new(&shell)
-        .args(["-l", "-c", "printf %s \"$PATH\""])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output();
-    match tokio::time::timeout(Duration::from_secs(5), ask).await {
-        Ok(Ok(o)) if o.status.success() => {
-            let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if p.is_empty() {
-                own
-            } else {
-                p
+    shell_path(&shell).await.unwrap_or(own)
+}
+
+/// The PATH `shell` has, interactive and login, or login alone.
+async fn shell_path(shell: &str) -> Option<String> {
+    let say = format!("printf '\\n{PATH_MARK}%s{PATH_MARK}\\n' \"$PATH\"");
+    for flags in [&["-i", "-l", "-c"][..], &["-l", "-c"][..]] {
+        let ask = tokio::process::Command::new(shell)
+            .args(flags)
+            .arg(&say)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output();
+        if let Ok(Ok(o)) = tokio::time::timeout(Duration::from_secs(5), ask).await {
+            if let Some(p) = marked_path(&String::from_utf8_lossy(&o.stdout)) {
+                return Some(p);
             }
         }
-        _ => own,
     }
+    None
+}
+
+/// What a shell's PATH is fenced with, so whatever else it prints is not.
+const PATH_MARK: &str = "__snyvi_path__";
+
+/// The PATH between the markers, when it is there and not empty.
+fn marked_path(out: &str) -> Option<String> {
+    let (_, rest) = out.split_once(PATH_MARK)?;
+    let (p, _) = rest.split_once(PATH_MARK)?;
+    let p = p.trim();
+    (!p.is_empty()).then(|| p.to_string())
 }
 
 #[cfg(all(test, unix))]
@@ -683,5 +702,33 @@ mod tests {
             }
             Ran::Failed(w) => panic!("{w}"),
         }
+    }
+
+    #[test]
+    fn the_path_is_read_between_its_markers() {
+        let out = format!("Welcome back!\n{PATH_MARK}/a/bin:/usr/bin{PATH_MARK}\nbye");
+        assert_eq!(marked_path(&out).as_deref(), Some("/a/bin:/usr/bin"));
+        assert_eq!(marked_path("no markers here"), None);
+        assert_eq!(marked_path(&format!("{PATH_MARK}{PATH_MARK}")), None);
+    }
+
+    #[tokio::test]
+    async fn a_shell_rc_reaches_the_path() {
+        // What .zshrc or .bashrc adds -- nvm's way -- is on it: the shell
+        // here is a script that adds to PATH only when interactive.
+        let dir = std::env::temp_dir().join(format!("snyvi-widget-rc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sh = dir.join("fakesh");
+        std::fs::write(
+            &sh,
+            "#!/bin/sh\ncase \"$1\" in -i) PATH=/from/rc:$PATH;; esac\n\
+             for a; do last=$a; done\necho hello\n/bin/sh -c \"$last\"\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let p = shell_path(sh.to_str().unwrap()).await.unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(p.starts_with("/from/rc:"), "{p}");
     }
 }

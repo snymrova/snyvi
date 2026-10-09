@@ -548,6 +548,14 @@ function stageMark(x, esc) {
   // In review: past its plan, so the PR says where it is, not "planned" --
   // which is what a working line falls back to once its chat ends, and read
   // as if the work had gone backwards. The merge ticks it (thread.rs `seen`).
+  // Shipped: its thread's PR merged, or the thread says shipped, and the
+  // line not ticked -- the work is out and waits on the reader's check
+  // (#112). Over "working" too, which would read as if it were not out.
+  const sh = !x.done ? shippedOf(x) : null;
+  if (sh) {
+    const pr = sh.pr ? ` in PR #${esc(sh.pr)}` : "";
+    return `<span class="dk-stage shipped" role="img" data-tip="Shipped${pr}" data-tip-sub="tick it once you have checked it" aria-label="Shipped${pr}, waiting for your check"><span class="w">shipped · check it</span></span>`;
+  }
   const t = !x.done && st !== "working" ? threadOf(x) : null;
   if (t && t.pr && !t.merged) {
     const ci = t.ci ? ` · ${esc(t.ci)}` : "", tone = /fail|error/i.test(t.ci) ? " fail" : /pass|success/i.test(t.ci) ? " pass" : "";
@@ -568,8 +576,17 @@ function stageMark(x, esc) {
   return "";
 }
 
+/** The thread of a line whose work is out: its PR merged, or the thread
+ *  moved to shipped. */
+function shippedOf(x) {
+  const t = threadOf(x);
+  return t && (t.merged || t.stage === "shipped") ? t : null;
+}
+
 /** The stage in words, for the line's tip: who has it and where. */
 function stageWords(x) {
+  const sh = !x.done ? shippedOf(x) : null;
+  if (sh) return `shipped${sh.pr ? ` in PR #${sh.pr}` : ""}, waiting for your check`;
   const st = stageOf(x), by = x.stage_by || "an agent", t = !x.done && st !== "working" ? threadOf(x) : null;
   if (t && t.pr && !t.merged) return `in PR #${t.pr}`;
   if (st === "working") {

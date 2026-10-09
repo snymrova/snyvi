@@ -163,6 +163,7 @@ pub(crate) async fn pane_set_widget(
         source: widget::Source::Push,
         writer: &writer,
         pane: &id,
+        title: "",
     };
     let desk = placed.desk_id;
     if !widget::name_ok(&b.name) {
@@ -287,6 +288,7 @@ pub(crate) async fn set_widget(State(app): S, headers: HeaderMap, body: Bytes) -
         source: widget::Source::Push,
         writer: &writer,
         pane: "",
+        title: "",
     };
     push(&app, desk, &b.name, &b.raw(), &w)
 }
@@ -551,6 +553,47 @@ pub(crate) async fn retry_widget(
             }
             Json(json!({ "ok": true, "desks": ds })).into_response()
         }
+        Err(e) => err(e),
+    }
+}
+
+/// Tell the agent, from a failing widget file's box: the agent that
+/// proposed it hears why it fails, whole, with its next prompt (#112). One
+/// the reader wrote by hand has no agent to tell, and says so.
+pub(crate) async fn tell_widget(
+    State(app): S,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    body: Bytes,
+) -> Response {
+    if let Some(no) = refuse_reader(&app, &headers) {
+        return no;
+    }
+    if !widget::name_ok(&name) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let b: RetryBody = serde_json::from_slice(&body).unwrap_or_default();
+    let desk = b.desk.unwrap_or(0);
+    let told = app.store.clocked(|c, _| {
+        let Some(seat) = widget::seat_of(c, desk, &name)? else {
+            return Ok(None);
+        };
+        let why = seat
+            .error
+            .strip_prefix(widget::STOPPED)
+            .unwrap_or(&seat.error);
+        if why.is_empty() || seat.source != "file" {
+            return Ok(None);
+        }
+        let note = format!(
+            "The reader asks you to fix your widget {name}: its box says \"{why}\". \
+             Fix it in its folder; the box runs it again once it changes."
+        );
+        crate::thread::tell_widget(c, &name, &note).map(Some)
+    });
+    match told {
+        Ok(None) => refused(StatusCode::CONFLICT, "nothing to tell: it has not failed"),
+        Ok(Some(told)) => Json(json!({ "told": told })).into_response(),
         Err(e) => err(e),
     }
 }
@@ -909,6 +952,7 @@ pub(crate) fn allow_box(
         source: widget::Source::Push,
         writer: &ask.writer,
         pane: &ask.pane,
+        title: "",
     };
     let r = push(app, desk, name, &ask.body, &w);
     if r.status().is_success() {

@@ -104,6 +104,16 @@ pub const PREFS_COLUMNS_1_30: [&str; 3] = [
 /// times in a row for the same reason, and does not run again until the
 /// reader says Try again, allows it, or its folder changes.
 pub const STOPPED: &str = "stopped: ";
+
+/// 1.31: a widget file's own title for its seat's head, which the name only
+/// stands in for (#112). Version 17 of `store::MIGRATIONS`, never in
+/// `SCHEMA`.
+pub const TITLE_COLUMN_1_31: &str =
+    "ALTER TABLE widget_bodies ADD COLUMN title TEXT NOT NULL DEFAULT ''";
+
+/// The most a seat's line keeps of why a run failed. A longer one ends in
+/// "…", so it is never read as whole when it is not.
+pub const ERROR_MAX: usize = 600;
 pub const FAILS_TO_STOP: u8 = 3;
 
 // --- the layout -----------------------------------------------------------
@@ -403,18 +413,22 @@ pub struct Seat {
     pub error: String,
     pub updated_at: i64,
     pub hidden: bool,
+    /// A widget file's title; empty for a push, whose head is its name.
+    pub title: String,
 }
 
-/// Who wrote a body: "panel 2", "snyvi widget set", "run.sh".
+/// Who wrote a body: "panel 2", "a script", or for a widget file how often
+/// it runs ("every 2 min"), with the title its head says.
 pub struct Writer<'a> {
     pub source: Source,
     pub writer: &'a str,
     pub pane: &'a str,
+    pub title: &'a str,
 }
 
 const SEAT_COLS: &str =
     "b.desk_id, b.name, b.source, b.body_html, b.tone, b.count, b.lines, b.stale_after,
-     b.writer, b.pane, b.error, b.updated_at, COALESCE(p.hidden, 0)";
+     b.writer, b.pane, b.error, b.updated_at, COALESCE(p.hidden, 0), b.title";
 
 fn seat(r: &rusqlite::Row) -> rusqlite::Result<Seat> {
     Ok(Seat {
@@ -433,6 +447,7 @@ fn seat(r: &rusqlite::Row) -> rusqlite::Result<Seat> {
         error: r.get(10)?,
         updated_at: r.get(11)?,
         hidden: r.get::<_, i64>(12)? != 0,
+        title: r.get(13)?,
     })
 }
 
@@ -506,12 +521,12 @@ pub fn put(
         }
     }
     conn.execute(
-        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, tone, count, lines, stale_after, writer, pane, error, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, '', ?12)
+        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, tone, count, lines, stale_after, writer, pane, error, updated_at, title)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, '', ?12, ?13)
          ON CONFLICT(desk_id, name) DO UPDATE SET source = excluded.source, body_md = excluded.body_md,
            body_html = excluded.body_html, tone = excluded.tone, count = excluded.count, lines = excluded.lines,
            stale_after = excluded.stale_after, writer = excluded.writer, pane = excluded.pane, error = '',
-           updated_at = excluded.updated_at",
+           updated_at = excluded.updated_at, title = excluded.title",
         params![
             desk_id,
             name,
@@ -524,7 +539,8 @@ pub fn put(
             b.stale_after,
             w.writer,
             w.pane,
-            now
+            now,
+            w.title
         ],
     )?;
     Ok(Put::Done)
@@ -538,18 +554,42 @@ pub fn fail(
     desk_id: i64,
     name: &str,
     why: &str,
-    writer: &str,
+    w: &Writer,
     now: i64,
 ) -> Result<()> {
-    let why: String = why.chars().take(200).collect();
+    let why = cut(why, ERROR_MAX);
     conn.execute(
-        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, writer, error, updated_at)
-         VALUES (?1, ?2, 'file', '', '', ?3, ?4, ?5)
-         ON CONFLICT(desk_id, name) DO UPDATE SET error = excluded.error, updated_at = excluded.updated_at
+        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, writer, error, updated_at, title)
+         VALUES (?1, ?2, 'file', '', '', ?3, ?4, ?5, ?6)
+         ON CONFLICT(desk_id, name) DO UPDATE SET error = excluded.error, updated_at = excluded.updated_at,
+           writer = excluded.writer, title = excluded.title
          WHERE widget_bodies.source = 'file'",
-        params![desk_id, name, writer, why, now],
+        params![desk_id, name, w.writer, why, now, w.title],
     )?;
     Ok(())
+}
+
+/// `s` kept to `max` characters, ending in "…" when it was longer.
+fn cut(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut t: String = s.chars().take(max - 1).collect();
+    t.push('…');
+    t
+}
+
+/// How often a widget file runs, as its seat's by-line says it: "every
+/// 30 s", "every 2 min", "every hour", "every 3 h".
+pub fn every_words(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("every {secs} s"),
+        60..=3599 if secs.is_multiple_of(60) => format!("every {} min", secs / 60),
+        60..=3599 => format!("every {} min {} s", secs / 60, secs % 60),
+        3600 => "every hour".into(),
+        _ if secs.is_multiple_of(3600) => format!("every {} h", secs / 3600),
+        _ => format!("every {} min", secs / 60),
+    }
 }
 
 /// Clear `name` on `desk_id`, as its writer may. A widget file's seat is

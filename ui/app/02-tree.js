@@ -93,7 +93,7 @@
     if (!folded.delete(key)) folded.add(key);
     save("snyvi.fold", folded);
     for (const b of document.querySelectorAll(`[data-fold="${key}"]`)) b.setAttribute("aria-expanded", !fold);
-    for (const s of document.querySelectorAll(`.sec[data-sec="${key}"]`)) s.classList.toggle("folded", fold);
+    for (const s of document.querySelectorAll(`.sec[data-sec="${key}"]`)) { s.classList.toggle("folded", fold); if (!fold) markCut(s); }
     gapsLeft();
     if (!LEFT_SECS.includes(key)) return;
     applyFolds();
@@ -223,9 +223,9 @@
    *  the rest is patched into it (`patchSeat`), so an update to a body is
    *  never a redraw of the side it is on. */
   function seatFrame(w) {
-    const key = `w:${w.name}`;
+    const key = `w:${w.name}`, t = w.title || wTitle(w.name);
     return `<section class="sec wg${secFolded(key) ? " folded" : ""}" id="wg-${w.desk_id}-${w.name}" data-sec="${key}" data-w="${w.name}" data-wdesk="${w.desk_id}" data-wsrc="${w.source}">` +
-      secHead(key, wTitle(w.name), { tip: wTitle(w.name), sub: w.source === "file" ? "A widget file, run while it is in view" : "Set by an agent or a script" }) +
+      secHead(key, t, { tip: t, sub: w.source === "file" ? "A widget file, run while it is in view" : "Set by an agent or a script" }) +
       `<div class="sec-body"></div></section>`;
   }
   /** What a seat's body holds, apart, so an update patches it in place. */
@@ -240,8 +240,25 @@
   const seatInner = w => `<p class="wg-by">${esc(w.writer || w.source)} · <span class="wg-age" data-t="${w.updated_at}">${relShort(w.updated_at)}</span></p>` +
     (wAsks(w) ? `<p class="wg-ask" role="status">${esc(w.error.replace(/^\w+: /, ""))}<button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
       : wStopped(w) ? `<p class="wg-ask wg-stop" role="status">Stopped ${esc(w.error.replace(/^stopped: /, ""))}<button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Not on this desk" data-tip-sub="Other desks keep it; /sidebars puts it back">Turn off here</button>` : ""}</p>`
-      : w.error ? `<p class="wg-err" role="status">${esc(w.error)}</p>` : "") +
-    `<div class="wg-body" style="--lines:${w.lines}">${w.html}</div>`;
+      : w.error ? wFailed(w) : "") +
+    // Never printed: no room kept for a body, so the line is all there is.
+    (w.html ? `<div class="wg-body" style="--lines:${w.lines}">${w.html}${W_MORE}</div>` : "");
+  /** Past its room: the cut line's "more", which opens it where it is --
+   *  shown only once the box is measured as cut (`markCut`). */
+  const W_MORE = `<button type="button" class="wg-more" aria-expanded="false">more</button>`;
+  /** A failed run (#112): why, in two lines that open whole, and for a
+   *  widget file, the button that tells the agent that proposed it. */
+  const wFailed = w => `<div class="wg-err" role="status"><div class="wg-why">${esc(w.error)}${W_MORE}</div>` +
+    (w.source === "file" ? `<button type="button" class="wg-allow" data-wtell="${w.name}" data-wd="${w.desk_id}">Tell the agent</button>` : "") + `</div>`;
+  /** Which of a seat's body and its line are cut by their room, so their
+   *  "more" shows: measured after they are drawn, and again when the seat
+   *  is unfolded, since a folded one measures nothing. */
+  function markCut(el) { requestAnimationFrame(() => el.querySelectorAll(".wg-body:not(.open), .wg-why:not(.open)").forEach(x => x.classList.toggle("cut", x.scrollHeight > x.clientHeight + 1))); }
+  /** A cut body or line opened where it is, or closed again. */
+  function seatOpen(x) {
+    const o = x.classList.toggle("open"), b = x.lastElementChild;
+    if (b?.matches(".wg-more")) { b.ariaExpanded = o; b.textContent = o ? "less" : "more"; }
+  }
   /** The global widgets, drawn whole: on the first paint, and when one
    *  comes or goes. A body that changed is patched (`patchSeat`). */
   function drawWidgets() {
@@ -250,24 +267,9 @@
     for (const w of seats) { const el = document.getElementById(`wg-0-${w.name}`); if (el) patchSeat(el, w); }
     placeLeft();
   }
-  /** Allow a widget file to run, from its seat: the window's capability,
-   *  which a tab has not. Its next run, a moment later, fills the seat. */
-  async function allowWidget(b) {
-    b.disabled = true;
-    try { await deskApi(`/api/widgets/${b.dataset.wallow}/allow`, {}); b.textContent = "Allowed"; }
-    catch { b.disabled = false; toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" }); }
-  }
-  /** A seat's own buttons: Try again on one that stopped, Turn off here.
-   *  Said in the seat when refused, where the click was. */
-  async function seatAct(b) {
-    const name = b.dataset.wretry || b.dataset.wnot, desk = +b.dataset.wd;
-    b.disabled = true;
-    try {
-      if (b.dataset.wretry) await deskApi(`/api/widgets/${name}/retry`, { desk });
-      else await deskApi(`/api/widgets/${name}/prefs`, { not_desk: desk });
-      b.textContent = b.dataset.wretry ? "Running…" : "Turned off";
-    } catch { b.disabled = false; b.textContent = "Could not · again"; }
-  }
+  /** A box's buttons -- Allow, Try again, Turn off here, Tell the agent --
+   *  are menu.js's, fetched on the first such click (`act`, 08-desks.js). */
+  const allowWidget = b => act("allowWidget", b), seatAct = b => act("seatAct", b);
   /** A global widget changed (the `widget` event): patched where it stands,
    *  or the slot drawn again when one came, went or was switched off. */
   function widgetSaid(j) {
@@ -283,6 +285,7 @@
     const body = el.querySelector(":scope > .sec-body");
     if (!body) return false;
     body.innerHTML = seatInner(w);
+    markCut(el);
     el.classList.toggle("stale", wStale(w));
     const head = el.querySelector(":scope > .sec-head"), n = head.querySelector(".sec-n"), tone = W_TONE[w.tone] || "";
     if (w.count) {
