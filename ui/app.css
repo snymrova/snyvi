@@ -617,6 +617,9 @@ button.sec-fold:hover { color: var(--fg-2); }
 .sec-fold[aria-expanded="true"] ~ .sec-n.fold-only { display: none; }
 .sec-acts { flex: none; display: flex; align-items: center; gap: var(--sp-1); opacity: 0; transition: opacity var(--t); }
 .sec-head:is(:hover, :focus-within, .empty) > .sec-acts { opacity: 1; }
+/* New desk is always there: the + in front of Desks is the way to a desk,
+   not a thing to find by hovering. */
+.sec-head[data-sec="desks"] > .sec-acts { opacity: 1; }
 .sec-acts > button { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .sec-acts > button:hover { background: var(--rule-2); color: var(--fg); }
 /* The left's sections are in the reader's order (app.js `placeLeft`), so

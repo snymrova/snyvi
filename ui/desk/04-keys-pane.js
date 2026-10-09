@@ -145,8 +145,13 @@ function makeView(p) {
     }
     if (e.isComposing || e.key === "Dead" || e.key === "Process") return;
     if (e.key === "Control" && v.at) hover(v, v.at);
-    // A plain ⌃V goes down as ^V, and Claude Code reads a picture off the
-    // clipboard itself on it: the window's own picture paste stands aside.
+    // On Windows a plain ⌃V is paste, as in Windows Terminal: Claude Code there
+    // takes a picture on Alt+V, not on ^V, so a ^V sent down would paste
+    // nothing. The browser's paste event comes through instead, and a picture
+    // goes in as a document whose path is typed, which Claude attaches.
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyV" && document.documentElement.dataset.os === "win") return;
+    // Elsewhere a plain ⌃V goes down as ^V, and Claude Code reads a picture off
+    // the clipboard itself on it: the window's own picture paste stands aside.
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyV") v.ctrlV = Date.now();
     const b = keyBytes(e, v.mode[0]);
     if (b == null) return;
@@ -190,6 +195,24 @@ function makeView(p) {
   new ResizeObserver(() => fit(v)).observe(body);
   header(v);
   return v;
+}
+
+/** A picture dropped on a panel goes in as a pasted one does. Only files are
+ *  taken: a drag of text or a link from the page is left alone. */
+function dropOn(v) {
+  const files = e => e.dataTransfer?.types.includes("Files");
+  v.body.addEventListener("dragover", e => {
+    if (!files(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = v.status.running ? "copy" : "none";
+  });
+  v.body.addEventListener("drop", e => {
+    if (!files(e)) return;
+    e.preventDefault();
+    if (![...e.dataTransfer.items].some(i => i.kind === "file" && /^image\/(png|jpeg|gif|webp)$/.test(i.type))) { ctx.toast("Only a picture can be dropped on a panel", "PNG, JPEG, GIF or WebP"); return; }
+    v.body.focus();
+    paste(v, e.dataTransfer);
+  });
 }
 
 function copy(v, always) {
