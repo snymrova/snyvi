@@ -105,9 +105,15 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
 - **settings** are drawn by snyvi on `/sidebars` as rows: `string`,
   `number`, `choice` (with `choices`) or `boolean`. The run gets them on
   stdin. A widget never draws its own settings.
+- Its box's head is its **title**, and under it how often it runs and when
+  it last did ("every 2 min · now").
 - A failure (a non-zero exit, a timeout, more than 4 KB, a body snyvi
-  refuses) is one dim line in its seat, over the last good body, and the rest
-  of the sidebar draws as ever. **Three in a row for the same reason stop it
+  refuses) is a line in its seat, over the last good body, and the rest of
+  the sidebar draws as ever. The line keeps two lines with **more** to
+  open it whole (600 characters at most, ending in "…" when cut), and
+  **Tell the agent**, which hands the whole reason to the agent that
+  proposed it, with its next prompt. A widget that has never printed keeps
+  no room for a body. **Three in a row for the same reason stop it
   on that desk**: the seat says why and where it ran, with **Try again** and
   **Turn off here**, and the agent that proposed it is told. An edit or an
   Allow runs it again too.
@@ -127,9 +133,11 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
   week**, or (an agent's) **while its panel is open**. When the time is up it
   is switched off, not removed: `/sidebars` says when it ended, with **Turn
   on again**.
-- `sh -c <command>` (`cmd /C` on Windows), with your login shell's `PATH`
-  read once when snyvi starts, your home and language, and nothing else
-  from snyvi's environment: not its token, not a desk's keys.
+- `sh -c <command>` (`cmd /C` on Windows), with your shell's `PATH` as an
+  interactive login shell has it (so what `.zshrc` or `.bashrc` loads --
+  nvm, pyenv, asdf -- is on it), read once when snyvi starts; your home
+  and language; and nothing else from snyvi's environment: not its token,
+  not a desk's keys.
 - Every `every` seconds (5 at least), for `timeout` seconds (30 at most),
   two at a time, 4 KB of output read. A timeout stops the whole process
   group, so nothing it started lives on.

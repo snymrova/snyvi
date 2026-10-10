@@ -650,9 +650,18 @@ button.sec-fold:hover { color: var(--fg-2); }
 .wg-allow:hover:not(:disabled) { background: var(--accent-bg); }
 .wg-ask.wg-stop { flex-wrap: wrap; color: var(--warn); }
 .wg-ask.wg-stop .wg-allow { color: var(--accent); }
+/* A failed run (#112): why, in two lines that open whole, and the button
+   that tells the agent. A cut body or line says so with its "more", over a
+   fade on its last line, and keeps its room: the click opens it. */
 .wg-err { margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
-.wg-body { height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
-.wg-body.open { height: auto; }
+.wg-err > .wg-allow { margin-top: 4px; }
+.wg-why { position: relative; max-height: 32px; overflow: hidden; }
+.wg-body { position: relative; height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
+.wg-body.open, .wg-why.open { height: auto; max-height: none; }
+.wg-more { display: none; position: absolute; right: 0; bottom: 0; padding-left: 24px; background: linear-gradient(90deg, transparent, var(--bg-side) 20px); color: var(--accent); }
+.wg-body > .wg-more { right: 8px; }
+.cut > .wg-more, .open > .wg-more { display: block; }
+.open > .wg-more { position: static; width: fit-content; margin-left: auto; padding: 0; background: none; }
 .wg-body > :first-child { margin-top: 0; }
 .wg-body :is(p, ul, ol, pre, h1, h2, h3, h4, blockquote) { margin: 0; font-size: inherit; line-height: inherit; }
 .wg-body :is(ul, ol) { padding-left: 16px; }

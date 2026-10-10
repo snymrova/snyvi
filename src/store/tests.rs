@@ -108,6 +108,9 @@ const OLD_1_30: &str = "ALTER TABLE desks DROP COLUMN account;
      ALTER TABLE widget_prefs DROP COLUMN until;
      ALTER TABLE widget_prefs DROP COLUMN until_pane;";
 
+/// And of 1.31's: a widget file's title on its seat (step 17).
+const OLD_1_31: &str = "ALTER TABLE widget_bodies DROP COLUMN title;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -913,6 +916,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          {OLD_1_25}
          {OLD_1_26}
          {OLD_1_30}
+         {OLD_1_31}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
@@ -1198,6 +1202,7 @@ fn a_1_16_database_comes_forward_once() {
              {OLD_1_25}
              {OLD_1_26}
          {OLD_1_30}
+         {OLD_1_31}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}

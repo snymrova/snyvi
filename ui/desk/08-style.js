@@ -450,6 +450,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    have something to say. */
 .dk-meta .dk-marks > .dk-stage.pr.pass { color: var(--ok); }
 .dk-meta .dk-marks > .dk-stage.pr.fail { color: var(--warn); }
+/* Shipped, not yet ticked: out, and the reader's to check (#112). */
+.dk-meta .dk-marks > .dk-stage.shipped { color: var(--ok); }
 .dk-num { padding: 0 1px; border-radius: 3px; font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: -.04em; line-height: 14px; font-variant-numeric: tabular-nums; color: var(--fg-3); opacity: .6; transition: opacity var(--t), color var(--t); }
 .dk-note:is(:hover, :focus-within) .dk-num, .dk-num[data-said] { opacity: 1; }
 .dk-num:hover { color: var(--accent); }

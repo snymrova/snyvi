@@ -476,6 +476,36 @@ async function order(ctx, ids, moved, byKey) {
   catch (e) { ds.desks = was; ctx.deskSaid(moved, "Couldn't move it", e); if (byKey) ctx.focusDesk(moved); }
 }
 
+/** Allow a widget file to run, from its seat: the window's capability,
+ *  which a tab has not. Its next run, a moment later, fills the seat. */
+export async function allowWidget(ctx, b) {
+  b.disabled = true;
+  try { await ctx.api(`/api/widgets/${b.dataset.wallow}/allow`, {}); b.textContent = "Allowed"; }
+  catch { b.disabled = false; ctx.toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" }); }
+}
+/** A seat's own buttons: Try again on one that stopped, Turn off here,
+ *  Tell the agent on one that failed (#112). Said in the seat, where the
+ *  click was. */
+export async function seatAct(ctx, b) {
+  const name = b.dataset.wretry || b.dataset.wnot || b.dataset.wtell, desk = +b.dataset.wd;
+  b.disabled = true;
+  try {
+    if (b.dataset.wtell) {
+      const j = await ctx.api(`/api/widgets/${name}/tell`, { desk });
+      b.textContent = j.told ? "Told · on its next prompt" : "No agent proposed it";
+      return;
+    }
+    if (b.dataset.wretry) await ctx.api(`/api/widgets/${name}/retry`, { desk });
+    else await ctx.api(`/api/widgets/${name}/prefs`, { not_desk: desk });
+    b.textContent = b.dataset.wretry ? "Running…" : "Turned off";
+  } catch { b.disabled = false; b.textContent = "Could not · again"; }
+}
+/** A cut body or line opened where it is, or closed again. */
+export function seatOpen(ctx, x) {
+  const o = x.classList.toggle("open"), b = x.lastElementChild;
+  if (b?.matches(".wg-more")) { b.ariaExpanded = o; b.textContent = o ? "less" : "more"; }
+}
+
 /** Desk `id` one place up (-1) or down (1), or to the top ("top"): its menu
  *  and ⌥↑ ⌥↓ on its row. */
 export function moveDesk(ctx, id, by, byKey = false) {
