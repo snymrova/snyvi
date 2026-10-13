@@ -37,6 +37,10 @@ permissions:
   # signature over latest.json, which is what the daemon checks.
   id-token: write
   attestations: write
+  # SignPath reads the windows job and fetches the unsigned files it was
+  # handed with this run's own token (docs.signpath.io, trusted build
+  # systems: GitHub), which needs to read the run's artifacts.
+  actions: read
 
 # One run per version at a time: a tag push racing a workflow_dispatch for the
 # same version would otherwise share a draft and clobber each other's uploads.
@@ -102,7 +106,11 @@ jobs:
             echo "the draft $v was opened on $target, not $GITHUB_SHA; deleting it"
             gh release delete "$v" --yes
           fi
-          gh release create "$v" --draft --generate-notes --title "$v" --target "$GITHUB_SHA"
+          # Every release page names the code signing policy, as SignPath
+          # Foundation asks of a project it signs for; gh puts --notes above
+          # the generated ones.
+          policy="Code signing policy: https://github.com/$GITHUB_REPOSITORY/blob/main/CODE-SIGNING.md"
+          gh release create "$v" --draft --generate-notes --notes "$policy" --title "$v" --target "$GITHUB_SHA"
 
   build:
     needs: create
@@ -286,10 +294,21 @@ jobs:
     needs: create
     if: ${{ !inputs.macos_only }}
     runs-on: windows-latest
-    timeout-minutes: 45
+    # Two signing requests, each waiting for a person to press Approve in
+    # SignPath. A missed approval fails only this job, on a draft: rerun it
+    # and nothing else is lost. 210 = the build's half hour plus each
+    # request's 90-minute wait (wait-for-completion-timeout-in-seconds).
+    timeout-minutes: 210
     env:
       VERSION: ${{ needs.create.outputs.version }}
       GH_TOKEN: ${{ github.token }}
+      # Signed through SignPath Foundation (CODE-SIGNING.md) once the token
+      # is there; until then -- before acceptance, or on a fork -- the files
+      # go out unsigned, as every Windows release before this one did, and
+      # the run says so. A dry run uses the test policy: no approval, and a
+      # certificate nothing trusts.
+      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+      SIGN_POLICY: ${{ inputs.dry_run && 'test-signing' || 'release-signing' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -298,9 +317,17 @@ jobs:
         # tauri's build script cannot follow it into a binary that never opens
         # a window -- and because build.rs only attaches snyvi.exe's own icon
         # resource when the feature is off.
+        #
+        # The icon's resource is also the one that names the file and its
+        # version, which SignPath's policy requires of what it signs, so a
+        # build without it stops here rather than at the signing request.
+        shell: bash
         run: |
-          cargo build --release --bin snyvi
+          set -e
+          cargo build --release --bin snyvi 2>&1 | tee build.log
           cargo build --release --bin snyvi-app --features desktop
+          grep -q "no icon resource" build.log && {
+            echo "snyvi.exe was built without its version resource"; exit 1; } || true
       - name: Nothing to install beside the executables
         # The Visual C++ runtime, above all: a clean Windows does not have it,
         # and every runner does. packaging/check-imports.ps1 says more.
@@ -328,6 +355,51 @@ jobs:
             echo "no native window is running:"; cat "$RUNNER_TEMP/app.log"; exit 1; }
           taskkill //F //IM snyvi-app.exe
           ./target/release/snyvi.exe stop
+      - name: Unsigned, and said so
+        if: env.SIGN != 'true'
+        shell: bash
+        run: echo "::warning::SIGNPATH_API_TOKEN is not set; the Windows files in this release are unsigned."
+      # Signing comes before anything is zipped, packed or hashed, so the zip,
+      # the installer, every .sha256, the provenance and latest.json all
+      # describe the signed files and need no change of their own.
+      - name: The executables, for SignPath
+        if: env.SIGN == 'true'
+        id: unsigned-exes
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-exes
+          path: |
+            target/release/snyvi.exe
+            target/release/snyvi-app.exe
+          if-no-files-found: error
+          retention-days: 1
+          # A rerun after a missed approval uploads the same name again.
+          overwrite: true
+      - name: Sign the executables
+        # Request 1, artifact configuration `exes`: a zip of the two.
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORG_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ env.SIGN_POLICY }}
+          artifact-configuration-slug: exes
+          github-artifact-id: ${{ steps.unsigned-exes.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 5400
+          # No `parameters: version`: user-defined parameters are not in the
+          # current SignPath plan, so the configuration checks product-name
+          # only. Bring the version check back if the Foundation's plan has it.
+          output-artifact-directory: ${{ runner.temp }}/signed-exes
+      - name: The signed executables, where the zip and the installer read them
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          foreach ($exe in "snyvi.exe", "snyvi-app.exe") {
+            $signed = Join-Path "$env:RUNNER_TEMP/signed-exes" $exe
+            if (-not (Get-AuthenticodeSignature $signed).SignerCertificate) { throw "$exe came back from SignPath unsigned" }
+            Copy-Item $signed "target/release/$exe" -Force
+          }
       - name: Package
         shell: pwsh
         run: |
@@ -345,6 +417,59 @@ jobs:
           # the zip stays for anyone who would rather have a folder.
           pwsh packaging/windows.ps1 $version
           if ($LASTEXITCODE -ne 0) { throw "the installer did not build" }
+      - name: The installer, for SignPath
+        if: env.SIGN == 'true'
+        id: unsigned-setup
+        uses: actions/upload-artifact@v7
+        with:
+          # As the file it is, not zipped: the configuration's root is the
+          # installer itself. The artifact takes the file's name.
+          path: dist/snyvi-${{ env.VERSION }}-x86_64-pc-windows-msvc-setup.exe
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+          # A rerun after a missed approval uploads the same name again.
+          overwrite: true
+      - name: Sign the installer
+        # Request 2, artifact configuration `installer`. Its uninstaller stays
+        # unsigned; CODE-SIGNING.md says why.
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORG_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ env.SIGN_POLICY }}
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 5400
+          # No `parameters: version`: user-defined parameters are not in the
+          # current SignPath plan, so the configuration checks product-name
+          # only. Bring the version check back if the Foundation's plan has it.
+          skip-decompress: true
+          output-artifact-directory: ${{ runner.temp }}/signed-setup
+      - name: Every Windows file is signed
+        # The signed installer in place of the unsigned one, its .sha256
+        # written again, and all three files checked: the two inside the zip
+        # and the installer.
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          $name = "snyvi-$env:VERSION-x86_64-pc-windows-msvc-setup.exe"
+          $signed = Get-ChildItem "$env:RUNNER_TEMP/signed-setup" -File
+          if ($signed.Count -ne 1) { throw "SignPath gave back $($signed.Count) files for the installer" }
+          Copy-Item $signed[0].FullName "dist/$name" -Force
+          $file = Join-Path (Resolve-Path "dist") $name
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$file.sha256", "$hash  $name`n")
+          # Valid means a certificate Windows trusts. The test policy's, on a
+          # dry run, is one it does not, so there it is enough to be signed.
+          $test = $env:SIGN_POLICY -eq "test-signing"
+          foreach ($f in "target/release/snyvi.exe", "target/release/snyvi-app.exe", "dist/$name") {
+            $s = Get-AuthenticodeSignature $f
+            if (-not $s.SignerCertificate -or (-not $test -and $s.Status -ne "Valid")) { throw "$f is $($s.Status)" }
+            Write-Output "$f signed by $($s.SignerCertificate.Subject)"
+          }
       - name: The same downloads, under names that do not move
         # See the Linux job: the README links at an exact asset name, so the
         # installer needs one that outlives this version. The zip gets one

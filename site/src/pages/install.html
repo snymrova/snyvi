@@ -28,6 +28,7 @@ sh install.sh --version 1.33.0   <span class="c"># a particular release</span></
 <pre><code>scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi
 scoop install snyvi</code></pre>
 <p>Or the <a href="https://github.com/snymrova/snyvi/releases/latest/download/snyvi-windows-x64-setup.exe">installer</a>. It isn't signed yet, so SmartScreen asks once: <i>More info</i>, then <i>Run anyway</i>. Scoop installs without the prompt. snyvi is in Microsoft's review for winget, and <code>winget install snymrova.snyvi</code> works once it's through.</p>
+<p>Signing is on its way: free code signing provided by <a href="https://signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a>. The <a href="https://github.com/snymrova/snyvi/blob/main/CODE-SIGNING.md">code signing policy</a> says what will be signed, and how.</p>
 
 <h2 id="cargo">Cargo</h2>
 <pre><code>cargo install snyvi

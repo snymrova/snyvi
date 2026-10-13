@@ -223,8 +223,9 @@ stay shared. [How](docs/GUIDE.md#claude-code).
 
 The Windows installer isn't signed yet, so SmartScreen asks once: *More
 info*, then *Run anyway*. Scoop installs without the prompt. Signing is on
-its way; the [code signing policy](CODE-SIGNING.md) says what will be
-signed, and how.
+its way: free code signing provided by [SignPath.io](https://signpath.io),
+certificate by [SignPath Foundation](https://signpath.org). The
+[code signing policy](CODE-SIGNING.md) says what will be signed, and how.
 </details>
 
 <details>

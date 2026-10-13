@@ -27,11 +27,11 @@ already on the machine.
 
 ## Who
 
-snyvi has one maintainer, who holds all three roles:
-
 - **Author**, trusted to commit: [snymrova](https://github.com/snymrova)
 - **Reviewer** of every change from anyone else: [snymrova](https://github.com/snymrova)
-- **Approver** of every signing request: [snymrova](https://github.com/snymrova)
+- **Approvers** of signing requests, either of whom approves a release:
+  [snymrova](https://github.com/snymrova) and
+  [sharmatrapti](https://github.com/sharmatrapti)
 
 Changes from anyone else arrive as pull requests and are reviewed before they
 merge. Each release is approved for signing by hand in SignPath; none is

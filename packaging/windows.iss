@@ -10,8 +10,9 @@
 ;
 ; For one user, never for the machine. `{localappdata}\Programs` is where
 ; Windows itself puts a per-user program, it needs no administrator, and so
-; there is no UAC prompt -- only SmartScreen, once, because the executables
-; are not signed. Not `%LOCALAPPDATA%\snyvi`: that is the library, and an
+; there is no UAC prompt -- only SmartScreen, which asks once of an unsigned
+; installer; release.yml signs this one through SignPath once its token is
+; set (CODE-SIGNING.md). Not `%LOCALAPPDATA%\snyvi`: that is the library, and an
 ; uninstall that deletes its own folder must never be pointed at the reader's
 ; documents.
 ;
@@ -26,6 +27,9 @@
 #ifndef Bin
   #define Bin SourcePath + "..\target\release"
 #endif
+; The version resource takes numbers only (a.b.c.d), and ci.yml builds
+; `0.0.0-ci`: everything from the first `-` is left to the text version.
+#define NumVersion Copy(Version, 1, Pos("-", Version + "-") - 1)
 
 [Setup]
 ; Fixed forever: this is how an upgrade finds the install it replaces.
@@ -33,6 +37,12 @@ AppId={{77914D41-28F1-4AB8-AA82-692BB637B9B2}
 AppName=snyvi
 AppVersion={#Version}
 AppVerName=snyvi {#Version}
+; The installer's own name and version, said rather than left to Inno's
+; defaults: SignPath signs it only when they are snyvi and this version.
+VersionInfoVersion={#NumVersion}
+VersionInfoProductName=snyvi
+VersionInfoProductVersion={#NumVersion}
+VersionInfoProductTextVersion={#Version}
 AppPublisher=snymrova
 AppPublisherURL=https://mrova.rocks/snyvi
 AppSupportURL=https://github.com/snymrova/snyvi/issues
@@ -63,6 +73,12 @@ ChangesEnvironment=yes
 ; whatever that missed.
 CloseApplications=force
 RestartApplications=no
+
+; The one page every install shows says what the install changes besides
+; its own folder, which is SignPath Foundation's rule for what it signs:
+; nothing done to the system goes unannounced.
+[Messages]
+SelectTasksLabel2=snyvi installs for you alone, in your profile, and adds itself to your PATH so a terminal finds it. Choose what else it does, then click Next.
 
 [Tasks]
 Name: claude; Description: "Connect Claude Code, if installed: every Markdown file Claude writes opens in snyvi"
