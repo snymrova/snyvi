@@ -296,7 +296,9 @@ jobs:
     runs-on: windows-latest
     # Two signing requests, each waiting for a person to press Approve in
     # SignPath. A missed approval fails only this job, on a draft: rerun it
-    # and nothing else is lost. 210 = the build's half hour plus each
+    # and nothing else is lost -- but SignPath takes no request from a run's
+    # fourth attempt ("Too many workflow reruns"), so past that, dispatch the
+    # release again: the draft on the same commit is reused. 210 = the build's half hour plus each
     # request's 90-minute wait (wait-for-completion-timeout-in-seconds).
     timeout-minutes: 210
     env:
