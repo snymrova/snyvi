@@ -254,7 +254,7 @@ async function paste(v, data) {
     try {
       const j = await ctx.api(`/api/panes/${v.id}/paste`, blob, blob.type);
       input(v, bracket(v, j.path));
-      ctx.toast("Pasted as a document", j.path);
+      ctx.toast("Pasted", j.path);
     } catch (e) { ctx.toast("Could not paste the image", e); }
     return;
   }

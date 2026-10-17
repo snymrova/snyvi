@@ -381,13 +381,15 @@ was on screen. One line larger than the whole cap is truncated to half the
 cap rather than dropped. The daemon keeps up to the cap. The page keeps 6,000
 rows and marks lines that went by unsent with `⋯ n lines went by`.
 
-**Image paste.** A PTY cannot take a bitmap, so a pasted image is stored as a
-document, with the pane's provenance. The page then types the image's
-**path** as the reader's paste. That path is `pastes/<hash>.<ext>` beside the
-store. The plan said to send a URL, but an agent opens a file with its own
-tools and has no reason to be able to fetch from this daemon, so a path is
-what it can use. **Still open:** an agent in a sandbox may not be allowed to
-read that folder.
+**Image paste.** A PTY cannot take a bitmap, so a pasted image is kept as a
+file, `pastes/<hash>.<ext>` beside the store, and the page types its **path**
+as the reader's paste. It is not filed as a document: the reader already has
+the picture, and the agent takes its own copy when the prompt is sent (Claude
+Code keeps it in the session). Like Claude Code's own paste cache, snyvi
+clears the folder itself: on start, at most once a day, pictures older than a
+week are removed. An agent opens a file with its own tools and has no reason
+to be able to fetch from this daemon, so a path is what it can use. **Still
+open:** an agent in a sandbox may not be allowed to read that folder.
 
 **Mouse reporting.** The wheel only. In a pane, the mouse is for selection,
 and selection is the browser's own, because the screen is DOM text, so clicks

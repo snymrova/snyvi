@@ -783,16 +783,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // The link to the relay, for as long as there is a friend: what they
     // send arrives as it lands, page open or not.
     spawn_peer_link(leaving.clone());
-    // An install from an older snyvi gets the hooks that tell a panel what
-    // Claude is doing, without the reader running `init-claude` again. Only
-    // where our hook already is and names this binary, and only once this
-    // daemon holds the port: one that is about to exit writes nothing. See
-    // `hook::top_up`.
-    tokio::task::spawn_blocking(|| {
-        if let Ok(true) = crate::hook::top_up() {
-            eprintln!("snyvi: added the panel status hooks to ~/.claude/settings.json");
-        }
-    });
+    // Only once this daemon holds the port: one about to exit does neither.
+    spawn_chores(&paths);
     eprintln!("snyvi {VERSION} listening on http://{addr}");
     axum::serve(nodelay(listener), router)
         .with_graceful_shutdown(asked_to_stop(stop_rx, told))
@@ -866,9 +858,29 @@ pub(crate) fn doc_event(app: &App, received: &receive::Received) -> serde_json::
     ev
 }
 
+/// What a daemon does once it holds the port, off the runtime.
+///
+/// An install from an older snyvi gets the hooks that tell a panel what
+/// Claude is doing, without the reader running `init-claude` again -- only
+/// where our hook already is and names this binary (`hook::top_up`). And
+/// pasted pictures past their week go, as Claude Code clears its own paste
+/// cache (`api_desk::sweep_pastes`).
+fn spawn_chores(paths: &Paths) {
+    let pastes = paths.data_dir.join("pastes");
+    tokio::task::spawn_blocking(move || {
+        if let Ok(true) = crate::hook::top_up() {
+            eprintln!("snyvi: added the panel status hooks to ~/.claude/settings.json");
+        }
+        let gone = api_desk::sweep_pastes(&pastes, std::time::SystemTime::now());
+        if gone > 0 {
+            eprintln!("snyvi: cleared {gone} pasted picture(s) older than a week");
+        }
+    });
+}
+
 /// A document in, the plain way: rendered and stored off the executor, then
 /// told to every page. A send has more to do around it (`receive_doc`); a
-/// pasted picture and a week's page have not, and come through here. The
+/// week's page and a pipeline's have not, and come through here. The
 /// refusal is the response the caller returns, boxed: a `Response` is a
 /// large thing to carry in every `Ok`, and clippy says so.
 async fn receive_and_emit(

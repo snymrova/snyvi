@@ -1875,6 +1875,7 @@ mod accounts;
 #[cfg(unix)]
 mod first_desk;
 mod keys;
+mod pastes;
 mod routes;
 mod widgets;
 use routes::{Gate, ROUTES};

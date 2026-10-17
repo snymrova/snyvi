@@ -1732,17 +1732,18 @@ pub(crate) async fn stop_pane(
     Json(json!({ "ok": true })).into_response()
 }
 
-/// An image pasted into a pane. A terminal cannot take a bitmap, so snyvi does
-/// what it does with everything else: the image is received as a document,
-/// named for the pane it came from, and what goes back to the page is a path
-/// the page then types into the pane as the reader's paste.
+/// An image pasted into a pane. A terminal cannot take a bitmap, so the image
+/// is kept as a file and what goes back to the page is its path, which the
+/// page then types into the pane as the reader's paste.
 ///
-/// A path and not the document's URL: the program on the other end is almost
-/// always an agent, and an agent opens a file with its own tools and has no
-/// reason to be able to fetch from this daemon. The file sits beside the
-/// store, in `pastes/`, named by its content so pasting it twice is one file.
-/// A sandboxed agent may not be allowed to read there; that is the one open
-/// question this leaves, and `docs/DESK.md` says so.
+/// A file and not a document: the reader already has the picture -- they just
+/// pasted it -- and the agent takes its own copy when the prompt is sent, so a
+/// document per paste was an unread entry nobody opened. A path and not a URL:
+/// an agent opens a file with its own tools and has no reason to be able to
+/// fetch from this daemon. The file sits beside the store, in `pastes/`, named
+/// by its content so pasting it twice is one file, and `sweep_pastes` clears
+/// it out after a week, as Claude Code clears its own paste cache. A sandboxed
+/// agent may not be allowed to read there; `docs/DESK.md` says so.
 pub(crate) async fn paste_image(
     State(app): S,
     headers: HeaderMap,
@@ -1753,7 +1754,7 @@ pub(crate) async fn paste_image(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    let Ok(Some(placed)) = app.store.pane(&id) else {
+    let Ok(Some(_)) = app.store.pane(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let ext = match headers
@@ -1786,22 +1787,54 @@ pub(crate) async fn paste_image(
     if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&file, &body)) {
         return err(anyhow::anyhow!("keeping the pasted image: {e}"));
     }
-    let payload = Payload {
-        path: Some(file.to_string_lossy().to_string()),
-        title: Some(format!(
-            "Pasted into {} [{}]",
-            placed.desk_name, placed.pane.slot
-        )),
-        workflow: Some(format!("{} pastes", placed.desk_name)),
-        cwd: Some(placed.root.clone()),
-        origin: Some("paste".into()),
-        pane: Some(id.clone()),
-        ..Default::default()
+    Json(json!({ "path": file })).into_response()
+}
+
+/// How long a pasted picture's file is kept. It is needed from the paste
+/// until the agent reads it, which is when the prompt is sent; a week is that
+/// with room to spare. Pasting it again writes it again, which starts the
+/// week over.
+const PASTES_KEPT: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+/// How often the sweep looks, by `pastes/.last-cleanup`: a daemon restarted
+/// ten times in a day reads the folder once.
+const PASTES_SWEPT_EVERY: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// Clears pasted pictures older than `PASTES_KEPT` out of `dir`, at most once
+/// per `PASTES_SWEPT_EVERY`. Only the pictures `paste_image` writes, by their
+/// extension: anything else someone put there is not this sweep's to remove.
+/// These are files snyvi made for an agent to read, not documents, so the rule
+/// that nothing is deleted is not theirs. Returns how many went.
+pub(crate) fn sweep_pastes(dir: &std::path::Path, now: std::time::SystemTime) -> usize {
+    let marker = dir.join(".last-cleanup");
+    // A file dated after `now` -- a clock set back -- counts as new, never as
+    // old enough to go.
+    let age = |p: &std::path::Path| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .map(|t| now.duration_since(t).unwrap_or_default())
     };
-    match receive_and_emit(&app, payload).await {
-        Ok(received) => Json(json!({ "id": received.doc.id, "path": file })).into_response(),
-        Err(no) => *no,
+    if age(&marker).is_some_and(|a| a < PASTES_SWEPT_EVERY) {
+        return 0;
     }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut gone = 0;
+    for path in entries.flatten().map(|e| e.path()) {
+        let picture = matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("png" | "jpg" | "gif" | "webp")
+        );
+        if picture
+            && age(&path).is_some_and(|a| a > PASTES_KEPT)
+            && std::fs::remove_file(&path).is_ok()
+        {
+            gone += 1;
+        }
+    }
+    let _ = std::fs::write(&marker, b"");
+    gone
 }
 
 #[derive(Deserialize)]
