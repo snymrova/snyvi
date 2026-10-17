@@ -2702,8 +2702,11 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // 1.32 (audit 67d008cb6f): seven blocks. No Keys or Threads section, the
     // update's card under the foot, On you shut until its button, and no
     // waiting bar over Home's own sticky bar.
-    rows.push(["Home: the date in the head, Arrived first and not hideable, no Friends without a friend, Pair… in the foot, no Keys, Threads or waiting bar", side.date && !side.clock && side.first === "arrived" && !side.hide && !side.friends && side.foot && !side.gone.length && !side.bar,
-      !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== "arrived" ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a Hide" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not carry the version, Check for updates and Pair…: "${side.footText}"` : side.gone.length ? `still on Home: ${side.gone.join(", ")}` : side.bar ? "the waiting bar is over Home" : "date, Arrived, Claude; Pair… in the foot; no Keys, Threads or waiting bar"]);
+    // Lately hidden, Arrived is only a friend's waiting line, and there is
+    // no friend here: Claude heads the column.
+    const sideHead = LATELY ? "arrived" : "claude";
+    rows.push([`Home: the date in the head, ${LATELY ? "Arrived" : "Claude"} first and not hideable, no Friends without a friend, Pair… in the foot, no Keys, Threads or waiting bar`, side.date && !side.clock && side.first === sideHead && !side.hide && !side.friends && side.foot && !side.gone.length && !side.bar,
+      !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== sideHead ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a Hide" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not carry the version, Check for updates and Pair…: "${side.footText}"` : side.gone.length ? `still on Home: ${side.gone.join(", ")}` : side.bar ? "the waiting bar is over Home" : `date, ${LATELY ? "Arrived, " : ""}Claude; Pair… in the foot; no Keys, Threads or waiting bar`]);
 
     // The note bar: one field for a line on any desk, Pick up's to start with.
     const notesOn = async id => ((await get(`/api/desks/${id}/notes`)).notes || []).map(n => n.text);
