@@ -421,7 +421,7 @@
    * corner.js draws; opening it is looking, so the dot goes everywhere. */
   const openLately = b => corner(m => { m.lately(); useActs().then(a => a.pop(actsCtx, "lately", b)); });
   for (const b of document.querySelectorAll(".lt-btn")) b.addEventListener("click", () => openLately(b));
-  if (boot.lately_unseen) root.dataset.lately = "1";
+  if (LATELY_SHOWN && boot.lately_unseen) root.dataset.lately = "1";
   // A toolbar: the arrows walk it, Tab leaves it.
   railNav.addEventListener("keydown", e => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;

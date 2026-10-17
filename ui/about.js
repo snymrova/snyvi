@@ -1187,7 +1187,7 @@ const SHOW = {
     none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Agents</a>` },
   waiting: { at: () => q("#inbox-row .t-inbox.new") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#inbox-row .t-inbox")), none: "Nothing is waiting right now." },
   desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .sec-head")), none: "Desks live in the window: <code>snyvi app</code>." },
-  notes: { at: () => q("#cn:not([hidden]) .oy-pill, #meta .oy-foot:not(.none), #onyou .oy-pill"), none: "Nothing in the corner right now. Ctrl Alt Y opens it." },
+  notes: { at: () => q("#cn:not([hidden]) .oy-pill, #meta .oy-foot:not(.none), #onyou .oy-pill"), none: "Nothing on you right now. Ctrl Alt Y opens On you." },
   keys: { at: () => q("#btn-help"), none: "" },
 };
 let startCap = false, startDocs = false;
@@ -1225,7 +1225,7 @@ export function start({ cap, docs }) {
     sec("notes", "Out of your head: notes, points and asides",
       `<p>Three small things, each going one way. <em>Notes</em> are yours: a list kept with each desk (+ New note), ticked off as things get done. An agent in that desk's panels can read it and tick a line, and nothing more. <em>Points</em> go from you to a panel: select a passage in a document you read over a desk and press + Point for panel 2. They gather under the panel until Put it in panel 2 types them into its input, quoted. Nothing is sent until you press Enter there.</p>` +
       `<ul class="dk-list start-sample" inert aria-hidden="true"><li class="dk-note dk-point"><span class="nm">From PLAN.md: the cache is per project, not per desk</span></li></ul><button type="button" class="dk-new dk-put start-sample" inert aria-hidden="true" tabindex="-1">Put it in panel 2</button>` +
-      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They rise in the corner, bottom right, and stay in its tray under Lately until you remove them; Ctrl Alt Y opens it. ${showLink("notes")}</p>`,
+      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They rise in the corner, bottom right, as a card: open what it is about, or put it away with Later. ${showLink("notes")}</p>`,
       `Right-click anything for what it can do · ${kb("☰")} or ${kb("shift", "F10")} the same menu from the keyboard`) +
     sec("versions", "Versions",
       `<p>A document is never changed. When an agent revises its plan it sends it again, and you keep both: the newest waits for you, the older ones are one key away. ${kb("c")} shows what changed since the one before, in green and red, and ${kb("s")} turns that between side by side and inline. Every version of the same file, from any session, is listed under Versions in the contents.</p>` +

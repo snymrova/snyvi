@@ -1127,17 +1127,19 @@ Suggested in the rail's corner, where nothing they do moves the page.
   has closed, after half an hour, or once you have written to that panel
   since: it no longer rises or rings, counts nowhere -- not the pill, not
   Home, not the desk brief, not the six an agent may have waiting -- and
-  the tray folds it under *older*. After three days it is put away by
+  the tray shows it under the fresh ones, dimmed. After three days it is put away by
   itself, as ✕ would. With the rail folded or hidden, nothing rises over a
   panel: the pill lights in the window's corner. Claude's own question
   dialog is on screen in its panel already, so it neither rises nor waits
   in the corner; Home lists it.
 
   **On you** has its own button at the right end of the rail's foot, always
-  there: the count in amber while something is fresh, in quiet ink when
-  only older asks wait, dim with nothing on you. The tray it opens is wider
-  than the rail, over the edge of the first panel, until you close it; a
-  pinned tray stays at the rail's width. An older ask is one line, what it
+  there, a raised hand: the count in amber while something is fresh, in
+  quiet ink when only older asks wait, no count with nothing on you. The
+  tray it opens is wider than the rail, over the edge of the first panel,
+  until you close it; a pinned tray, or one with nothing in it, stays at
+  the rail's width. The rail keeps its foot when you open one of its
+  documents, the button with it. An older ask is one line, what it
   is and how old, and a click opens its card.
 
   A card leaves when it stops being true, not only when you answer it.

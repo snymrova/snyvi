@@ -126,7 +126,7 @@ function deskItems(q) {
 const COMMANDS = [
   { cmd: "home", t: "Home", key: "h", s: "What needs you, the desks, and what is waiting" },
   { cmd: "inbox", t: "Inbox", key: "i", s: "Every document, newest first" },
-  { cmd: "corner", t: "On you and Lately", s: `What waits on you, and what came: ${/Mac/.test(navigator.platform) ? "⌃⌥Y" : "Ctrl Alt Y"}`, k: "notifications messages asides" },
+  { cmd: "corner", t: "On you", s: `What waits on you, across your desks: ${/Mac/.test(navigator.platform) ? "⌃⌥Y" : "Ctrl Alt Y"}`, k: "notifications messages asides" },
   { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
   { cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell", window: true },
   { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },

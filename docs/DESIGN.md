@@ -459,6 +459,11 @@ The pill opens **one tray with two parts**:
   daemon (`src/lately.rs`): it **never counts**; a **dot in the accent**
   marks what is unseen. Opening the tray sees it, in every page.
 
+Lately is **hidden** for now (`LATELY_SHOWN` in `ui/app/05-notes.js`): no
+clock in the sidebar (its buttons are out of `index.html`), no column on
+Home, no dot. What comes still rises as
+a card and the daemon still keeps it, so turning it back on loses nothing.
+
 | # | Rule | |
 |---|---|---|
 | R1 | **Place** | From outside: the corner. Caused by the reader: in place, rungs 0–3. Nothing from outside in the middle of the page. |

@@ -49,7 +49,7 @@ const RISE_MS = 8000;
  *  has been drawn; the hover that holds a card; the turns this page has
  *  seen, for this desk, so only a new one rises; the tray pinned open
  *  (#115); and where the focus was when the tray opened, to give it back. */
-const oy = { open: false, rise: 0, drawnRise: 0, timer: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, inRail: false, more: 0, rang: 0, quiet: false };
+const oy = { empty: false, open: false, rise: 0, drawnRise: 0, timer: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, inRail: false, more: 0, rang: 0, quiet: false };
 /** Whether the last thing the reader did was a key: the tray opened with
  *  the pointer takes the focus without a ring (app.css .ring-quiet). */
 let viaKey = false;
@@ -116,10 +116,16 @@ function oyCounts(d, f) {
  *  and says so while the tray is open. */
 function oyFoot(d) {
   const n = oyCounts(d, filedNow(d)), count = n.now + n.old;
-  const label = !count ? "Nothing on you" : `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
-  const sub = n.now ? "What only you can do on this desk" : count ? "Older asks, still waiting on you" : "Nothing on you on this desk";
-  return `<button type="button" class="oy-foot${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${ico("tray")}<span class="n">${count || ""}</span></button>`;
+  const label = !count ? "Nothing on you right now" : `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
+  // What On you is, always, then how it stands: with nothing on the reader
+  // the tip said only that, and a first hover never learned what it was for.
+  const sub = `What only you can do on this desk · ${n.now ? "new" : count ? "older asks waiting" : "nothing right now"}`;
+  return `<button type="button" class="oy-foot${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span></button>`;
 }
+
+/** On you's mark, the hand, drawn by the corner (ui/corner.js `hand`),
+ *  which the window loads with the desk. */
+const oyIco = () => ctx.corner?.()?.hand?.() || "";
 
 /** The pin, in the tray's head (#115): pinned, the tray stays open while
  *  the reader works in the panels, and a click elsewhere leaves it. The pill
@@ -161,11 +167,13 @@ function trayHtml(d, f, esc) {
   const all = said + older + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
     (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + sugRows(f, d);
   const n = oyCounts(d, f), count = n.now + n.old;
-  const title = `<span class="oy-hi" aria-hidden="true">${ico("tray")}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +
+  oy.empty = !all;
+  const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +
     (count ? `<span class="sec-n${n.now ? " warn" : ""}">${count}</span>` : "");
   const close = `<button type="button" class="oy-x" data-a="oy-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${ico("x")}</button>`;
-  const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${pinBtn()}${close}</div>`;
-  return `<div class="oy-tray${oy.quiet ? " ring-quiet" : ""}" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing is on you here.</p>`}</div></div>`;
+  // Nothing to keep open beside the panels, so no pin, unless it is pinned.
+  const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${all || oy.pin ? pinBtn() : ""}${close}</div>`;
+  return `<div class="oy-tray${oy.quiet ? " ring-quiet" : ""}" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing on you right now.</p>`}</div></div>`;
 }
 
 /** Where the corner sits: in the rail's column, at its width, its foot just
@@ -202,7 +210,6 @@ function onYou(d) {
   if (oy.pinAt !== d.id) { oy.pinAt = d.id; oy.pin = pinned(d.id); oy.open ||= oy.pin; }
   const el = oyNode();
   oyPlace(el);
-  el.classList.toggle("wide", oy.open && !oy.pin);
   // Every draw asks what is new, not only a read of the list: a turn read
   // while the desk was out of view -- Home, a document -- rises when it is
   // back in view (#116). Only once this desk's list is in, or its first read
@@ -212,6 +219,8 @@ function onYou(d) {
   const card = oy.rise ? riseHtml(d, f, esc) : "";
   if (oy.rise && !card) { oy.rise = 0; oy.more = 0; clearTimeout(oy.timer); }
   const tray = oy.open ? trayHtml(d, f, esc) : "";
+  // Wide for what it holds; an empty tray says so at the rail's width.
+  el.classList.toggle("wide", oy.open && !oy.pin && !oy.empty);
   // What came from outside rises here too, over a turn's card never.
   const K = ctx.corner?.(), news = K && !tray && !card ? K.cardHtml(true) : "";
   // In the rail it is the foot's button (`oyFoot`). With no rail in view
@@ -220,7 +229,7 @@ function onYou(d) {
   const count = n.now + n.old;
   const label = `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
   const pill = !tray && count && !oy.inRail
-    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="${n.now ? "What only you can do on this desk" : "Older asks, still waiting on you"}" data-key="ctrl+alt+y">${ico("tray")}<span class="n">${count}</span></button>` : "";
+    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="${n.now ? "What only you can do on this desk" : "Older asks, still waiting on you"}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count}</span></button>` : "";
   // A redraw replaces every button: the one the keyboard was on gets the
   // focus back, by what it does and to which row, or a press on a card
   // button dropped the hand to the page's body (W24).
@@ -372,16 +381,17 @@ const ONYOU_CSS = `
    it is open, never past the window. */
 .oy.in-rail.wide { width: min(max(var(--oy-w), 360px), var(--oy-wmax)); }
 .oy.in-rail.wide.from-r { left: auto; right: var(--oy-r); }
-/* As tall as what it holds, to Lately's ceiling, then it scrolls. */
+/* As tall as what it holds, to a ceiling, then it scrolls. */
 .oy.in-rail.wide .oy-scroll { max-height: min(calc(70vh - 40px), 520px, calc(var(--oy-max) - 40px)); }
 /* On you in the rail's foot (oyFoot): one width whatever the count, so the
    links beside it hold still. Amber while something is fresh, quiet ink
-   when only older asks wait, dim with nothing. */
-#meta .oy-foot { flex: none; display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; min-width: 38px; height: 22px; margin-left: auto; padding: 0 6px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg-3); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; cursor: pointer; }
+   when only older asks wait, and with nothing the quiet ink alone: dimmed
+   below it, it read as switched off, and fell to 2.1:1. As tall as the
+   repository's button beside it. */
+#meta .oy-foot { flex: none; display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; min-width: 38px; height: 26px; margin-left: auto; padding: 0 6px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg-3); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; cursor: pointer; }
 #meta .oy-foot svg { width: 13px; height: 13px; }
 #meta .oy-foot .n { min-width: 2ch; text-align: left; font-weight: 600; color: var(--fg-2); }
 #meta .oy-foot.on, #meta .oy-foot.on .n { color: var(--warn); }
-#meta .oy-foot.none { opacity: .55; }
 #meta .oy-foot:hover, #meta .oy-foot:focus-visible, #meta .oy-foot[aria-expanded="true"] { background: var(--rule); color: var(--fg); opacity: 1; }
 .oy-hi { display: grid; place-items: center; width: 14px; margin-right: 4px; color: var(--fg-3); }
 .oy-hi svg { width: 13px; height: 13px; }
@@ -411,7 +421,7 @@ const ONYOU_CSS = `
 .oy-tray .oy-old > li { opacity: .72; }
 .oy-tray .oy-old > li:hover, .oy-tray .oy-old > li:focus-within { opacity: 1; }
 .oy-tray .dk-turn-list + .oy-old > li:first-child { border-top: 1px solid var(--rule); }
-/* An older ask and a card an agent removed are Lately's rows (corner.js
+/* An older ask and a card an agent removed are the corner's log rows (corner.js
    .cn-row): the title, then where and when, quiet (09-thread.js olderLine,
    awayRows). Removed says who and why under its title, and may take two
    lines for it. */

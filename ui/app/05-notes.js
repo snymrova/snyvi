@@ -27,6 +27,14 @@
    * the holding back while an agent's aside is unseen, are corner.js's
    * (`says`); first paint carries only their names. */
   const OWN = new Set(["first-doc", "two-waiting", "blocked", "version"]);
+  /* Lately is hidden: no clock in the sidebar's foot or its rail, no column
+   * on Home, no dot and no blinking mark for what waits in it. What comes
+   * still rises as a card, and the daemon still keeps it (src/lately.rs),
+   * so nothing is lost. Showing it again is this switch, bench/ui.mjs's
+   * LATELY, and its two clock buttons back in index.html (#rail-lately at
+   * the rail's end, #btn-lately before #live; git show 52ffc42:ui/index.html),
+   * which came out rather than ship hidden: first paint had no room. */
+  const LATELY_SHOWN = false;
   let cornerMod = null, cornerLoading = null;
   /* The corner is the desk's while its rail is on screen: on the desk, and
    * on a document opened from the desk's own list, which keeps that rail
@@ -35,7 +43,7 @@
   const overDesk = () => (state.view === "desk" || state.deskBehind != null) && !!desk;
   const cornerUse = () => (cornerLoading ||= import(`/assets/corner.js${boot.v ? `?v=${boot.v}` : ""}`)
     .then(m => (cornerMod ||= m.init({ root, store, esc, relShort, capability, deskApi, sayErr, toast, who: whoIco, glyph, peek: mascotPeek, showDoc: id => showDoc(id, true, false, overDesk()), showDesk, showHome, showStart,
-      view: () => state.view, onDesk: overDesk, friends: () => state.friends,
+      view: () => state.view, onDesk: overDesk, friends: () => state.friends, lately: LATELY_SHOWN,
       deskRedraw: () => desk?.arranged?.(), deskTray: () => desk?.openTray?.(), homeRedraw: () => homeMod?.redraw?.(),
       openLately: () => openLately($(root.dataset.side === "0" ? "#rail-lately" : "#btn-lately")), unpop: () => closePop(false),
       hop: () => { const m = $(".brand-mark"); if (m && !quiet()) { m.classList.remove("hop"); void m.offsetWidth; m.classList.add("hop"); } } })))
@@ -46,7 +54,7 @@
   if ((store.get("snyvi.own.held") || "[]") !== "[]") setTimeout(() => corner(m => m.sayHeld()), 30e3);
   {
     const a = (boot.notes || []).find(n => !n.dismissed);
-    if (a && !a.seen) root.dataset.note = a.lit ? "lit" : "new";
+    if (LATELY_SHOWN && a && !a.seen) root.dataset.note = a.lit ? "lit" : "new";
   }
   // Ctrl+Alt+Y ("you") opens and closes the corner's tray on every page; a
   // desk's corner hears it first, its panels' keys included (10-onyou.js).
