@@ -46,7 +46,11 @@ const CHECK = args.includes("--check");
 const KEEP = args.includes("--keep");
 const BIN_SRC = resolve(flag("--bin") || "./target/release/snyvi");   // absolute: one send runs from the fixture's folder
 let BIN = BIN_SRC;   // the copy the daemon runs from, once main() has made it
-const PORT = flag("--port") || "7797";   // 7796 is browser.mjs; 7791, 7794-7795 and 7812-7814 are CI's
+const PORT = flag("--port") || "7797";
+/* Lately is hidden in the window (LATELY_SHOWN, ui/app/05-notes.js, which
+ * says what else comes back with it): the rows that open it wait for it,
+ * and rows that say it stays out of sight stand in for them. */
+const LATELY = false;   // 7796 is browser.mjs; 7791, 7794-7795 and 7812-7814 are CI's
 
 function flag(name) {
   const i = args.indexOf(name);
@@ -1539,6 +1543,7 @@ async function lossRows(p, base, token, arrive, browsed) {
     const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent" }) });
     return (await r.json()).note;
   };
+  if (!LATELY) return rows;
   const aside = await say("An aside whose Undo will be refused.");
   await p.goto(`${origin}/`);
   await p.pointerAway();
@@ -1614,6 +1619,7 @@ async function reachRows(p, base, token, arrive) {
 
   // An older aside in Lately is reached by Ctrl Alt Y and Tab, and opened
   // by Enter (the corner, plan b0bca0a11f).
+  if (!LATELY) return rows;
   const say = async (text, about) => {
     const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent", ...(about ? { about } : {}) }) });
     return (await r.json()).note;
@@ -1860,6 +1866,18 @@ async function asideRows(p, base, token) {
   rows.push(["an aside rises in the corner, its byline first who spoke", rose && /^bench-agent/.test(by),
     !rose ? `the corner reads ${JSON.stringify(await p.ev(`document.querySelector("#cn")?.textContent || null`))}` : !/^bench-agent/.test(by) ? `the byline reads "${by}"` : `"${by}"`]);
 
+  // Hidden, a click elsewhere settles it with nothing left behind: no
+  // clock, no dot, no blinking mark that nothing could put out.
+  if (!LATELY) {
+    await p.click(400, 300);
+    const out = await until(`!document.querySelector("#cn .cn-card")`);
+    const none = await p.ev(`!document.querySelector("#btn-lately, #rail-lately")?.getClientRects().length && !document.documentElement.dataset.note && !document.documentElement.hasAttribute("data-lately")`);
+    rows.push(["Lately hidden: a settled aside leaves no clock, dot or blinking mark", out && none,
+      !out ? "the card did not go" : !none ? "a clock, a dot or the mark's blink is still drawn" : "the card went, and nothing points at Lately"]);
+    await p.ev(`fetch("/api/lately/seen", { method: "POST" }).then(r => r.status)`);
+    await p.pointerAway();
+    return rows;
+  }
   // A click elsewhere settles it into Lately, its clock dotted: nothing
   // that came goes on a timer, or on a click (plan b0bca0a11f).
   await p.click(400, 300);
@@ -2369,6 +2387,7 @@ async function deskRows(cdp, base, token) {
     rows.push(["a panel that needs you changes only its mark", rang && after.rowA && after.row && after.lit,
       !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
 
+    if (LATELY) {
     // An aside sent from a panel is a way back to it. From the other
     // desk, a click on its row in the corner's Lately opens this one with
     // that panel focused (it may be inside the daemon's quiet, so it is
@@ -2393,6 +2412,7 @@ async function deskRows(cdp, base, token) {
     const there = led && await until(`location.pathname === "/desk/${da}" && document.querySelector(".pn.on .pn-body")?.getAttribute("aria-label") === "Panel 2"`);
     rows.push(["an aside from a panel goes back to that panel", !!there,
       !from ? "the daemon did not say where the aside came from" : !led ? "the card does not lead to the panel" : !there ? `the click landed on ${await p.ev("location.pathname")}, not panel 2 of still-a` : "the click opened still-a with panel 2 focused"]);
+    } else second = (await post(`/api/desks/${da}/panes`)).pane.id;
 
     // 1.32: no queue bar on a desk (audit dc5adb4641). 1.33: no slot in the
     // head either -- the rail's Documents already shows what waits here, in
@@ -2439,6 +2459,7 @@ async function deskRows(cdp, base, token) {
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     await p.pointerAway();
 
+    if (LATELY) {
     // 1.38, the one the reader lost: a page from another desk rises while
     // they work in a panel, and a click into the panel used to take it away
     // for good. Now it settles into Lately, whose clock is dotted, and
@@ -2458,6 +2479,7 @@ async function deskRows(cdp, base, token) {
       !rose3 ? "it never rose" : !dotted ? "a click into the panel left Lately's clock with no dot" : !kept ? "Lately has no row for it" : !read ? `its row opened ${await p.ev("location.pathname")}` : "settled, the clock dotted, kept in Lately, and read from there"]);
     if (read) { await p.ev("history.back(), 1"); await until(`location.pathname === "/desk/${da}"`, 30); }
     await p.pointerAway();
+    }
 
     // #171: a page opened from the desk's own list keeps the desk's rail,
     // and its corner with it. A newer version of that page rose twice there,
@@ -2855,9 +2877,15 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     const inLately = await p.ev(`/Quiet aside 20\\./.test(document.querySelector(".hm-arrived")?.textContent || "")`);
     // Home shows the newest five, as Arrived did, and the sidebar's Lately
     // the rest (1.43; it was the corner's tray).
+    if (!LATELY) {
+      const shown = await p.ev(`!!document.querySelector(".hm .cn-lately")`);
+      rows.push(["Home under 20 asides, Lately hidden: no Lately drawn, no redraw, no friends read", ev20.draws === 0 && ev20.peers === 0 && !shown,
+        `${ev20.draws} redraw${ev20.draws === 1 ? "" : "s"}, ${ev20.peers} read${ev20.peers === 1 ? "" : "s"} of /api/peers${shown ? ", and Lately drawn on Home" : ", nothing of Lately on Home"}`]);
+    } else {
     const capped = await p.ev(`(() => { const l = document.querySelector(".hm-arrived .cn-large"); return { n: l?.querySelectorAll(".cn-row").length ?? -1, more: !!l?.querySelector("[data-a=cn-lately]") }; })()`);
     rows.push(["Home under 20 asides: Lately takes them in, five shown and the rest in the sidebar's, no redraw, no friends read", ev20.draws === 0 && ev20.peers === 0 && inLately && capped.n === 5 && capped.more,
       `${ev20.draws} redraw${ev20.draws === 1 ? "" : "s"}, ${ev20.peers} read${ev20.peers === 1 ? "" : "s"} of /api/peers, ${ev20.home} of /api/home${inLately ? ", the last in Lately" : ", the last not in Lately"}, ${capped.n} rows shown${capped.more ? " and a way to the rest" : ", no way to the rest"}`]);
+    }
   } finally {
     if (other) await post(`/api/desks/${other}/delete`).catch(() => {});
     await post(`/api/panes/${pane}/stop`).catch(() => {});

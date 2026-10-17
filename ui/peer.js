@@ -407,6 +407,6 @@ export function event(ctx, j) {
     if (!open) ctx.refreshDoc?.(j.doc);
     if (!j.quiet) ctx.rise({ kind: "friend", key: `pr${Date.now()}`, from: `<b>${from}</b> replied`, title: j.reply, label: open ? "Show it" : "Open", go: open ? () => ctx.refreshDoc(j.doc) : () => ctx.showDoc?.(j.doc) });
   }
-  else if (j.from && !j.quiet) ctx.rise({ kind: "friend", key: `pn${Date.now()}`, from: `A line from <b>${from}</b>`, title: j.desk ? `a suggestion on ${j.desk}` : "on Home, in Lately", label: "Home", go: ctx.home });
+  else if (j.from && !j.quiet) ctx.rise({ kind: "friend", key: `pn${Date.now()}`, from: `A line from <b>${from}</b>`, title: j.desk ? `a suggestion on ${j.desk}` : "on Home", label: "Home", go: ctx.home });
 }
 

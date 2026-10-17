@@ -137,6 +137,10 @@ const CSS = `
 .cn-old .cn-bl { flex: none; max-width: 45%; }
 .cn-old > li { opacity: .72; }
 .cn-old > li:is(:hover, :focus-within) { opacity: 1; }
+/* On you's older asks: whole rows, as the fresh ones, only quieter. */
+.cn-dim { border-top: 1px solid var(--rule); }
+.cn-dim > li { opacity: .72; }
+.cn-dim > li:is(:hover, :focus-within) { opacity: 1; }
 .cn-by b { font-weight: 600; color: var(--fg-2); }
 .cn-by b.cn-snyvi { color: var(--accent); }
 .cn-t { display: block; padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-small); line-height: 1.35; color: var(--fg-2); text-align: left; overflow-wrap: anywhere; }
@@ -189,12 +193,16 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 `;
 
 let c = null, el = null;
+/** On you's mark: a raised hand, what is handed to the reader (`hand_over`).
+ *  It wore the Inbox's tray, and Inbox is what came to read, not what only
+ *  the reader can do. The desk's corner draws it from here too. */
+const hand = (px = 13) => `<svg viewBox="0 0 24 24" width="${px}" height="${px}" fill="none" stroke="currentColor" stroke-width="${+(36 / px).toFixed(2)}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 11V6a2 2 0 0 0-4 0"/><path d="M14 10V4a2 2 0 0 0-4 0v2"/><path d="M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-6-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>`;
 /** Lately as this page holds it, the corner's state, and what waits off a
  *  desk: the turns across desks (the window only) and the offers. */
 const L = {
   rows: [], loaded: false, loading: null, more: false, unseen: false,
   turns: [], turnsSeen: null, offers: [],
-  open: false, earlier: false, older: false, allToday: false, back: null,
+  open: false, earlier: false, allToday: false, back: null,
   card: null, cardDrawn: null, timer: 0, rang: 0,
   /** A card settled since the tray was last opened: the pill stays, to say
    *  where it went, though nothing in it is unseen any more. */
@@ -219,7 +227,7 @@ export function init(ctx) {
   if (c.friends()) offersLoad();
   return { event, refresh, moved, rise, offer, says, sayHeld, toggle, open: openTray, draw, redraw, lately,
     cardHtml, trayHtml: latelyHtml, offersHtml, offerCount: () => liveOffers().length, dot, keep: () => L.kept,
-    act, opened, chime, ring, mark,
+    act, opened, chime, ring, mark, hand,
     /** The desk's first page while its card is up: its row in the rail is ringed. */
     rising: id => L.card?.kind === "first" && L.card.key === `d${id}` };
 }
@@ -391,7 +399,7 @@ function escape(e) {
 /* ---------- the pill and the tray ---------- */
 
 /** The dot: something in Lately, or one of snyvi's own lines, unseen. */
-function dot() { return L.unseen || ownRows().some(r => !r.seen); }
+function dot() { return !!c.lately && (L.unseen || ownRows().some(r => !r.seen)); }
 const liveOffers = () => L.offers.filter(o => !L.said.has(`o${o.id}`));
 const freshTurns = () => L.turns.filter(w => !w.stale && !w.answered_at && !L.said.has(`t${w.id}`));
 
@@ -407,7 +415,7 @@ function openTray(tries = 0) {
   el?.querySelector(".oy-tray")?.focus({ preventScroll: true });
 }
 function closeTray(back) {
-  L.open = false; L.older = false;
+  L.open = false;
   if (!dot()) L.kept = false;
   redraw();
   if (back && L.back?.isConnected) L.back.focus({ preventScroll: true });
@@ -428,7 +436,7 @@ function opened() {
  *  did for the sidebar's card. */
 function mark() {
   const a = L.rows.find(r => r.kind === "aside" && !r.removed);
-  if (a && !a.seen && L.unseen) c.root.dataset.note = a.lit ? "lit" : "new";
+  if (c.lately && a && !a.seen && L.unseen) c.root.dataset.note = a.lit ? "lit" : "new";
   else delete c.root.dataset.note;
   // The sidebar's Lately button wears the dot (app.css).
   c.root.toggleAttribute("data-lately", dot());
@@ -496,12 +504,13 @@ function offTray(esc) {
   const turns = c.capability ? L.turns.filter(w => !w.answered_at) : [];
   const fresh = turns.filter(w => !w.stale), old = turns.filter(w => w.stale);
   const said = [...L.said].filter(([k]) => k[0] === "t").map(([, s]) => `<li class="cn-row mine" role="status"><span class="cn-b"><span class="cn-t">${esc(s.text)}</span></span></li>`).join("");
-  const fold = !old.length ? "" : !fresh.length ? old.map(turnRow).join("")
-    : `<li><button type="button" class="cn-fold" data-a="cn-older" aria-expanded="${L.older}">${old.length} older</button></li>` + (L.older ? old.map(turnRow).join("") : "");
-  const asks = said + fresh.map(turnRow).join("") + fold + offersHtml();
+  // Older asks under the fresh, dimmed, not folded: an unanswered ask is on
+  // the reader whatever its age, as the desk's tray has it (1.43).
+  const asks = said + fresh.map(turnRow).join("") + offersHtml();
+  const older = old.length ? `<ul class="cn-list cn-dim" aria-label="Older">${old.map(turnRow).join("")}</ul>` : "";
   const close = `<button type="button" class="oy-x" data-a="cn-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${c.glyph("x", 12)}</button>`;
-  return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1"><div class="oy-head"><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do, across your desks">On you</h3><span class="oy-gap"></span>${close}</div>` +
-    `<div class="oy-scroll">${asks ? `<ul class="cn-list">${asks}</ul>` : `<p class="oy-none">Nothing is on you.</p>`}</div></div>`;
+  return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1"><div class="oy-head"><span class="oy-hi" aria-hidden="true">${hand()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do, across your desks">On you</h3><span class="oy-gap"></span>${close}</div>` +
+    `<div class="oy-scroll">${asks || older ? (asks ? `<ul class="cn-list">${asks}</ul>` : "") + older : `<p class="oy-none">Nothing on you right now.</p>`}</div></div>`;
 }
 
 /** Who asked, as the reader knows them. */
@@ -687,8 +696,10 @@ function cardHtml(desk) {
   if (!k) return "";
   const { esc } = c, first = L.cardDrawn !== k;
   L.cardDrawn = k;
-  // What waits on the reader is On you's; anything else came, and is Lately's.
-  const more = k.more ? `<button type="button" class="cn-more" data-a="${k.kind === "turn" || k.kind === "offer" ? "cn-open" : "cn-lately"}">+${k.more} more</button>` : "";
+  // What waits on the reader is On you's; anything else came, and is
+  // Lately's, which has no "+N more" while it is hidden.
+  const mine = k.kind === "turn" || k.kind === "offer";
+  const more = k.more && (mine || c.lately) ? `<button type="button" class="cn-more" data-a="${mine ? "cn-open" : "cn-lately"}">+${k.more} more</button>` : "";
   let body = "";
   if (k.kind === "turn") body = `<ul class="cn-list">${turnRow(k.turn)}</ul>`;
   else if (k.kind === "offer") body = `<ul class="cn-list">${offerRow(L.offers.find(o => o.id === k.offer.id) || k.offer)}</ul>`;
@@ -728,7 +739,6 @@ function act(a, b) {
     "cn-earlier": () => { L.earlier = !L.earlier; redraw(); },
     "cn-today": () => { L.allToday = true; redraw(); },
     "cn-close": () => { c.unpop?.(); [...document.querySelectorAll(".lt-btn")].find(x => x.getClientRects().length)?.focus({ preventScroll: true }); },
-    "cn-older": () => { L.older = !L.older; redraw(); },
     "cn-more": () => load(L.rows[L.rows.length - 1]?.id || 0),
     "cn-seen": () => { opened(); for (const x of L.rows) x.seen = true; redraw(); },
     "cn-answer": () => answer(+k, b.dataset.v),

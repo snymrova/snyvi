@@ -430,8 +430,8 @@ export async function show(ctx) {
   peersDirty = true;
   tick();
   claudeAsk();
-  // Lately is the corner's, drawn large here (ui/corner.js).
-  if (!cornerMod) c.corner?.().then(m => { cornerMod = m; redraw(); }, () => {});
+  // Lately is the corner's, drawn large here (ui/corner.js), when it is shown.
+  if (!cornerMod && c.lately) c.corner?.().then(m => { cornerMod = m; redraw(); }, () => {});
   if (last) draw(last);
   await refresh();
 }
@@ -1186,6 +1186,9 @@ function arrived(j) {
   // A waiting line is drawn above with its buttons, not again in the log.
   const waiting = new Set(lines.map(n => `${n.from}\n${n.text}`));
   const rows = lines.length ? `<ul class="hm-arr">${lines.map(n => lineRow(n, j)).join("")}</ul>` : "";
+  // Lately hidden (app.js LATELY_SHOWN): what waits on a word from the
+  // reader stays, under the section's old name, and the log goes.
+  if (!c.lately) return rows ? `<section class="hm-w hm-arrived" data-w="arrived" data-part="home.arrived" aria-label="Arrived"><div class="hm-wh"><h2>Arrived</h2></div>${rows}</section>` : "";
   const lately = cornerMod ? cornerMod.trayHtml(true, r => r.kind === "line" && waiting.has(`${r.who}\n${r.text}`)) : `<p class="hm-quiet">…</p>`;
   const all = j.waiting ? `<p class="hm-arr-all"><a href="/inbox" data-nav="inbox">${plural(j.waiting, "document")} waiting in the Inbox →</a></p>` : "";
   const dot = cornerMod?.dot() ? ` <span class="cn-dot" aria-label="something new"></span>` : "";
