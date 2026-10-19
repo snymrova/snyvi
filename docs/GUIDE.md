@@ -1661,8 +1661,12 @@ only on pages that have one, after the text has painted. Relative
 images in a document sent by path are served from the file's directory,
 confined to the project root and to pictures, video and sound. An image
 whose path is a video or a song, `![take 2](take2.mp4)`, plays in place:
-a player with controls, seeking as it goes, in a box that holds its size
-before the video arrives. So several takes go in one document, to be
+a song in snyvi's own pill (play, where it is, how long, the volume
+beside the speaker), a video with the engine's controls, seeking as it
+goes. An MP4 or MOV take has its own shape from the first paint, upright
+or wide, read from its header; any other video holds a 16:9 box, so
+nothing moves when it arrives. One plays at a time: pressing the next
+take pauses the last. So several takes go in one document, to be
 watched and chosen from.
 
 Search understands `p:project` and `kind:md|code|diff|text` prefixes.

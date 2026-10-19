@@ -228,7 +228,7 @@
    * fetched the first time one is opened, since most readers read what their
    * agents sent. The rows in the sidebar's Folders are this file's. */
   let browseMod = null, browseLoading = null;
-  const browseUse = () => (browseLoading ||= import(`/assets/browse.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (browseMod = m), e => { browseLoading = null; throw e; }));
+  const browseUse = () => (browseLoading ||= chunk("browse").then(m => (browseMod = m), e => { browseLoading = null; throw e; }));
   const browseCtx = () => ({ state, docEl, metaEl, main, esc, rel, fmtSize, toast, leave, offDesk, setPreview, swapIn, applyPreview, afterRender, afterRefresh,
     placeAt, placeOf, kept, cameFrom, jumpToHash, lineHash, browsing, previewButton, rawUrl });
   function showBrowse(rootId, path, push = true, fromHistory = false) {
@@ -239,7 +239,7 @@
    * ui/paths.js: fetched the first time Ctrl is held in a window that holds
    * the capability, and never in a tab, which cannot ask. */
   let pathsLoading = null;
-  const pathsUse = () => (pathsLoading ||= import(`/assets/paths.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => m.init({ api: deskApi, state, docEl, toast,
+  const pathsUse = () => (pathsLoading ||= chunk("paths").then(m => m.init({ api: deskApi, state, docEl, toast,
     browse: (r, p) => showBrowse(r, p, true),
     landLine: n => { history.replaceState(history.state, "", `${location.pathname}#L${n}`); jumpToHash(); } }), e => { pathsLoading = null; throw e; }));
   addEventListener("keydown", e => { if (e.key === "Control" && capability && !pathsLoading) pathsUse().catch(() => {}); });
@@ -297,13 +297,13 @@
 
   /* After the Undo has gone: "N removed · Show" at the foot of the Inbox,
    * drawn by home.js (`removedLine`), the chunk for the pages that list. */
-  const homeUse = () => (homeLoading ||= import(`/assets/home.js${boot.v ? `?v=${boot.v}` : ""}`)).then(m => (homeMod = m));
+  const homeUse = () => (homeLoading ||= chunk("home")).then(m => (homeMod = m));
   /** A friend's snyvi (docs/PEER.md): pairing, Send to…, a line, an agent's
    *  offer. All of it is peer.js, fetched on the first of those and never on
    *  a read; first paint has no room to spare, so only the wiring is here.
    *  No promise kept: the module map already holds a loaded one, and a
    *  failed fetch is simply tried again on the next click. */
-  const peerUse = () => import(`/assets/peer.js${boot.v ? `?v=${boot.v}` : ""}`);
+  const peerUse = () => chunk("peer");
   // Saved into a folder: Copy path has a file here to give now (#99).
   const savedHere = (id, path) => { state.cache.delete(id); if (state.doc && state.doc.id === id) { state.doc.local_path = path; renderMeta(); } };
   const peerCtx = { esc, rel, sayErr, toast, state, refreshDoc, saved: savedHere, peer: peerUse, home: () => showHome(true),
@@ -321,7 +321,7 @@
    * read never opens, first paint never carries. Each of the three names
    * below is what it was, returning once the chunk has done it. */
   let panelLoading = null, pagesMod = null;
-  const panelMod = () => (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`));
+  const panelMod = () => (panelLoading ||= chunk("about"));
   const pagesCtx = () => ({ state, docEl, main, boot, capability, esc, rel, toast, sayErr, leave, offDesk, swapIn, afterRender, loadDesks, deskApi, mascotHead,
     places: () => (capability ? deskPlaces() : []), tilde,
     // Welcome's ways to a desk (about.js): one made goes to Got another
@@ -345,7 +345,7 @@
     document.title = "Sidebars · snyvi";
     if (push) history.pushState({ sidebars: true }, "", "/sidebars");
     let m;
-    try { m = await (sidebarsLoading ||= import(`/assets/sidebars.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    try { m = await (sidebarsLoading ||= chunk("sidebars")); }
     catch (e) { sidebarsLoading = null; toast("Could not open that page", { sub: e }); return; }
     if (state.view !== "sidebars") return;
     await m.show({ docEl, esc, toast, deskApi, secHead, setLayout, view: () => state.view });
@@ -394,9 +394,19 @@
     // press puts the player in the button's box, plays it and hands it the
     // keyboard. Made here, on the press, it sounds in half a second in the
     // Linux window, where one made with the page took 8.6 s.
+    //
+    // A song keeps the pill, which ui/player.js turns into its controls: the
+    // engine's own clip its volume to the 54 px box (audit 3c6958c2a8). The
+    // sound starts here, on the press, before that chunk is fetched. A chunk
+    // that cannot be fetched is a daemon that has gone, and the song with it.
     else if (w === "play") {
-      const t = b.nextElementSibling, m = t && t.content && t.content.firstElementChild;
-      if (m) { b.replaceWith(m); t.remove(); m.play().catch(() => {}); m.focus(); }
+      const t = b.nextElementSibling, m = t.content?.firstElementChild;
+      if (m) {
+        t.replaceWith(m);
+        if (m.localName === "audio") m.controls = false; else b.remove();
+        m.play().catch(() => {});
+        chunk("player").then(p => p.pressed(docEl, b, m));
+      }
     }
   });
   /** The count beside the brand mark: how many agents hold a stream on the
@@ -448,7 +458,7 @@
   /* A comparison of two versions, and a diff read split, are ui/diff.js's,
    * fetched the first time either is asked for, with the split's look. */
   let diffLoading = null;
-  const diffUse = () => (diffLoading ||= import(`/assets/diff.js${boot.v ? `?v=${boot.v}` : ""}`).catch(e => { diffLoading = null; throw e; }));
+  const diffUse = () => (diffLoading ||= chunk("diff").catch(e => { diffLoading = null; throw e; }));
   const diffCtx = () => ({ state, docEl, main, esc, fmt, toast, swapIn, buildToc, renderMeta, enhanceCode });
   const showCompare = (a, b) => diffUse().then(m => m.compare(diffCtx(), a, b), e => toast("Could not compare the versions", { sub: e }));
   /** Replace the inline diff body of a diff document with the side-by-side rendering. */

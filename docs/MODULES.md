@@ -94,6 +94,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/look.js` | 358 | lazy | theme, accent, Aa |
 | `ui/corner.js` | 743 | lazy | the corner on every page: the card that rises, the pill, the tray (On you and Lately), snyvi's own lines, the chime; a desk's corner draws its parts (`docs/DESIGN.md` §4.5) |
 | `ui/palette.js` | 304 | lazy | ⌘K |
+| `ui/player.js` | 114 | lazy | a song's own controls, and one player sounding at a time; fetched on the first press |
 | `ui/toast.js`, `ui/tip.js`, `ui/keys.js`, `ui/paths.js`, `ui/frame.js`, `ui/find.js`, `ui/browse.js`, `ui/diff.js` | < 200 each | lazy | one thing each |
 
 ## Benches (`bench/`)

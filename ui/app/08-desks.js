@@ -36,7 +36,7 @@
    * are wrappers rather than references because several of them are declared
    * further down this file. */
   let acts = null, actsLoading = null;
-  const useActs = () => (actsLoading ||= import(`/assets/menu.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (acts = m)));
+  const useActs = () => (actsLoading ||= chunk("menu").then(m => (acts = m)));
   const actsCtx = {
     state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl, peerCtx, keepCurInView, showSidebars,
     navList: () => navMod ? navMod.list() : [],
@@ -209,7 +209,7 @@
     }
     // The corner with it: the desk's corner draws its pill, tray and card
     // in corner.js's look, with Lately in its tray.
-    try { [desk] = await Promise.all([deskLoading ||= import(`/assets/desk.js${boot.v ? `?v=${boot.v}` : ""}`), cornerUse()]); }
+    try { [desk] = await Promise.all([deskLoading ||= chunk("desk"), cornerUse()]); }
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();

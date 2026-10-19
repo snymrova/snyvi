@@ -262,10 +262,11 @@ fn page(
     match kind {
         // The bytes are the document; serve them back rather than rendering them.
         Kind::Image => render::image_body(&format!("/api/docs/{id}/blob"), title),
-        Kind::Video | Kind::Audio => render::media_body(
-            &format!("/api/docs/{id}/blob"),
-            &render::ext_of(b.path.as_deref().unwrap_or_default()),
-        ),
+        Kind::Video | Kind::Audio => {
+            let ext = render::ext_of(b.path.as_deref().unwrap_or_default());
+            let size = render::media_size(&ext, std::io::Cursor::new(&b.bytes));
+            render::media_body(&format!("/api/docs/{id}/blob"), &ext, size)
+        }
         Kind::Binary => render::placeholder(&render::describe_bytes(title, b.bytes.len() as u64)),
         _ => renderer.render_with_files(
             kind,
