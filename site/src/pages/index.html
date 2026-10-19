@@ -28,58 +28,22 @@
   <a href="#just-as-you-left-it"><span>Every project pulls you away from the last.</span><b>Just as you left it {{icon:arrow}}</b></a>
 </div>
 <p class="verdict">Agents make it easy to start. <b>snyvi helps you finish.</b></p>
-<p>One desk for each project, its agents side by side, and everything they write kept where you can read it. It runs on your machine, with no account and nothing to configure.</p>
 
 <h2 id="one-desk-for-each-project">One desk for each project</h2>
-<p>A project's folder with up to four real shells in it: Claude Code, Codex, your tests, a <code>git log</code>. Every agent on the project works in view, and each panel says whether its agent is working, done, or waiting on you.</p>
+<p>A project's folder with up to four agents in it, side by side: Claude Code, Codex, Gemini, any shell. Each panel says whether its agent is working, done, or waiting on you.</p>
 <div class="wide">{{clip:desk|Switching from the atlas desk to ledger, where two Claude Code sessions work side by side, one working and one done}}</div>
 
 <h2 id="nothing-scrolls-away">Nothing scrolls away</h2>
-<p>Plans and reviews land on the desk that wrote them, marked with the panel they came from, and open as clean pages. They're filed under their project and kept with every earlier version. <kbd>c</kbd> shows what changed.</p>
+<p>Every plan and review an agent writes lands on its desk as a clean page, filed under its project, every version kept. <kbd>c</kbd> shows what changed.</p>
 <div class="wide">{{clip:plan|A plan Claude wrote, opened from the desk's rail as a clean page, filed under its project}}</div>
 
 <h2 id="out-of-your-head">Out of your head</h2>
-<p>Each desk keeps its own notes, so what's left to do stays with the project. The agents at that desk read them, say how far they've got, and tick one off with the commit it went into. Home shows every desk's list and where each was left.</p>
+<p>Each desk keeps its own notes. The agents read them, say how far they've got, and tick one off with the commit it went into. When one needs a decision from you, it asks in the desk's corner and waits.</p>
 <div class="wide">{{clip:notes|A desk's notes beside its panel: a new one typed in, under one the agent has already ticked off}}</div>
 
-<h2 id="only-what-needs-you">Only what needs you</h2>
-<p>What stops a project is rarely the work. It's the one thing waiting on you. When an agent needs a decision, a merge, a key, or a command it was blocked from running, it goes to <b>Your turn</b>, in the desk's corner: a card with the options and the one it recommends, or the command with <b>Run</b> beside it. Answer there, and the answer goes to the panel that asked. Everything else stays out of your way.</p>
-<div class="wide">{{clip:turn|Your turn in the desk's corner: a decision from panel 2, with the options and Other, answered with one press}}</div>
-<p>Each piece of work is a thread on its panel's row: its notes, its branch, its PR and its checks, from idea to shipped. You can see where every project stands, and what's left before it's done.</p>
-
 <h2 id="just-as-you-left-it">Just as you left it</h2>
-<p>Switch projects and each desk is exactly as you left it. The agents you walked away from keep working.</p>
+<p>Switch projects and each desk is exactly as you left it; the agents you walked away from keep working. Home shows where every project was left, and <kbd>⌘K</kbd> searches everything any agent ever sent.</p>
 <div class="wide">{{clip:home|Home: where ledger was left and its open notes; pressing it opens the desk just as it was}}</div>
-<p><kbd>⌘K</kbd> searches everything any agent ever sent. So does this page: try it.</p>
-<div class="wide">{{clip:search|snyvi's search: one word matching plans, reviews and code across every project}}</div>
-
-<h2 id="room-to-focus">Room to focus</h2>
-<p>When one agent needs all of you, fold the sidebar and the rail away and give its panel the whole window. <kbd>⌃⌥Z</kbd> puts it back in the grid. The others keep working, and their tabs say when one needs you.</p>
-<div class="wide">{{clip:focus|One Claude Code panel given the whole window, the desk's other panels as tabs in its head}}</div>
-
-<h2 id="a-friends-snyvi">A friend's snyvi</h2>
-<p>Pair once, with three words said over a call, and a document's menu gains <b>Send to…</b> It lands in your friend's sidebar under <i>From you</i> within a second, sealed to their key on the way. A relay holds the ciphertext for a week at most, reads none of it, and keeps it for a snyvi that is asleep. An agent can offer a document to a friend, and you press Send. Nothing else travels. <a href="/guide/friends">How it works</a>.</p>
-<div class="wide">{{clip:friend|Pairing with a friend, Maya, then sending her a plan from its menu}}</div>
-
-<h2 id="any-agent">Any agent</h2>
-<p>Claude Code, Codex, Cursor, Gemini, and anything else that speaks MCP. snyvi connects Claude Code from the window on first run. The rest is one line each, and snyvi's Agents page has each one's.</p>
-<div class="wide">{{clip:agents|Agents: Claude Code connected, Codex and Cursor each with the line that sets it up}}</div>
-<pre><code>snyvi init-claude --auto   <span class="c"># Claude Code</span>
-snyvi init codex           <span class="c"># also cursor, claude-desktop, gemini, windsurf, vscode, zed</span></code></pre>
-
-<h2 id="your-sidebars">Your sidebars</h2>
-<p>Arrange both sidebars on <code>/sidebars</code>: drag, switch off, reset. Give a desk a small status box an agent keeps up to date, or one a script fills, or one snyvi runs for you on a timer, like the branch you're on and how far ahead it is. <a href="/guide/widgets">Write a widget</a>.</p>
-<pre><code>snyvi widget set backups --tone ok "Nightly backup **done**"
-snyvi widget new git &amp;&amp; snyvi widget check git</code></pre>
-
-<h2 id="how-it-works">How it works</h2>
-<pre class="mermaid">flowchart TB
-  A["An agent in a panel&lt;br/&gt;Claude Code, Codex, a shell"] -- "send_document, notes, leave_off&lt;br/&gt;over MCP" --&gt; D["snyvi&lt;br/&gt;one binary on 127.0.0.1"]
-  A -. "hooks: working, done, needs you" .-&gt; D
-  D --&gt; K["The desk&lt;br/&gt;panels, its documents, its notes"]
-  D --&gt; L["The library&lt;br/&gt;every version, searchable"]
-  D --&gt; H["Home&lt;br/&gt;where each project was left"]</pre>
-<p>snyvi runs the panels itself, so an agent in one is a real terminal session on your machine. What the agent writes arrives over MCP, is filed by the folder it came from, and lands on the desk of the panel that sent it. A document sent from anywhere else lands in the inbox, under its project.</p>
 
 <h2 id="private-and-fast">Private, and fast</h2>
 <dl class="plate">
@@ -90,22 +54,17 @@ snyvi widget new git &amp;&amp; snyvi widget check git</code></pre>
   <dt>The binary</dt><dd>one, static, <span class="fact">17.4 MB</span></dd>
   <dt>Updates</dt><dd>signed, and checked before they're applied</dd>
 </dl>
-<p>Every number here is one a bench reads on every push, with a budget it's held to. <a href="/guide#measured-so-far">Measured so far</a>. What does leave your machine, and when, is on <a href="/privacy">one page</a>.</p>
+<p>Nothing of yours leaves your machine unless you send a page to a friend you paired with, sealed to their key. <a href="/privacy">What does, and when</a>.</p>
 
 <h2 id="questions">Questions</h2>
 <details><summary>{{icon:chev}}Is it free?</summary>
 <p>Yes, and open source under the MIT licence. There is no paid tier.</p></details>
-<details><summary>{{icon:chev}}Does anything leave my machine?</summary>
-<p>Nothing of yours, unless you send it. snyvi listens only on <code>127.0.0.1</code>, has no account and sends no telemetry. It reaches out for three things, each only when you'd expect it: the update check every six hours or so (<code>snyvi update off</code> stops it), a document you press Send on for a paired friend, sealed to their key, and the tour's clips if you open it. <a href="/privacy">The whole list</a>.</p></details>
-<details><summary>{{icon:chev}}Do I have to work in desks?</summary>
-<p>No. Any agent anywhere can send snyvi what it writes, and it lands in the inbox under its project. Desks are for when you want the agents in view.</p></details>
-<details><summary>{{icon:chev}}Can each desk use a different Claude account?</summary>
-<p>Yes. Sign in to another account from a desk's keys sheet, and that desk's panels start as that account. Right-click a panel to run it as another, back into the same conversation. When a panel hits its usage limit, it offers <b>Continue as</b> your other account, right there, and picks the conversation up where it stopped. Your settings, hooks and history stay shared. <a href="/guide#claude-code">How</a>.</p></details>
+<details><summary>{{icon:chev}}Which agents?</summary>
+<p>Claude Code, connected from the window on first run. Codex, Cursor, Gemini, Windsurf, VS Code, Zed and Claude Desktop with one line each: <code>snyvi init codex</code>. Any shell in a panel.</p></details>
+<details><summary>{{icon:chev}}Does it work on a Mac?</summary>
+<p>Yes: the Mac build is signed and notarized, and <code>brew install --cask snymrova/snyvi/snyvi</code> is the way in. We don't own a Mac, so we'd love to hear how your first minute went, <a href="https://github.com/snymrova/snyvi/issues">on GitHub</a>.</p></details>
 <details><summary>{{icon:chev}}Windows says it "protected your PC".</summary>
-<p>The Windows installer isn't signed yet, so SmartScreen asks once: <i>More info</i>, then <i>Run anyway</i>. Scoop installs without the prompt, and winget will once Microsoft's review is through. Signing is on its way; the <a href="https://github.com/snymrova/snyvi/blob/main/CODE-SIGNING.md">code signing policy</a> says what will be signed, and how.</p></details>
-<details><summary>{{icon:chev}}Can I use the faces?</summary>
-<p>The one in the corner is snyvi, and the app icon is the same drawing. It has six faces and speaks only when spoken to. They're MIT like the rest, so use them for anything about snyvi.</p>
-<p><img src="/media/faces.svg" width="600" height="272" alt="snyvi's six faces: rest, glad, wink, love, whoa, oops" loading="lazy"></p></details>
+<p>The Windows installer isn't signed yet, so SmartScreen asks once: <i>More info</i>, then <i>Run anyway</i>. Scoop installs without the prompt, and winget will once Microsoft's review is through. <a href="https://github.com/snymrova/snyvi/blob/main/CODE-SIGNING.md">What will be signed, and how</a>.</p></details>
 
 <section class="close" aria-labelledby="close">
 {{mascot:rest:mk-hero}}
