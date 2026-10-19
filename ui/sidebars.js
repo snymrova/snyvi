@@ -89,8 +89,11 @@ const hideId = (side, id) => id === "widgets" ? `${side}:widgets` : id;
 export async function show(ctx) {
   c = ctx;
   if (!styled) { const s = document.createElement("style"); s.textContent = STYLE; document.head.append(s); styled = true; }
-  try { data = await (await fetch("/api/widgets")).json(); }
-  catch { c.docEl.innerHTML = `<div class="sb"><p class="sb-say">Could not read the sidebars.</p></div>`; return; }
+  // The window's capability rides it (`deskApi`): the list names every
+  // widget folder and setting, which the daemon gives the window or the
+  // token alone (1.46). A browser tab is told where to go.
+  try { data = await c.deskApi("/api/widgets"); }
+  catch (e) { c.docEl.innerHTML = `<div class="sb"><p class="sb-say">${e.status === 403 ? "The sidebars are arranged in the snyvi window." : "Could not read the sidebars."}</p></div>`; return; }
   if (c.view() !== "sidebars") return;
   draw();
   c.docEl.onclick = click;
@@ -354,7 +357,7 @@ async function prefs(name, body, redraw = true, owner = 0) {
 async function again() {
   const at = document.activeElement, box = at?.closest?.(".sb-w")?.dataset.own;
   const mark = at && [...at.attributes].find(a => a.name.startsWith("data-w") || a.name === "data-allow" || a.name === "data-rerun");
-  try { data = await (await fetch("/api/widgets")).json(); } catch { return; }
+  try { data = await c.deskApi("/api/widgets"); } catch { return; }
   if (c.view() !== "sidebars") return;
   draw();
   if (!mark) return;

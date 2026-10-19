@@ -44,12 +44,16 @@ pub(crate) async fn desk_widgets(
 
 /// Everything /sidebars arranges: the layout, every widget file with what
 /// it asks and whether it is allowed as it is now, and every pushed widget
-/// with its desk. A read for this page or the token (1.46): it names every
+/// with its desk. A read for the window or the token (1.46): it names every
 /// folder, command and the settings the reader typed, which is not any
-/// local process's to read.
+/// local process's to read. Not `refuse_reader`: a browser sends no
+/// `Origin` on a same-origin GET, and a `Host` alone any process can send,
+/// so the page shows its capability (`deskApi`), as a desk's reads do.
 pub(crate) async fn list_widgets(State(app): S, headers: HeaderMap) -> Response {
-    if let Some(no) = refuse_reader(&app, &headers) {
-        return no;
+    if !authorized(&app, &headers) {
+        if let Some(no) = refuse_desk(&app, &headers, &Default::default()) {
+            return no;
+        }
     }
     // Hashed before the lock is taken: the store waits on no disk.
     let found: Vec<_> = widget::files::scan(&app.paths.config_dir)

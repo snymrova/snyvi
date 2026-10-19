@@ -426,6 +426,7 @@ async fn answers_to_its_gate(
             ("authorization", bearer),
         ],
         Gate::Reader => vec![("host", host), (CAPABILITY_HEADER, cap)],
+        Gate::DeskOrToken => vec![("host", host), ("origin", origin)],
         Gate::Open => unreachable!(),
     };
     let (s, _) = ask(&router, method, path, body, &wrong).await;
@@ -461,6 +462,11 @@ async fn answers_to_its_gate(
             vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
         ],
         Gate::Mint => vec![vec![("host", host), (WINDOW_HEADER, window)]],
+        Gate::DeskOrToken => vec![
+            vec![("host", host), ("authorization", bearer)],
+            vec![("host", host), ("origin", origin), (CAPABILITY_HEADER, cap)],
+            vec![("host", host), (CAPABILITY_HEADER, cap)],
+        ],
         Gate::Open => unreachable!(),
     };
     for h in rights {

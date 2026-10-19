@@ -215,8 +215,9 @@ async fn allow_on_a_full_desk_leaves_no_yes_behind() {
     assert_eq!(a.answer, "", "still waiting, honestly");
 }
 
-/// What /sidebars reads names every folder and setting: this page's or
-/// the token's, not any local process's.
+/// What /sidebars reads names every folder and setting: the window's or
+/// the token's, not any local process's -- and not one that sends this
+/// page's origin or host without the capability.
 #[tokio::test]
 async fn the_widget_list_is_not_any_local_processs() {
     let (_tmp, router, l) = gated_router("snyvi-widget-list");
@@ -236,20 +237,18 @@ async fn the_widget_list_is_not_any_local_processs() {
                 .status()
         }
     };
+    let host = || ("host", l.host.clone());
+    assert_eq!(get(vec![host()]).await, StatusCode::FORBIDDEN);
     assert_eq!(
-        get(vec![("host", l.host.clone())]).await,
+        get(vec![host(), ("origin", l.origin.clone())]).await,
         StatusCode::FORBIDDEN
     );
     assert_eq!(
-        get(vec![
-            ("host", l.host.clone()),
-            ("authorization", l.bearer.clone())
-        ])
-        .await,
+        get(vec![host(), ("authorization", l.bearer.clone())]).await,
         StatusCode::OK
     );
     assert_eq!(
-        get(vec![("host", l.host.clone()), ("origin", l.origin.clone())]).await,
+        get(vec![host(), (CAPABILITY_HEADER, l.cap.clone())]).await,
         StatusCode::OK
     );
 }

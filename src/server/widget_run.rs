@@ -801,17 +801,22 @@ fn marked_path(out: &str) -> Option<String> {
 mod windows_tests {
     use super::*;
 
+    /// A folder whose name has a space, read by cmd's own `type` through a
+    /// quoted path: Rust's own quoting would hand cmd `\"...\"`, which it
+    /// does not read as a quote, and `type` would find no file. cmd's
+    /// built-in, so nothing else (PowerShell's cold start under the runner's
+    /// short environment took CI past the timeout) is tested with it.
     #[tokio::test]
     async fn a_quoted_argument_reaches_cmd_whole() {
-        let dir = std::env::temp_dir().join(format!("snyvi-widget-win-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("snyvi widget win {}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("run.ps1"), "Write-Output 'from ps1'\n").unwrap();
+        std::fs::write(dir.join("out.txt"), "from a quoted path\r\n").unwrap();
         let spec = files::Spec {
             name: "t".into(),
             title: "T".into(),
             scope: files::Scope::Global,
             run: files::Run {
-                command: "powershell -NoProfile -ExecutionPolicy Bypass -File \"%SNYVI_WIDGET_DIR%\\run.ps1\"".into(),
+                command: "type \"%SNYVI_WIDGET_DIR%\\out.txt\"".into(),
                 every: 5,
                 timeout: 20,
             },
@@ -821,7 +826,7 @@ mod windows_tests {
         };
         let path = std::env::var("PATH").unwrap_or_default();
         match run_once(&spec, &dir, &dir, &path, &json!({}), &[]).await {
-            Ran::Printed(o) => assert!(o.contains("from ps1"), "{o}"),
+            Ran::Printed(o) => assert!(o.contains("from a quoted path"), "{o}"),
             Ran::Failed(w) => panic!("{w}"),
         }
         let _ = std::fs::remove_dir_all(&dir);

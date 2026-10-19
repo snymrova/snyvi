@@ -278,7 +278,7 @@ async function main() {
     await section("by keyboard, and back", () => reachRows(p, base, token, arrive));
     await section("the ✕ over what is read", () => backRows(p, browsed));
     await section("back and forward", () => navRows(p));
-    await section("the sidebars, arranged", () => sidebarsRows(p));
+    await section("the sidebars, arranged", () => sidebarsRows(p, token));
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
@@ -1782,15 +1782,20 @@ async function navRows(p) {
  *  again says the same. 1.27.0 moved the row and saved nothing: the page's
  *  stylesheet was named CSS, which hid the browser's CSS.escape, and the
  *  redraw threw before the POST. Reset at the end, for the sections after. */
-async function sidebarsRows(p) {
+async function sidebarsRows(p, token) {
   const rows = [];
   const origin = await p.ev("location.origin");
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
-  const kept = async () => (await (await fetch(`${origin}/api/widgets`)).json()).layout;
+  // The list names every widget folder and setting, so since 1.46 it is the
+  // window's or the token's: the bench reads what was kept with the token,
+  // and the page is a window's for this section (a capability on its
+  // fragment), handed back at the end so the sections after are a tab again.
+  const kept = async () => (await (await fetch(`${origin}/api/widgets`, { headers: { authorization: `Bearer ${token}` } })).json()).layout;
+  const cap = (await (await fetch(`${origin}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const listed = () => p.ev(`[...document.querySelectorAll('.sb-list[data-side="left"] .sb-row')].map(r => r.dataset.sb.split(":")[1]).join(" ")`);
   const onLeft = () => p.ev(`[...document.querySelectorAll("#trees > #inbox-row, #trees > #desk-nav, #trees > #browse-nav")].map(n => ({ "inbox-row": "inbox", "desk-nav": "desks", "browse-nav": "folders" })[n.id]).join(" ")`);
   const errs = [];
-  await p.goto(`${origin}/sidebars`);
+  await p.goto(`${origin}/sidebars#cap=${cap}`);
   await until(`!!document.querySelector('.sb-row[data-sb="left:inbox"]')`);
   await p.ev(`window.__sbErr = []; window.addEventListener("error", e => window.__sbErr.push(e.message)); 1`);
   const before = await listed();
@@ -1829,6 +1834,7 @@ async function sidebarsRows(p) {
   const k3 = await kept();
   rows.push(["Reset to default puts today's order back", k3.left.join(" ") === "inbox desks folders widgets" && (await onLeft()) === "inbox desks folders",
     `the daemon kept "${k3.left.join(" ")}", the left reads "${await onLeft()}"${under ? `; over the button: ${under}` : ""}`]);
+  await p.ev(`sessionStorage.removeItem("snyvi.cap"), 1`);
   return rows;
 }
 
