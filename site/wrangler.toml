@@ -1,6 +1,9 @@
 # snyvi.com: static assets, built by build.mjs into out/, and one small worker.
 # Deployed by .github/workflows/site.yml; by hand: node site/build.mjs && npx wrangler deploy -c site/wrangler.toml
 name = "snyvi-site"
+# The account is not a secret; naming it here is what lets a deploy run with
+# only the API token, in CI or by hand.
+account_id = "0f6e3c93463d6bce9eef05d4cf0ae0ff"
 # worker.js answers byte ranges for the tour clips (/tour/*) and nothing else.
 main = "worker.js"
 compatibility_date = "2026-09-01"
