@@ -677,19 +677,12 @@ button.sec-fold:hover { color: var(--fg-2); }
 .wg-err { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
 .wg-err:has(> .open) { position: static; }
 .wg-why { position: relative; flex: 1; min-width: 0; max-height: 16px; overflow: hidden; }
-.wg-body { position: relative; height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
+/* The room is `lines` of 20 px plus the 2 px over the first: a body that
+   fills its lines exactly is not "cut" by its own padding. */
+.wg-body { position: relative; height: calc(var(--lines, 3) * 20px + 2px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
 .wg-body.open, .wg-why.open { height: auto; max-height: none; }
-/* A gallery's outputs (src/widget/gallery.rs): one row of tiles in the
-   box's room, each its size before it loads, so nothing moves. The columns
-   share the rail's width, and the row is one tile high: what does not fit
-   wraps out of sight whole, never cut at the edge, and `clip` keeps a
-   click or a Tab from scrolling it back. */
-.gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--gal) * .7), 1fr)); grid-auto-rows: var(--gal); gap: 4px; height: var(--gal); overflow: clip; }
-.gal-t { position: relative; display: grid; place-items: center; padding: 0; border-radius: var(--r-xs); overflow: hidden; background: var(--rule-2); color: var(--fg-3); font-size: var(--fs-micro); line-height: 1.2; cursor: pointer; }
-.gal-t img { width: 100%; height: 100%; object-fit: cover; }
-.gal-t:hover { box-shadow: inset 0 0 0 1px var(--accent); }
-.gal-v.on { position: absolute; color: #fff; text-shadow: 0 0 3px #000; }
-.gal-x { color: var(--danger); font-weight: 600; }
+/* A gallery's tiles (.gal) are a desk's rail's alone: their rules are
+   desk.js's (ui/desk/08-style.js), not first paint's. */
 .wg-more { display: none; position: absolute; right: 0; bottom: 0; padding-left: 24px; background: linear-gradient(90deg, transparent, var(--bg-side) 20px); color: var(--accent); }
 .wg-body > .wg-more { right: 8px; }
 .cut > .wg-more, .open > .wg-more { display: block; }

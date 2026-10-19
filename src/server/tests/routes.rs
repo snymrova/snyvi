@@ -708,7 +708,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/widgets", Some("{}"), Gate::Token, true),
-    ("GET", "/api/widgets", None, Gate::Open, true),
+    ("GET", "/api/widgets", None, Gate::Reader, true),
     ("GET", "/sidebars", None, Gate::Open, true),
     (
         "POST",

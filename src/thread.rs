@@ -1964,20 +1964,31 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
             return Ok(Suggested::HasDesk(d));
         }
     }
-    // A widget the same panel proposes again, its script fixed, takes the
-    // place of its card still waiting: one card, the newest. The old folder
-    // stays in `.proposed/`, where nothing runs, and the agent is not told
-    // of a card it replaced itself.
-    if kind == "widget" && !s.pane.is_empty() {
+    // A widget proposed again by name, its script fixed, takes the place of
+    // its card still waiting: one card per name on a desk, the newest. The
+    // old folder stays in `.proposed/`, where nothing runs. A panel is not
+    // told of a card it replaced itself; another panel's is told whose
+    // card stands now, so it does not propose a third.
+    if kind == "widget" {
+        let note = format!(
+            "{} proposed the widget {name} again: its card replaced yours. Leave it to that card.",
+            if by.is_empty() { "Another panel" } else { by.as_str() }
+        );
         tx.execute(
-            "UPDATE desk_suggestions SET settled_at = ?4, outcome = 'replaced', told_at = ?4
-             WHERE desk_id = ?1 AND kind = 'widget' AND name = ?2 AND pane = ?3 AND settled_at = 0",
-            params![desk_id, name, s.pane, now],
+            "UPDATE desk_suggestions SET settled_at = ?4, outcome = 'replaced',
+               told_at = CASE WHEN pane = ?3 THEN ?4 ELSE 0 END,
+               note = CASE WHEN pane = ?3 THEN note ELSE ?5 END
+             WHERE desk_id = ?1 AND kind = 'widget' AND name = ?2 AND settled_at = 0",
+            params![desk_id, name, s.pane, now, note],
         )?;
     }
+    // The cap is by kind: a stale card for a panel never blocks a box, and
+    // the other way round.
+    let widgetish = kind == "widget" || kind == "box";
     let waiting: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM desk_suggestions WHERE desk_id = ?1 AND settled_at = 0",
-        params![desk_id],
+        "SELECT COUNT(*) FROM desk_suggestions WHERE desk_id = ?1 AND settled_at = 0
+           AND (kind IN ('widget', 'box')) = ?2",
+        params![desk_id, widgetish],
         |r| r.get(0),
     )?;
     if waiting >= SUGGESTIONS_PER_DESK {
@@ -2031,7 +2042,9 @@ pub fn tell_widget(conn: &Connection, owner: i64, name: &str, note: &str) -> Res
     )? > 0)
 }
 
-/// The reader opened it, or put it away with ✕. Settled once.
+/// The reader opened it, or put it away with ✕ -- or, for a widget, snyvi
+/// could not add it (`stale`: its folder changed, or its name was taken
+/// meanwhile), which the agent is told with `note`. Settled once.
 pub fn settle(
     conn: &Connection,
     desk_id: i64,
@@ -2039,15 +2052,27 @@ pub fn settle(
     outcome: &str,
     now: i64,
 ) -> Result<Option<Suggestion>> {
-    let outcome = if outcome == "opened" {
-        "opened"
-    } else {
-        "dismissed"
+    settle_with(conn, desk_id, id, outcome, "", now)
+}
+
+pub fn settle_with(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    outcome: &str,
+    note: &str,
+    now: i64,
+) -> Result<Option<Suggestion>> {
+    let outcome = match outcome {
+        "opened" | "stale" => outcome,
+        _ => "dismissed",
     };
     let n = conn.execute(
-        "UPDATE desk_suggestions SET settled_at = ?3, outcome = ?4 WHERE desk_id = ?1 AND id = ?2
-         AND settled_at = 0",
-        params![desk_id, id, now, outcome],
+        "UPDATE desk_suggestions SET settled_at = ?3, outcome = ?4,
+           note = CASE WHEN ?5 = '' THEN note ELSE ?5 END,
+           told_at = CASE WHEN ?5 = '' THEN told_at ELSE 0 END
+         WHERE desk_id = ?1 AND id = ?2 AND settled_at = 0",
+        params![desk_id, id, now, outcome, note],
     )?;
     if n == 0 {
         return Ok(None);
@@ -2065,27 +2090,57 @@ pub fn unsettle(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     )? > 0)
 }
 
-/// Suggestions this pane made that the reader has opened -- or, for a box,
-/// said Not now to -- and it has not been told of; marked told.
+/// Suggestions this pane made that the reader has opened, said Not now to
+/// (a box or a widget), or that snyvi could not add or that another card
+/// replaced -- and it has not been told of; marked told. A word for a
+/// pane that has gone goes to whichever pane on the desk prompts next, as
+/// answers do (`take_untold`): a widget outlives the session that proposed
+/// it, and "Tell the agent" must reach someone.
 pub fn take_opened(
     conn: &Connection,
     desk_id: i64,
     pane: &str,
+    live: &[String],
     now: i64,
 ) -> Result<Vec<Suggestion>> {
     let mut st = conn.prepare(&format!(
-        "SELECT {SUG_COLS} FROM desk_suggestions WHERE desk_id = ?1 AND pane = ?2
-         AND (outcome = 'opened' OR (kind = 'box' AND outcome = 'dismissed')) AND told_at = 0
-         ORDER BY settled_at, id LIMIT 4"
+        "SELECT {SUG_COLS} FROM desk_suggestions WHERE desk_id = ?1
+         AND (outcome = 'opened' OR (kind IN ('box', 'widget') AND outcome = 'dismissed')
+              OR (outcome IN ('stale', 'replaced') AND note != '')) AND told_at = 0
+         ORDER BY settled_at, id"
     ))?;
     let v: Vec<Suggestion> = st
-        .query_map(params![desk_id, pane], row_to_suggestion)?
-        .collect::<rusqlite::Result<_>>()?;
+        .query_map(params![desk_id], row_to_suggestion)?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|s| s.pane == pane || !live.contains(&s.pane))
+        .take(4)
+        .collect();
     let mut up = conn.prepare_cached("UPDATE desk_suggestions SET told_at = ?2 WHERE id = ?1")?;
     for s in &v {
         up.execute(params![s.id, now])?;
     }
     Ok(v)
+}
+
+/// Whether a word for widget `name`'s card can reach anyone: its panel is
+/// `live`, or some panel on the desk is, to hear it in its stead.
+pub fn widget_heard(
+    conn: &Connection,
+    owner: i64,
+    name: &str,
+    live: &[String],
+) -> Result<bool> {
+    let pane: Option<String> = conn
+        .query_row(
+            "SELECT pane FROM desk_suggestions WHERE kind = 'widget' AND name = ?1
+               AND outcome = 'opened' AND (?2 = 0 OR desk_id = ?2)
+             ORDER BY settled_at DESC LIMIT 1",
+            params![name, owner],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(pane.is_some() && !live.is_empty())
 }
 
 #[cfg(test)]

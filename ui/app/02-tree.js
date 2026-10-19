@@ -237,8 +237,11 @@
    *  never a redraw of the side it is on. */
   /** `data-wsrc` is "own" for a desk's own widget file (1.32), whose menu
    *  shares it rather than picks its desks (menu.js `widgetItems`). */
+  /** The fold's key is the widget's, not its name's: a global `status` and
+   *  desk 7's own `status` are two widgets, folded apart. A shared file's
+   *  seats on several desks fold together, as one widget. */
   function seatFrame(w) {
-    const key = `w:${w.name}`, t = w.title || wTitle(w.name);
+    const key = `w:${w.owner || (w.desk_id ? `d${w.desk_id}` : "g")}:${w.name}`, t = w.title || wTitle(w.name);
     return `<section class="sec wg${secFolded(key) ? " folded" : ""}" id="wg-${w.desk_id}-${w.name}" data-sec="${key}" data-w="${w.name}" data-wdesk="${w.desk_id}" data-wsrc="${w.owner ? "own" : w.source}">` +
       secHead(key, esc(t), { tip: t }) +
       `<div class="sec-body"></div></section>`;
@@ -257,12 +260,12 @@
    * fails, or works again, never moves what is below (no layout shift). */
   const seatInner = w => `<div class="wg-body" style="--lines:${w.lines}">${w.html || ""}${w.html ? W_MORE : ""}</div>` +
     (wAsks(w) ? `<p class="wg-ask" role="status"><span data-tip="${esc(w.error.replace(/^\w+: /, ""))}">${esc(w.error.replace(/^\w+: /, ""))}</span><button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
-      : wStopped(w) ? `<p class="wg-ask wg-stop" role="status"><span data-tip="${esc(w.error.replace(/^stopped: /, "Stopped "))}">Stopped ${esc(w.error.replace(/^stopped: /, ""))}</span><button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Not on this desk" data-tip-sub="Other desks keep it; /sidebars puts it back">Turn off here</button>` : ""}</p>`
+      : wStopped(w) ? `<p class="wg-ask wg-stop" role="status"><span data-tip="${esc(w.error.replace(/^stopped: /, "Stopped "))}">Stopped ${esc(w.error.replace(/^stopped: /, ""))}</span><button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? (w.owner ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Turn off" data-tip-sub="It stays on /sidebars, ready to switch back on">Turn off</button>` : `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Not on this desk" data-tip-sub="Other desks keep it; /sidebars puts it back">Turn off here</button>`) : ""}</p>`
       : w.error ? wFailed(w) : "");
   /** Past its room: the cut line's "more", which opens it where it is --
    *  shown only once the box is measured as cut (`markCut`). */
   const W_MORE = `<button type="button" class="wg-more" aria-expanded="false">more</button>`;
-  /** A failed run (#112): why, in two lines that open whole, and for a
+  /** A failed run (#112): why, in one line that opens whole, and for a
    *  widget file, the button that tells the agent that proposed it. */
   const wFailed = w => `<div class="wg-err" role="status"><div class="wg-why">${esc(w.error)}${W_MORE}</div>` +
     (w.source === "file" && w.agent ? `<button type="button" class="wg-allow" data-wtell="${w.name}" data-wd="${w.desk_id}">Tell the agent</button>` : "") + `</div>`;
@@ -292,23 +295,41 @@
     if (was && was.hidden === j.hidden && el) patchSeat(el, j); else drawWidgets();
   }
   /** One seat's body, its count and its tone, changed where it stands: the
-   *  sidebar is not redrawn, so nothing takes the focus or the scroll. */
+   *  sidebar is not redrawn, so nothing takes the focus or the scroll. A
+   *  body that did not change is left as it is, so a rail redrawn for a
+   *  panel's dot does not snap an opened "more" shut or bring back an
+   *  Allow the reader just pressed; one that did keeps "more" open. */
   function patchSeat(el, w) {
     const body = el.querySelector(":scope > .sec-body");
     if (!body) return false;
-    body.innerHTML = seatInner(w);
-    markCut(el);
-    // Who writes it, how often and how long ago: the name's tip, not a line
-    // of the box's own, so the box is its name, its count and its body.
-    el.querySelector(".sec-fold").dataset.tipSub = `${w.writer || w.source} · ${relShort(w.updated_at)}`;
-    el.classList.toggle("stale", wStale(w));
-    const head = el.querySelector(":scope > .sec-head"), n = head.querySelector(".sec-n"), tone = W_TONE[w.tone] || "";
+    el.$w = w;
+    const inner = seatInner(w);
+    if (body.$inner !== inner) {
+      const open = body.querySelector(".wg-body.open, .wg-why.open") != null;
+      body.innerHTML = body.$inner = inner;
+      if (open) seatOpen(body.querySelector(".wg-body, .wg-why"));
+      markCut(el);
+    }
+    seatClock(el, w);
+    const head = el.querySelector(":scope > .sec-head"), nm = head.querySelector(".sec-nm"), t = w.title || wTitle(w.name);
+    if (nm && nm.textContent !== t) { nm.textContent = t; el.querySelector(".sec-fold").dataset.tip = t; }
+    const n = head.querySelector(".sec-n"), tone = W_TONE[w.tone] || "";
     if (w.count) {
       const c = n || head.insertBefore(document.createElement("span"), head.querySelector(".sec-acts"));
       c.className = `sec-n${tone ? ` ${tone}` : ""}`; c.textContent = w.count;
     } else n?.remove();
     return true;
   }
+  /** Who writes it, how often and how long ago: the name's tip, not a line
+   *  of the box's own, so the box is its name, its count and its body; and
+   *  whether it is old. Said again every minute (`seatTick`), since a box a
+   *  dead cron job stops writing is the one `stale_after` is for, and no
+   *  event comes for it. */
+  function seatClock(el, w) {
+    el.querySelector(".sec-fold").dataset.tipSub = `${w.writer || w.source} · ${relShort(w.updated_at)}`;
+    el.classList.toggle("stale", wStale(w));
+  }
+  setInterval(() => document.querySelectorAll("section.wg").forEach(el => el.$w && seatClock(el, el.$w)), 60000);
 
   /** The browse section keeps its own DOM across navigations so expanded folders stay open.
    *  Its body always ends in a quiet "open a folder" row, so reading a folder is

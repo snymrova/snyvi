@@ -1330,10 +1330,20 @@ pub(crate) async fn delete_desk(
     }
     // Closed, not deleted (`desk::close`): its panes stop and keep their
     // text, as a closed panel's does, and its notes stay on it, until prune.
+    // Which panel each was, for what its agent left in a widget: the rows
+    // go with the desk, so they are read first.
+    let slots: std::collections::HashMap<String, i64> = app
+        .store
+        .desk(id)
+        .ok()
+        .flatten()
+        .map(|d| d.panes.iter().map(|p| (p.id.clone(), p.slot)).collect())
+        .unwrap_or_default();
     match app.store.close_desk(id) {
         Ok(Some(panes)) => {
             for p in &panes {
                 app.panes.forget(p);
+                pane_widgets_ended(&app, p, slots.get(p).copied());
             }
             desks_moved(&app);
             Json(json!({ "ok": true, "restore": format!("/api/desks/{id}/reopen") }))

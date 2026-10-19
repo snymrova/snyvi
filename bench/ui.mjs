@@ -3106,6 +3106,30 @@ async function widgetBoxRows(cdp, base, tmp) {
       return { by: el.querySelector(".sec-fold").dataset.tipSub, src: el.dataset.wsrc }; })()`);
     rows.push(["a desk's own widget says only how often, and its frame is the desk's", !!o && /^every 5 s/.test(o.by) && o.src === "own",
       !ocame ? "no box came for a widget in the desk's own folder" : `by-line "${o.by}", data-wsrc "${o.src}"`]);
+    // A seat waiting on Allow holds the file's own room (1.46): the first
+    // body, six lines tall, moves nothing below it.
+    const six = join(widgets, `@${desk}`, "wsix");
+    mkdirSync(six, { recursive: true });
+    writeFileSync(join(six, "widget.json"), JSON.stringify({ name: "wsix", title: "Six", scope: "desk", run: { command: "run.sh", every: 5 }, lines: 6 }));
+    writeFileSync(join(six, "run.sh"), "#!/bin/sh\necho six\n", { mode: 0o755 });
+    const sbox = `#wg-${desk}-wsix`;
+    const scame = await until(`!!document.querySelector("${sbox} [data-wallow]")`);
+    const h0 = scame && await p.ev(`document.querySelector("${sbox}").offsetHeight`);
+    const lines0 = scame && await p.ev(`document.querySelector("${sbox} .wg-body").style.getPropertyValue("--lines")`);
+    if (scame) await p.clickOn(`${sbox} [data-wallow]`);
+    const ran = scame && await until(`/six/.test(document.querySelector("${sbox} .wg-body")?.textContent || "")`, 120);
+    const h1 = ran && await p.ev(`document.querySelector("${sbox}").offsetHeight`);
+    rows.push(["a seat waiting on Allow keeps the file's own room, so its first body moves nothing", !!ran && lines0 === "6" && h1 === h0,
+      !scame ? "no Allow line came for a six-line widget" : lines0 !== "6" ? `the waiting seat had ${lines0 || "no"} lines, not 6` : !ran ? "its body never came after Allow" : h1 !== h0 ? `the seat grew: ${h0} px → ${h1} px` : `${h0} px before and after`]);
+    // A body that fills its room exactly is not "cut" by its own padding.
+    put("wfit", { title: "Fits", scope: "global", run: { command: "run.sh", every: 5 }, lines: 2 }, "#!/bin/sh\nprintf 'line one  \\nline two\\n'\n");
+    const fbox = "#wg-0-wfit";
+    const fcame = await until(`!!document.querySelector("${fbox} [data-wallow]")`);
+    if (fcame) await post("/api/widgets/wfit/allow", { owner: 0 });
+    const fran = fcame && await until(`/line two/.test(document.querySelector("${fbox} .wg-body")?.textContent || "")`, 120);
+    const fcut = fran && await p.ev(`document.querySelector("${fbox} .wg-body").classList.contains("cut")`);
+    rows.push(["a body that fills its room exactly is not cut", !!fran && fcut === false,
+      !fcame ? "no Allow line came for the two-line widget" : !fran ? "its body never came" : fcut ? "two lines in a two-line room were marked cut" : "two lines, no more"]);
     // An agent's widget is removed from its box's menu: Undo stands where
     // it was, at its height, and puts the folder back.
     if (o) {

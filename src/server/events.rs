@@ -249,6 +249,12 @@ pub(crate) struct EventsQ {
     /// so the daemon knows that agent is here for as long as the stream is.
     #[serde(default)]
     pub(crate) agent: Option<String>,
+    /// The id the page picks for itself, the one its focus words carry
+    /// (`FocusBody::page`): when its stream ends, its last word goes with
+    /// it, so a page that died without saying so -- a window killed, a
+    /// crash -- does not keep its desk "in view" for the runner (1.46).
+    #[serde(default)]
+    pub(crate) page: Option<String>,
 }
 
 impl EventsQ {
@@ -286,6 +292,8 @@ pub(crate) struct StreamMark {
     pub(crate) app: Arc<App>,
     pub(crate) window: bool,
     pub(crate) agent: Option<String>,
+    /// The page's own id, whose focus word is dropped with the stream.
+    pub(crate) page: Option<String>,
 }
 
 impl StreamMark {
@@ -294,6 +302,7 @@ impl StreamMark {
         window: bool,
         agent: Option<String>,
         window_version: Option<String>,
+        page: Option<String>,
     ) -> StreamMark {
         app.streams.fetch_add(1, Ordering::Relaxed);
         if agent.is_none() {
@@ -325,7 +334,12 @@ impl StreamMark {
             };
             emit(&app, "agents", json!({ "online": changed }));
         }
-        StreamMark { app, window, agent }
+        StreamMark {
+            app,
+            window,
+            agent,
+            page,
+        }
     }
 }
 
@@ -334,6 +348,11 @@ impl Drop for StreamMark {
         self.app.streams.fetch_sub(1, Ordering::Relaxed);
         if self.agent.is_none() {
             self.app.pages.fetch_sub(1, Ordering::Relaxed);
+        }
+        // Its last word went with it: a page that can say nothing more is
+        // not in front, and shows no desk.
+        if let Some(page) = &self.page {
+            FOCUSED.lock().unwrap().remove(page);
         }
         if self.window {
             let left = self
@@ -406,7 +425,11 @@ pub(crate) async fn events(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
     let stop = BroadcastStream::new(app.shutdown.subscribe()).map(|_| None);
-    let mark = StreamMark::new(app.clone(), q.is_window(), q.agent(), q.window_version());
+    let page = q
+        .page
+        .clone()
+        .filter(|p| !p.is_empty() && p.len() <= 64);
+    let mark = StreamMark::new(app.clone(), q.is_window(), q.agent(), q.window_version(), page);
     // The first thing on every stream is what the updater has to say, so
     // the pill is right at first paint without a field on every boot
     // payload or a poll.

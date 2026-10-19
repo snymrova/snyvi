@@ -799,11 +799,21 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
             shared,
             global,
         } => {
+            // Inside a panel, with no desk named, the starter is a draft in
+            // the current folder (1.46): an agent learning the format must
+            // not put a live Allow box on the reader's desk; the card is
+            // the one way in from a panel.
+            if desk.is_none() && !global && !shared && panel_desk(paths).is_some() {
+                return widget_draft(&name);
+            }
             let owner = if global || shared {
                 0
             } else {
-                desk.or_else(|| panel_desk(paths)).unwrap_or(0)
+                desk.unwrap_or(0)
             };
+            if owner != 0 && !desk_open(paths, owner) {
+                anyhow::bail!("there is no open desk {owner}: `snyvi desks` lists them");
+            }
             return widget_new(paths, &name, owner, global);
         }
         WidgetCmd::Check { name, desk, dir } => {
@@ -843,6 +853,9 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
             (name, serde_json::Value::String(String::new()), desk, global)
         }
     };
+    // `--desk N` for the panel's own desk is the panel's push: it asks with
+    // a card as the bare form does, rather than slip past it by its id.
+    let desk = desk.filter(|d| Some(*d) != panel_desk(paths));
     let v = client::widget(paths, &name, body, desk, global)?;
     if v.get("waiting").and_then(serde_json::Value::as_bool) == Some(true) {
         eprintln!(
@@ -880,6 +893,8 @@ fn gallery_cmd(paths: &config::Paths, cmd: GalleryCmd) -> Result<()> {
         "file": abs(file)?, "job": job, "caption": caption, "model": model, "prompt": prompt,
         "cost": cost, "poster": abs(poster)?, "failed": failed, "name": name, "lines": lines,
     });
+    // The panel's own desk by its id is still the panel's add: it asks.
+    let desk = desk.filter(|d| Some(*d) != panel_desk(paths));
     let v = client::gallery(paths, body, desk)?;
     if v.get("waiting").and_then(serde_json::Value::as_bool) == Some(true) {
         eprintln!(
@@ -944,6 +959,52 @@ fn widget_new(paths: &config::Paths, name: &str, owner: i64, global: bool) -> Re
     Ok(())
 }
 
+/// `snyvi widget new` inside a panel: a draft folder here, not in snyvi's
+/// widgets folder, which an agent checks and then proposes.
+fn widget_draft(name: &str) -> Result<()> {
+    use crate::widget::files;
+    if !crate::widget::name_ok(name) {
+        anyhow::bail!("a widget's name is lowercase letters, digits and dashes, at most 32");
+    }
+    let dir = std::env::current_dir()?.join(name);
+    if dir.exists() {
+        anyhow::bail!("{} is there already", dir.display());
+    }
+    let (json, script, body) = files::starter(name, files::Scope::Desk);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("widget.json"), json)?;
+    std::fs::write(dir.join(script), body)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir.join(script), std::fs::Permissions::from_mode(0o755))?;
+    }
+    println!("{}", dir.display());
+    println!(
+        "A draft, in a panel: nothing runs from here. Edit {script}, try it with `snyvi widget check {name} --dir {}`, then propose_widget with the script: the user adds it from the card on their On you list.",
+        dir.display()
+    );
+    Ok(())
+}
+
+/// Whether desk `id` is open, read as `panel_desk` reads.
+fn desk_open(paths: &config::Paths, id: i64) -> bool {
+    rusqlite::Connection::open_with_flags(
+        &paths.db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .ok()
+    .and_then(|c| {
+        c.query_row(
+            "SELECT 1 FROM desks WHERE id = ?1 AND closed_at = 0",
+            [id],
+            |_| Ok(()),
+        )
+        .ok()
+    })
+    .is_some()
+}
+
 /// `snyvi widget check`: one run, in this terminal, of what snyvi would
 /// run, with what it would be given; then the body it would draw, or why
 /// it would not. Run here and now, in this shell's environment -- so a
@@ -989,25 +1050,19 @@ fn widget_check(
         spec.run.every,
         cwd.display()
     );
-    let mut cmd = if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        c.arg("/C").arg(&spec.run.command);
-        c
-    } else {
-        let mut c = std::process::Command::new("sh");
-        c.arg("-c").arg(&spec.run.command);
-        c
-    };
-    // As the runner gives it: its own folder first on PATH, and named.
-    let sep = if cfg!(windows) { ";" } else { ":" };
+    // As the runner gives it, and nothing more (`files::command`): the
+    // environment cleared, the folder first on this shell's PATH, and the
+    // keys it names from this panel's desk -- so a script that reaches for
+    // the panel's own environment fails here, where it is cheap, not in
+    // the seat. Run with its timeout, and read to the runner's cap.
+    files::keys_ok(&spec, owner.unwrap_or(desk)).map_err(|why| anyhow::anyhow!("snyvi would not run it: {why}"))?;
+    let mut keys = Vec::new();
+    for k in &spec.keys {
+        let v = client::key(paths, k).with_context(|| format!("the key {k} it names"))?;
+        keys.push((k.clone(), v));
+    }
     let path = std::env::var("PATH").unwrap_or_default();
-    let mut child = cmd
-        .current_dir(&cwd)
-        .env("PATH", format!("{}{sep}{path}", folder.display()))
-        .env("SNYVI_WIDGET", name)
-        .env("SNYVI_WIDGET_DIR", &folder)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
+    let mut child = files::command(&spec, &folder, &cwd, &path, &keys)
         .stderr(std::process::Stdio::inherit())
         .spawn()
         .context("starting it")?;
@@ -1015,29 +1070,43 @@ fn widget_check(
         use std::io::Write;
         let _ = i.write_all(stdin.to_string().as_bytes());
     }
+    let mut stdout = child.stdout.take().context("its stdout")?;
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let _ = (&mut stdout).take(4097).read_to_end(&mut buf);
+        buf
+    });
     let started = std::time::Instant::now();
-    let out = child.wait_with_output()?;
-    let took = started.elapsed();
-    if !out.status.success() {
+    let timeout = std::time::Duration::from_secs(spec.run.timeout);
+    let status = loop {
+        if let Some(s) = child.try_wait()? {
+            break Some(s);
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let out = reader.join().unwrap_or_default();
+    let Some(status) = status else {
         anyhow::bail!(
-            "it exited {}: snyvi would show that over the last good body",
-            out.status.code().unwrap_or(-1)
-        );
-    }
-    if took.as_secs() >= spec.run.timeout {
-        eprintln!(
-            "snyvi: it took {:.1} s, past its timeout of {} s: snyvi would stop it",
-            took.as_secs_f64(),
+            "it took longer than its timeout of {} s: snyvi would stop it",
             spec.run.timeout
         );
-    }
-    if out.stdout.len() > 4096 {
+    };
+    if !status.success() {
         anyhow::bail!(
-            "it printed {} bytes: snyvi reads 4 KB at most",
-            out.stdout.len()
+            "it exited {}: snyvi would show that over the last good body",
+            status.code().unwrap_or(-1)
         );
     }
-    let printed = String::from_utf8_lossy(&out.stdout);
+    if out.len() > 4096 {
+        anyhow::bail!("it printed more than 4 KB: snyvi reads that much at most");
+    }
+    let printed = String::from_utf8_lossy(&out);
     // As the runner draws it: the file's own room, unless the run said.
     let own = |mut b: widget::Body| {
         if !printed.trim_start().starts_with('{') {

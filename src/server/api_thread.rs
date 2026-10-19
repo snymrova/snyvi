@@ -1121,8 +1121,21 @@ fn open_suggestion(app: &Arc<App>, id: i64, row: i64, body: &[u8]) -> Response {
     // How long the reader chose on the card, for a widget or a box.
     let lasts: Lasts = serde_json::from_slice(body).unwrap_or_default();
     if card.kind == "widget" {
-        if let Err(why) = install_proposed(app, &card, &lasts) {
-            return refused(StatusCode::CONFLICT, why);
+        if let Err(no) = install_proposed(app, &card, &lasts) {
+            // A card that can never be added -- its folder changed, its
+            // name taken -- is settled as stale, and the agent told why,
+            // rather than left asking; a full desk keeps it waiting.
+            if no.stale {
+                let note = format!(
+                    "The user pressed Add on your widget {}, but snyvi could not add it: {}.",
+                    card.name, no.why
+                );
+                let _ = app.store.clocked(|c, now| {
+                    thread::settle_with(c, id, row, "stale", &note, now)
+                });
+                threads_moved(app, id);
+            }
+            return refused(StatusCode::CONFLICT, no.why);
         }
     }
     if card.kind == "box" {

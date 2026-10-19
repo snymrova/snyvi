@@ -644,7 +644,7 @@ pub(crate) async fn pane_brief(
         .filter(|p| p.removed_at == 0)
         .map(|p| p.name)
         .collect();
-    let (threads, waiting) = app
+    let (threads, waiting, cards) = app
         .store
         .clocked(|c, now| {
             Ok((
@@ -653,6 +653,7 @@ pub(crate) async fn pane_brief(
                 // waits here, not the first thirty across every desk; the
                 // stale ones only counted (`brief::brief_of`).
                 crate::thread::waiting_on(c, desk.id, true, now)?,
+                crate::thread::suggestions(c, desk.id)?,
             ))
         })
         .unwrap_or_default();
@@ -660,6 +661,7 @@ pub(crate) async fn pane_brief(
         notes: &notes,
         threads: &threads,
         waiting: &waiting,
+        cards: &cards,
     };
     let context = crate::brief::brief_of(
         &desk,
@@ -824,7 +826,7 @@ pub(crate) async fn pane_changes(
         .clocked(|c, now| {
             Ok((
                 crate::thread::moved_since(c, desk.id, &id, since)?,
-                crate::thread::take_opened(c, desk.id, &id, now)?,
+                crate::thread::take_opened(c, desk.id, &id, &live, now)?,
             ))
         })
         .unwrap_or_default();

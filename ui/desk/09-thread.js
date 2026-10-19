@@ -393,14 +393,22 @@ function sugRows(f, d) {
     // and the value it starts with.
     const sets = Object.entries(x.settings || {}).map(([k, v]) => `<span class="mono">${esc(k)}</span>` +
       (v?.label ? ` (${esc(v.label)})` : "") + (v?.default != null && v.default !== "" ? ` = <span class="mono">${esc(JSON.stringify(v.default))}</span>` : ""));
+    // The keys it names (1.46): Add gives the run each from this desk's
+    // Keys, and the reader sees which before they do.
+    const keys = (x.keys || []).map(k => `<span class="mono">${esc(k)}</span>`);
+    // What Try once printed: whole, scrolling past the box's room, with
+    // the count and tone it would show -- a card is not a seat.
+    const printed = tried && !tried.busy && !tried.error
+      ? `<div class="wg-body sg-tried" role="status">${tried.count ? `<p class="sg-count ${esc(tried.tone || "")}">${esc(tried.count)}</p>` : ""}${tried.html || "<p>(it printed nothing)</p>"}</div>` : "";
     return `<p class="tn-by">${at} · every ${every(x.every || 60)} while in view</p>` +
       `<code class="sg-cmd" data-tip="Runs this on a timer while the widget is in view" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` +
       (x.script ? fold(s.id, x.script_name || "script", x.script, "") : "") +
       (x.files || []).map(f => fold(`${s.id}/${f.name}`, f.name, f.text || "", f.name)).join("") +
       (sets.length ? `<p class="tn-by">Settings on /sidebars: ${sets.join(", ")}</p>` : "") +
+      (keys.length ? `<p class="tn-by" data-tip="Keys it is given" data-tip-sub="Each from this desk's Keys list, in the run's environment; nothing else of the desk's">Uses ${keys.length === 1 ? "the key" : "the keys"} ${keys.join(", ")}</p>` : "") +
       (tried ? tried.busy ? `<p class="tn-by" role="status">Running it once…</p>`
         : tried.error ? `<p class="wg-err sg-tried" role="status">${esc(tried.error)}</p>`
-        : `<div class="wg-body sg-tried" role="status" style="--lines:${Math.min(6, Math.max(1, +x.lines || 3))}">${tried.html || "<p>(it printed nothing)</p>"}</div>` : "");
+        : printed : "");
   };
   const act = s => s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : s.kind === "box" ? "Allow" : "Open panel";
   const rows = f.suggestions.map(s => `<li class="dk-sugcard"><p class="sg-what">${what(s)}</p>` +

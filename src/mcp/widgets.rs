@@ -30,19 +30,25 @@ never a to-do of theirs or how to do it. The user gets a card on \
 their On you list showing the script, where it runs and how often, can try it once, and adds it or not; nothing \
 runs before. It is this desk's own: it runs in this desk's folder and on no other desk, and only the user can \
 share it. The script's folder is first on PATH and in $SNYVI_WIDGET_DIR, so name the script bare as the command \
-(run.sh, not ./run.sh or sh run.sh), or write \"$SNYVI_WIDGET_DIR/run.sh\"; snyvi refuses a command that cannot \
-reach it. Give the script whole (it gets the desk and settings as JSON on stdin), with any files it reads and \
-the settings the user would change. Try it first: write widget.json and the script to a folder and run snyvi \
-widget check NAME --dir FOLDER from the desk's folder. Proposing the same name again replaces your card. for \
-suggests how long it lasts: today, week, panel (while this panel is open), or leave it out for until the user \
-turns it off.";
+(run.sh, not ./run.sh or sh run.sh), or write \"$SNYVI_WIDGET_DIR/run.sh\"; snyvi refuses a command that hands \
+one of the files it was given to an interpreter by a bare name, or names it by a relative path. Give the script \
+whole as script with its file name as script_name (it gets the desk and settings as JSON on stdin), with any \
+files it reads and the settings the user would change. A key the script needs (an API token on this desk's Keys \
+list) goes in keys, by name: the card shows the names, and the run gets each as $NAME in its environment; snyvi \
+key does not work in a run. Try it first: write widget.json and the script to a folder of your own (never the \
+widgets folder) and run snyvi widget check NAME --dir FOLDER from the desk's folder, which runs it as snyvi \
+would, with the same environment. Proposing the same name again replaces the card waiting for it. If the user \
+said not now to a name, it is refused: leave it. for suggests how long it lasts: today, week, panel (while this \
+panel is open), or leave it out for until the user turns it off.";
 
 const READ: &str = "Read the widgets on this snyvi desk and where each stands: the boxes panels push \
-(waiting on the user's card, allowed, not now, removed) and the widget files snyvi runs (allowed, changed since, \
-off, stopped after failing, with the error), what each shows, and the cards still waiting. Read it before \
-set_widget or propose_widget, to update your own box rather than make a second, to pick a name that is free, and \
-to leave alone what the user said not now to or removed: boxes, proposals and widget files alike. A desk has room \
-for six.";
+(waiting on the user's card, allowed, not now, removed, again after the user took a no back, ended when its \
+time was up) and the widget files snyvi runs (showing, waits for the user's Allow, changed since allowed, waits \
+for a key, off, stopped after failing, or failing with the error), what each shows, which are yours, and the \
+cards still waiting. A widget that waits for Allow or a key is not failing: nothing of the script's to fix. Read \
+it before set_widget or propose_widget, to update your own box rather than make a second, to pick a name that \
+is free, and to leave alone what the user said not now to or removed: boxes, proposals and widget files alike. \
+A desk has room for six.";
 
 const GALLERY: &str = "Show what an image or video model made for the user (OpenRouter, fal, Replicate, a local \
 model, a render) as a tile in this snyvi desk's gallery: a box in the desk's rail with the newest outputs, which \
@@ -72,12 +78,13 @@ pub(super) fn specs() -> Vec<Value> {
                 "every": { "type": "integer", "minimum": 5, "description": "Seconds between runs (60)." },
                 "timeout": { "type": "integer", "minimum": 1, "maximum": 30 },
                 "lines": { "type": "integer", "minimum": 1, "maximum": 6 },
-                "script_name": { "type": "string", "description": "The script's file name, e.g. run.sh." },
+                "script_name": { "type": "string", "description": "The script's file name, e.g. run.sh: required when script is given, and what the command names." },
                 "script": { "type": "string", "description": "The script, whole, at most 16 KB." },
+                "keys": { "type": "array", "items": { "type": "string" }, "maxItems": 4, "description": "Names of this desk's keys the run needs, as its Keys list shows them (OPENROUTER_API_KEY). Each is $NAME in the run's environment once the user adds the widget; shown on the card." },
                 "files": { "type": "object", "additionalProperties": { "type": "string" }, "maxProperties": 4, "description": "Other files the script reads, by name: a helper, a query. Each at most 16 KB, named without a folder; reach them through $SNYVI_WIDGET_DIR. Shown on the card." },
                 "settings": { "type": "object", "description": "Rows the user sets on /sidebars, as widget.json has them: {\"base\": {\"type\": \"string\", \"label\": \"Compare against\", \"default\": \"main\"}}. type is string, number, boolean, or choice with choices. At most 8. The script gets them on stdin as settings." },
                 "why": { "type": "string", "description": "One sentence." },
-                "for": { "type": "string", "enum": ["today", "week", "panel", "always"], "description": "How long you suggest it lasts; the user picks on the card." }
+                "for": { "type": "string", "enum": ["today", "week", "panel"], "description": "How long you suggest it lasts; the user picks on the card. Left out: until the user turns it off." }
             }, "required": ["name", "command", "why"], "additionalProperties": false },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
         }),
@@ -94,7 +101,7 @@ pub(super) fn specs() -> Vec<Value> {
                 "failed": { "type": "string", "description": "Why the job made nothing." },
                 "name": { "type": "string", "description": "The gallery's name, default gallery. Lowercase letters, digits and dashes." },
                 "lines": { "type": "integer", "minimum": 2, "maximum": 6, "description": "The box's height, 20 px a line (4)." },
-                "for": { "type": "string", "enum": ["today", "week", "panel", "always"], "description": "How long you suggest it lasts; the user picks on the card." }
+                "for": { "type": "string", "enum": ["today", "week", "panel"], "description": "How long you suggest it lasts; the user picks on the card. Left out: until the user turns it off." }
             }, "additionalProperties": false },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
         }),
@@ -107,7 +114,7 @@ pub(super) fn specs() -> Vec<Value> {
                 "count": { "type": "string", "description": "At most 8 characters: 3, !2, 3/5." },
                 "lines": { "type": "integer", "minimum": 1, "maximum": 6 },
                 "stale_after": { "type": "integer", "minimum": 0, "description": "Seconds; 0 is never." },
-                "for": { "type": "string", "enum": ["today", "week", "panel", "always"], "description": "How long you suggest it lasts; the user picks on the card." }
+                "for": { "type": "string", "enum": ["today", "week", "panel"], "description": "How long you suggest it lasts; the user picks on the card. Left out: until the user turns it off." }
             }, "required": ["name", "body"], "additionalProperties": false },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
         }),
@@ -164,12 +171,25 @@ impl Session {
                 format!("Kept as output #{}. The user has a card on their On you list to allow the gallery; it shows when they do. Carry on.", v["id"]),
                 false,
             ),
-            Ok(v) => said(
-                format!("In the gallery as output #{}{}.", v["id"],
-                    if args.get("file").is_none() { ", shown as being made: add the same job with its file when it is done" } else { "" }),
-                false,
-            ),
-            Err(e) => said(format!("snyvi did not take it: {e}"), true),
+            Ok(v) => {
+                let failed = args
+                    .get("failed")
+                    .and_then(Value::as_str)
+                    .is_some_and(|f| !f.trim().is_empty());
+                let no_file = args
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .is_none_or(|f| f.trim().is_empty());
+                let then = if failed {
+                    ", marked as failed with why"
+                } else if no_file {
+                    ", shown as being made: add the same job with its file when it is done"
+                } else {
+                    ""
+                };
+                said(format!("In the gallery as output #{}{then}.", v["id"]), false)
+            }
+            Err(e) => said(format!("snyvi did not take it, and kept nothing: {e}"), true),
         }
     }
 
@@ -277,6 +297,7 @@ fn say_widgets(v: &Value) -> String {
             "removed" => " -- leave it: the user removed it",
             "waiting" => " -- on the user's card; your updates wait behind it",
             "again" => " -- the user took back their no: a push of it asks again, with a card",
+            "ended" => " -- its time is up: a push of it asks again, with a card",
             _ => "",
         };
         out.push_str(&format!(
@@ -286,6 +307,7 @@ fn say_widgets(v: &Value) -> String {
         ));
     }
     for f in files.iter().filter(|f| !named(&s(f, "name"))) {
+        let who = if yours(f) { ", yours" } else { "" };
         let state = if !s(f, "error").is_empty() {
             format!("cannot be read: {}", s(f, "error"))
         } else if f.get("changed") == Some(&Value::Bool(true)) {
@@ -300,7 +322,7 @@ fn say_widgets(v: &Value) -> String {
         } else {
             "waits for Allow".into()
         };
-        out.push_str(&format!("- file {} ({state})\n", s(f, "name")));
+        out.push_str(&format!("- file {} ({state}{who})\n", s(f, "name")));
     }
     let names = |k: &str| {
         list(k)

@@ -46,9 +46,6 @@ const OUT_MAX: u64 = 4096;
 /// Runs at once, across every widget.
 const AT_ONCE: usize = 2;
 
-/// A folder's stamp (`files::stamp`), and the hash taken at it.
-type Hashed = (files::Stamp, Result<String, String>);
-
 /// The login shell's PATH, once the runner has read it: Try once on a card
 /// runs with the same.
 static LOGIN_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -68,9 +65,6 @@ type Fails = std::sync::Arc<std::sync::Mutex<HashMap<(i64, String), (u8, String)
 /// What the runner keeps between rounds.
 #[derive(Default)]
 struct Runner {
-    /// A folder's stamp and the hash taken at it, by the widget's key
-    /// (`Found::key`).
-    hashes: HashMap<String, Hashed>,
     /// When each (desk, name) last started, and whether it is running now.
     last: HashMap<(i64, String), Instant>,
     running: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<(i64, String)>>>,
@@ -106,7 +100,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
     let live = |p: &str| app.panes.is_running(p);
     end_asks(app);
     let found = files::scan(&app.paths.config_dir);
-    forget_gone(r, &found);
+    forget_gone(app, r, &found);
     if found.is_empty() {
         return;
     }
@@ -169,8 +163,10 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             }
             continue;
         }
-        // Allowed, and unchanged since.
-        let hash = match folder_hash(r, &f) {
+        // Allowed, and unchanged since: hashed every round (at most 96 KB),
+        // since a cheaper stamp -- an mtime, a size -- is the writer's to
+        // set, and what the reader allowed must be what runs.
+        let hash = match files::hash(&f.folder) {
             Ok(h) => h,
             Err(why) => {
                 for (desk, _) in &seats {
@@ -220,12 +216,26 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
     }
 }
 
-/// A widget whose folder is gone -- removed, or moved by hand -- has its
-/// last run forgotten, so one put back by Undo runs on the next round
-/// rather than a period later.
-fn forget_gone(r: &mut Runner, found: &[files::Found]) {
+/// A widget whose folder is gone -- removed, moved by hand, an agent's
+/// `rm` -- leaves no seat behind: what it last said is cleared and the
+/// pages told, and its last run is forgotten, so one put back by Undo
+/// runs on the next round rather than a period later. A seat that outlived
+/// its folder could be neither allowed nor removed (1.46).
+fn forget_gone(app: &Arc<App>, r: &mut Runner, found: &[files::Found]) {
     r.last
         .retain(|(_, n), _| found.iter().any(|f| &f.name == n));
+    let keep: Vec<(i64, String)> = found.iter().map(|f| (f.owner, f.name.clone())).collect();
+    let Ok(gone) = app
+        .store
+        .clocked(|c, _| widget::clear_files_except(c, &keep))
+    else {
+        return;
+    };
+    for (desk, name) in gone {
+        r.said.remove(&(desk, name.clone()));
+        r.ran_as.retain(|k, _| k != &name && !k.ends_with(&format!("/{name}")));
+        announce(app, desk, &name);
+    }
 }
 
 /// Boxes allowed for a while whose while is up: taken off, and said.
@@ -295,20 +305,67 @@ fn start_seats(
         if r.running.lock().unwrap().contains(&key) {
             continue;
         }
-        if r.last
-            .get(&key)
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(spec.run.every))
+        let (seat, full) = app
+            .store
+            .clocked(|c, _| Ok((widget::seat_of(c, desk, &f.name)?, widget::slot_full(c, desk)?)))
+            .unwrap_or((None, false));
+        // Due by the clock that ran it last, or by the wall: the monotonic
+        // clock stands still while the machine sleeps, and a widget run at
+        // nine should run at the wake, not an hour after it.
+        let every = Duration::from_secs(spec.run.every);
+        let since_wall = seat
+            .as_ref()
+            .map(|s| crate::store::now() - s.updated_at)
+            .unwrap_or(i64::MAX);
+        if r.last.get(&key).is_some_and(|t| t.elapsed() < every)
+            && since_wall < spec.run.every as i64
         {
             continue;
         }
         // Stopped after failing: until the reader says Try again.
-        let stopped = app
-            .store
-            .clocked(|c, _| widget::seat_of(c, desk, &f.name))
-            .ok()
-            .flatten()
-            .is_some_and(|s| s.error.starts_with(widget::STOPPED));
-        if stopped {
+        if seat
+            .as_ref()
+            .is_some_and(|s| s.error.starts_with(widget::STOPPED))
+        {
+            continue;
+        }
+        // No seat, and none free: nothing it prints could be shown. Said
+        // in the log, since the seat that would say it is the one missing.
+        if seat.is_none() && full {
+            if r.said.get(&key).is_none() {
+                eprintln!(
+                    "snyvi: widget {} does not run on desk {desk}: the desk has {} widgets already",
+                    f.name,
+                    widget::DESK_MAX
+                );
+                r.said.insert(key.clone(), "full".into());
+            }
+            continue;
+        }
+        // The keys it named, from the desk it belongs to. One not on the
+        // desk is said in the seat, and the run waits for it.
+        let keys: Vec<(String, String)> = spec
+            .keys
+            .iter()
+            .filter_map(|k| app.secrets.value(who.owner, k).map(|v| (k.clone(), v)))
+            .collect();
+        if keys.len() < spec.keys.len() {
+            let missing: Vec<&str> = spec
+                .keys
+                .iter()
+                .filter(|k| !keys.iter().any(|(n, _)| n == *k))
+                .map(String::as_str)
+                .collect();
+            say(
+                app,
+                r,
+                desk,
+                who,
+                &format!(
+                    "needs the key {} on this desk: add it under Keys",
+                    missing.join(", ")
+                ),
+            );
             continue;
         }
         r.last.insert(key.clone(), Instant::now());
@@ -332,7 +389,7 @@ fn start_seats(
         );
         tokio::spawn(async move {
             let _held = gate.acquire_owned().await;
-            let out = run_once(&spec, &folder, &cwd, &path, &stdin).await;
+            let out = run_once(&spec, &folder, &cwd, &path, &stdin, &keys).await;
             let who = Who {
                 spec: &spec,
                 owner,
@@ -348,40 +405,34 @@ fn start_seats(
     }
 }
 
-/// A folder's hash, read again only when a file in it was touched.
-fn folder_hash(r: &mut Runner, f: &files::Found) -> Result<String, String> {
-    let stamp = files::stamp(&f.folder).unwrap_or_default();
-    let key = f.key();
-    match r.hashes.get(&key).filter(|(s, _)| *s == stamp) {
-        Some((_, h)) => h.clone(),
-        None => {
-            let h = files::hash(&f.folder);
-            r.hashes.insert(key, (stamp, h.clone()));
-            h
-        }
-    }
-}
-
-/// A line in a seat instead of a run: said once, until it changes.
+/// A line in a seat instead of a run: said once, until it changes. A seat
+/// that stopped keeps its stop through a passing line (the desk's folder
+/// gone for a round, the folder too big) -- Try again, Allow or an edit
+/// end a stop, not a round -- and only Allow's and changed's lines, which
+/// the reader must answer, write over it.
 fn say(app: &Arc<App>, r: &mut Runner, desk: i64, who: &Who, why: &str) {
     let name = &who.spec.name;
     let key = (desk, name.clone());
     // Said already, and its box still says it. A box taken away meanwhile
     // -- removed, and put back by Undo -- is said to again.
-    let still = || {
-        app.store
-            .clocked(|c, _| widget::seat_of(c, desk, name))
-            .ok()
-            .flatten()
-            .is_some()
-    };
-    if r.said.get(&key).is_some_and(|w| w == why) && still() {
+    let seat = app
+        .store
+        .clocked(|c, _| widget::seat_of(c, desk, name))
+        .ok()
+        .flatten();
+    if r.said.get(&key).is_some_and(|w| w == why) && seat.is_some() {
+        return;
+    }
+    let asks = why.starts_with("allow: ") || why.starts_with("changed: ");
+    if !asks && seat.is_some_and(|s| s.error.starts_with(widget::STOPPED)) {
         return;
     }
     r.said.insert(key, why.to_string());
     if app
         .store
-        .clocked(|c, now| widget::fail(c, desk, name, why, &file_writer(who), now))
+        .clocked(|c, now| {
+            widget::fail(c, desk, name, why, who.spec.lines, &file_writer(who), now)
+        })
         .is_ok()
     {
         announce(app, desk, name);
@@ -459,60 +510,20 @@ pub(crate) enum Ran {
 }
 
 /// Run a widget's command once: in `cwd`, with the run's JSON on stdin, its
-/// own `folder` first on PATH and in `SNYVI_WIDGET_DIR`, and only the
-/// reader's PATH, home and language from the daemon's environment -- not the
-/// token, not snyvi's own variables, not a desk's keys.
+/// own `folder` first on PATH and in `SNYVI_WIDGET_DIR`, the `keys` it
+/// named, and only the reader's PATH, home and language from the daemon's
+/// environment -- not the token, not snyvi's own variables, not the rest of
+/// a desk's keys (`files::command`, which `snyvi widget check` runs too).
 pub(crate) async fn run_once(
     spec: &files::Spec,
     folder: &Path,
     cwd: &Path,
     path: &str,
     stdin: &serde_json::Value,
+    keys: &[(String, String)],
 ) -> Ran {
-    let sep = if cfg!(windows) { ";" } else { ":" };
-    let path = if path.is_empty() {
-        folder.to_string_lossy().to_string()
-    } else {
-        format!("{}{sep}{path}", folder.to_string_lossy())
-    };
-    let mut cmd = if cfg!(windows) {
-        let mut c = tokio::process::Command::new("cmd");
-        c.arg("/C").arg(&spec.run.command);
-        c
-    } else {
-        let mut c = tokio::process::Command::new("sh");
-        c.arg("-c").arg(&spec.run.command);
-        c
-    };
-    cmd.current_dir(cwd)
-        .env_clear()
-        .env("PATH", &path)
-        .env("SNYVI_WIDGET", &spec.name)
-        .env("SNYVI_WIDGET_DIR", folder)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    for k in [
-        "HOME",
-        "USER",
-        "LOGNAME",
-        "LANG",
-        "LC_ALL",
-        "TMPDIR",
-        "USERPROFILE",
-        "SYSTEMROOT",
-        "COMSPEC",
-        "PATHEXT",
-        "TEMP",
-        "TMP",
-        "APPDATA",
-        "LOCALAPPDATA",
-    ] {
-        if let Some(v) = std::env::var_os(k) {
-            cmd.env(k, v);
-        }
-    }
+    let mut cmd = tokio::process::Command::from(files::command(spec, folder, cwd, path, keys));
+    cmd.kill_on_drop(true);
     #[cfg(unix)]
     cmd.process_group(0);
     let mut child = match cmd.spawn() {
@@ -542,8 +553,10 @@ pub(crate) async fn run_once(
             ))
         }
         Ok((o, e, status)) => {
+            // Past the cap the pipe was closed and the command has ended
+            // (`wait` returned): what it started finds the pipe closed too,
+            // and a kill on a reaped pid could reach someone else's group.
             if o.len() as u64 > OUT_MAX {
-                stop_group(pid);
                 return Ran::Failed(format!("printed more than {} KB", OUT_MAX / 1024));
             }
             let first_err = String::from_utf8_lossy(&e)
@@ -628,10 +641,14 @@ fn land(app: &Arc<App>, desk: i64, who: &Who, cwd: &Path, fails: &Fails, ran: Ra
             let n = {
                 let mut m = fails.lock().unwrap();
                 let e = m.entry(key).or_insert((0, String::new()));
+                // In a row for the same reason: the kind of failure, not
+                // its words -- a line with a time or a pid in it would
+                // never repeat, and the widget would fail forever unstopped.
                 // A stopped widget runs again only after Try again: it
                 // gets three tries anew, as the button says.
-                if e.1 != why || e.0 >= widget::FAILS_TO_STOP {
-                    *e = (0, why.clone());
+                let kind = fail_kind(&why);
+                if e.1 != kind || e.0 >= widget::FAILS_TO_STOP {
+                    *e = (0, kind);
                 }
                 e.0 = e.0.saturating_add(1);
                 e.0
@@ -654,14 +671,15 @@ fn land(app: &Arc<App>, desk: i64, who: &Who, cwd: &Path, fails: &Fails, ran: Ra
         }
     };
     let w = file_writer(who);
+    let fail = |why: &str| {
+        app.store
+            .clocked(|c, now| widget::fail(c, desk, &spec.name, why, spec.lines, &w, now))
+            .map(|_| ())
+    };
     let wrote = match ran {
-        Ran::Failed(why) => app
-            .store
-            .clocked(|c, now| widget::fail(c, desk, &spec.name, &why, &w, now)),
+        Ran::Failed(why) => fail(&why),
         Ran::Printed(out) => match widget::Body::parse(&out) {
-            Err(why) => app
-                .store
-                .clocked(|c, now| widget::fail(c, desk, &spec.name, &why, &w, now)),
+            Err(why) => fail(&why),
             Ok(sent) => {
                 let mut b = match sent {
                     widget::Sent::Body(b) => b,
@@ -680,15 +698,46 @@ fn land(app: &Arc<App>, desk: i64, who: &Who, cwd: &Path, fails: &Fails, ran: Ra
                     b.stale_after = 0;
                 }
                 let html = crate::render::widget_md(&b.md);
-                app.store.clocked(|c, now| {
-                    widget::put(c, desk, &spec.name, &b, &html, &w, now).map(|_| ())
-                })
+                let put = app
+                    .store
+                    .clocked(|c, now| widget::put(c, desk, &spec.name, &b, &html, &w, now));
+                // Nowhere to draw it: the desk is full, or a box holds the
+                // name. Said in the log; the seat that would say it is the
+                // one there is not.
+                match put {
+                    Ok(widget::Put::Full) => eprintln!(
+                        "snyvi: widget {} printed, but desk {desk} has {} widgets already",
+                        spec.name,
+                        widget::DESK_MAX
+                    ),
+                    Ok(widget::Put::Box) => eprintln!(
+                        "snyvi: widget {} printed, but a box is called that on desk {desk}",
+                        spec.name
+                    ),
+                    _ => {}
+                }
+                put.map(|_| ())
             }
         },
     };
     if wrote.is_ok() {
         announce(app, desk, &spec.name);
     }
+}
+
+/// What kind of failure a reason is, for "three in a row for the same
+/// reason": its exit code, a timeout, too much printed, a body refused --
+/// without the words after it, which may carry a time or a pid.
+fn fail_kind(why: &str) -> String {
+    if let Some(rest) = why.strip_prefix("exit ") {
+        return format!("exit {}", rest.split(':').next().unwrap_or(""));
+    }
+    for head in ["took longer than", "printed more than", "could not start"] {
+        if why.starts_with(head) {
+            return head.to_string();
+        }
+    }
+    why.to_string()
 }
 
 /// The reader's PATH as their shell has it, read once: a daemon started
@@ -741,6 +790,40 @@ fn marked_path(out: &str) -> Option<String> {
     (!p.is_empty()).then(|| p.to_string())
 }
 
+/// Windows hands `cmd /C` the line whole (`files::command`): a command with
+/// a quoted argument -- the starter's own `-File "%SNYVI_WIDGET_DIR%\run.ps1"`
+/// -- reaches the shell as written, not re-quoted by std.
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_quoted_argument_reaches_cmd_whole() {
+        let dir = std::env::temp_dir().join(format!("snyvi-widget-win-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("run.ps1"), "Write-Output 'from ps1'\n").unwrap();
+        let spec = files::Spec {
+            name: "t".into(),
+            title: "T".into(),
+            scope: files::Scope::Global,
+            run: files::Run {
+                command: "powershell -NoProfile -ExecutionPolicy Bypass -File \"%SNYVI_WIDGET_DIR%\\run.ps1\"".into(),
+                every: 5,
+                timeout: 20,
+            },
+            lines: 3,
+            settings: Default::default(),
+            keys: Vec::new(),
+        };
+        let path = std::env::var("PATH").unwrap_or_default();
+        match run_once(&spec, &dir, &dir, &path, &json!({}), &[]).await {
+            Ran::Printed(o) => assert!(o.contains("from ps1"), "{o}"),
+            Ran::Failed(w) => panic!("{w}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -757,6 +840,7 @@ mod tests {
             },
             lines: 3,
             settings: Default::default(),
+            keys: Vec::new(),
         }
     }
 
@@ -769,8 +853,28 @@ mod tests {
             &dir,
             &path,
             &json!({ "settings": { "x": 1 } }),
+            &[],
         )
         .await
+    }
+
+    #[tokio::test]
+    async fn a_named_key_is_in_its_environment_and_no_other() {
+        let dir = std::env::temp_dir();
+        let path = std::env::var("PATH").unwrap_or_default();
+        let keys = [("OPENROUTER_API_KEY".to_string(), "sk-test".to_string())];
+        match run_once(&spec("env", 5), &dir, &dir, &path, &json!({}), &keys).await {
+            Ran::Printed(o) => assert!(o.contains("OPENROUTER_API_KEY=sk-test"), "{o}"),
+            Ran::Failed(w) => panic!("{w}"),
+        }
+    }
+
+    #[test]
+    fn a_failures_kind_is_its_code_not_its_words() {
+        assert_eq!(fail_kind("exit 7: curl: (7) after 2 ms"), "exit 7");
+        assert_eq!(fail_kind("exit 7: curl: (7) after 9 ms"), "exit 7");
+        assert_eq!(fail_kind("took longer than 5 s and was stopped"), "took longer than");
+        assert_eq!(fail_kind("the body is longer than 1500 characters"), "the body is longer than 1500 characters");
     }
 
     #[tokio::test]
@@ -817,7 +921,7 @@ mod tests {
         std::fs::write(&script, "#!/bin/sh\necho \"in $(basename \"$PWD\")\"\n").unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let path = std::env::var("PATH").unwrap_or_default();
-        match run_once(&spec("count.sh", 5), &own, &desk, &path, &json!({})).await {
+        match run_once(&spec("count.sh", 5), &own, &desk, &path, &json!({}), &[]).await {
             Ran::Printed(o) => assert_eq!(o.trim(), "in desk"),
             Ran::Failed(w) => panic!("{w}"),
         }

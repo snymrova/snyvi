@@ -233,7 +233,11 @@
   // a document read over a desk shows the desk's rail -- which is what
   // decides whether a widget runs (src/widget/run.rs).
   let saidFocus = null, focusSeq = 0;
-  const pageMark = Math.random().toString(36).slice(2);
+  // The page's own name, which its event stream carries too (08-desks.js
+  // `connect`): when the stream ends, the daemon drops this page's word,
+  // so a window that died without `pagehide` is not "in view" for the
+  // runner (src/server/events.rs).
+  const pageMark = state.page = Math.random().toString(36).slice(2);
   function sayFocus(again, leaving) {
     const focused = !leaving && document.hasFocus() && !document.hidden, visible = !leaving && !document.hidden;
     const desk = state.view === "desk" ? state.deskId : state.deskBehind;

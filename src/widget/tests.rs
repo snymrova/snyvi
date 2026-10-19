@@ -240,7 +240,7 @@ fn a_widget_files_name_is_its_own() {
 fn a_failed_run_keeps_the_last_good_body() {
     let c = db();
     put(&c, 3, "git", &body("ok"), "<p>ok</p>", &FILE, 1).unwrap();
-    fail(&c, 3, "git", "exit 1: not a git repository", &FILE, 2).unwrap();
+    fail(&c, 3, "git", "exit 1: not a git repository", 3, &FILE, 2).unwrap();
     let s = seat_of(&c, 3, "git").unwrap().unwrap();
     assert_eq!(
         (s.html.as_str(), s.error.as_str()),
@@ -251,14 +251,23 @@ fn a_failed_run_keeps_the_last_good_body() {
     assert_eq!(seat_of(&c, 3, "git").unwrap().unwrap().error, "");
     // A pushed seat is not a file's to fail.
     put(&c, 3, "deploy", &body("x"), "", &PUSH, 1).unwrap();
-    fail(&c, 3, "deploy", "nope", &FILE, 2).unwrap();
+    assert!(!fail(&c, 3, "deploy", "nope", 3, &FILE, 2).unwrap());
     assert_eq!(seat_of(&c, 3, "deploy").unwrap().unwrap().error, "");
+    // A line before any body takes the file's own room, so the first body
+    // moves nothing (1.46); and no seat past the desk's cap.
+    assert!(fail(&c, 3, "six", "allow: Six wants to run", 6, &FILE, 2).unwrap());
+    assert_eq!(seat_of(&c, 3, "six").unwrap().unwrap().lines, 6);
+    for n in 0..DESK_MAX {
+        let _ = put(&c, 9, &format!("w{n}"), &body("x"), "", &PUSH, 1).unwrap();
+    }
+    assert!(!fail(&c, 9, "late", "allow: Late wants to run", 3, &FILE, 2).unwrap());
+    assert!(seat_of(&c, 9, "late").unwrap().is_none());
 }
 
 #[test]
 fn a_file_seat_has_its_title_and_how_often_it_runs() {
     let c = db();
-    fail(&c, 3, "git", "exit 1", &FILE, 1).unwrap();
+    fail(&c, 3, "git", "exit 1", 3, &FILE, 1).unwrap();
     let s = seat_of(&c, 3, "git").unwrap().unwrap();
     assert_eq!(
         (s.title.as_str(), s.writer.as_str()),
@@ -268,7 +277,7 @@ fn a_file_seat_has_its_title_and_how_often_it_runs() {
     // next line says how often instead.
     c.execute("UPDATE widget_bodies SET writer = 'sh', title = ''", [])
         .unwrap();
-    fail(&c, 3, "git", "exit 2", &FILE, 2).unwrap();
+    fail(&c, 3, "git", "exit 2", 3, &FILE, 2).unwrap();
     let s = seat_of(&c, 3, "git").unwrap().unwrap();
     assert_eq!(
         (s.title.as_str(), s.writer.as_str()),
@@ -282,12 +291,12 @@ fn a_file_seat_has_its_title_and_how_often_it_runs() {
 fn a_long_reason_is_cut_where_it_says_so() {
     let c = db();
     let long = "x".repeat(ERROR_MAX + 50);
-    fail(&c, 3, "git", &long, &FILE, 1).unwrap();
+    fail(&c, 3, "git", &long, 3, &FILE, 1).unwrap();
     let e = seat_of(&c, 3, "git").unwrap().unwrap().error;
     assert_eq!(e.chars().count(), ERROR_MAX);
     assert!(e.ends_with('…'));
     let short = "y".repeat(ERROR_MAX);
-    fail(&c, 3, "git", &short, &FILE, 2).unwrap();
+    fail(&c, 3, "git", &short, 3, &FILE, 2).unwrap();
     assert_eq!(seat_of(&c, 3, "git").unwrap().unwrap().error, short);
 }
 
@@ -376,11 +385,12 @@ fn a_stopped_widget_runs_again_on_try_again() {
         3,
         "ci",
         &format!("{STOPPED}after 3 failures, exit 2"),
+        3,
         &FILE,
         1,
     )
     .unwrap();
-    fail(&c, 4, "ci", "exit 2", &FILE, 1).unwrap();
+    fail(&c, 4, "ci", "exit 2", 3, &FILE, 1).unwrap();
     assert_eq!(unstop(&c, 0, "ci", None).unwrap(), vec![3]);
     assert_eq!(seat_of(&c, 3, "ci").unwrap().unwrap().error, "");
     assert_eq!(seat_of(&c, 4, "ci").unwrap().unwrap().error, "exit 2");
@@ -400,11 +410,33 @@ fn a_box_waits_for_yes_and_ends_with_its_time() {
         vec![(1, "deploy".to_string())]
     );
     assert_eq!(ask_of(&c, 1, "deploy").unwrap().unwrap().answer, "ended");
-    // One there before boxes were asked for is taken as allowed.
-    put(&c, 1, "tests", &body("ok"), "", &PUSH, 1).unwrap();
-    assert!(ask_grandfather(&c, 1, "tests", 3).unwrap());
-    assert_eq!(ask_of(&c, 1, "tests").unwrap().unwrap().answer, "yes");
-    assert!(!ask_grandfather(&c, 1, "nothing", 3).unwrap());
+    // A box a script pushed is the reader's: no panel is handed it (1.46),
+    // and whoever would take the name is told who holds it.
+    let script = Writer {
+        pane: "",
+        writer: "a script",
+        ..PUSH
+    };
+    put(&c, 1, "tests", &body("ok"), "", &script, 1).unwrap();
+    assert!(ask_of(&c, 1, "tests").unwrap().is_none());
+    assert_eq!(name_held(&c, 1, "tests").unwrap(), Some(Held::Box));
+    assert_eq!(
+        name_held(&c, 1, "deploy").unwrap(),
+        Some(Held::Asked("ended".into()))
+    );
+    assert_eq!(name_held(&c, 1, "nothing").unwrap(), None);
+    // A widget file does not take a box's seat over it.
+    assert_eq!(put(&c, 1, "tests", &body("x"), "", &FILE, 2).unwrap(), Put::Box);
+    // A box the reader removed stays removed to a new panel's push: the
+    // body waits behind its card, the no holds.
+    ask_wait(&c, 1, "gone", "p1", "panel 1", "old", 1).unwrap();
+    ask_answer(&c, 1, "gone", "removed", 0, "", 2).unwrap();
+    ask_wait(&c, 1, "gone", "p9", "panel 9", "new", 3).unwrap();
+    let a = ask_of(&c, 1, "gone").unwrap().unwrap();
+    assert_eq!(
+        (a.answer.as_str(), a.pane.as_str(), a.body.as_str()),
+        ("removed", "p1", "new")
+    );
 }
 
 const OWN: Writer<'static> = Writer {
@@ -555,7 +587,8 @@ fn only_an_agents_widget_says_it_is_one() {
         "a shared file and a script's box are the reader's"
     );
     // Its panel closed, a box it asked for is still an agent's.
-    ask_grandfather(&c, 7, "deploy", 2).unwrap();
+    ask_wait(&c, 7, "deploy", "p2", "panel 2", "", 2).unwrap();
+    ask_answer(&c, 7, "deploy", "yes", 0, "", 2).unwrap();
     pane_ended(&c, "p2", "panel 2 closed").unwrap();
     assert!(agent("deploy"));
 }
@@ -573,7 +606,8 @@ fn a_removed_box_keeps_its_body_for_undo() {
         1,
     )
     .unwrap();
-    ask_grandfather(&c, 7, "deploy", 1).unwrap();
+    ask_wait(&c, 7, "deploy", "p2", "panel 2", "", 1).unwrap();
+    ask_answer(&c, 7, "deploy", "yes", 50, "", 1).unwrap();
     assert!(remove_box(&c, 7, "deploy", 5).unwrap());
     assert!(seat_of(&c, 7, "deploy").unwrap().is_none());
     let a = ask_of(&c, 7, "deploy").unwrap().unwrap();
@@ -583,10 +617,11 @@ fn a_removed_box_keeps_its_body_for_undo() {
         (b.md.as_str(), b.tone, b.count.as_str(), b.lines),
         ("**3/5**", Tone::Warn, "3/5", 2)
     );
-    // Undo: allowed again, with what it showed.
+    // Undo: allowed again, with what it showed, for as long as it was.
     let back = restore_box(&c, 7, "deploy", 6).unwrap().unwrap();
     assert_eq!(back.body, a.body);
-    assert_eq!(ask_of(&c, 7, "deploy").unwrap().unwrap().answer, "yes");
+    let a = ask_of(&c, 7, "deploy").unwrap().unwrap();
+    assert_eq!((a.answer.as_str(), a.until), ("yes", 50));
     assert!(restore_box(&c, 7, "deploy", 7).unwrap().is_none(), "once");
     // A script's box is not an agent's to remove; nor is nothing.
     let script = Writer {
@@ -652,4 +687,23 @@ fn an_agent_brings_a_widget_only_to_a_desk_with_room() {
     }
     assert!(!desk_has_room(&c, 4).unwrap());
     assert!(desk_has_room(&c, 5).unwrap());
+}
+
+/// A widget file's seat goes with its folder (1.46): every file seat not
+/// among the folders found is cleared, and a box's is not a file's to clear.
+#[test]
+fn a_file_seat_goes_with_its_folder() {
+    let c = db();
+    fail(&c, 3, "git", "allow: Git wants to run", 2, &FILE, 1).unwrap();
+    fail(&c, 7, "arena", "exit 1", 2, &OWN, 1).unwrap();
+    put(&c, 3, "deploy", &body("x"), "", &PUSH, 1).unwrap();
+    let keep = [(0, "git".to_string())];
+    assert_eq!(
+        clear_files_except(&c, &keep).unwrap(),
+        vec![(7, "arena".to_string())]
+    );
+    assert!(seat_of(&c, 3, "git").unwrap().is_some());
+    assert!(seat_of(&c, 7, "arena").unwrap().is_none());
+    assert!(seat_of(&c, 3, "deploy").unwrap().is_some(), "a box stays");
+    assert!(clear_files_except(&c, &[]).unwrap().contains(&(3, "git".to_string())));
 }

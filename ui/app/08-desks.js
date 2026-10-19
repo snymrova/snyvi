@@ -524,7 +524,9 @@
   }
 
   function connect() {
-    const es = new EventSource("/api/events" + (inWindow ? `?window=${encodeURIComponent(windowMark)}` : ""));
+    // The page's own name rides the stream (05-notes.js `pageMark`): when
+    // the stream ends, its focus word goes with it.
+    const es = new EventSource(`/api/events?page=${encodeURIComponent(state.page || "")}` + (inWindow ? `&window=${encodeURIComponent(windowMark)}` : ""));
     stream = es;
     es.onopen = async () => {
       // A first connection is not a return.

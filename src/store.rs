@@ -571,6 +571,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (23, thread::PR_STATE_1_43), // 1.43: where a thread's PR is, as GitHub says it
     (24, crate::links::COLUMN_1_43), // 1.43: a desk's links in the rail's foot
     (25, thread::AWAY_COLUMN_1_44), // 1.44: why an agent put an On you card away
+    (26, widget::PROPOSED_BY_1_46), // 1.46: which pane proposed a widget file
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
