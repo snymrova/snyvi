@@ -1,5 +1,6 @@
 # www.snyvi.com → snyvi.com. Deployed by .github/workflows/site.yml beside the site.
 name = "snyvi-www"
+account_id = "0f6e3c93463d6bce9eef05d4cf0ae0ff"
 main = "worker.js"
 compatibility_date = "2026-09-01"
 routes = [{ pattern = "www.snyvi.com", custom_domain = true }]
