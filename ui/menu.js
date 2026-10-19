@@ -512,8 +512,11 @@ export async function allowWidget(ctx, b) {
   try { await ctx.api(`/api/widgets/${b.dataset.wallow}/allow`, { owner: ownerOf(b.closest("section.wg")) }); b.textContent = "Allowed"; }
   catch (e) {
     b.disabled = false;
-    if (e?.status === 403) ctx.toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" });
-    else ctx.toast(`Not allowed: ${e?.message || e}`);
+    // Said in the seat's own line, where the click was: a tab's missing
+    // capability, or the daemon's reason (a folder gone, a bad file).
+    const line = b.parentElement?.querySelector("span");
+    const why = e?.status === 403 ? "Allow works in the snyvi window, not a tab" : `Not allowed: ${e?.message || e}`;
+    if (line) { line.textContent = why; line.dataset.tip = why; } else ctx.toast(why);
   }
 }
 /** A seat's own buttons: Try again on one that stopped, Turn off here,

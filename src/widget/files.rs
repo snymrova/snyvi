@@ -133,12 +133,13 @@ pub fn restore(config_dir: &Path, id: &str, owner: i64, name: &str) -> Result<()
         .map_err(|e| format!("could not move it back: {e}"))
 }
 
-/// The desk an `@<id>` folder is for.
+/// The desk an `@<id>` folder is for: written as snyvi writes it, so `@+7`
+/// and `@007` are nobody's rather than desk 7's twice over.
 fn owner_of(folder_name: &str) -> Option<i64> {
     folder_name
         .strip_prefix('@')
         .and_then(|n| n.parse::<i64>().ok())
-        .filter(|n| *n > 0)
+        .filter(|n| *n > 0 && format!("@{n}") == folder_name)
 }
 
 /// Why `name` cannot be `owner`'s (0: shared), or None when it can. A
@@ -227,11 +228,47 @@ pub struct Spec {
     pub lines: u8,
     #[serde(default)]
     pub settings: BTreeMap<String, Field>,
+    /// The desk keys a run is given, by name, in its environment (1.46):
+    /// named on the card and on /sidebars, under Allow with the rest of
+    /// widget.json. A desk's own widget alone: a shared or global one has
+    /// no desk to take them from.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<String>,
 }
 
 fn lines_default() -> u8 {
     LINES_DEFAULT
 }
+
+/// The most keys a widget may name.
+pub const KEYS_MAX: usize = 4;
+
+/// Why `spec`'s keys cannot be given to it as `owner`'s (0: shared or
+/// global), or nothing: at most `KEYS_MAX`, each a key's name, and only
+/// for a desk's own widget.
+pub fn keys_ok(spec: &Spec, owner: i64) -> Result<(), String> {
+    if spec.keys.is_empty() {
+        return Ok(());
+    }
+    if spec.keys.len() > KEYS_MAX {
+        return Err(format!("a widget names at most {KEYS_MAX} keys"));
+    }
+    for k in &spec.keys {
+        if let Err(why) = crate::secrets::valid_name(k) {
+            return Err(format!("the key \"{k}\": {why}"));
+        }
+    }
+    if owner == 0 {
+        return Err(
+            "only a desk's own widget can use the desk's keys: a shared or global one has no desk to take them from"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// The smallest widget.json, for a refusal to show beside what was wrong.
+pub const MINIMAL_JSON: &str = r#"{"name": "<folder name>", "title": "Shown on the box", "run": {"command": "run.sh", "every": 60, "timeout": 10}, "lines": 2}"#;
 
 impl Spec {
     /// The spec as it is run: every bound applied, the title filled in.
@@ -300,7 +337,7 @@ fn scan_in(parent: &Path, owner: i64) -> Vec<Found> {
                                 .into(),
                         )
                     } else {
-                        Ok(s)
+                        keys_ok(&s, owner).map(|_| s)
                     }
                 }),
                 name,
@@ -345,12 +382,24 @@ pub fn scan(config_dir: &Path) -> Vec<Found> {
     out
 }
 
-/// One folder's `widget.json`, read and bounded.
+/// One folder's `widget.json`, read and bounded: measured before it is
+/// read, since the runner reads every one each round, and refused with the
+/// smallest one beside what was wrong, which is what a writer needs.
 pub fn read(folder: &Path, name: &str) -> Result<Spec, String> {
-    let text = std::fs::read_to_string(folder.join("widget.json"))
+    let file = folder.join("widget.json");
+    let len = std::fs::metadata(&file)
+        .map(|m| m.len())
         .map_err(|_| "it has no widget.json".to_string())?;
-    let spec: Spec =
-        serde_json::from_str(&text).map_err(|e| format!("widget.json does not read: {e}"))?;
+    if len > FOLDER_MAX {
+        return Err(format!(
+            "widget.json is larger than {} KB",
+            FOLDER_MAX / 1024
+        ));
+    }
+    let text = std::fs::read_to_string(&file).map_err(|_| "it has no widget.json".to_string())?;
+    let spec: Spec = serde_json::from_str(&text).map_err(|e| {
+        format!("widget.json does not read: {e}. The least it says: {MINIMAL_JSON}")
+    })?;
     if spec.name != name {
         return Err(format!(
             "widget.json says \"{}\", in a folder called {name}",
@@ -363,35 +412,71 @@ pub fn read(folder: &Path, name: &str) -> Result<Spec, String> {
     Ok(spec.bounded())
 }
 
-/// What a folder's stamp is: its newest change, its bytes, how many
-/// entries, and its names (with where each link points), so a rename or a
-/// link moves it as an edit does.
-pub type Stamp = (u128, u64, usize, u64);
-
-/// A stamp of everything in a folder, cheap to take every round: what
-/// changed in it moves it, and only then is the folder hashed again.
-pub fn stamp(folder: &Path) -> Option<Stamp> {
-    use std::hash::{Hash, Hasher};
-    let mut newest = 0u128;
-    let (mut bytes, mut n) = (0u64, 0usize);
-    let mut names = std::collections::hash_map::DefaultHasher::new();
-    for (f, link) in files(folder) {
-        let m = std::fs::symlink_metadata(&f).ok()?;
-        let t = m
-            .modified()
-            .ok()?
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()?
-            .as_nanos();
-        newest = newest.max(t);
-        bytes += m.len();
-        n += 1;
-        f.hash(&mut names);
-        if link {
-            std::fs::read_link(&f).ok().hash(&mut names);
+/// The command a widget's run is: `sh -c` (`cmd /C`, handed the line whole
+/// so its quotes reach the shell) in `cwd`, with its own `folder` first on
+/// `path` and in `SNYVI_WIDGET_DIR`, the reader's home and language, the
+/// `keys` it named with their values -- and nothing else of snyvi's
+/// environment: not the token, not the rest of the desk's keys. The one
+/// builder for the runner, Try once and `snyvi widget check`, so what
+/// passes a check runs.
+pub fn command(
+    spec: &Spec,
+    folder: &Path,
+    cwd: &Path,
+    path: &str,
+    keys: &[(String, String)],
+) -> std::process::Command {
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let path = if path.is_empty() {
+        folder.to_string_lossy().to_string()
+    } else {
+        format!("{}{sep}{path}", folder.to_string_lossy())
+    };
+    #[cfg(windows)]
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("cmd");
+        c.raw_arg("/C").raw_arg(&spec.run.command);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(&spec.run.command);
+        c
+    };
+    cmd.current_dir(cwd)
+        .env_clear()
+        .env("PATH", &path)
+        .env("SNYVI_WIDGET", &spec.name)
+        .env("SNYVI_WIDGET_DIR", folder)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for k in [
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "TMPDIR",
+        "USERPROFILE",
+        "SYSTEMROOT",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "APPDATA",
+        "LOCALAPPDATA",
+    ] {
+        if let Some(v) = std::env::var_os(k) {
+            cmd.env(k, v);
         }
     }
-    Some((newest, bytes, n, names.finish()))
+    for (k, v) in keys {
+        cmd.env(k, v);
+    }
+    cmd
 }
 
 /// Every regular file and link under a folder, in a fixed order, `true`
@@ -526,19 +611,45 @@ pub fn settings_ok(spec: &Spec) -> Result<(), String> {
 /// (#111). A desk widget runs in the desk's folder, with its own first on
 /// PATH and in `SNYVI_WIDGET_DIR`: a script of its own is named bare as the
 /// command, or through the variable. A relative path to one of its files
-/// (`./run.sh`), or its bare name as an argument (`sh run.sh`, `node x.js`),
-/// is looked for in the desk's folder, where it is not -- so the run fails
-/// on every desk, every time. Refused with how to write it. A global widget
+/// (`./run.sh`), or its bare name handed to an interpreter (`sh run.sh`,
+/// `node x.js`), is looked for in the desk's folder, where it is not -- so
+/// the run fails on every desk, every time. Refused with how to write it.
+/// A wrapper that runs its argument (`timeout 5 run.sh`, `env TZ=UTC
+/// run.sh`) finds it on PATH as the shell does, and passes. A global widget
 /// runs in its own folder, where everything reaches.
 pub fn lint(spec: &Spec, folder: &Path) -> Result<(), String> {
     if spec.scope == Scope::Global {
         return Ok(());
     }
     let ends = |w: &str| matches!(w, ";" | "&&" | "||" | "|" | "&" | "(" | "{");
+    // What reads its argument as a file itself, rather than run it.
+    let interprets = |w: &str| {
+        matches!(
+            w.rsplit(['/', '\\']).next().unwrap_or(w),
+            "sh" | "bash"
+                | "zsh"
+                | "dash"
+                | "fish"
+                | "node"
+                | "deno"
+                | "bun"
+                | "python"
+                | "python3"
+                | "ruby"
+                | "perl"
+                | "php"
+                | "pwsh"
+                | "powershell"
+                | "source"
+                | "."
+        )
+    };
     let mut first = true;
+    let mut before = "";
     for raw in spec.run.command.split_whitespace() {
         if ends(raw) {
             first = true;
+            before = "";
             continue;
         }
         let then_first = raw.ends_with(';') || raw.ends_with('&') || raw.ends_with('|');
@@ -556,7 +667,7 @@ pub fn lint(spec: &Spec, folder: &Path) -> Result<(), String> {
                 .unwrap_or(w);
             let here = !rel.is_empty() && !rel.starts_with("..") && folder.join(rel).is_file();
             let pathed = w.contains(['/', '\\']);
-            if here && (pathed || !first) {
+            if here && (pathed || (!first && interprets(before))) {
                 let sep = if cfg!(windows) { "\\" } else { "/" };
                 return Err(format!(
                     "{rel} is in the widget's folder, but a desk widget runs in the desk's folder, where it is not: \
@@ -574,8 +685,10 @@ pub fn lint(spec: &Spec, folder: &Path) -> Result<(), String> {
         if !(first && w.contains('=')) {
             first = false;
         }
+        before = w;
         if then_first {
             first = true;
+            before = "";
         }
     }
     Ok(())
@@ -616,6 +729,7 @@ pub fn starter(name: &str, scope: Scope) -> (String, &'static str, String) {
         },
         lines: 2,
         settings: BTreeMap::new(),
+        keys: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&spec).unwrap_or_default() + "\n";
     let body = if cfg!(windows) {
@@ -731,21 +845,20 @@ mod tests {
         let cfg = folder("links");
         let w = dir(&cfg).join("git");
         std::fs::write(w.join("run.sh"), "echo a").unwrap();
-        let (h0, s0) = (hash(&w).unwrap(), stamp(&w).unwrap());
+        let h0 = hash(&w).unwrap();
         // A link dropped in, first on PATH: shadows `git` for the script.
         std::os::unix::fs::symlink("/bin/true", w.join("git")).unwrap();
-        let (h1, s1) = (hash(&w).unwrap(), stamp(&w).unwrap());
+        let h1 = hash(&w).unwrap();
         assert_ne!(h0, h1, "a link is in the hash");
-        assert_ne!(s0, s1, "and in the stamp");
         // Pointed elsewhere: asks again.
         std::fs::remove_file(w.join("git")).unwrap();
         std::os::unix::fs::symlink("/bin/false", w.join("git")).unwrap();
         assert_ne!(hash(&w).unwrap(), h1);
-        // A rename keeps sizes and times; the stamp still moves.
+        // A rename keeps sizes and times; the hash still moves.
         std::fs::remove_file(w.join("git")).unwrap();
-        let before = stamp(&w).unwrap();
+        let before = hash(&w).unwrap();
         std::fs::rename(w.join("run.sh"), w.join("go.sh")).unwrap();
-        assert_ne!(stamp(&w).unwrap(), before);
+        assert_ne!(hash(&w).unwrap(), before);
         let _ = std::fs::remove_dir_all(&cfg);
     }
 
@@ -762,6 +875,7 @@ mod tests {
             },
             lines: 2,
             settings: BTreeMap::new(),
+            keys: Vec::new(),
         }
     }
 
@@ -791,6 +905,10 @@ mod tests {
             "git status --short",
             "LANG=C run.sh",
             "true && run.sh",
+            // A wrapper finds the script on PATH as the shell would.
+            "timeout 5 run.sh",
+            "env TZ=UTC run.sh",
+            "nice -n 10 run.sh",
         ] {
             assert_eq!(lint(&desk_spec(good), &w), Ok(()), "{good}");
         }

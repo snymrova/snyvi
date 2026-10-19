@@ -419,7 +419,18 @@ impl Body {
                     return Err("\"body\" is Markdown text".into());
                 }
             }
-            if let Ok(w) = serde_json::from_str::<Wire>(t) {
+            let wire = serde_json::from_str::<Wire>(t);
+            // An object with a body whose other fields are the wrong shape
+            // is refused by name, not drawn as its braces.
+            if wire.is_err()
+                && serde_json::from_str::<serde_json::Value>(t)
+                    .ok()
+                    .and_then(|v| v.get("body").map(serde_json::Value::is_string))
+                    .unwrap_or(false)
+            {
+                return Err("lines and stale_after are whole numbers of lines and seconds, tone is a word, count a number or a short text".into());
+            }
+            if let Ok(w) = wire {
                 let body = w.body.unwrap_or_default();
                 if body.trim().is_empty() {
                     return Ok(Sent::Clear);
@@ -576,6 +587,9 @@ pub enum Put {
     Full,
     /// A widget file has this name, and only it fills it.
     Owned,
+    /// A box a panel or a script pushed has this name: a widget file does
+    /// not take its seat over it.
+    Box,
 }
 
 /// Keep a body for `name` on `desk_id`, drawn (`html`). A new widget past
@@ -599,18 +613,10 @@ pub fn put(
         .optional()?;
     match owner.as_deref() {
         Some("file") if w.source != Source::File => return Ok(Put::Owned),
+        Some("push") if w.source == Source::File => return Ok(Put::Box),
         Some(_) => {}
-        None => {
-            let n: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM widget_bodies WHERE desk_id = ?1",
-                [desk_id],
-                |r| r.get(0),
-            )?;
-            let cap = if desk_id == 0 { GLOBAL_MAX } else { DESK_MAX };
-            if n as usize >= cap {
-                return Ok(Put::Full);
-            }
-        }
+        None if slot_full(conn, desk_id)? => return Ok(Put::Full),
+        None => {}
     }
     conn.execute(
         "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, tone, count, lines, stale_after, writer, pane, error, updated_at, title, owner)
@@ -639,27 +645,99 @@ pub fn put(
     Ok(Put::Done)
 }
 
+/// Whether the slot -- a desk, or the left -- has every seat taken.
+pub fn slot_full(conn: &Connection, desk_id: i64) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM widget_bodies WHERE desk_id = ?1",
+        [desk_id],
+        |r| r.get(0),
+    )?;
+    let cap = if desk_id == 0 { GLOBAL_MAX } else { DESK_MAX };
+    Ok(n as usize >= cap)
+}
+
 /// A widget file's run went wrong: say so in its seat, over the last good
 /// body, which stays. A widget that never ran well has a seat with only the
-/// line in it.
+/// line in it, at the file's own `lines`, so its first body fills the room
+/// the line held and moves nothing below. The seat counts against the
+/// slot's cap as a body does: whether there was one for the line.
 pub fn fail(
     conn: &Connection,
     desk_id: i64,
     name: &str,
     why: &str,
+    lines: u8,
     w: &Writer,
     now: i64,
-) -> Result<()> {
+) -> Result<bool> {
     let why = cut(why, ERROR_MAX);
-    conn.execute(
-        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, writer, error, updated_at, title, owner)
-         VALUES (?1, ?2, 'file', '', '', ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT(desk_id, name) DO UPDATE SET error = excluded.error, updated_at = excluded.updated_at,
-           writer = excluded.writer, title = excluded.title, owner = excluded.owner
-         WHERE widget_bodies.source = 'file'",
-        params![desk_id, name, w.writer, why, now, w.title, w.owner],
+    let n = conn.execute(
+        "UPDATE widget_bodies SET error = ?3, updated_at = ?4, writer = ?5, title = ?6, owner = ?7
+         WHERE desk_id = ?1 AND name = ?2 AND source = 'file'",
+        params![desk_id, name, why, now, w.writer, w.title, w.owner],
     )?;
-    Ok(())
+    if n > 0 {
+        return Ok(true);
+    }
+    if seat_of(conn, desk_id, name)?.is_some() || slot_full(conn, desk_id)? {
+        return Ok(false);
+    }
+    conn.execute(
+        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, lines, stale_after, writer, error, updated_at, title, owner)
+         VALUES (?1, ?2, 'file', '', '', ?3, 0, ?4, ?5, ?6, ?7, ?8)",
+        params![desk_id, name, lines as i64, w.writer, why, now, w.title, w.owner],
+    )?;
+    Ok(true)
+}
+
+/// Where a name stands on a desk, for whoever would take it: a widget file's
+/// seat, a pushed box's, or a box asked for (its answer), or free.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Held {
+    File,
+    Box,
+    Asked(String),
+}
+
+pub fn name_held(conn: &Connection, desk_id: i64, name: &str) -> Result<Option<Held>> {
+    let source: Option<String> = conn
+        .query_row(
+            "SELECT source FROM widget_bodies WHERE desk_id = ?1 AND name = ?2",
+            params![desk_id, name],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(match source.as_deref() {
+        Some("file") => Some(Held::File),
+        Some(_) => Some(Held::Box),
+        None => ask_of(conn, desk_id, name)?.map(|a| Held::Asked(a.answer)),
+    })
+}
+
+/// The seats of widget files whose folder is gone -- removed, moved by
+/// hand, or an agent's `rm` -- so a seat never outlives what fills it:
+/// every file seat but the ones in `keep` (owner, name). The (desk, name)
+/// of each seat cleared, to say.
+pub fn clear_files_except(conn: &Connection, keep: &[(i64, String)]) -> Result<Vec<(i64, String)>> {
+    let mut st =
+        conn.prepare("SELECT desk_id, name, owner FROM widget_bodies WHERE source = 'file'")?;
+    let gone: Vec<(i64, String)> = st
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(_, n, o)| !keep.iter().any(|(ko, kn)| ko == o && kn == n))
+        .map(|(d, n, _)| (d, n))
+        .collect();
+    for (d, n) in &gone {
+        clear(conn, *d, n, Source::File)?;
+    }
+    Ok(gone)
 }
 
 /// Whether desk `desk_id` has a seat free for a widget an agent brings: the
@@ -753,7 +831,15 @@ pub struct Prefs {
     pub until: i64,
     /// The panel whose life it lasts; none is not one.
     pub until_pane: String,
+    /// The pane that proposed it, when an agent did (1.46): `read_widgets`
+    /// says "yours" by it, so two agents on a desk know whose it is.
+    pub proposed_by: String,
 }
+
+/// 1.46: which pane proposed a widget file, for `read_widgets`. Version 26
+/// of `store::MIGRATIONS`.
+pub const PROPOSED_BY_1_46: &str =
+    "ALTER TABLE widget_prefs ADD COLUMN proposed_by TEXT NOT NULL DEFAULT ''";
 
 impl Prefs {
     /// Whether a desk widget is on desk `id`.
@@ -779,7 +865,7 @@ fn desks_read(s: &str) -> Vec<i64> {
 }
 
 const PREFS_COLS: &str =
-    "owner, name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane";
+    "owner, name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane, proposed_by";
 
 fn prefs_row(r: &rusqlite::Row) -> rusqlite::Result<Prefs> {
     Ok(Prefs {
@@ -792,6 +878,7 @@ fn prefs_row(r: &rusqlite::Row) -> rusqlite::Result<Prefs> {
         desks: desks_read(&r.get::<_, String>(6)?),
         until: r.get(7)?,
         until_pane: r.get(8)?,
+        proposed_by: r.get(9)?,
     })
 }
 
@@ -824,6 +911,7 @@ pub struct Change<'a> {
     pub desks: Option<&'a [i64]>,
     pub until: Option<i64>,
     pub until_pane: Option<&'a str>,
+    pub proposed_by: Option<&'a str>,
 }
 
 /// Change what the reader decided about `owner`'s widget `name`.
@@ -836,11 +924,12 @@ pub fn set_prefs(
 ) -> Result<Prefs> {
     let was = prefs(conn, owner, name)?;
     conn.execute(
-        "INSERT INTO widget_prefs (owner, name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        "INSERT INTO widget_prefs (owner, name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane, updated_at, proposed_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT(owner, name) DO UPDATE SET hidden = excluded.hidden, settings = excluded.settings,
            trusted_hash = excluded.trusted_hash, rerun_edits = excluded.rerun_edits, desks = excluded.desks,
-           until = excluded.until, until_pane = excluded.until_pane, updated_at = excluded.updated_at",
+           until = excluded.until, until_pane = excluded.until_pane, updated_at = excluded.updated_at,
+           proposed_by = excluded.proposed_by",
         params![
             owner,
             name,
@@ -851,7 +940,8 @@ pub fn set_prefs(
             desks_text(ch.desks.unwrap_or(&was.desks)),
             ch.until.unwrap_or(was.until),
             ch.until_pane.unwrap_or(&was.until_pane),
-            now
+            now,
+            ch.proposed_by.unwrap_or(&was.proposed_by)
         ],
     )?;
     prefs(conn, owner, name)
@@ -876,6 +966,7 @@ pub fn rehome(conn: &Connection, name: &str, from: i64, to: i64, now: i64) -> Re
         desks: Some(&desks),
         until: Some(was.until),
         until_pane: Some(&was.until_pane),
+        proposed_by: Some(&was.proposed_by),
     };
     set_prefs(conn, to, name, &ch, now)?;
     let mut touched = desks_of(conn, from, name)?;
@@ -1078,7 +1169,9 @@ pub fn bodies_md(conn: &Connection, desk_id: i64) -> Result<Vec<(String, String)
 }
 
 /// A panel's body waits behind its card: the newest one sent is the one
-/// shown on yes.
+/// shown on yes. A box the reader removed stays removed -- the no holds for
+/// the CLI and the panel that pushed it until the reader takes it back or
+/// allows the new card -- with the body that waits behind that card.
 pub fn ask_wait(
     conn: &Connection,
     desk_id: i64,
@@ -1091,8 +1184,11 @@ pub fn ask_wait(
     conn.execute(
         "INSERT INTO widget_asks (desk_id, name, answer, pane, writer, body, updated_at)
          VALUES (?1, ?2, '', ?3, ?4, ?5, ?6)
-         ON CONFLICT(desk_id, name) DO UPDATE SET answer = '', pane = excluded.pane,
-           writer = excluded.writer, body = excluded.body, updated_at = excluded.updated_at",
+         ON CONFLICT(desk_id, name) DO UPDATE SET
+           answer = CASE WHEN widget_asks.answer = 'removed' THEN 'removed' ELSE '' END,
+           pane = CASE WHEN widget_asks.answer = 'removed' THEN widget_asks.pane ELSE excluded.pane END,
+           writer = CASE WHEN widget_asks.answer = 'removed' THEN widget_asks.writer ELSE excluded.writer END,
+           body = excluded.body, updated_at = excluded.updated_at",
         params![desk_id, name, pane, writer, body, now],
     )?;
     Ok(())
@@ -1113,18 +1209,6 @@ pub fn ask_answer(
         "UPDATE widget_asks SET answer = ?3, until = ?4, until_pane = ?5, updated_at = ?6
          WHERE desk_id = ?1 AND name = ?2",
         params![desk_id, name, answer, until, until_pane, now],
-    )? > 0)
-}
-
-/// A box that was there before boxes were asked for is taken as allowed:
-/// the reader has been looking at it. Whether it was.
-pub fn ask_grandfather(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Result<bool> {
-    Ok(conn.execute(
-        "INSERT INTO widget_asks (desk_id, name, answer, pane, writer, updated_at)
-         SELECT desk_id, name, 'yes', pane, writer, ?3 FROM widget_bodies
-         WHERE desk_id = ?1 AND name = ?2 AND source = 'push'
-         ON CONFLICT(desk_id, name) DO NOTHING",
-        params![desk_id, name, now],
     )? > 0)
 }
 
@@ -1199,18 +1283,19 @@ pub fn remove_box(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Resu
          VALUES (?1, ?2, 'removed', ?3, ?4, ?5, ?6)
          ON CONFLICT(desk_id, name) DO UPDATE SET answer = 'removed', body = excluded.body,
            pane = CASE WHEN excluded.pane != '' THEN excluded.pane ELSE widget_asks.pane END,
-           writer = excluded.writer, until = 0, until_pane = '', updated_at = excluded.updated_at",
+           writer = excluded.writer, updated_at = excluded.updated_at",
         params![desk_id, name, pane, writer, raw, now],
     )?;
     clear(conn, desk_id, name, Source::Push)
 }
 
-/// Undo a removed box: allowed again, and the ask -- with the body it last
-/// showed, to put back -- or None when it is not one removed.
+/// Undo a removed box: allowed again, for as long as it was, and the ask
+/// -- with the body it last showed, to put back -- or None when it is not
+/// one removed.
 pub fn restore_box(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Result<Option<Ask>> {
     match ask_of(conn, desk_id, name)? {
         Some(a) if a.answer == "removed" => {
-            ask_answer(conn, desk_id, name, "yes", 0, "", now)?;
+            ask_answer(conn, desk_id, name, "yes", a.until, &a.until_pane, now)?;
             Ok(Some(a))
         }
         _ => Ok(None),

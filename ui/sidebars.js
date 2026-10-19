@@ -89,8 +89,11 @@ const hideId = (side, id) => id === "widgets" ? `${side}:widgets` : id;
 export async function show(ctx) {
   c = ctx;
   if (!styled) { const s = document.createElement("style"); s.textContent = STYLE; document.head.append(s); styled = true; }
-  try { data = await (await fetch("/api/widgets")).json(); }
-  catch { c.docEl.innerHTML = `<div class="sb"><p class="sb-say">Could not read the sidebars.</p></div>`; return; }
+  // The window's capability rides it (`deskApi`): the list names every
+  // widget folder and setting, which the daemon gives the window or the
+  // token alone (1.46). A browser tab is told where to go.
+  try { data = await c.deskApi("/api/widgets"); }
+  catch (e) { c.docEl.innerHTML = `<div class="sb"><p class="sb-say">${e.status === 403 ? "The sidebars are arranged in the snyvi window." : "Could not read the sidebars."}</p></div>`; return; }
   if (c.view() !== "sidebars") return;
   draw();
   c.docEl.onclick = click;
@@ -157,7 +160,10 @@ function filesBox() {
       `<span class="sb-w-state ${state[1]}">${state[0]}</span>` +
       `<button type="button" class="sb-sw" role="switch" aria-checked="${!f.hidden}" data-wsw="${esc(f.name)}" aria-label="${f.hidden ? "Off" : "On"}: ${esc(f.title || f.name)}"></button></div>` +
       (f.error ? `<p class="sb-w-err">${esc(f.error)}</p>` : "") +
-      `<div class="sb-w-acts">` + (f.allowed ? "" : `<button type="button" class="sb-btn primary" data-allow="${esc(f.name)}" data-tip="Allow it to run" data-tip-sub="As its folder is now. Only the snyvi window can allow">Allow</button>`) +
+      // The desk keys it names (1.46): Allow covers them, and the reader
+      // sees which before they do.
+      (f.keys?.length ? `<p class="sb-w-err" style="color:var(--fg-2)" data-tip="Keys it is given" data-tip-sub="Each from ${mine || "its desk"}'s Keys list, in the run's environment; nothing else of the desk's">Uses ${f.keys.length === 1 ? "the key" : "the keys"} ${f.keys.map(k => `<code>${esc(k)}</code>`).join(", ")}</p>` : "") +
+      `<div class="sb-w-acts">` + (f.allowed ? "" : `<button type="button" class="sb-btn primary" data-allow="${esc(f.name)}" data-tip="Allow it to run" data-tip-sub="As its folder is now${f.keys?.length ? ", and the keys it names" : ""}. Only the snyvi window can allow">Allow</button>`) +
       `<label data-tip="Rerun my edits" data-tip-sub="A change to its folder runs without asking again. For a widget you are writing yourself"><input type="checkbox" data-rerun="${esc(f.name)}"${f.rerun_edits ? " checked" : ""}>Rerun my edits</label>` +
       (ended ? `<button type="button" class="sb-btn primary" data-won="${esc(f.name)}">Turn on again</button>` : "") + (f.owner ? rmBtn(f.name, f.owner, f.owner) : "") + `</div>` + where + lasts +
       (fields.length ? `<div class="sb-set">` + fields.map(([k, d]) => {
@@ -198,12 +204,17 @@ function saidNo() {
 
 /** Save the layout, and draw what the daemon kept. */
 async function save(l) {
+  const was = data.layout;
   data.layout = l; draw();
   try {
     const r = await fetch("/api/layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(l) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     data.layout = await r.json(); c.setLayout(data.layout); draw();
-  } catch (e) { c.toast("Could not save the sidebars", { sub: e }); }
+  } catch (e) {
+    // Not kept: the page shows what the sidebars have, not what it hoped.
+    data.layout = was; draw();
+    c.toast("Could not save the sidebars", { sub: e });
+  }
 }
 
 /** Move `id` on `side` to just before `before`, or to the end. */
@@ -340,10 +351,18 @@ async function prefs(name, body, redraw = true, owner = 0) {
   }
 }
 
-/** Read everything again: after an Allow, a switch. */
+/** Read everything again: after an Allow, a switch, a Remove -- keeping
+ *  the focus on the control it was on, by what it names, so a keyboard
+ *  reader does not start over from the top. */
 async function again() {
-  try { data = await (await fetch("/api/widgets")).json(); } catch { return; }
-  if (c.view() === "sidebars") draw();
+  const at = document.activeElement, box = at?.closest?.(".sb-w")?.dataset.own;
+  const mark = at && [...at.attributes].find(a => a.name.startsWith("data-w") || a.name === "data-allow" || a.name === "data-rerun");
+  try { data = await c.deskApi("/api/widgets"); } catch { return; }
+  if (c.view() !== "sidebars") return;
+  draw();
+  if (!mark) return;
+  const back = [...c.docEl.querySelectorAll(`[${mark.name}="${CSS.escape(mark.value)}"]`)].find(el => box == null || el.closest(".sb-w")?.dataset.own === box);
+  back?.focus({ preventScroll: true });
 }
 
 /** Alt+↑ ↓ moves the row with the focus; a row is not a field, so the

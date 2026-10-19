@@ -278,7 +278,7 @@ async function main() {
     await section("by keyboard, and back", () => reachRows(p, base, token, arrive));
     await section("the ✕ over what is read", () => backRows(p, browsed));
     await section("back and forward", () => navRows(p));
-    await section("the sidebars, arranged", () => sidebarsRows(p));
+    await section("the sidebars, arranged", () => sidebarsRows(p, token));
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
@@ -1782,15 +1782,20 @@ async function navRows(p) {
  *  again says the same. 1.27.0 moved the row and saved nothing: the page's
  *  stylesheet was named CSS, which hid the browser's CSS.escape, and the
  *  redraw threw before the POST. Reset at the end, for the sections after. */
-async function sidebarsRows(p) {
+async function sidebarsRows(p, token) {
   const rows = [];
   const origin = await p.ev("location.origin");
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
-  const kept = async () => (await (await fetch(`${origin}/api/widgets`)).json()).layout;
+  // The list names every widget folder and setting, so since 1.46 it is the
+  // window's or the token's: the bench reads what was kept with the token,
+  // and the page is a window's for this section (a capability on its
+  // fragment), handed back at the end so the sections after are a tab again.
+  const kept = async () => (await (await fetch(`${origin}/api/widgets`, { headers: { authorization: `Bearer ${token}` } })).json()).layout;
+  const cap = (await (await fetch(`${origin}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const listed = () => p.ev(`[...document.querySelectorAll('.sb-list[data-side="left"] .sb-row')].map(r => r.dataset.sb.split(":")[1]).join(" ")`);
   const onLeft = () => p.ev(`[...document.querySelectorAll("#trees > #inbox-row, #trees > #desk-nav, #trees > #browse-nav")].map(n => ({ "inbox-row": "inbox", "desk-nav": "desks", "browse-nav": "folders" })[n.id]).join(" ")`);
   const errs = [];
-  await p.goto(`${origin}/sidebars`);
+  await p.goto(`${origin}/sidebars#cap=${cap}`);
   await until(`!!document.querySelector('.sb-row[data-sb="left:inbox"]')`);
   await p.ev(`window.__sbErr = []; window.addEventListener("error", e => window.__sbErr.push(e.message)); 1`);
   const before = await listed();
@@ -1829,6 +1834,7 @@ async function sidebarsRows(p) {
   const k3 = await kept();
   rows.push(["Reset to default puts today's order back", k3.left.join(" ") === "inbox desks folders widgets" && (await onLeft()) === "inbox desks folders",
     `the daemon kept "${k3.left.join(" ")}", the left reads "${await onLeft()}"${under ? `; over the button: ${under}` : ""}`]);
+  await p.ev(`sessionStorage.removeItem("snyvi.cap"), 1`);
   return rows;
 }
 
@@ -3106,6 +3112,30 @@ async function widgetBoxRows(cdp, base, tmp) {
       return { by: el.querySelector(".sec-fold").dataset.tipSub, src: el.dataset.wsrc }; })()`);
     rows.push(["a desk's own widget says only how often, and its frame is the desk's", !!o && /^every 5 s/.test(o.by) && o.src === "own",
       !ocame ? "no box came for a widget in the desk's own folder" : `by-line "${o.by}", data-wsrc "${o.src}"`]);
+    // A seat waiting on Allow holds the file's own room (1.46): the first
+    // body, six lines tall, moves nothing below it.
+    const six = join(widgets, `@${desk}`, "wsix");
+    mkdirSync(six, { recursive: true });
+    writeFileSync(join(six, "widget.json"), JSON.stringify({ name: "wsix", title: "Six", scope: "desk", run: { command: "run.sh", every: 5 }, lines: 6 }));
+    writeFileSync(join(six, "run.sh"), "#!/bin/sh\necho six\n", { mode: 0o755 });
+    const sbox = `#wg-${desk}-wsix`;
+    const scame = await until(`!!document.querySelector("${sbox} [data-wallow]")`);
+    const h0 = scame && await p.ev(`document.querySelector("${sbox}").offsetHeight`);
+    const lines0 = scame && await p.ev(`document.querySelector("${sbox} .wg-body").style.getPropertyValue("--lines")`);
+    if (scame) await p.clickOn(`${sbox} [data-wallow]`);
+    const ran = scame && await until(`/six/.test(document.querySelector("${sbox} .wg-body")?.textContent || "")`, 120);
+    const h1 = ran && await p.ev(`document.querySelector("${sbox}").offsetHeight`);
+    rows.push(["a seat waiting on Allow keeps the file's own room, so its first body moves nothing", !!ran && lines0 === "6" && h1 === h0,
+      !scame ? "no Allow line came for a six-line widget" : lines0 !== "6" ? `the waiting seat had ${lines0 || "no"} lines, not 6` : !ran ? "its body never came after Allow" : h1 !== h0 ? `the seat grew: ${h0} px → ${h1} px` : `${h0} px before and after`]);
+    // A body that fills its room exactly is not "cut" by its own padding.
+    put("wfit", { title: "Fits", scope: "global", run: { command: "run.sh", every: 5 }, lines: 2 }, "#!/bin/sh\nprintf 'line one  \\nline two\\n'\n");
+    const fbox = "#wg-0-wfit";
+    const fcame = await until(`!!document.querySelector("${fbox} [data-wallow]")`);
+    if (fcame) await post("/api/widgets/wfit/allow", { owner: 0 });
+    const fran = fcame && await until(`/line two/.test(document.querySelector("${fbox} .wg-body")?.textContent || "")`, 120);
+    const fcut = fran && await p.ev(`document.querySelector("${fbox} .wg-body").classList.contains("cut")`);
+    rows.push(["a body that fills its room exactly is not cut", !!fran && fcut === false,
+      !fcame ? "no Allow line came for the two-line widget" : !fran ? "its body never came" : fcut ? "two lines in a two-line room were marked cut" : "two lines, no more"]);
     // An agent's widget is removed from its box's menu: Undo stands where
     // it was, at its height, and puts the folder back.
     if (o) {

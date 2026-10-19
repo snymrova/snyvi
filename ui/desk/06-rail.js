@@ -50,15 +50,19 @@ const secFolded = (key, open) => ctx.secFolded(key, open);
  * tone are patched into it, after a draw and on the `widget` event -- so an
  * agent writing "deploy 3/5" every second never redraws the rail, takes an
  * open field's focus or moves the documents' scroll. Asked for once a desk. */
-let wAt = null, wList = [], wGet = null;
+let wAt = null, wList = [], wGet = null, wQueue = [];
 async function getWidgets(id) {
   if (id == null || wGet === id) return;
-  wGet = id;
+  wGet = id; wQueue = [];
   let j = null;
   try { j = await ctx.api(`/api/desks/${id}/widgets`); } catch {}
   wGet = null;
   if (id !== deskId) return;
   wAt = id; wList = (j && j.widgets) || [];
+  // What the daemon said while the list was on its way: played onto it,
+  // so a seat cleared in between is not a ghost until the next word.
+  const late = wQueue; wQueue = [];
+  late.forEach(widgetSaid);
   if (current()) rail();
 }
 const forgetWidgets = () => { wAt = null; wList = []; gone = null; };
@@ -98,7 +102,13 @@ export function widgetGone(desk, name, owner) {
 /** The daemon removed it: Undo can be pressed, with where it was kept. */
 export function widgetKept(name, from) {
   if (!gone || gone.name !== name) return;
+  // A seat whose folder was gone already had nothing to keep: no Undo.
+  if (from === null) { gone = null; if (current()) rail(); return; }
   gone.from = from || "";
+  // The moment starts when Undo can be pressed, not when the daemon was
+  // asked: a slow removal does not eat into it.
+  clearTimeout(gone.timer);
+  gone.timer = setTimeout(() => { gone = null; if (current()) rail(); }, GONE_MS);
   const b = document.querySelector(`[data-wundo="${window.CSS.escape(name)}"]`);
   if (b) { b.dataset.wfrom = gone.from; b.disabled = false; }
 }
@@ -106,19 +116,17 @@ export function widgetKept(name, from) {
  *  file's box comes back only when the runner has run it again, a round or
  *  two later (`waits`): its place holds, saying so, until that box arrives
  *  (`widgetSaid`), so the rail does not close up and open again. */
-const BACK_WAIT_MS = 20000;
+const BACK_WAIT_MS = 20000, BOX_BACK_MS = 3000;
 export function widgetBack(name, waits = false) {
   if (!gone || gone.name !== name) return;
   clearTimeout(gone.timer);
-  if (waits) {
-    gone.back = true;
-    gone.timer = setTimeout(() => { gone = null; if (current()) rail(); }, BACK_WAIT_MS);
-    const el = document.querySelector(`[data-wundo="${window.CSS.escape(name)}"]`)?.closest("section");
-    if (el) el.outerHTML = goneSec(gone);
-    return;
-  }
-  gone = null;
-  if (current()) rail();
+  // Its place holds until its box arrives (`widgetSaid`), which puts it
+  // back where it was rather than at the rail's end: a widget file's in a
+  // round or two, a box's at once.
+  gone.back = true;
+  gone.timer = setTimeout(() => { gone = null; if (current()) rail(); }, waits ? BACK_WAIT_MS : BOX_BACK_MS);
+  const el = document.querySelector(`[data-wundo="${window.CSS.escape(name)}"]`)?.closest("section");
+  if (el) el.outerHTML = goneSec(gone);
 }
 function fillSeats(d) {
   if (wAt !== d.id) return;
@@ -127,13 +135,18 @@ function fillSeats(d) {
 /** A widget changed (the `widget` event): patched where it stands, or the
  *  rail drawn again when one came, went or was switched off. */
 export function widgetSaid(j) {
-  if (!ctx || !j || wAt !== j.desk_id || j.desk_id !== deskId) return;
+  if (!ctx || !j || j.desk_id !== deskId) return;
+  if (wGet === j.desk_id) { wQueue.push(j); return; }
+  if (wAt !== j.desk_id) return;
   const i = wList.findIndex(w => w.name === j.name);
   if (j.cleared) { if (i >= 0) { wList.splice(i, 1); rail(); } return; }
-  // The box an Undo was waiting for: it takes its place back.
-  if (gone && gone.back && gone.name === j.name) { clearTimeout(gone.timer); gone = null; }
+  // The box an Undo was waiting for: it takes its place back, where it was.
+  let at = null;
+  if (gone && gone.back && gone.name === j.name) { clearTimeout(gone.timer); at = gone.at; gone = null; }
   const was = i >= 0 ? wList[i] : null;
-  if (was) wList[i] = j; else wList.push(j);
+  if (was) wList[i] = j;
+  else if (at != null) wList.splice(Math.min(at, wList.length), 0, j);
+  else wList.push(j);
   const el = document.getElementById(`wg-${j.desk_id}-${j.name}`);
   // Shared, or made this desk's own (1.32): its frame says whose it is,
   // so it is drawn again rather than patched.

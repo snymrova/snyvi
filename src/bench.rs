@@ -521,8 +521,12 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// from 18.9 to 19.1 MB. 19.5 until 1.40.0: pipelines (src/pipeline.rs,
 /// the runner in src/server/pipeline_run.rs, their routes, the planner's
 /// schema and the transcript reader) took the musl build from 19.2 to just
-/// over 19.5 MB, with no crate added.
-const BINARY_MB: f64 = 20.0;
+/// over 19.5 MB, with no crate added. 20 until 1.46.0: widgets you can
+/// always answer (a seat goes with its folder, the card's hash is what is
+/// allowed, the keys a widget names and the one command builder the runner,
+/// Try once and `widget check` share) took the musl build from 20.0 to just
+/// over it, with no crate added.
+const BINARY_MB: f64 = 20.5;
 
 /// Returns whether any row was over budget.
 ///

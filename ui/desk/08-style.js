@@ -6,9 +6,46 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS;
+  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS;
   document.head.append(s);
 }
+
+/* A desk's rail: each section holds its head, which stays while the
+ * section scrolls under it, and a folded one is only its head. The rail
+ * starts where the sidebar's sections do: under a header the brand row's
+ * height, its first head 4 px down, so the first heads on either side are
+ * on one line. Its heads stay at the top as their sections scroll, so
+ * nothing fades there; the foot still does. Only desk.js draws a .dk-rail,
+ * and only after style() is in, so these left first paint (1.46). First in
+ * the sheet, so the desk's own rules after them still win as they did. */
+const RAIL_CSS = `
+.dk-rail > .sec { display: flow-root; }
+.dk-rail > .sec:first-child > .sec-head { margin-top: var(--sp-2); }
+.dk-rail > .sec.folded + .sec > .sec-head { margin-top: var(--sp-1); }
+.dk-rail > .sec > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
+#rail:has(.dk-rail) { padding-top: var(--head-h); }
+#toc:has(> .dk-rail) { padding-top: 0; mask-image: linear-gradient(#000, #000 calc(100% - 14px), transparent); }
+`;
+
+/* A gallery's outputs (src/widget/gallery.rs): one row of tiles in the
+ * box's room, each its size before it loads, so nothing moves. The columns
+ * share the rail's width, and the row is one tile high: what does not fit
+ * wraps out of sight whole, never cut at the edge, and \`clip\` keeps a
+ * click or a Tab from scrolling it back. Only a desk's rail has one, so
+ * the rules are the desk's, not first paint's. With it, what Try once
+ * printed on a widget's card: whole, scrolling, since a card is not a
+ * seat, with the count it would show. */
+const GALLERY_CSS = `
+.gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--gal) * .7), 1fr)); grid-auto-rows: var(--gal); gap: 4px; height: var(--gal); overflow: clip; }
+.gal-t { position: relative; display: grid; place-items: center; padding: 0; border-radius: var(--r-xs); overflow: hidden; background: var(--rule-2); color: var(--fg-3); font-size: var(--fs-micro); line-height: 1.2; cursor: pointer; }
+.gal-t img { width: 100%; height: 100%; object-fit: cover; }
+.gal-t:hover { box-shadow: inset 0 0 0 1px var(--accent); }
+.gal-v.on { position: absolute; color: #fff; text-shadow: 0 0 3px #000; }
+.gal-x { color: var(--danger); font-weight: 600; }
+.sg-tried.wg-body { height: auto; max-height: 12em; overflow: auto; }
+.sg-count { float: right; margin: 0 0 0 8px; font-weight: 600; }
+.sg-count.ok { color: var(--ok); } .sg-count.warn { color: var(--warn); } .sg-count.bad { color: var(--danger); }
+`;
 
 const CSS = `
 @font-face { font-family: "snyvi symbols"; font-display: block; unicode-range: U+E000-F8FF;

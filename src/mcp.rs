@@ -860,9 +860,10 @@ make a second, pick a name that is free, and leave alone what I said not now to 
 of at most 8 characters and one short line, for a figure that changes by itself and I would otherwise go and \
 check -- not a to-do, not instructions. If it only matters while you work here, use set_widget and keep it up \
 to date as the work goes. If it should keep going after this session, write a script that prints the widget's \
-JSON ({\"body\",\"tone\",\"count\"}) or Markdown, run it once here with the stdin snyvi gives it to check it \
-works, then propose_widget with the script, any settings I would want to change, and why. Tell me in one line \
-which you did; the card on my On you list is where I allow it.",
+JSON ({\"body\",\"tone\",\"count\"}) or Markdown into a folder of your own with its widget.json, check it with \
+snyvi widget check NAME --dir FOLDER (it runs as snyvi would, with the same environment; a key it needs is \
+named in keys, never read with snyvi key), then propose_widget with the script, any settings I would want to \
+change, and why. Tell me in one line which you did; the card on my On you list is where I allow it.",
     },
 ];
 

@@ -65,6 +65,10 @@ pub struct Work<'a> {
     pub notes: &'a [DeskNote],
     pub threads: &'a [Thread],
     pub waiting: &'a [Turn],
+    /// Widget and box cards still waiting on the reader (1.46): a new
+    /// session proposes nothing twice, and does not call pending what the
+    /// reader has not answered.
+    pub cards: &'a [Suggestion],
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -167,6 +171,27 @@ pub fn brief_of(
         ));
     }
     lines.extend(thread_lines(desk, slot, work.threads, work.waiting));
+    let cards: Vec<String> = work
+        .cards
+        .iter()
+        .filter(|s| s.settled_at == 0 && (s.kind == "widget" || s.kind == "box"))
+        .map(|s| {
+            let whose = desk
+                .panes
+                .iter()
+                .find(|p| p.id == s.pane)
+                .map_or("a panel since closed".to_string(), |p| {
+                    format!("panel {}", p.slot)
+                });
+            format!("the {} {} (proposed by {whose})", s.kind, cut(&s.name, 40))
+        })
+        .collect();
+    if !cards.is_empty() {
+        lines.push(format!(
+            "Waiting on the user's On you list, unanswered: {}. Do not propose it again; read_widgets says where it stands.",
+            cards.join("; ")
+        ));
+    }
     // Another panel's Claude is at work on these: a second one leaves them be.
     let elsewhere: Vec<String> = open
         .iter()
@@ -465,6 +490,11 @@ fn filed_news(c: &Changes) -> Vec<String> {
             s.note.clone()
         } else if s.kind == "desk" {
             format!("You opened a desk for {}, as suggested.", tilde(&s.folder))
+        } else if s.kind == "widget" && s.outcome == "dismissed" {
+            format!(
+                "You said not now to the widget {}: leave it, unless they ask for it.",
+                cut(&s.name, 40)
+            )
         } else if s.kind == "widget" {
             format!("You added the widget {}, as proposed.", cut(&s.name, 40))
         } else if s.kind == "box" && s.outcome == "dismissed" {
@@ -1126,6 +1156,7 @@ mod tests {
             notes: &[],
             threads: &[t, shipped],
             waiting: &[w],
+            cards: &[],
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
         assert!(b.contains(

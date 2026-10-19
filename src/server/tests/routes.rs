@@ -16,6 +16,9 @@ pub(super) enum Gate {
     Token,
     /// What runs the daemon: the capability or the window secret.
     Window,
+    /// What names every widget folder and setting: the window's page with
+    /// its capability, or the token (`/api/widgets`, 1.46).
+    DeskOrToken,
     /// The one mint: the window secret alone.
     Mint,
 }
@@ -708,7 +711,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/widgets", Some("{}"), Gate::Token, true),
-    ("GET", "/api/widgets", None, Gate::Open, true),
+    ("GET", "/api/widgets", None, Gate::DeskOrToken, true),
     ("GET", "/sidebars", None, Gate::Open, true),
     (
         "POST",

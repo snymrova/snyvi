@@ -539,8 +539,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // takes a panel's thread from it (`thread::TAKEN_COLUMN`).
     (13, thread::TAKEN_COLUMN),
     (13, thread::TAKEN_FILL),
-    // 1.30: the Claude account a desk and a panel start as
-    // (`crate::accounts::COLUMNS_1_30`).
+    // 1.30: the Claude account a desk and a panel start as (`accounts::COLUMNS_1_30`).
     (14, accounts::COLUMNS_1_30[0]),
     (14, accounts::COLUMNS_1_30[1]),
     (14, accounts::COLUMNS_1_30[2]),
@@ -571,6 +570,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (23, thread::PR_STATE_1_43), // 1.43: where a thread's PR is, as GitHub says it
     (24, crate::links::COLUMN_1_43), // 1.43: a desk's links in the rail's foot
     (25, thread::AWAY_COLUMN_1_44), // 1.44: why an agent put an On you card away
+    (26, widget::PROPOSED_BY_1_46), // 1.46: which pane proposed a widget file
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

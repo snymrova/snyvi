@@ -155,6 +155,10 @@ const OLD_1_42: &str =
 /// `thread::AWAY_COLUMN_1_44`).
 const OLD_1_43: &str = "ALTER TABLE turns DROP COLUMN away;";
 
+/// And of 1.45's: which pane proposed a widget file (step 26,
+/// `widget::PROPOSED_BY_1_46`).
+const OLD_1_45: &str = "ALTER TABLE widget_prefs DROP COLUMN proposed_by;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -1785,7 +1789,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1799,5 +1803,5 @@ fn a_1_32_database_gains_the_session_column() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!((version, session.as_str()), (25, ""));
+    assert_eq!((version, session.as_str()), (26, ""));
 }

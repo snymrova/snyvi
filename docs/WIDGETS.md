@@ -52,8 +52,8 @@ All three send the same thing: **Markdown**, or **one JSON object**:
 
 | Field | | |
 |---|---|---|
-| `body` | Markdown, 1,500 characters at most | text, bold, code, links, lists. No HTML, pictures (their alt text instead; a gallery's tiles are below), tables or diagrams. Empty clears the widget |
-| `tone` | `ok`, `warn`, `bad`, `none` | colours the count |
+| `body` | Markdown, 1,500 characters at most | text, bold, code, links, lists. HTML is dropped; a picture shows as its alt text (a gallery's tiles are below); a table as its pipes; a heading or a code block renders, but takes room. Empty clears the widget |
+| `tone` | `ok`, `warn`, `bad`, `none` | colours the count. `good`, `warning`, `error`, `fail`, and `green`, `yellow`, `red` read as those |
 | `count` | 8 characters at most | beside the name, kept while folded: `3`, `!2`, `3/5` |
 | `lines` | 1–6 (3) | the body's room, 20 px a line. A longer body is cut and opens on a click; a new one never moves what's below |
 | `stale_after` | seconds (1800); 0 is never | after it the widget dims |
@@ -90,7 +90,7 @@ there are.
 
 | Who | How |
 |---|---|
-| an agent in a panel | MCP `add_to_gallery`: `file`, `job`, `caption`, `model`, `prompt`, `cost` (dollars), `poster`, `failed`, `name` (`gallery`), `lines` |
+| an agent in a panel | MCP `add_to_gallery`: `file`, `job`, `caption`, `model`, `prompt`, `cost` (dollars), `poster`, `failed`, `name` (`gallery`), `lines`, `for` (how long, on the first card) |
 | a script | `snyvi gallery add out.png --caption warm --model flux --cost 0.04 --desk 3` |
 
 - **A file, never a URL.** The agent downloads what the model gave it (a
@@ -175,12 +175,14 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
   "$(git branch --show-current)" "$ahead" "${base:-main}" "$tone" "$dirty"
 ```
 
-- `snyvi widget new git` writes a starter: inside a panel it is that desk's
-  own, anywhere else shared (`--desk ID` for a desk's own from anywhere,
-  `--shared` or `--global` to say). `snyvi widget check git` runs it once in
-  your terminal and prints what snyvi would draw, or why it wouldn't;
-  `--dir FOLDER` runs a draft from anywhere, before it is in the widgets
-  folder, which is how an agent tries one before proposing it.
+- `snyvi widget new git` writes a starter: in your shell it is shared
+  (`--desk ID` for a desk's own, `--shared` or `--global` to say); inside a
+  panel it is a **draft** in the current folder, since an agent learning
+  the format must not put a live Allow box on your desk (1.46). `snyvi
+  widget check git` runs it once in your terminal, as snyvi would run it,
+  and prints what snyvi would draw, or why it wouldn't; `--dir FOLDER` runs
+  a draft from anywhere, before it is in the widgets folder, which is how
+  an agent tries one before proposing it.
 - **scope** `desk` runs it in the folder of each desk it is on, on that
   desk's rail; `global` runs it in its own folder, on the left. A desk's own
   widget can't be global.
@@ -210,7 +212,17 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
   **Turn off here**, and the agent that proposed it is told. Try again
   gives it three tries anew; an edit or an Allow runs it again too.
 - A widget that keeps a file between runs keeps it outside its folder
-  (`$TMPDIR`): a change to the folder asks for Allow again.
+  (`${TMPDIR:-/tmp}`): a change to the folder asks for Allow again.
+- **A folder that goes** -- removed, moved by hand, an agent's `rm` --
+  takes its box with it within a round (1.46): a box never outlives what
+  fills it, so there is no box that neither Allow nor Remove can answer.
+- **Keys** (1.46): a desk's own widget may name the desk's keys it needs,
+  `"keys": ["OPENROUTER_API_KEY"]`, at most four. The card and `/sidebars`
+  show the names; Allow covers them with the rest of `widget.json`; each
+  run gets them as `$NAME`, from that desk's Keys alone. A key not on the
+  desk is said in the box ("needs the key … add it under Keys"), and the
+  widget waits. A shared or global widget has no desk to take them from,
+  and may name none.
 
 ### How snyvi runs it
 
@@ -233,9 +245,21 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
   on again**.
 - `sh -c <command>` (`cmd /C` on Windows), with your shell's `PATH` as an
   interactive login shell has it (so what `.zshrc` or `.bashrc` loads --
-  nvm, pyenv, asdf -- is on it), read once when snyvi starts; your home
-  and language; and nothing else from snyvi's environment: not its token,
-  not a desk's keys.
+  nvm, pyenv, asdf -- is on it), read once when snyvi starts; your home,
+  user and language, `TMPDIR` when snyvi has one; the keys it names; and
+  nothing else from snyvi's environment: not its token, not the rest of a
+  desk's keys. `snyvi widget check` runs it the same way, with its timeout,
+  so what passes a check runs.
+- **Only while in view** holds when a window dies too: a page's "in view"
+  goes with its event stream (1.46), so a window killed on a desk does not
+  keep that desk's widgets running while a tab sits on Home.
+- A run is due when its `every` has passed by the clock that ran it last,
+  or by the wall: a laptop asleep past a run's time runs it at the wake.
+- **Three in a row for the same reason** is three of the same kind -- the
+  same exit code, a timeout, too much printed -- not the same words, so a
+  line with a time in it does not fail forever unstopped. A stop stays
+  through a passing line (the desk's folder gone for a round) until Try
+  again, Allow or an edit.
 - Every `every` seconds (5 at least), for `timeout` seconds (30 at most),
   two at a time, 4 KB of output read. A timeout stops the whole process
   group, so nothing it started lives on.
@@ -252,10 +276,15 @@ menu, and on its row on `/sidebars`.
   you decided about it (Allow, settings) is kept. A box keeps the last thing
   it showed.
 - **Undo** stands where the box was, at its height, for 4 seconds, and puts
-  it back as it was, still allowed. After that, move the folder back by hand.
+  it back as it was, still allowed, for as long as it was. After that, move
+  the folder back by hand. A box whose folder is gone already has nothing
+  to keep: Remove takes the box, and offers no Undo.
 - **The agent is told.** The one that proposed the widget hears it on its
-  next prompt. The panel that pushed a box is refused if it pushes that box
-  again. A new panel asks again, with a card.
+  next prompt -- or, if its panel has closed, the next panel to prompt on
+  the desk does, as gallery picks reach one. The panel that pushed a box
+  is refused if it pushes that box again. A new panel asks again, with a
+  card, and the no holds -- for that panel and for the CLI -- until you
+  answer the card or take the no back on `/sidebars`.
 - **Only the window removes.** An agent's token can't, and there is no
   `snyvi widget remove`, because a panel's agent can run the CLI. Your own
   widgets (shared, global, or pushed from a script) have Turn off.
@@ -282,7 +311,13 @@ what Allow takes before you allow it.
 Only the snyvi window can allow, and only the window can widen what it
 allowed: switch a widget on again, share it, tick more desks, make it last
 longer or change its settings (1.36). The token an agent holds can't, and
-neither can a browser tab; either can still turn a widget off.
+neither can a browser tab; either can still turn a widget off -- though
+taking a widget that is on every desk off one desk, which pins it to
+today's desks, is the window's too (1.46). The folder is hashed on every
+round a run is due, not stamped by its times and sizes, which are the
+writer's to set. What `/sidebars` reads (`GET /api/widgets`: every folder,
+command and setting) is this page's or the token's, not any local
+process's.
 
 **This is consent, not a sandbox.** A widget runs as you, with your PATH,
 like anything in your shell. Agents in a desk's panels have a shell as you
@@ -308,17 +343,29 @@ A proposal can carry the widget's **settings** (the rows you change on
 beside the script, 16 KB each, named apart in any case (a Mac's disk
 takes `Run.sh` for `run.sh`); every file is on the card, folded, as the
 script is, with each setting's label and default, since Add allows the
-whole folder. The card is the folder as it was proposed: **Try once** and
-**Add** refuse a folder that changed after it ("ask the agent to propose
-it again"). An agent can't add a seventh widget to a desk. The same panel proposing the
-same name again, its script fixed, **replaces** its card rather than adding
-a second; the old proposal stays in `widgets/.proposed/`, where nothing
-runs.
+whole folder, and the keys it names. The card is the folder as it was
+proposed, read back from that folder: **Try once** and **Add** refuse a
+folder that changed after it ("ask the agent to propose it again"), and
+Add trusts the hash the card carries, not a fresh one of the folder --
+a folder swapped as it is added is refused, not allowed unseen (1.46). A
+card that can never be added -- its folder changed, its name taken by a
+box meanwhile -- is settled as stale and the agent told why; a full desk
+keeps the card waiting. Nothing of an earlier widget of that name (its
+Rerun my edits, its settings) carries over to the one added. An agent
+can't add a seventh widget to a desk, propose a name a box holds, or
+propose again a name you said Not now to (it is told, and refused). Any
+panel proposing a name whose card still waits **replaces** that card
+rather than adding a second, and the other panel is told whose stands;
+the old proposal stays in `widgets/.proposed/`, where nothing runs.
 
 `set_widget` asks the same way, once per desk and name: the panel's first
 push is a card, *"A box on this desk: deploy"* with what it would show,
 **Allow** or **Not now**. Its updates wait behind the card; after Allow they
-go straight in. After Not now, a push of that name on that desk is refused,
+go straight in. A name a widget file holds, or a box a script pushed, is
+not a panel's to ask for: nothing is handed over by name (1.46). Allow
+draws the box first and records the yes only once it is drawn, so a desk
+that filled meanwhile is said on the card in words, with no yes left
+behind it. After Not now, a push of that name on that desk is refused,
 and the agent is told why. `snyvi widget set` run inside a panel asks the
 same; from a plain shell, a hook or cron it doesn't -- those are yours. That
 includes an agent in a terminal outside snyvi, which has a shell as you:
