@@ -12,15 +12,11 @@ pub(super) fn sized(tag: &str, path: &str, base: &str, dir: &Path) -> Option<Str
     if tag.contains(" width=") || tag.contains(" loading=") {
         return None;
     }
-    let rel = path.strip_prefix(base)?;
-    if rel.is_empty() || rel.contains("..") || rel.starts_with('/') {
-        return None;
-    }
-    let ext = ext_of(rel);
+    let ext = ext_of(path);
     if !is_image_ext(&ext) || ext == "svg" {
         return None;
     }
-    let (w, h) = picture_size_of(&dir.join(rel))?;
+    let (w, h) = picture_size_of(&own_file(path, base, dir)?)?;
     let body = tag
         .strip_suffix("/>")
         .or_else(|| tag.strip_suffix('>'))?
@@ -28,6 +24,16 @@ pub(super) fn sized(tag: &str, path: &str, base: &str, dir: &Path) -> Option<Str
     Some(format!(
         "{body} width=\"{w}\" height=\"{h}\" loading=\"lazy\" decoding=\"async\">"
     ))
+}
+
+/// The file on disk a `/files/<id>/` path names, when it is one under the
+/// document's own folder: nothing above it, nothing absolute.
+pub(super) fn own_file(path: &str, base: &str, dir: &Path) -> Option<std::path::PathBuf> {
+    let rel = path.strip_prefix(base)?;
+    if rel.is_empty() || rel.contains("..") || rel.starts_with('/') {
+        return None;
+    }
+    Some(dir.join(rel))
 }
 
 /// The first bytes of a picture file, enough for every header `picture_size`

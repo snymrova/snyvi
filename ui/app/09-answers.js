@@ -86,7 +86,7 @@
    * pointer comes over something with a `data-tip`, or Tab is first pressed:
    * its first showing waits 450 ms, which covers the fetch. */
   let tipMod = null, tipLoading = null;
-  const useTip = (since = performance.now()) => tipLoading ||= import(`/assets/tip.js${boot.v ? `?v=${boot.v}` : ""}`)
+  const useTip = (since = performance.now()) => tipLoading ||= chunk("tip")
     .then(m => (tipMod = m.init({ keyHint, since })), () => { tipLoading = null; });
   document.addEventListener("pointerover", e => { if (!tipLoading && e.target.closest?.("[data-tip]")) useTip(); }, { passive: true });
   document.addEventListener("keydown", e => { if (!tipLoading && e.key === "Tab") useTip(); });
@@ -112,7 +112,7 @@
   function toast(title, o = {}) {
     const at = "at" in o ? o.at : actedAt(), say = m => m.say(title, o, at);
     if (toastMod) return void say(toastMod);
-    (toastLoading ||= import(`/assets/toast.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (toastMod = m.init({
+    (toastLoading ||= chunk("toast").then(m => (toastMod = m.init({
       toastsEl: $("#toasts"), esc, glyph, mascotHead, quiet, sayErr, rectOf, UNDO_MS,
       tipGone: el => tipMod?.gone(el),
       rest: () => { clearTimeout(qbSettle); const w = queueBar.querySelector(".qb-who[data-feel]"); if (w) { delete w.dataset.feel; w.innerHTML = mascotHead("rest"); } },
@@ -166,7 +166,7 @@
     const input = $("#palette-input");
     if (pal.hidden) { input.value = ""; openDialog(pal, input); }
     let lk;
-    try { [palMod, lk] = await Promise.all([palLoading ||= import(`/assets/palette.js${boot.v ? `?v=${boot.v}` : ""}`), useLook()]); }
+    try { [palMod, lk] = await Promise.all([palLoading ||= chunk("palette"), useLook()]); }
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", { sub: e }); return; }
     const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
@@ -182,7 +182,7 @@
    * idle, or sooner if the hand reaches the column or ⌘K opens. Until it is
    * in, the page wears what boot.js resolved, which is all first paint needs. */
   let look = null, lookLoading = null;
-  const useLook = () => (lookLoading ||= import(`/assets/look.js${boot.v ? `?v=${boot.v}` : ""}`)
+  const useLook = () => (lookLoading ||= chunk("look")
     .then(m => (look = m.init({ root, $, store, boot, toast, control, onDesk, desk: () => desk, mmd: () => mmd, sayTermSize })), e => { lookLoading = null; throw e; }));
   (window.requestIdleCallback || setTimeout)(() => useLook().catch(() => {}), { timeout: 1500 });
   for (const ev of ["pointerenter", "focusin"]) $(".foot-set").addEventListener(ev, () => useLook().catch(() => {}));
@@ -248,7 +248,7 @@
    *  reaches the clipboard with nothing awaited before it, which WebKit
    *  asks. A click before it came waits for it. */
   let copyMod = null;
-  const useCopy = () => import(`/assets/copy.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (copyMod = m.init({ state, rawUrl, toast, keyHint })));
+  const useCopy = () => chunk("copy").then(m => (copyMod = m.init({ state, rawUrl, toast, keyHint })));
   const copyAll = btn => copyMod ? copyMod.copyAll(btn) : useCopy().then(m => m.copyAll(btn));
   $("#btn-copy-top").addEventListener("click", e => copyAll(e.currentTarget));
 
@@ -334,7 +334,7 @@
     if (game?.isOpen()) { game.close(); return; }
     // The sky is the sidebar, and a rail is 44 px of it.
     if (root.dataset.side === "0") { toast("Asteroids", { sub: sideNarrow.matches ? "needs a wider window" : `needs the sidebar open · ${keyHint("\\")}`, face: null }); return; }
-    try { game = await (gameLoading ||= import(`/assets/game.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    try { game = await (gameLoading ||= chunk("game")); }
     catch (e) { gameLoading = null; toast("Could not start the game", { sub: e }); return; }
     gameBtn.classList.add("on");
     game.open($("#side"), { back: gameBtn, onClose: () => gameBtn.classList.remove("on") });
@@ -463,7 +463,7 @@
   // the focus leaving, are a chunk (ui/keys.js), fetched on the first ⌃B or
   // the first letter pressed asleep.
   let keysOn = false, keyMode = null, keysLoading = null;
-  const useKeys = () => (keysLoading ||= import(`/assets/keys.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (keyMode = m)));
+  const useKeys = () => (keysLoading ||= chunk("keys").then(m => (keyMode = m)));
   function keys(on) {
     if (on === keysOn) return;
     keysOn = on;

@@ -15,9 +15,9 @@ use syntect::util::LinesWithEndings;
 mod media;
 mod pictures;
 use media::players;
-pub use media::{lazy_players, media_body, media_kind};
+pub use media::{lazy_players, media_body, media_kind, media_size, media_size_at};
 pub(crate) use pictures::picture_size;
-use pictures::sized;
+use pictures::{own_file, sized};
 
 /// Source scanned for an outline, and the most entries returned.
 const OUTLINE_CAP: usize = 512 * 1024;

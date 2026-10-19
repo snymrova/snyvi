@@ -3,6 +3,9 @@
  * one function scope (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
   const $ = (s, r = document) => r.querySelector(s);
   const boot = JSON.parse($("#boot").textContent || "{}");
+  /** A chunk of the page, fetched when it is first wanted, under the version
+   *  that makes a browser drop a stale copy across an upgrade. */
+  const chunk = name => import(`/assets/${name}.js${boot.v ? `?v=${boot.v}` : ""}`);
   const root = document.documentElement;
   const main = $("#main"), docEl = $("#doc"), treeEl = $("#tree"), tocEl = $("#toc"), metaEl = $("#meta"), rail = $("#rail");
   const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row"), queueBar = $("#queue-bar");

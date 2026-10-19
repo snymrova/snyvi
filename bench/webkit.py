@@ -59,7 +59,9 @@ page: 83 of them held the page 5 s and stuttered on for 8 more, and a song
 that loaded ahead took 8.6 s from Play to sound. They are buttons now, the
 player made on the press, and these rows say so: none is a player before it
 is pressed, the page answers while they arrive, and the 60th sounds within
-two seconds of its press.
+two seconds of its press. Pressed, it is snyvi's own 54 px pill rather than
+the engine's controls, which clipped their volume slider to that box, and
+the next song pressed stops it.
 
 `--display` runs the desk row on the display in DISPLAY rather than under
 Xvfb -- the window's own engine and GPU -- and records what it reads without
@@ -642,6 +644,21 @@ def media_rows(env, base, tmp):
             v.wait(50)
         ms = p.get("ms")
         rows.append(("a pressed song sounds", ms is not None and ms < 2000, f"{ms} ms from the press to its time moving, budget 2000" if ms is not None else "it never moved in 5 s"))
+        # The pill is its player (ui/player.js, audit 3c6958c2a8): the
+        # engine's controls clipped their own volume to the song's 54 px.
+        pill = {}
+        for _ in range(40):
+            pill = json.loads(v.js("""(() => { const p = document.querySelector('#doc .doc-song');
+              return JSON.stringify({ h: p ? Math.round(p.getBoundingClientRect().height) : 0, native: document.querySelectorAll('#doc audio[controls]').length }); })()"""))
+            if pill["h"]:
+                break
+            v.wait(50)
+        rows.append(("a pressed song is the pill, not the engine's controls", pill["h"] == 54 and pill["native"] == 0, f"{pill['h']} px, {pill['native']} with the engine's controls"))
+        # And one plays at a time: pressing the next takes the first's turn.
+        v.js("(() => { const b = document.querySelectorAll('#doc .doc-play')[60]; b.click(); b.nextElementSibling.volume = 0; return 1; })()")
+        v.wait(1500)
+        on = json.loads(v.js("JSON.stringify([...document.querySelectorAll('#doc audio')].map(a => !a.paused))"))
+        rows.append(("the next song pressed stops the first", on == [False, True], f"playing: {on}"))
     finally:
         v.win.destroy()
     return rows

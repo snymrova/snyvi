@@ -94,6 +94,10 @@ pub(crate) const DIFF_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/diff.js
 pub(crate) const SIDEBARS_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/sidebars.js"));
 pub(crate) const GALLERY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/gallery.js"));
 
+/// A song's own controls (audit 3c6958c2a8), fetched on the first press of
+/// one: a document with no song in it never pays for them.
+pub(crate) const PLAYER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/player.js"));
+
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
 
@@ -799,6 +803,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("paths.js", PATHS_JS, JS),
     ("sidebars.js", SIDEBARS_JS, JS),
     ("gallery.js", GALLERY_JS, JS),
+    ("player.js", PLAYER_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.
