@@ -446,6 +446,7 @@ function entries(ctx, el, byKey = false) {
       { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };
   }
+  if (el.matches("[data-desksort]")) return sorts(ctx);
   // `+ New desk`, wherever it is -- the Desks head, the empty Desks row, the
   // Desks page -- asks where before it makes anything: a desk is for a
   // project, and one in the home folder is the exception, so it is last.
@@ -560,8 +561,16 @@ export function moveDesk(ctx, id, by, byKey = false) {
   return order(ctx, ids, id, byKey);
 }
 
-/** A desk row's menu entries for its place in the list. */
+/** The Desks head's sort (#175): the reader's own order, or one taken for
+ *  them, the one in use checked. */
+const sorts = ctx => ({ head: "Sort desks", items: [["", "Your order"], ["seen", "Last opened"], ["az", "A–Z"]].map(([k, label]) =>
+  ({ label, on: ctx.deskSort === k, run: () => ctx.sortDesks(k) })) });
+
+/** A desk row's menu entries for its place in the list. Under a sort that
+ *  is not the reader's, a move would be undone by the next draw, so the
+ *  one entry is the way back to their order (#175). */
 function moves(ctx, id, byKey) {
+  if (ctx.deskSort) return [{ label: "Sort by your order", run: () => ctx.sortDesks("") }, RULE];
   const ids = ctx.state.desks.desks.map(d => d.id), i = ids.indexOf(id), last = ids.length - 1;
   return [
     i > 1 && { label: "Move to top", run: () => moveDesk(ctx, id, "top", byKey) },
@@ -577,7 +586,7 @@ function moves(ctx, id, byKey) {
  *  and a press that never travelled is the click it was. */
 export function dragDesk(ctx, a, e) {
   const rows = [...a.closest(".t-desks").querySelectorAll(".t-desk > a[data-desk]")];
-  if (rows.length < 2 || e.button !== 0) return;
+  if (rows.length < 2 || e.button !== 0 || ctx.deskSort) return;
   const id = +a.dataset.desk, x0 = e.clientX, y0 = e.clientY;
   let line = null, at = -1;
   const move = ev => {
@@ -639,7 +648,8 @@ export function open(ctx, el, x, y, byKey = false) {
   asked = { el, x, y, byKey, opener };
   menu.style.maxHeight = "";
   menu.innerHTML = `<div class="ctx-head">${ctx.esc(m.head)}</div>` + items.map((e, i) => e === RULE ? `<hr role="separator">`
-    : `<button type="button" role="menuitem" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.hint ? `<small>${ctx.esc(e.hint)}</small>` : ""}${e.key ? `<kbd>${ctx.esc(e.key)}</kbd>` : ""}</button>`).join("");
+    // `on`, where there is one: a choice of several, the one in use ticked.
+    : `<button type="button" role="${e.on == null ? "menuitem" : `menuitemradio" aria-checked="${e.on}`}" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.hint ? `<small>${ctx.esc(e.hint)}</small>` : ""}${e.key || e.on ? `<kbd>${ctx.esc(e.on ? "✓" : e.key)}</kbd>` : ""}</button>`).join("");
   menu.hidden = false;
   // Below the point when it fits, above it when it does not, and scrolled
   // when the window is shorter than the menu.

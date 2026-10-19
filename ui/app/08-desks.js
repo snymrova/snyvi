@@ -64,6 +64,8 @@
     places: () => deskPlaces(),
     // The desks moved in the reader's order (menu.js, `moveDesk`).
     drawDesks: () => renderDesks(),
+    get deskSort() { return deskSort; },
+    sortDesks: k => { deskSort = k; held = null; k ? store.set("snyvi.deskSort", k) : store.del("snyvi.deskSort"); renderDesks(); },
     focusDesk: id => deskNav.querySelector(`a[data-desk="${id}"]`)?.focus({ preventScroll: false }),
     deskSaid: (id, text, e) => { clearTimeout(deskSaid?.timer); deskSaid = { id, text, why: e ? sayErr(e).why : "", timer: setTimeout(() => { deskSaid = null; renderDesks(); }, 4000) }; renderDesks(); },
   };
@@ -75,6 +77,20 @@
     const a = e.target.closest(".t-desk > a[data-desk]");
     if (a && capability && acts && !e.target.closest("[data-dropdesk]")) acts.dragDesk(actsCtx, a, e);
   });
+  /* #175: the order the Desks list is drawn in. "" is the reader's own
+   * (desks.pos: a drag, Move up and down, ⌥↑ ⌥↓); "seen" is last opened
+   * first, "az" by name. An automatic order is taken once and held -- at
+   * load, when it is picked, when the window comes back -- so the desk just
+   * opened does not jump to the top under the click that opened it; a desk
+   * made since goes last. Kept per window, as a section's fold is. */
+  let deskSort = store.get("snyvi.deskSort") || "", held = null;
+  function inSort(list) {
+    if (!deskSort || !list.length) return list;
+    held ||= [...list].sort(deskSort === "az" ? (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }) : (a, b) => b.visited_at - a.visited_at).map(d => d.id);
+    const at = d => held.includes(d.id) ? held.indexOf(d.id) : 1e9 + d.id;
+    return [...list].sort((a, b) => at(a) - at(b));
+  }
+  addEventListener("visibilitychange", () => { if (deskSort && !document.hidden) { held = null; renderDesks(); } });
   /** A desk row's own word on what just failed on it, for a few seconds: in
    *  the row, where the reader was looking, not in a corner. */
   let deskSaid = null;
@@ -120,7 +136,7 @@
   function renderDesks() {
     // A page's foot reads the same panels: a desk's change is its change too.
     turnLine();
-    const list = state.desks ? state.desks.desks : [];
+    const list = inSort(state.desks ? state.desks.desks : []);
     let blocked = 0;
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
@@ -129,7 +145,9 @@
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", {
       count: blocked ? `${blocked}` : "", tone: "warn", countTip: blocked ? needYou(blocked) : "",
-      acts: capability ? `<button type="button" data-newdesk data-tip="New desk" aria-label="New desk">${glyph("plus", 14)}</button>` : "",
+      // The sort keeps its place with one desk or none, hidden: a second
+      // desk showing it must not move the count beside it.
+      acts: capability ? `<button type="button" data-desksort data-tip="${deskSort ? `Sorted ${deskSort === "az" ? "A–Z" : "by last opened"}` : "Sort desks"}" aria-label="Sort desks"${list.length > 1 ? "" : ' style="visibility:hidden"'}>${glyph("sort", 14)}</button><button type="button" data-newdesk data-tip="New desk" aria-label="New desk">${glyph("plus", 14)}</button>` : "",
     });
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty">Open the snyvi window to run desks</li>`
         : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>`
@@ -359,7 +377,7 @@
       e.preventDefault(); e.stopPropagation();
       const r = at.getBoundingClientRect();
       menuFor(at, r.left + 12, r.top + Math.min(r.height, 28), true);
-    } else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && capability && el.matches("a[data-desk]") && deskNav.contains(el)) {
+    } else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && capability && !deskSort && el.matches("a[data-desk]") && deskNav.contains(el)) {
       // A desk's place in the list, from its row: what its menu's Move up
       // and Move down do.
       e.preventDefault(); e.stopPropagation();

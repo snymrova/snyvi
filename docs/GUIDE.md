@@ -827,6 +827,13 @@ or alt ↑ / ↓ on the row. The sidebar, Home's cards, Home's # list and ⌘K
 all show that order; a new desk goes at the bottom, and a reopened one goes
 back where it was. Only Pick up follows the desk you touched last.
 
+**Or let the sidebar sort them.** The arrows beside the Desks head's +
+sort the sidebar's list: Your order, Last opened, or A–Z. The sort is
+taken when you pick it and again when you come back to the window, so the
+desk you just opened stays where you clicked it. While a sort is on, drag
+and the Move entries rest, and a desk's menu offers Sort by your order,
+which brings back your order unchanged. Home and ⌘K keep your order.
+
 **A Claude session is named after its panel.** In `/resume` it reads
 *snyvi · panel 1* until the panel has a name, by `name_panel` or by you,
 and *snyvi · fix the login* from the next prompt on. A name you gave the
