@@ -180,7 +180,9 @@ pub fn brief_of(
                 .panes
                 .iter()
                 .find(|p| p.id == s.pane)
-                .map_or("a panel since closed".to_string(), |p| format!("panel {}", p.slot));
+                .map_or("a panel since closed".to_string(), |p| {
+                    format!("panel {}", p.slot)
+                });
             format!("the {} {} (proposed by {whose})", s.kind, cut(&s.name, 40))
         })
         .collect();

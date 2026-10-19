@@ -59,7 +59,11 @@ async fn add_allows_only_what_the_card_showed() {
     let no = super::super::api_widget::install_proposed(&app, &card, &lasts)
         .err()
         .unwrap();
-    assert!(no.why.contains("changed after it was proposed"), "{}", no.why);
+    assert!(
+        no.why.contains("changed after it was proposed"),
+        "{}",
+        no.why
+    );
     assert!(no.stale, "a card that can never be added is settled stale");
     assert!(stage.is_dir(), "nothing moved in");
     // A card from before 1.36 kept no hash: asked again too.
@@ -89,7 +93,10 @@ async fn add_allows_only_what_the_card_showed() {
         .unwrap();
     assert_eq!(p.trusted_hash, widget::files::hash(&own).unwrap());
     assert_eq!(p.trusted_hash, card.detail["hash"].as_str().unwrap());
-    assert!(!p.rerun_edits && p.settings == "{}", "nothing of the old one");
+    assert!(
+        !p.rerun_edits && p.settings == "{}",
+        "nothing of the old one"
+    );
 }
 
 /// A widget that names a key is given it, from its desk alone: shared it
@@ -97,9 +104,11 @@ async fn add_allows_only_what_the_card_showed() {
 #[tokio::test]
 async fn a_widget_names_its_keys_and_a_shared_one_may_not() {
     let (_tmp, app, _router, _leaves) = gated_app_with("snyvi-widget-keys", |_| {});
+    let root = app.paths.data_dir.join("keyed");
+    std::fs::create_dir_all(&root).unwrap();
     let desk = app
         .store
-        .create_desk("/tmp/keyed", Some("keyed"))
+        .create_desk(&root.to_string_lossy(), Some("keyed"))
         .unwrap()
         .id;
     let stage = widget::files::dir(&app.paths.config_dir)
@@ -111,15 +120,23 @@ async fn a_widget_names_its_keys_and_a_shared_one_may_not() {
         r#"{"name":"spend","scope":"desk","run":{"command":"run.sh"},"keys":["OPENROUTER_API_KEY"]}"#,
     )
     .unwrap();
-    std::fs::write(stage.join("run.sh"), "#!/bin/sh\necho \"key=$OPENROUTER_API_KEY\"\n").unwrap();
+    std::fs::write(
+        stage.join("run.sh"),
+        "#!/bin/sh\necho \"key=$OPENROUTER_API_KEY\"\n",
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(stage.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(stage.join("run.sh"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
     }
     let spec = widget::files::read(&stage, "spend").unwrap();
     assert_eq!(spec.keys, vec!["OPENROUTER_API_KEY".to_string()]);
-    assert!(widget::files::keys_ok(&spec, 0).is_err(), "shared: no desk to take them from");
+    assert!(
+        widget::files::keys_ok(&spec, 0).is_err(),
+        "shared: no desk to take them from"
+    );
     assert!(widget::files::keys_ok(&spec, desk).is_ok());
     let card = crate::thread::Suggestion {
         desk_id: desk,
@@ -137,12 +154,16 @@ async fn a_widget_names_its_keys_and_a_shared_one_may_not() {
             .is_some_and(|e| e.contains("needs the key OPENROUTER_API_KEY")),
         "{tried}"
     );
-    app.secrets.keep(desk, "OPENROUTER_API_KEY", "sk-test").unwrap();
+    app.secrets
+        .keep(desk, "OPENROUTER_API_KEY", "sk-test")
+        .unwrap();
     #[cfg(unix)]
     {
         let tried = super::super::api_widget::try_proposed(&app, &card).await;
         assert!(
-            tried["html"].as_str().is_some_and(|h| h.contains("key=sk-test")),
+            tried["html"]
+                .as_str()
+                .is_some_and(|h| h.contains("key=sk-test")),
             "{tried}"
         );
     }
@@ -199,10 +220,12 @@ async fn allow_on_a_full_desk_leaves_no_yes_behind() {
 #[tokio::test]
 async fn the_widget_list_is_not_any_local_processs() {
     let (_tmp, router, l) = gated_router("snyvi-widget-list");
-    let get = |headers: Vec<(&str, &str)>| {
+    let get = |headers: Vec<(&'static str, String)>| {
         let router = router.clone();
         async move {
-            let mut req = axum::http::Request::builder().method("GET").uri("/api/widgets");
+            let mut req = axum::http::Request::builder()
+                .method("GET")
+                .uri("/api/widgets");
             for (k, v) in headers {
                 req = req.header(k, v);
             }
@@ -213,13 +236,20 @@ async fn the_widget_list_is_not_any_local_processs() {
                 .status()
         }
     };
-    assert_eq!(get(vec![("host", l.host.as_str())]).await, StatusCode::FORBIDDEN);
     assert_eq!(
-        get(vec![("host", l.host.as_str()), ("authorization", l.bearer.as_str())]).await,
+        get(vec![("host", l.host.clone())]).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        get(vec![
+            ("host", l.host.clone()),
+            ("authorization", l.bearer.clone())
+        ])
+        .await,
         StatusCode::OK
     );
     assert_eq!(
-        get(vec![("host", l.host.as_str()), ("origin", l.origin.as_str())]).await,
+        get(vec![("host", l.host.clone()), ("origin", l.origin.clone())]).await,
         StatusCode::OK
     );
 }

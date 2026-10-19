@@ -425,11 +425,14 @@ pub(crate) async fn events(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = app.events.subscribe();
     let stop = BroadcastStream::new(app.shutdown.subscribe()).map(|_| None);
-    let page = q
-        .page
-        .clone()
-        .filter(|p| !p.is_empty() && p.len() <= 64);
-    let mark = StreamMark::new(app.clone(), q.is_window(), q.agent(), q.window_version(), page);
+    let page = q.page.clone().filter(|p| !p.is_empty() && p.len() <= 64);
+    let mark = StreamMark::new(
+        app.clone(),
+        q.is_window(),
+        q.agent(),
+        q.window_version(),
+        page,
+    );
     // The first thing on every stream is what the updater has to say, so
     // the pill is right at first paint without a field on every boot
     // payload or a poll.

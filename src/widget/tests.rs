@@ -16,6 +16,7 @@ fn db() -> Connection {
     for c in OWNER_1_32 {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(PROPOSED_BY_1_46).unwrap();
     conn
 }
 
@@ -426,7 +427,10 @@ fn a_box_waits_for_yes_and_ends_with_its_time() {
     );
     assert_eq!(name_held(&c, 1, "nothing").unwrap(), None);
     // A widget file does not take a box's seat over it.
-    assert_eq!(put(&c, 1, "tests", &body("x"), "", &FILE, 2).unwrap(), Put::Box);
+    assert_eq!(
+        put(&c, 1, "tests", &body("x"), "", &FILE, 2).unwrap(),
+        Put::Box
+    );
     // A box the reader removed stays removed to a new panel's push: the
     // body waits behind its card, the no holds.
     ask_wait(&c, 1, "gone", "p1", "panel 1", "old", 1).unwrap();
@@ -474,6 +478,7 @@ fn a_desks_own_widget_is_on_its_desk_alone() {
         7,
         "arena",
         &format!("{STOPPED}after 3 failures, exit 1"),
+        3,
         &OWN,
         2,
     )
@@ -536,6 +541,7 @@ fn a_widget_on_one_desk_is_marked_to_be_that_desks() {
     for s in OWNER_1_32 {
         c.execute_batch(s).unwrap();
     }
+    c.execute_batch(PROPOSED_BY_1_46).unwrap();
     // What it printed as a shared widget, on its one desk.
     put(
         &c,
@@ -705,5 +711,7 @@ fn a_file_seat_goes_with_its_folder() {
     assert!(seat_of(&c, 3, "git").unwrap().is_some());
     assert!(seat_of(&c, 7, "arena").unwrap().is_none());
     assert!(seat_of(&c, 3, "deploy").unwrap().is_some(), "a box stays");
-    assert!(clear_files_except(&c, &[]).unwrap().contains(&(3, "git".to_string())));
+    assert!(clear_files_except(&c, &[])
+        .unwrap()
+        .contains(&(3, "git".to_string())));
 }

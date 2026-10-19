@@ -1970,7 +1970,8 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
     // told of a card it replaced itself; another panel's is told whose
     // card stands now, so it does not propose a third.
     if kind == "widget" {
-        let note = format!(
+        let note =
+            format!(
             "{} proposed the widget {name} again: its card replaced yours. Leave it to that card.",
             if by.is_empty() { "Another panel" } else { by.as_str() }
         );
@@ -2125,12 +2126,7 @@ pub fn take_opened(
 
 /// Whether a word for widget `name`'s card can reach anyone: its panel is
 /// `live`, or some panel on the desk is, to hear it in its stead.
-pub fn widget_heard(
-    conn: &Connection,
-    owner: i64,
-    name: &str,
-    live: &[String],
-) -> Result<bool> {
+pub fn widget_heard(conn: &Connection, owner: i64, name: &str, live: &[String]) -> Result<bool> {
     let pane: Option<String> = conn
         .query_row(
             "SELECT pane FROM desk_suggestions WHERE kind = 'widget' AND name = ?1

@@ -1055,7 +1055,8 @@ fn widget_check(
     // keys it names from this panel's desk -- so a script that reaches for
     // the panel's own environment fails here, where it is cheap, not in
     // the seat. Run with its timeout, and read to the runner's cap.
-    files::keys_ok(&spec, owner.unwrap_or(desk)).map_err(|why| anyhow::anyhow!("snyvi would not run it: {why}"))?;
+    files::keys_ok(&spec, owner.unwrap_or(desk))
+        .map_err(|why| anyhow::anyhow!("snyvi would not run it: {why}"))?;
     let mut keys = Vec::new();
     for k in &spec.keys {
         let v = client::key(paths, k).with_context(|| format!("the key {k} it names"))?;

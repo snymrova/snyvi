@@ -1288,7 +1288,10 @@ fn propose_refusal(app: &App, desk: i64, b: &ProposeBody) -> Option<Box<Response
     if matches!(held, Some(widget::Held::Box) | Some(widget::Held::Asked(_))) {
         return Some(Box::new(refused(
             StatusCode::CONFLICT,
-            format!("a box is called {} on this desk already: pick another name", b.name),
+            format!(
+                "a box is called {} on this desk already: pick another name",
+                b.name
+            ),
         )));
     }
     if declined {
@@ -1330,7 +1333,9 @@ fn propose_refusal(app: &App, desk: i64, b: &ProposeBody) -> Option<Box<Response
         )));
     }
     if b.keys.len() > widget::files::KEYS_MAX
-        || b.keys.iter().any(|k| crate::secrets::valid_name(k).is_err())
+        || b.keys
+            .iter()
+            .any(|k| crate::secrets::valid_name(k).is_err())
     {
         return Some(Box::new(refused(
             StatusCode::BAD_REQUEST,
@@ -1419,11 +1424,7 @@ pub(crate) async fn pane_propose_widget(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos() & 0xffff)
         .unwrap_or(0);
-    let stage = proposed_dir(&app).join(format!(
-        "{}-{nonce:04x}-{}",
-        crate::store::now(),
-        b.name
-    ));
+    let stage = proposed_dir(&app).join(format!("{}-{nonce:04x}-{}", crate::store::now(), b.name));
     let wrote = write_proposal(&stage, &b, command);
     if let Err(e) = wrote {
         return refused(
@@ -1668,6 +1669,7 @@ pub(crate) struct Lasts {
 /// Why a card could not be added: its folder is not what it showed (the
 /// card is stale, and settled so: the agent is told), or the desk is full
 /// (the card waits, and the reader is told).
+#[derive(Debug)]
 pub(crate) struct NotAdded {
     pub(crate) why: String,
     pub(crate) stale: bool,
@@ -1697,7 +1699,12 @@ pub(crate) fn install_proposed(
     widget::files::keys_ok(&spec, owner).map_err(stale)?;
     let held = app
         .store
-        .clocked(|c, _| Ok((widget::desk_has_room(c, card.desk_id)?, widget::name_held(c, card.desk_id, name)?)))
+        .clocked(|c, _| {
+            Ok((
+                widget::desk_has_room(c, card.desk_id)?,
+                widget::name_held(c, card.desk_id, name)?,
+            ))
+        })
         .unwrap_or((true, None));
     if !shared && !held.0 {
         return Err(NotAdded {
@@ -1708,7 +1715,10 @@ pub(crate) fn install_proposed(
             stale: false,
         });
     }
-    if matches!(held.1, Some(widget::Held::Box) | Some(widget::Held::Asked(_))) {
+    if matches!(
+        held.1,
+        Some(widget::Held::Box) | Some(widget::Held::Asked(_))
+    ) {
         return Err(stale(format!(
             "a box is called {name} on this desk: the widget would take its seat. Ask the agent to propose it under another name"
         )));
@@ -1722,12 +1732,17 @@ pub(crate) fn install_proposed(
         .get("hash")
         .and_then(|h| h.as_str())
         .map(String::from)
-        .ok_or_else(|| stale("this card is from before 1.36: ask the agent to propose it again".into()))?;
+        .ok_or_else(|| {
+            stale("this card is from before 1.36: ask the agent to propose it again".into())
+        })?;
     let to = widget::files::folder_of(cfg, owner, name);
     to.parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .and_then(|_| std::fs::rename(&stage, &to))
-        .map_err(|e| NotAdded { why: format!("could not move it in: {e}"), stale: false })?;
+        .map_err(|e| NotAdded {
+            why: format!("could not move it in: {e}"),
+            stale: false,
+        })?;
     if widget::files::hash(&to).ok().as_deref() != Some(shown.as_str()) {
         let _ = std::fs::rename(&to, &stage);
         return Err(stale(
@@ -1748,7 +1763,10 @@ pub(crate) fn install_proposed(
     app.store
         .clocked(|c, now| widget::set_prefs(c, owner, name, &ch, now))
         .map(|_| ())
-        .map_err(|e| NotAdded { why: e.to_string(), stale: false })
+        .map_err(|e| NotAdded {
+            why: e.to_string(),
+            stale: false,
+        })
 }
 
 /// The reader allowed a panel's box: what waits behind the card is drawn,

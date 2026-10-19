@@ -1130,9 +1130,9 @@ fn open_suggestion(app: &Arc<App>, id: i64, row: i64, body: &[u8]) -> Response {
                     "The user pressed Add on your widget {}, but snyvi could not add it: {}.",
                     card.name, no.why
                 );
-                let _ = app.store.clocked(|c, now| {
-                    thread::settle_with(c, id, row, "stale", &note, now)
-                });
+                let _ = app
+                    .store
+                    .clocked(|c, now| thread::settle_with(c, id, row, "stale", &note, now));
                 threads_moved(app, id);
             }
             return refused(StatusCode::CONFLICT, no.why);

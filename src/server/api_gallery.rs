@@ -135,53 +135,10 @@ async fn add(app: &Arc<App>, desk: i64, pane: &str, writer: &str, b: AddBody) ->
     if let Some(no) = said_no(app, desk, pane, &name) {
         return no;
     }
-    // Room for its box, and a card to ask with, before anything is kept:
-    // an output kept and then refused would be added again, twice over.
-    let standing = app.store.clocked(|c, _| {
-        let held = widget::name_held(c, desk, &name)?;
-        let room = widget::seat_of(c, desk, &name)?.is_some() || !widget::slot_full(c, desk)?;
-        let asked = widget::ask_of(c, desk, &name)?;
-        let waiting = crate::thread::box_waiting(c, desk, &name)?;
-        let cards = crate::thread::suggestions(c, desk)?
-            .iter()
-            .filter(|s| s.settled_at == 0 && (s.kind == "widget" || s.kind == "box"))
-            .count() as i64;
-        Ok((held, room, asked, waiting, cards))
-    });
-    let (held, room, asked, waiting, cards) = match standing {
-        Ok(x) => x,
-        Err(e) => return err(e),
+    let allowed = match room_for(app, desk, pane, &name) {
+        Ok(yes) => yes,
+        Err(no) => return *no,
     };
-    if held == Some(widget::Held::File) {
-        return refused(
-            StatusCode::CONFLICT,
-            format!("a widget file is called {name} on this desk: pick another name for the gallery"),
-        );
-    }
-    if !pane.is_empty() && held == Some(widget::Held::Box) && asked.is_none() {
-        return refused(
-            StatusCode::CONFLICT,
-            format!("a script's box is called {name} on this desk: it is the user's. Pick another name"),
-        );
-    }
-    if !room {
-        return refused(
-            StatusCode::CONFLICT,
-            format!(
-                "this desk has {} widgets, which is all it can have: read_widgets, and update one of yours",
-                widget::DESK_MAX
-            ),
-        );
-    }
-    let needs_card = !pane.is_empty()
-        && !waiting
-        && !asked.as_ref().is_some_and(|a| a.answer == "yes");
-    if needs_card && cards >= crate::thread::SUGGESTIONS_PER_DESK {
-        return refused(
-            StatusCode::CONFLICT,
-            "three suggestions are waiting on this desk already: the gallery can be asked for once the user answers one",
-        );
-    }
     let (stored, poster) = match copy_files(app, &b.file, &b.poster).await {
         Ok(x) => x,
         Err(no) => return *no,
@@ -224,7 +181,6 @@ async fn add(app: &Arc<App>, desk: i64, pane: &str, writer: &str, b: AddBody) ->
         title: "",
         owner: 0,
     };
-    let allowed = pane.is_empty() || asked.as_ref().is_some_and(|a| a.answer == "yes");
     let r = if allowed {
         super::api_widget::push(app, desk, &name, &raw, &w)
     } else {
@@ -251,6 +207,61 @@ async fn add(app: &Arc<App>, desk: i64, pane: &str, writer: &str, b: AddBody) ->
         Json(json!({ "ok": true, "id": id, "desk": desk, "name": name, "file": file, "waiting": waiting })),
     )
         .into_response()
+}
+
+/// Room for its box, and a card to ask with, before anything is kept: an
+/// output kept and then refused would be added again, twice over. Ok says
+/// whether it is drawn now (a script's, or one the user said yes to).
+fn room_for(app: &Arc<App>, desk: i64, pane: &str, name: &str) -> Result<bool, Box<Response>> {
+    let standing = app.store.clocked(|c, _| {
+        let held = widget::name_held(c, desk, name)?;
+        let room = widget::seat_of(c, desk, name)?.is_some() || !widget::slot_full(c, desk)?;
+        let asked = widget::ask_of(c, desk, name)?;
+        let waiting = crate::thread::box_waiting(c, desk, name)?;
+        let cards = crate::thread::suggestions(c, desk)?
+            .iter()
+            .filter(|s| s.settled_at == 0 && (s.kind == "widget" || s.kind == "box"))
+            .count() as i64;
+        Ok((held, room, asked, waiting, cards))
+    });
+    let (held, room, asked, waiting, cards) = match standing {
+        Ok(x) => x,
+        Err(e) => return Err(Box::new(err(e))),
+    };
+    if held == Some(widget::Held::File) {
+        return Err(Box::new(refused(
+            StatusCode::CONFLICT,
+            format!(
+                "a widget file is called {name} on this desk: pick another name for the gallery"
+            ),
+        )));
+    }
+    if !pane.is_empty() && held == Some(widget::Held::Box) && asked.is_none() {
+        return Err(Box::new(refused(
+            StatusCode::CONFLICT,
+            format!(
+                "a script's box is called {name} on this desk: it is the user's. Pick another name"
+            ),
+        )));
+    }
+    if !room {
+        return Err(Box::new(refused(
+            StatusCode::CONFLICT,
+            format!(
+                "this desk has {} widgets, which is all it can have: read_widgets, and update one of yours",
+                widget::DESK_MAX
+            ),
+        )));
+    }
+    let needs_card =
+        !pane.is_empty() && !waiting && !asked.as_ref().is_some_and(|a| a.answer == "yes");
+    if needs_card && cards >= crate::thread::SUGGESTIONS_PER_DESK {
+        return Err(Box::new(refused(
+            StatusCode::CONFLICT,
+            "three suggestions are waiting on this desk already: the gallery can be asked for once the user answers one",
+        )));
+    }
+    Ok(pane.is_empty() || asked.as_ref().is_some_and(|a| a.answer == "yes"))
 }
 
 /// The output and its poster copied in, before anything is kept: a clip

@@ -539,8 +539,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // takes a panel's thread from it (`thread::TAKEN_COLUMN`).
     (13, thread::TAKEN_COLUMN),
     (13, thread::TAKEN_FILL),
-    // 1.30: the Claude account a desk and a panel start as
-    // (`crate::accounts::COLUMNS_1_30`).
+    // 1.30: the Claude account a desk and a panel start as (`accounts::COLUMNS_1_30`).
     (14, accounts::COLUMNS_1_30[0]),
     (14, accounts::COLUMNS_1_30[1]),
     (14, accounts::COLUMNS_1_30[2]),

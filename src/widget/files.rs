@@ -391,11 +391,15 @@ pub fn read(folder: &Path, name: &str) -> Result<Spec, String> {
         .map(|m| m.len())
         .map_err(|_| "it has no widget.json".to_string())?;
     if len > FOLDER_MAX {
-        return Err(format!("widget.json is larger than {} KB", FOLDER_MAX / 1024));
+        return Err(format!(
+            "widget.json is larger than {} KB",
+            FOLDER_MAX / 1024
+        ));
     }
     let text = std::fs::read_to_string(&file).map_err(|_| "it has no widget.json".to_string())?;
-    let spec: Spec = serde_json::from_str(&text)
-        .map_err(|e| format!("widget.json does not read: {e}. The least it says: {MINIMAL_JSON}"))?;
+    let spec: Spec = serde_json::from_str(&text).map_err(|e| {
+        format!("widget.json does not read: {e}. The least it says: {MINIMAL_JSON}")
+    })?;
     if spec.name != name {
         return Err(format!(
             "widget.json says \"{}\", in a folder called {name}",
@@ -622,8 +626,22 @@ pub fn lint(spec: &Spec, folder: &Path) -> Result<(), String> {
     let interprets = |w: &str| {
         matches!(
             w.rsplit(['/', '\\']).next().unwrap_or(w),
-            "sh" | "bash" | "zsh" | "dash" | "fish" | "node" | "deno" | "bun" | "python"
-                | "python3" | "ruby" | "perl" | "php" | "pwsh" | "powershell" | "source" | "."
+            "sh" | "bash"
+                | "zsh"
+                | "dash"
+                | "fish"
+                | "node"
+                | "deno"
+                | "bun"
+                | "python"
+                | "python3"
+                | "ruby"
+                | "perl"
+                | "php"
+                | "pwsh"
+                | "powershell"
+                | "source"
+                | "."
         )
     };
     let mut first = true;

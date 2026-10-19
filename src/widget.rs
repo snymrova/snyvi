@@ -719,9 +719,16 @@ pub fn name_held(conn: &Connection, desk_id: i64, name: &str) -> Result<Option<H
 /// every file seat but the ones in `keep` (owner, name). The (desk, name)
 /// of each seat cleared, to say.
 pub fn clear_files_except(conn: &Connection, keep: &[(i64, String)]) -> Result<Vec<(i64, String)>> {
-    let mut st = conn.prepare("SELECT desk_id, name, owner FROM widget_bodies WHERE source = 'file'")?;
+    let mut st =
+        conn.prepare("SELECT desk_id, name, owner FROM widget_bodies WHERE source = 'file'")?;
     let gone: Vec<(i64, String)> = st
-        .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))?
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+            ))
+        })?
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
         .filter(|(_, n, o)| !keep.iter().any(|(ko, kn)| ko == o && kn == n))
@@ -959,6 +966,7 @@ pub fn rehome(conn: &Connection, name: &str, from: i64, to: i64, now: i64) -> Re
         desks: Some(&desks),
         until: Some(was.until),
         until_pane: Some(&was.until_pane),
+        proposed_by: Some(&was.proposed_by),
     };
     set_prefs(conn, to, name, &ch, now)?;
     let mut touched = desks_of(conn, from, name)?;

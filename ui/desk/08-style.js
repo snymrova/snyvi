@@ -6,9 +6,26 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS;
+  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS;
   document.head.append(s);
 }
+
+/* A desk's rail: each section holds its head, which stays while the
+ * section scrolls under it, and a folded one is only its head. The rail
+ * starts where the sidebar's sections do: under a header the brand row's
+ * height, its first head 4 px down, so the first heads on either side are
+ * on one line. Its heads stay at the top as their sections scroll, so
+ * nothing fades there; the foot still does. Only desk.js draws a .dk-rail,
+ * and only after style() is in, so these left first paint (1.46). First in
+ * the sheet, so the desk's own rules after them still win as they did. */
+const RAIL_CSS = `
+.dk-rail > .sec { display: flow-root; }
+.dk-rail > .sec:first-child > .sec-head { margin-top: var(--sp-2); }
+.dk-rail > .sec.folded + .sec > .sec-head { margin-top: var(--sp-1); }
+.dk-rail > .sec > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
+#rail:has(.dk-rail) { padding-top: var(--head-h); }
+#toc:has(> .dk-rail) { padding-top: 0; mask-image: linear-gradient(#000, #000 calc(100% - 14px), transparent); }
+`;
 
 /* A gallery's outputs (src/widget/gallery.rs): one row of tiles in the
  * box's room, each its size before it loads, so nothing moves. The columns

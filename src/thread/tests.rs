@@ -849,8 +849,8 @@ fn suggestions_wait_settle_and_are_told_once() {
     settle(&conn, d, ids[1], "opened", 3).unwrap().unwrap();
     assert!(!unsettle(&conn, d, ids[1]).unwrap());
     assert!(settle(&conn, d, ids[1], "dismissed", 4).unwrap().is_none());
-    assert_eq!(take_opened(&conn, d, "p1", &[],5).unwrap().len(), 1);
-    assert!(take_opened(&conn, d, "p1", &[],6).unwrap().is_empty());
+    assert_eq!(take_opened(&conn, d, "p1", &[], 5).unwrap().len(), 1);
+    assert!(take_opened(&conn, d, "p1", &[], 6).unwrap().is_empty());
 }
 
 #[test]
@@ -979,7 +979,7 @@ fn a_box_is_one_card_and_its_answer_is_told() {
     // Not now is told to the panel, as an opened card is.
     settle(&conn, d, c.id, "dismissed", 2).unwrap();
     assert!(!box_waiting(&conn, d, "deploy").unwrap());
-    let told = take_opened(&conn, d, "p1", &[],3).unwrap();
+    let told = take_opened(&conn, d, "p1", &[], 3).unwrap();
     assert_eq!((told.len(), told[0].outcome.as_str()), (1, "dismissed"));
     // Anything else the agent suggests lasts until the reader says.
     assert_eq!(lasts("forever"), "");
@@ -1004,13 +1004,15 @@ fn a_stopped_widget_is_told_to_the_agent_that_proposed_it() {
     };
     assert_eq!(c.detail["every"], 120);
     settle(&conn, d, c.id, "opened", 2).unwrap();
-    assert!(take_opened(&conn, d, "p1", &[],3).unwrap()[0].note.is_empty());
+    assert!(take_opened(&conn, d, "p1", &[], 3).unwrap()[0]
+        .note
+        .is_empty());
     // Another desk's own arena is not this one.
     assert!(!tell_widget(&conn, d + 1, "arena", "not this one").unwrap());
     assert!(tell_widget(&conn, d, "arena", "Your widget arena stopped").unwrap());
-    let again = take_opened(&conn, d, "p1", &[],4).unwrap();
+    let again = take_opened(&conn, d, "p1", &[], 4).unwrap();
     assert_eq!(again[0].note, "Your widget arena stopped");
-    assert!(take_opened(&conn, d, "p1", &[],5).unwrap().is_empty());
+    assert!(take_opened(&conn, d, "p1", &[], 5).unwrap().is_empty());
 }
 
 #[test]
@@ -1105,9 +1107,17 @@ fn a_widgets_word_reaches_the_next_panel_when_its_own_has_closed() {
     assert!(widget_heard(&conn, d, "ci", &["p1".into()]).unwrap());
     // p1 closed: p2 hears it, once.
     let heard = take_opened(&conn, d, "p2", &["p2".into()], 5).unwrap();
-    assert_eq!((heard.len(), heard[0].note.as_str()), (1, "Your widget ci stopped"));
-    assert!(take_opened(&conn, d, "p2", &["p2".into()], 6).unwrap().is_empty());
-    assert!(!widget_heard(&conn, d, "ci", &[]).unwrap(), "no panel at all");
+    assert_eq!(
+        (heard.len(), heard[0].note.as_str()),
+        (1, "Your widget ci stopped")
+    );
+    assert!(take_opened(&conn, d, "p2", &["p2".into()], 6)
+        .unwrap()
+        .is_empty());
+    assert!(
+        !widget_heard(&conn, d, "ci", &[]).unwrap(),
+        "no panel at all"
+    );
     // Not now on a widget's card is told, and a stale card with its reason.
     let Suggested::Card(c2) = suggest(
         &mut conn,
@@ -1123,7 +1133,10 @@ fn a_widgets_word_reaches_the_next_panel_when_its_own_has_closed() {
     };
     settle(&conn, d, c2.id, "dismissed", 8).unwrap();
     let told = take_opened(&conn, d, "p1", &["p1".into()], 9).unwrap();
-    assert_eq!((told[0].kind.as_str(), told[0].outcome.as_str()), ("widget", "dismissed"));
+    assert_eq!(
+        (told[0].kind.as_str(), told[0].outcome.as_str()),
+        ("widget", "dismissed")
+    );
     let Suggested::Card(c3) = suggest(
         &mut conn,
         d,
@@ -1138,7 +1151,10 @@ fn a_widgets_word_reaches_the_next_panel_when_its_own_has_closed() {
     };
     settle_with(&conn, d, c3.id, "stale", "its folder changed", 11).unwrap();
     let told = take_opened(&conn, d, "p1", &["p1".into()], 12).unwrap();
-    assert_eq!((told[0].outcome.as_str(), told[0].note.as_str()), ("stale", "its folder changed"));
+    assert_eq!(
+        (told[0].outcome.as_str(), told[0].note.as_str()),
+        ("stale", "its folder changed")
+    );
 }
 
 /// Send now types the answer into the panel: that is how the agent hears it,

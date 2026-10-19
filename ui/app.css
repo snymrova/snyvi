@@ -649,12 +649,8 @@ button.sec-fold:hover { color: var(--fg-2); }
 #widgets-nav > .sec.folded + .sec > .sec-head { margin-top: var(--sp-1); }
 /* A section the reader hid on /sidebars, and its rail icon. */
 .lay-off { display: none !important; }
-/* A desk's rail: each section holds its head, which stays while the
-   section scrolls under it, and a folded one is only its head. */
-.dk-rail > .sec { display: flow-root; }
-.dk-rail > .sec:first-child > .sec-head { margin-top: var(--sp-2); }
-.dk-rail > .sec.folded + .sec > .sec-head { margin-top: var(--sp-1); }
-.dk-rail > .sec > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
+/* A desk's rail (.dk-rail) is drawn by desk.js alone, after its style is
+   in: its rules are ui/desk/08-style.js's RAIL_CSS, not first paint's. */
 .sec.folded > .sec-body { display: none; }
 .sec-n.ok { color: var(--ok); }
 .sec-n.bad { color: var(--danger); }
@@ -1305,13 +1301,6 @@ pre.code .inv { color: var(--del-fg); }
 /* Entries that have scrolled out fade at the edges rather than being cut mid-line.
    The padding is the fade's height, so an unscrolled list has nothing in it. */
 #toc { mask-image: linear-gradient(transparent, #000 14px, #000 calc(100% - 14px), transparent); }
-/* A desk's rail is sections, as the sidebar is, and starts where the
-   sidebar's do: under a header the brand row's height, its first head 4 px
-   down (.dk-rail above), so the first heads on either side are on one line.
-   Its heads stay at the top as their sections scroll, so nothing fades
-   there; the foot still does. */
-#rail:has(.dk-rail) { padding-top: var(--head-h); }
-#toc:has(> .dk-rail) { padding-top: 0; mask-image: linear-gradient(#000, #000 calc(100% - 14px), transparent); }
 #toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--rule); }
 #toc li a { display: block; padding: 3px 10px; color: var(--fg-3); border-left: 1px solid transparent; margin-left: -1px; line-height: 1.4; transition: color var(--t), border-color var(--t); overflow-wrap: anywhere; }
 /* Two lines of a heading, then ellipsis: better than cutting every entry mid-word. */

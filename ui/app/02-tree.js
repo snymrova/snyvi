@@ -260,7 +260,7 @@
    * fails, or works again, never moves what is below (no layout shift). */
   const seatInner = w => `<div class="wg-body" style="--lines:${w.lines}">${w.html || ""}${w.html ? W_MORE : ""}</div>` +
     (wAsks(w) ? `<p class="wg-ask" role="status"><span data-tip="${esc(w.error.replace(/^\w+: /, ""))}">${esc(w.error.replace(/^\w+: /, ""))}</span><button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
-      : wStopped(w) ? `<p class="wg-ask wg-stop" role="status"><span data-tip="${esc(w.error.replace(/^stopped: /, "Stopped "))}">Stopped ${esc(w.error.replace(/^stopped: /, ""))}</span><button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? (w.owner ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Turn off" data-tip-sub="It stays on /sidebars, ready to switch back on">Turn off</button>` : `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Not on this desk" data-tip-sub="Other desks keep it; /sidebars puts it back">Turn off here</button>`) : ""}</p>`
+      : wStopped(w) ? `<p class="wg-ask wg-stop" role="status"><span data-tip="${esc(w.error.replace(/^stopped: /, "Stopped "))}">Stopped ${esc(w.error.replace(/^stopped: /, ""))}</span><button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Off on this desk" data-tip-sub="/sidebars switches it back on">Turn off${w.owner ? "" : " here"}</button>` : ""}</p>`
       : w.error ? wFailed(w) : "");
   /** Past its room: the cut line's "more", which opens it where it is --
    *  shown only once the box is measured as cut (`markCut`). */
@@ -310,9 +310,12 @@
       if (open) seatOpen(body.querySelector(".wg-body, .wg-why"));
       markCut(el);
     }
-    seatClock(el, w);
+    // Who writes it, how often and how long ago: the name's tip, not a line
+    // of the box's own, so the box is its name, its count and its body.
+    el.querySelector(".sec-fold").dataset.tipSub = `${w.writer || w.source} · ${relShort(w.updated_at)}`;
+    el.classList.toggle("stale", wStale(w));
     const head = el.querySelector(":scope > .sec-head"), nm = head.querySelector(".sec-nm"), t = w.title || wTitle(w.name);
-    if (nm && nm.textContent !== t) { nm.textContent = t; el.querySelector(".sec-fold").dataset.tip = t; }
+    if (nm.textContent !== t) nm.textContent = el.querySelector(".sec-fold").dataset.tip = t;
     const n = head.querySelector(".sec-n"), tone = W_TONE[w.tone] || "";
     if (w.count) {
       const c = n || head.insertBefore(document.createElement("span"), head.querySelector(".sec-acts"));
@@ -320,16 +323,11 @@
     } else n?.remove();
     return true;
   }
-  /** Who writes it, how often and how long ago: the name's tip, not a line
-   *  of the box's own, so the box is its name, its count and its body; and
-   *  whether it is old. Said again every minute (`seatTick`), since a box a
-   *  dead cron job stops writing is the one `stale_after` is for, and no
-   *  event comes for it. */
-  function seatClock(el, w) {
-    el.querySelector(".sec-fold").dataset.tipSub = `${w.writer || w.source} · ${relShort(w.updated_at)}`;
-    el.classList.toggle("stale", wStale(w));
-  }
-  setInterval(() => document.querySelectorAll("section.wg").forEach(el => el.$w && seatClock(el, el.$w)), 60000);
+  /** Every minute each seat is patched with what it last had: its age and
+   *  whether it is stale are said again, since a box a dead cron job stops
+   *  writing is the one `stale_after` is for, and no event comes for it. An
+   *  unchanged body is left as it is (`$inner`), so nothing flickers. */
+  setInterval(() => document.querySelectorAll("section.wg").forEach(el => el.$w && patchSeat(el, el.$w)), 60000);
 
   /** The browse section keeps its own DOM across navigations so expanded folders stay open.
    *  Its body always ends in a quiet "open a folder" row, so reading a folder is

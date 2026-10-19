@@ -233,7 +233,8 @@ fn forget_gone(app: &Arc<App>, r: &mut Runner, found: &[files::Found]) {
     };
     for (desk, name) in gone {
         r.said.remove(&(desk, name.clone()));
-        r.ran_as.retain(|k, _| k != &name && !k.ends_with(&format!("/{name}")));
+        r.ran_as
+            .retain(|k, _| k != &name && !k.ends_with(&format!("/{name}")));
         announce(app, desk, &name);
     }
 }
@@ -307,7 +308,12 @@ fn start_seats(
         }
         let (seat, full) = app
             .store
-            .clocked(|c, _| Ok((widget::seat_of(c, desk, &f.name)?, widget::slot_full(c, desk)?)))
+            .clocked(|c, _| {
+                Ok((
+                    widget::seat_of(c, desk, &f.name)?,
+                    widget::slot_full(c, desk)?,
+                ))
+            })
             .unwrap_or((None, false));
         // Due by the clock that ran it last, or by the wall: the monotonic
         // clock stands still while the machine sleeps, and a widget run at
@@ -332,7 +338,7 @@ fn start_seats(
         // No seat, and none free: nothing it prints could be shown. Said
         // in the log, since the seat that would say it is the one missing.
         if seat.is_none() && full {
-            if r.said.get(&key).is_none() {
+            if !r.said.contains_key(&key) {
                 eprintln!(
                     "snyvi: widget {} does not run on desk {desk}: the desk has {} widgets already",
                     f.name,
@@ -430,9 +436,7 @@ fn say(app: &Arc<App>, r: &mut Runner, desk: i64, who: &Who, why: &str) {
     r.said.insert(key, why.to_string());
     if app
         .store
-        .clocked(|c, now| {
-            widget::fail(c, desk, name, why, who.spec.lines, &file_writer(who), now)
-        })
+        .clocked(|c, now| widget::fail(c, desk, name, why, who.spec.lines, &file_writer(who), now))
         .is_ok()
     {
         announce(app, desk, name);
@@ -873,8 +877,14 @@ mod tests {
     fn a_failures_kind_is_its_code_not_its_words() {
         assert_eq!(fail_kind("exit 7: curl: (7) after 2 ms"), "exit 7");
         assert_eq!(fail_kind("exit 7: curl: (7) after 9 ms"), "exit 7");
-        assert_eq!(fail_kind("took longer than 5 s and was stopped"), "took longer than");
-        assert_eq!(fail_kind("the body is longer than 1500 characters"), "the body is longer than 1500 characters");
+        assert_eq!(
+            fail_kind("took longer than 5 s and was stopped"),
+            "took longer than"
+        );
+        assert_eq!(
+            fail_kind("the body is longer than 1500 characters"),
+            "the body is longer than 1500 characters"
+        );
     }
 
     #[tokio::test]
