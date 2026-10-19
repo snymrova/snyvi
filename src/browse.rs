@@ -408,7 +408,8 @@ impl Browser {
         }
         // Played where it is, a range at a time, whatever its size.
         if let Some(kind) = render::media_kind(&ext) {
-            return Ok(view(kind, None, render::media_body(&fresh_url, &ext)));
+            let size = render::media_size_at(&ext, &path);
+            return Ok(view(kind, None, render::media_body(&fresh_url, &ext, size)));
         }
         if meta.len() > MAX_RENDER_BYTES {
             return Ok(view(

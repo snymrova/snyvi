@@ -537,8 +537,8 @@ fn the_page_never_puts_the_capability_in_a_url() {
 /// with no capability never fetches the code that paints a pane.
 #[test]
 fn the_page_asks_for_the_desk_view_only_in_a_window_opening_a_desk() {
-    assert_eq!(APP_JS.matches("import(`/assets/desk.js").count(), 1);
-    let import = APP_JS.find("import(`/assets/desk.js").unwrap();
+    assert_eq!(APP_JS.matches(r#"chunk("desk")"#).count(), 1);
+    let import = APP_JS.find(r#"chunk("desk")"#).unwrap();
     let sentence = APP_JS
         .find("This is a browser tab, and a browser tab cannot start one")
         .expect("a tab is told why there is no desk");
@@ -561,8 +561,8 @@ fn the_page_asks_for_the_desk_view_only_in_a_window_opening_a_desk() {
 /// whose rocket is never pressed never fetches a game.
 #[test]
 fn the_page_asks_for_the_game_only_when_the_rocket_is_pressed() {
-    assert_eq!(APP_JS.matches("import(`/assets/game.js").count(), 1);
-    let import = APP_JS.find("import(`/assets/game.js").unwrap();
+    assert_eq!(APP_JS.matches(r#"chunk("game")"#).count(), 1);
+    let import = APP_JS.find(r#"chunk("game")"#).unwrap();
     let press = APP_JS
         .find(r##"$("#btn-game")"##)
         .expect("the rocket is the button the game is behind");
@@ -582,7 +582,7 @@ fn the_page_asks_for_the_game_only_when_the_rocket_is_pressed() {
 /// were being carried by every first paint.
 #[test]
 fn the_page_asks_for_the_panels_only_when_one_is_opened() {
-    assert_eq!(APP_JS.matches("import(`/assets/about.js").count(), 1);
+    assert_eq!(APP_JS.matches(r#"chunk("about")"#).count(), 1);
     // Since 1.8 the two buttons are in the shortcuts card, which the
     // chunk builds and wires when it first opens: the page has neither.
     for button in [r##"on("#btn-about""##, r##"on("#btn-reset""##] {
@@ -618,7 +618,7 @@ fn the_page_asks_for_the_panels_only_when_one_is_opened() {
 #[test]
 fn the_page_asks_for_the_diagram_driver_only_when_a_document_holds_one() {
     assert_eq!(
-        APP_JS.matches("import(`/assets/mmd.js").count(),
+        APP_JS.matches(r#"chunk("mmd")"#).count(),
         1,
         "one import, so there is one place the laziness can be lost"
     );

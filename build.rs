@@ -72,6 +72,7 @@ fn strip_ui() {
         ("paths.js", strip::Lang::Js),
         ("sidebars.js", strip::Lang::Js),
         ("gallery.js", strip::Lang::Js),
+        ("player.js", strip::Lang::Js),
         ("app.css", strip::Lang::Css),
         ("themes.css", strip::Lang::Css),
     ] {

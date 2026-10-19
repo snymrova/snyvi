@@ -111,7 +111,7 @@
   // A link to a heading lands with no step, and its popstate comes before
   // the hashchange that gives it one (ui/nav.js): only a stepped entry paints.
   addEventListener("popstate", () => { if (history.state && history.state.n != null) navStep(); });
-  const useNav = () => import(`/assets/nav.js${boot.v ? `?v=${boot.v}` : ""}`)
+  const useNav = () => chunk("nav")
     .then(m => (navMod = m.init({ stepAt, rep0, top: () => navTop, setTop: n => { navTop = n; navStep(); }, menuFor: (el, x, y) => menuFor(el, x, y, false), relShort })));
   // Copy all's chunk (09-answers.js) comes at the same idle moment.
   (window.requestIdleCallback || setTimeout)(() => { useNav().catch(() => {}); useCopy().catch(() => {}); }, { timeout: 1500 });
@@ -224,4 +224,4 @@
    * fetched only where there is a window to ask, so a tab never carries it.
    * The chunk asks the window whether the page may -- an older window refuses
    * and keeps its own bar -- and draws nothing until it says yes. */
-  if (window.__TAURI_INTERNALS__) import(`/assets/frame.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => m.frame(root, $), () => {});
+  if (window.__TAURI_INTERNALS__) chunk("frame").then(m => m.frame(root, $), () => {});

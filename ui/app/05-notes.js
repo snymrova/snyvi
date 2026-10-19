@@ -41,7 +41,7 @@
    * (08-desks.js `behindDesk`). Asking only for the desk view drew a card
    * twice there, in the desk's corner and this page's (#171). */
   const overDesk = () => (state.view === "desk" || state.deskBehind != null) && !!desk;
-  const cornerUse = () => (cornerLoading ||= import(`/assets/corner.js${boot.v ? `?v=${boot.v}` : ""}`)
+  const cornerUse = () => (cornerLoading ||= chunk("corner")
     .then(m => (cornerMod ||= m.init({ root, store, esc, relShort, capability, deskApi, sayErr, toast, who: whoIco, glyph, peek: mascotPeek, showDoc: id => showDoc(id, true, false, overDesk()), showDesk, showHome, showStart,
       view: () => state.view, onDesk: overDesk, friends: () => state.friends, lately: LATELY_SHOWN,
       deskRedraw: () => desk?.arranged?.(), deskTray: () => desk?.openTray?.(), homeRedraw: () => homeMod?.redraw?.(),
@@ -156,7 +156,7 @@
    * diagram key or a theme change can mean on a page that has never held one. */
   let mmd = null, mmdLoading = null;
 
-  const mmdLoad = () => (mmdLoading ||= import(`/assets/mmd.js${boot.v ? `?v=${boot.v}` : ""}`)
+  const mmdLoad = () => (mmdLoading ||= chunk("mmd")
     .then(m => (mmd = m))
     .catch(e => { mmdLoading = null; throw e; }));
 
@@ -219,7 +219,7 @@
     const input = $("#find-input");
     input.placeholder = state.preview === "html" ? "Find in the source" : "Find in document";
     input.focus(); input.select();
-    try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    try { find = await (findLoading ||= chunk("find")); }
     catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", { sub: e }); return; }
     find.open({ $, docEl, bring }, from);
   }
