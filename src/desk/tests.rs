@@ -6,6 +6,7 @@ fn db() -> Connection {
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(POS_COLUMN).unwrap();
     conn.execute_batch(HELD_COLUMN).unwrap();
+    conn.execute_batch(NAME_BY_COLUMNS_1_46).unwrap();
     conn.execute_batch(SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::thread::THREAD_COLUMN).unwrap();
     conn.execute_batch(LOOP_COLUMNS_1_37).unwrap();
@@ -550,6 +551,48 @@ fn a_pane_keeps_the_last_conversation_and_only_a_uuid() {
     assert!(super::pane(&conn, &p.id).unwrap().is_none());
 }
 
+/// A name the agent gave its panel is that conversation's: a new one in the
+/// pane (`/clear`, a fresh `claude`) drops it, and the same one coming back
+/// keeps it. The reader's name stays through either, and a close and an undo
+/// keep who named it (#176).
+#[test]
+fn a_new_conversation_drops_the_agents_name_and_keeps_the_readers() {
+    let mut conn = db();
+    let d = create(&conn, "/p", None, 0).unwrap();
+    let Opened::Pane(p) = pane(&mut conn, d.id) else {
+        panic!("no pane")
+    };
+    let name = |conn: &Connection| super::pane(conn, &p.id).unwrap().unwrap().pane.name;
+    let a = "0f6c1c2e-8a41-4b7e-9d3a-5e2f1b7c9a10";
+    let b = "a1b2c3d4-0000-4000-8000-123456789abc";
+    let c = "c0ffee00-0000-4000-8000-123456789abc";
+    assert!(set_agent_session(&conn, &p.id, a).unwrap());
+    assert!(rename_pane(&conn, &p.id, "auth refactor", NAMED_BY_AGENT).unwrap());
+    assert!(!set_agent_session(&conn, &p.id, a).unwrap(), "a resume");
+    assert_eq!(name(&conn), "auth refactor");
+    assert!(set_agent_session(&conn, &p.id, b).unwrap(), "a /clear");
+    assert_eq!(name(&conn), "");
+
+    // The reader's name outlives the conversation; an agent's over it is
+    // the agent's, and goes with the next one.
+    assert!(rename_pane(&conn, &p.id, "mine", "").unwrap());
+    assert!(set_agent_session(&conn, &p.id, a).unwrap());
+    assert_eq!(name(&conn), "mine");
+    assert!(rename_pane(&conn, &p.id, "theirs", NAMED_BY_AGENT).unwrap());
+
+    // Closed and back, it is still the agent's.
+    let tx = conn.transaction().unwrap();
+    assert!(close_pane(&tx, &p.id, 1).unwrap().is_some());
+    tx.commit().unwrap();
+    assert!(matches!(
+        restore_pane(&mut conn, &p.id).unwrap(),
+        Restored::Pane(_)
+    ));
+    assert_eq!(name(&conn), "theirs");
+    assert!(set_agent_session(&conn, &p.id, c).unwrap());
+    assert_eq!(name(&conn), "");
+}
+
 /// A new project desk's first panel waits for the reader on every read of
 /// the desk, not only the first, until its first start clears the hold;
 /// a panel made without one is never held.
@@ -862,7 +905,7 @@ fn a_closed_pane_leaves_no_gap_and_comes_back_at_the_end() {
         .iter()
         .map(|p| p.id.clone())
         .collect();
-    assert!(rename_pane(&conn, &ids[1], "  the   tests \n").unwrap());
+    assert!(rename_pane(&conn, &ids[1], "  the   tests \n", NAMED_BY_AGENT).unwrap());
     assert!(layout(&conn, d, 0.5, 0.5, Some(3)).unwrap());
     let tx = conn.transaction().unwrap();
     assert_eq!(close_pane(&tx, &ids[1], 5).unwrap(), Some((d, 2)));

@@ -173,7 +173,9 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
    theirs, and the reader's own untick or re-tick clears all three. Since
    1.7.1 it can also name its own panel: `name_panel`
    (`POST /api/panes/{id}/name`), through the same checks, writes only that
-   pane's `name`, the one ✎ sets. The tools
+   pane's `name`, the one ✎ sets, marked as the agent's (`name_by`). Since
+   1.46.2 a new conversation in the pane (its hook reports a session id
+   other than the last) drops a name the agent gave; ✎'s stays. The tools
    are offered only when `SNYVI_SESSION` is set. This does not widen what a
    token holder can reach -- the store is a file the reader's processes can
    already open -- it hands an agent one list through the front door.

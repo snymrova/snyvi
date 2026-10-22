@@ -1321,6 +1321,22 @@ async function designRows(p, url, arrive) {
     !before ? "no tip while resting on wrap" : after.tip ? `the tip stayed: "${after.tip}"` : !after.toast ? "no answer came" : `"${after.toast}" beside it, and the tip gave way`]);
   await p.pointerAway();
 
+  // A tooltip, not a card (#177): one line beside the control, its sub-line
+  // in the tip for a screen reader but not drawn. Copy all's tip has one.
+  // Shown by the keyboard: this browser is hover: none, where a resting
+  // pointer brings no tip. A Tab fetches the chunk and makes focus visible.
+  await p.goto(url);
+  await until(`window.__ui.vis("#btn-copy-top")`);
+  await p.press("Tab");
+  await p.ev(`document.querySelector("#btn-copy-top").focus()`);
+  await until(`document.querySelector("#tip.on")?.textContent.startsWith("Copy all")`);
+  const line = await p.ev(`(() => { const t = document.querySelector("#tip.on"), b = document.querySelector("#btn-copy-top"), s = t?.querySelector(".tip-s");
+    if (!t) return null; const r = t.getBoundingClientRect();
+    return { h: Math.round(r.height), sub: b.dataset.tipSub || "", read: !!s && t.textContent.includes(b.dataset.tipSub), drawn: !!s && s.getBoundingClientRect().width > 1, shadow: getComputedStyle(t).boxShadow }; })()`);
+  rows.push(["a tip is one line, its sub-line read aloud and not drawn", !!line && !!line.sub && line.h <= 24 && line.read && !line.drawn && line.shadow === "none",
+    !line ? "no tip on Copy all, focused" : !line.sub ? "Copy all's tip has no sub-line to test with" : line.drawn ? "the sub-line is drawn" : !line.read ? "the sub-line is not in the tip" : `${line.h} px tall, shadow ${line.shadow}`]);
+  await p.ev(`document.activeElement?.blur()`);
+
   // A menu's answer stands where its item stood: the menu has gone.
   await p.ev(`for (const d of document.querySelectorAll("#tree details.t-proj:not([open])")) d.open = true`);
   await until(`!!document.querySelector("#tree a[data-id]")`);

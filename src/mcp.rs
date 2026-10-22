@@ -118,8 +118,8 @@ needs that friend; never to a name that is not on the list. Say in your reply th
 const NAME_DESCRIPTION: &str = "Name the snyvi panel this session is running in, so the user can tell their \
 panels apart at a glance: a few words for what you are working on in it, like \"auth refactor\" or \"fix CI\". \
 Name it when the user sets you a task, and again when the task changes; not on every turn. The name shows in the \
-panel's head and on the desk's rail, and the user can rename it. An empty name gives the panel back to its \
-program's title.";
+panel's head and on the desk's rail, and the user can rename it. The name lasts as long as this conversation: a \
+new one in the panel starts unnamed. An empty name gives the panel back to its program's title.";
 
 /// What the server tells every agent that connects.
 const INSTRUCTIONS: &str = "snyvi is the user's document viewer. When you produce a document for the user \

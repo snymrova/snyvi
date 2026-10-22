@@ -471,7 +471,8 @@ pub(crate) async fn pane_mark_note(
 /// An agent names the panel it runs in: `name_panel`. The gate the list has
 /// -- the token, then a running pane -- and the one thing it touches is that
 /// pane's own name, the one the reader sets with ✎. Empty gives the panel
-/// back to its program's title.
+/// back to its program's title. The name is the agent's: a new conversation
+/// in the pane drops it (`desk::set_agent_session`).
 pub(crate) async fn pane_name(
     State(app): S,
     headers: HeaderMap,
@@ -481,7 +482,7 @@ pub(crate) async fn pane_name(
     if let Err(no) = agent_pane(&app, &headers, &id) {
         return *no;
     }
-    renamed(&app, &id, &b.name)
+    renamed(&app, &id, &b.name, crate::desk::NAMED_BY_AGENT)
 }
 
 /// A card above the rail's foot, put or taken off by the agent in pane `id`
@@ -672,9 +673,16 @@ pub(crate) async fn pane_brief(
         last,
         now,
     );
+    // The name as it is after `agent_said`, not as `placed` read it before:
+    // a new conversation has just dropped the old one's (#176).
+    let name = desk
+        .panes
+        .iter()
+        .find(|p| p.id == id)
+        .map_or(placed.pane.name.as_str(), |p| p.name.as_str());
     Json(json!({
         "context": context,
-        "title": crate::brief::title(&desk, placed.pane.slot, &placed.pane.name),
+        "title": crate::brief::title(&desk, placed.pane.slot, name),
         "desk": desk.name,
         "state": state,
     }))

@@ -1472,12 +1472,13 @@ pub(crate) async fn rename_pane(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    renamed(&app, &id, &b.name)
+    renamed(&app, &id, &b.name, "")
 }
 
-/// The one rename, the reader's ✎ and an agent's `name_panel` alike.
-pub(crate) fn renamed(app: &App, id: &str, name: &str) -> Response {
-    match app.store.rename_pane(id, name) {
+/// The one rename, the reader's ✎ and an agent's `name_panel` alike; `by`
+/// says which (`desk::rename_pane`).
+pub(crate) fn renamed(app: &App, id: &str, name: &str, by: &str) -> Response {
+    match app.store.rename_pane(id, name, by) {
         Ok(true) => {
             desks_moved(app);
             Json(json!({ "ok": true })).into_response()

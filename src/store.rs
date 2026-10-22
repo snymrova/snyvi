@@ -553,8 +553,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (16, thread::SUGGEST_COLUMNS_1_30[1]),
     (16, thread::SUGGEST_COLUMNS_1_30[2]),
     (17, widget::TITLE_COLUMN_1_31), // 1.31: a widget file's own title (#112)
-    // 1.32: a widget file belongs to a desk, or is shared; prefs by owner
-    // and name, and a seat says whose it is (`widget::OWNER_1_32`).
+    // 1.32: a widget file, its prefs and its seats are a desk's or shared (`widget::OWNER_1_32`).
     (18, widget::OWNER_1_32[0]),
     (18, widget::OWNER_1_32[1]),
     (18, widget::OWNER_1_32[2]),
@@ -571,6 +570,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (24, crate::links::COLUMN_1_43), // 1.43: a desk's links in the rail's foot
     (25, thread::AWAY_COLUMN_1_44), // 1.44: why an agent put an On you card away
     (26, widget::PROPOSED_BY_1_46), // 1.46: which pane proposed a widget file
+    (27, desk::NAME_BY_COLUMNS_1_46), // 1.46.2: who named a pane, the reader or its agent (#176)
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -2123,8 +2123,8 @@ impl Store {
         desk::restore_pane(&mut self.conn.lock().unwrap(), id)
     }
 
-    pub fn rename_pane(&self, id: &str, name: &str) -> Result<bool> {
-        desk::rename_pane(&self.conn.lock().unwrap(), id, name)
+    pub fn rename_pane(&self, id: &str, name: &str, by: &str) -> Result<bool> {
+        desk::rename_pane(&self.conn.lock().unwrap(), id, name, by)
     }
 
     /// Closed panes older than `before` (`desk::prune_closed`); what `prune`

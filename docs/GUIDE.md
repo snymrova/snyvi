@@ -1502,7 +1502,9 @@ yet…** whatever branch carried the work: **works** ticks it as yours, and
 **not yet…** asks what is still wrong, reopens it with your words, and the
 next agent's brief starts with it. A commit never ticks a note by itself. The
 same Claude can name its panel with `name_panel`, a few words for what it
-is doing there, which you can rename like any other. There is no way for an
+is doing there, which you can rename like any other. Its name lasts as long
+as its conversation: after `/clear`, or a new `claude` in the panel, the
+panel goes back to its program's title. A name you gave it stays. There is no way for an
 agent to add, untick, change or remove a line. It is found by the pane: the panel puts its id in
 the shell's environment as `SNYVI_SESSION`, and the daemon answers only
 while that panel is running, and only with its own desk's list -- never
