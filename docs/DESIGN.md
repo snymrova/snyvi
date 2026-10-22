@@ -297,7 +297,9 @@ first time it is slightly off.
 - **Tips** (§8.1), five rules:
   1. A tip is a **name**: at most 4 words, sentence case, no full stop.
   2. **One** sub-line, only if it changes what you'd do ("nothing is
-     deleted", "Ends 3 panels · click again").
+     deleted", "Ends 3 panels · click again"). Since 1.46.2 it is read
+     aloud and not drawn (§8.1): what a sighted reader must see goes in
+     the name.
   3. The shortcut on the right in `kbd`, via `keyHint()`, never in
      brackets.
   4. Never a sentence that explains a feature: that goes in the empty
@@ -742,14 +744,14 @@ five kinds plus the icon button.
 
 ### 8.1 The snyvi tip
 
-One tip component. **Never `title`.** A tip is a name, plus an optional
-sub-line and a shortcut; it shows on hover and on focus.
+One tip component. **Never `title`.** A tip is a name and a shortcut, on
+one line, plus an optional sub-line that is read aloud and not drawn; it
+shows on hover and on focus. It is a tooltip, not a card (#177).
 
 ```
-  ✕ ◂┌─────────────────────────────┐
-     │ Remove from the sidebar  Del │   name: --fs-small, --fg · key: kbd, --fg-3
-     │ nothing is deleted           │   sub-line: --fs-micro, --fg-3; facts in mono
-     └──────────────────────────────┘
+  ✕ ◂ Remove from the sidebar  Del    fill --fg, text --bg (inverted)
+                                      name: --fs-micro 500 · key: kbd, --bg 60% into --fg
+                                      sub-line "nothing is deleted": clipped (.vh), read aloud
 ```
 
 - **One `#tip` element**, reused, `role="tooltip"`, linked by
@@ -758,16 +760,25 @@ sub-line and a shortcut; it shows on hover and on focus.
   (`mod+alt+w`, drawn by `keyHint()`); `aria-label` stays.
   `data-tip-mono` sets a fact tip (a path, a key) in mono;
   `data-tip-overflow` shows only while the element (or its
-  `data-tip-cut` child) is cut off; `data-tip-live` marks a setting whose
+  `data-tip-cut` child) is cut off, and wraps; `data-tip-full` draws the
+  sub-line under the name, for a tip whose sub-line is what it is for
+  ("What it said" and an error's own words; an armed button's "click
+  again" too); `data-tip-live` marks a setting whose
   tip names what it is set to (theme, accent, Aa, width, wrap) -- after a
   click it shows again at once, updated, and that is the click's answer. **No `title`
   attribute anywhere in `ui/`** (bar `document.title` and `iframe[title]`),
   or the OS draws its own box over ours. The rail's `data-label` +
   `::after` moves onto it.
-- **Surface:** `--bg-raise`, 1 px `--rule`, `--r-sm`, `--shadow-2`, padding
-  4/8, the toast's 8 px tail, on `--z-tip`. **Placement:** sidebar, rail
-  and foot → right; top chrome and panel heads → below; the desk's right
-  rail → left; flips and clamps with `toast()`'s code.
+- **Surface:** inverted -- `--fg` fill, `--bg` text, so it is dark on a
+  light theme and light on a dark one -- no border, no shadow, `--r-sm`,
+  padding 3/7, one line (`nowrap`, at most 320 px, the name cut with an
+  ellipsis past that), on `--z-tip`. Only a `data-tip-overflow` tip wraps,
+  since it is the whole of a cut-off value. A 4 px arrow on the side
+  facing the control points at its middle, even when the window's edge has
+  pushed the tip along; the tip stands 6 px off, the arrow 2.
+  **Placement:** sidebar, rail and foot → right; top chrome and panel heads
+  → below; the desk's right rail → left; flips and clamps with `toast()`'s
+  code.
 - **Timing:** 450 ms on first hover, then **instant for 600 ms**; at once
   on `:focus-visible`. `pointerdown`, scroll, a key or Esc hide it. A
   `--dur-instant` fade and 2 px slide; the fade only under reduced motion.
@@ -775,7 +786,8 @@ sub-line and a shortcut; it shows on hover and on focus.
   it.
 - **No tip** on touch (`hover: none`) or on a row that isn't truncated; an
   overflow tip shows only when `scrollWidth > clientWidth`, with the full
-  value, paths in mono. Status tips put their facts in mono.
+  value, paths in mono. A sub-line says what changes what you would do;
+  it reaches a screen reader through `aria-describedby` and is not drawn.
 - **Cost:** `ui/tip.js` is a lazy chunk; first paint carries ~15 lines of
   CSS and one delegated listener.
 

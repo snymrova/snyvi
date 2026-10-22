@@ -733,7 +733,7 @@ function updateRow(u, d) {
     box.dataset.st = busy || u.restarting ? "busy" : failed || u.error ? "bad" : r || u.ready || u.available ? "ready" : u.checked ? "ok" : "";
     if (busy || u.restarting) say.insertAdjacentHTML("afterbegin", DOTS);
     // The updater's own words, for whoever needs them, in the line's tip.
-    if (u.error) { say.dataset.tip = "What it said"; say.dataset.tipSub = u.error; } else delete say.dataset.tip;
+    if (u.error) { say.dataset.tip = "What it said"; say.dataset.tipSub = u.error; say.dataset.tipFull = ""; } else delete say.dataset.tip;
     if (busy || u.restarting) return;
     if (u.available && !u.ready && u.how && u.how.length) { how.textContent = u.how.join("\n"); how.hidden = false; }
     const notes = () => { if (u.notes) { const a = document.createElement("a"); a.className = "upd-notes"; a.href = u.notes; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Release notes ↗"; act.append(a); } };
@@ -852,7 +852,7 @@ async function submitReset(e, d) {
     : n ? `${plural(Math.abs(n), "document")} ${n > 0 ? "arrived" : "went"} since you looked · type ${c.documents}`
     : c.desks !== was.desks ? `the desks changed since you looked · type ${c.documents}`
     : `${plural(c.pinned, "pinned document")} · tick Also the pinned to include them`}`;
-  if (j.error) { resetErr.dataset.tip = "What it said"; resetErr.dataset.tipSub = j.error; } else delete resetErr.dataset.tip;
+  if (j.error) { resetErr.dataset.tip = "What it said"; resetErr.dataset.tipSub = j.error; resetErr.dataset.tipFull = ""; } else delete resetErr.dataset.tip;
   resetErr.hidden = false;
   // The number has moved: say the new sentence and ask for the new number.
   if (j.census) { resetCensus = j.census; $("#reset-n").value = ""; $("#reset-say").textContent = resetSentence(j.census, plural); }

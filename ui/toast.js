@@ -150,7 +150,7 @@ function say(title, o, acted) {
   el.className = "toast";
   if (err) el.setAttribute("role", "alert");
   // The words snyvi or the browser really used, for whoever needs them.
-  if (raw) { el.dataset.tip = "What it said"; el.dataset.tipSub = raw; }
+  if (raw) { el.dataset.tip = "What it said"; el.dataset.tipSub = raw; el.dataset.tipFull = ""; }
   if (face) el.dataset.feel = face;
   el.innerHTML = (face ? `<span class="who">${mascotHead(face)}</span>` : "") +
     `<span class="say"><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;

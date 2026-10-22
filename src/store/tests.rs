@@ -159,6 +159,10 @@ const OLD_1_43: &str = "ALTER TABLE turns DROP COLUMN away;";
 /// `widget::PROPOSED_BY_1_46`).
 const OLD_1_45: &str = "ALTER TABLE widget_prefs DROP COLUMN proposed_by;";
 
+/// And of 1.46.1's: who named a pane (step 27, `desk::NAME_BY_COLUMNS_1_46`).
+const OLD_1_46_1: &str =
+    "ALTER TABLE panes DROP COLUMN name_by; ALTER TABLE panes_closed DROP COLUMN name_by;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -967,7 +971,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1256,7 +1260,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1789,7 +1793,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1803,5 +1807,53 @@ fn a_1_32_database_gains_the_session_column() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!((version, session.as_str()), (26, ""));
+    assert_eq!(
+        (version, session.as_str()),
+        (MIGRATIONS.last().unwrap().0, "")
+    );
+}
+
+/// A 1.46.1 database gains who named each pane on its first open, and a
+/// name it already had reads as the reader's: kept through a new
+/// conversation, since nothing says an agent gave it (#176).
+#[test]
+fn a_1_46_1_database_keeps_its_panel_names() {
+    let dir = tempdir::Dir::new("snyvi-store-1-46-1");
+    let paths = Paths {
+        data_dir: dir.path.clone(),
+        config_dir: dir.path.clone(),
+        docs_dir: dir.path.join("docs"),
+        db_path: dir.path.join("t.db"),
+        token_path: dir.path.join("token"),
+    };
+    let pane = {
+        let s = Store::open(&paths).unwrap();
+        let d = s.create_desk("/p", None).unwrap();
+        let crate::desk::Opened::Pane(p) = s.open_pane(d.id, "/p", "claude", false).unwrap() else {
+            panic!("a pane")
+        };
+        p.id
+    };
+    let conn = Connection::open(&paths.db_path).unwrap();
+    conn.execute_batch(&format!(
+        "{OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
+    ))
+    .unwrap();
+    drop(conn);
+    let s = Store::open(&paths).unwrap();
+    assert!(s
+        .set_pane_session(&pane, "0f6c1c2e-8a41-4b7e-9d3a-5e2f1b7c9a10")
+        .unwrap());
+    let conn = s.conn.lock().unwrap();
+    let (version, name, by): (i64, String, String) = conn
+        .query_row(
+            "SELECT (SELECT user_version FROM pragma_user_version), name, name_by FROM panes WHERE id = ?1",
+            params![pane],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (version, name.as_str(), by.as_str()),
+        (27, "auth refactor", "")
+    );
 }

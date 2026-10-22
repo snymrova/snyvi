@@ -86,6 +86,19 @@ ALTER TABLE desk_notes ADD COLUMN reply_at INTEGER NOT NULL DEFAULT 0;";
 /// Version 20 of `store::MIGRATIONS`, on the same terms as `POS_COLUMN`.
 pub const HELD_COLUMN: &str = "ALTER TABLE panes ADD COLUMN held INTEGER NOT NULL DEFAULT 0";
 
+/// 1.46.2: who named a pane, `''` the reader (✎) and `'agent'` the agent in
+/// it (`name_panel`), on the open and the closed table both, so a close and
+/// an undo carry it. A new conversation in the pane drops an agent's name
+/// and keeps the reader's (`set_agent_session`). A name from before this
+/// reads as the reader's, the one that is never taken away. Version 27 of
+/// `store::MIGRATIONS`, one batch, on the same terms as `POS_COLUMN`.
+pub const NAME_BY_COLUMNS_1_46: &str =
+    "ALTER TABLE panes ADD COLUMN name_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE panes_closed ADD COLUMN name_by TEXT NOT NULL DEFAULT '';";
+
+/// Who gave a pane its name, as `rename_pane` is told and `name_by` keeps.
+pub const NAMED_BY_AGENT: &str = "agent";
+
 /// 1.16: the studio is retired, and a studio desk is a terminal desk on the
 /// same folder (its root was always the folder), with its panels, notes,
 /// keys and documents. Version 4 of `store::MIGRATIONS`. Nothing on disk is
@@ -770,8 +783,8 @@ pub fn close(conn: &mut Connection, id: i64, now: i64) -> Result<Option<Vec<Stri
     // they were written, which puts each where it was.
     for p in &ids {
         tx.execute(
-            "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, agent_session, account, created_at, closed_at)
-             SELECT id, desk_id, cwd, cmd, name, agent_session, account, created_at, ?2 FROM panes WHERE id = ?1",
+            "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, name_by, agent_session, account, created_at, closed_at)
+             SELECT id, desk_id, cwd, cmd, name, name_by, agent_session, account, created_at, ?2 FROM panes WHERE id = ?1",
             params![p, now],
         )?;
     }
@@ -806,8 +819,8 @@ pub fn reopen(conn: &mut Connection, id: i64) -> Result<bool> {
         .collect::<rusqlite::Result<_>>()?;
     for (i, p) in back.iter().enumerate() {
         tx.execute(
-            "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, agent_session, account, created_at)
-             SELECT id, desk_id, ?2, cwd, cmd, name, agent_session, account, created_at FROM panes_closed WHERE id = ?1",
+            "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, name_by, agent_session, account, created_at)
+             SELECT id, desk_id, ?2, cwd, cmd, name, name_by, agent_session, account, created_at FROM panes_closed WHERE id = ?1",
             params![p, i as i64 + 1],
         )?;
         tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![p])?;
@@ -1058,8 +1071,8 @@ pub fn close_pane(tx: &rusqlite::Transaction, id: &str, now: i64) -> Result<Opti
         return Ok(None);
     };
     tx.execute(
-        "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, agent_session, account, created_at, closed_at)
-         SELECT id, desk_id, cwd, cmd, name, agent_session, account, created_at, ?2 FROM panes WHERE id = ?1",
+        "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, name_by, agent_session, account, created_at, closed_at)
+         SELECT id, desk_id, cwd, cmd, name, name_by, agent_session, account, created_at, ?2 FROM panes WHERE id = ?1",
         params![id, now],
     )?;
     tx.execute("DELETE FROM panes WHERE id = ?1", params![id])?;
@@ -1109,8 +1122,8 @@ pub fn restore_pane(conn: &mut Connection, id: &str) -> Result<Restored> {
         return Ok(Restored::DeskFull);
     };
     tx.execute(
-        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, agent_session, account, created_at)
-         SELECT id, desk_id, ?2, cwd, cmd, name, agent_session, account, created_at FROM panes_closed WHERE id = ?1",
+        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, name_by, agent_session, account, created_at)
+         SELECT id, desk_id, ?2, cwd, cmd, name, name_by, agent_session, account, created_at FROM panes_closed WHERE id = ?1",
         params![id, slot],
     )?;
     tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![id])?;
@@ -1157,8 +1170,10 @@ pub fn prune_closed(
 }
 
 /// Call a pane something. Trimmed, one line, cut at `NAME_CHARS`; empty goes
-/// back to the title its program sets.
-pub fn rename_pane(conn: &Connection, id: &str, name: &str) -> Result<bool> {
+/// back to the title its program sets. `by` is who named it: `""` the reader,
+/// `NAMED_BY_AGENT` the agent, whose name lasts only as long as its
+/// conversation (`set_agent_session`).
+pub fn rename_pane(conn: &Connection, id: &str, name: &str, by: &str) -> Result<bool> {
     let name: String = name
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -1167,8 +1182,8 @@ pub fn rename_pane(conn: &Connection, id: &str, name: &str) -> Result<bool> {
         .take(NAME_CHARS)
         .collect();
     Ok(conn.execute(
-        "UPDATE panes SET name = ?2 WHERE id = ?1",
-        params![id, name],
+        "UPDATE panes SET name = ?2, name_by = ?3 WHERE id = ?1",
+        params![id, name, by],
     )? > 0)
 }
 
@@ -1215,13 +1230,20 @@ pub fn unhold(conn: &Connection, id: &str) -> Result<bool> {
 /// changed something, so a hook firing on every turn is one no-op UPDATE and
 /// the windows are told only when there is something new to offer. The id
 /// ends up on a command line (`claude --resume <id>`), so only a UUID is kept.
+/// A new conversation (`/clear`, a fresh `claude`) drops the name the agent
+/// gave the pane, which was the old conversation's; the reader's name stays.
+/// The same conversation coming back (a resume, a `/compact`) changes
+/// nothing, so keeps either.
 pub fn set_agent_session(conn: &Connection, id: &str, session: &str) -> Result<bool> {
     if !valid_session(session) {
         return Ok(false);
     }
     Ok(conn.execute(
-        "UPDATE panes SET agent_session = ?2 WHERE id = ?1 AND agent_session <> ?2",
-        params![id, session],
+        "UPDATE panes SET agent_session = ?2,
+           name = CASE WHEN name_by = ?3 THEN '' ELSE name END,
+           name_by = CASE WHEN name_by = ?3 THEN '' ELSE name_by END
+         WHERE id = ?1 AND agent_session <> ?2",
+        params![id, session, NAMED_BY_AGENT],
     )? > 0)
 }
 
