@@ -49,7 +49,8 @@ fn a_launch_is_a_set_kept_at_once() {
         line("write what happened", "someday"),
         line("  ", ""),
     ];
-    let Lines::Set(ids, undated) = suggest_lines(&mut conn, d, &set, "Claude", "", 10).unwrap() else {
+    let Lines::Set(ids, undated) = suggest_lines(&mut conn, d, &set, "Claude", "", 10).unwrap()
+    else {
         panic!()
     };
     assert_eq!(ids.len(), 4);
@@ -58,12 +59,22 @@ fn a_launch_is_a_set_kept_at_once() {
     let hn = notes.iter().find(|n| n.id == ids[2]).unwrap();
     assert_eq!(hn.text, "Show HN");
     assert_eq!(hn.due_at, 10 + 11 * 86_400);
-    assert!(notes.iter().filter(|n| ids.contains(&n.id)).all(|n| n.suggested_by == "Claude"));
+    assert!(notes
+        .iter()
+        .filter(|n| ids.contains(&n.id))
+        .all(|n| n.suggested_by == "Claude"));
 
     assert_eq!(keep_set(&conn, d, ids[0]).unwrap(), 4);
     let notes = crate::desk::notes(&conn, d).unwrap();
-    assert!(notes.iter().filter(|n| ids.contains(&n.id)).all(|n| n.suggested_by.is_empty()));
-    assert_eq!(notes.iter().filter(|n| !n.suggested_by.is_empty()).count(), 1, "the one apart waits");
+    assert!(notes
+        .iter()
+        .filter(|n| ids.contains(&n.id))
+        .all(|n| n.suggested_by.is_empty()));
+    assert_eq!(
+        notes.iter().filter(|n| !n.suggested_by.is_empty()).count(),
+        1,
+        "the one apart waits"
+    );
     assert_eq!(keep_set(&conn, d, ids[0]).unwrap(), 0, "kept already");
 }
 
@@ -72,11 +83,23 @@ fn a_set_has_its_bounds() {
     let mut conn = db();
     let d = crate::desk::create(&conn, "/w", None, 0).unwrap().id;
     let many: Vec<Line> = (0..13).map(|i| line(&format!("step {i}"), "")).collect();
-    assert_eq!(suggest_lines(&mut conn, d, &many, "", "", 1).unwrap(), Lines::TooMany);
-    assert_eq!(suggest_lines(&mut conn, d, &[line(" ", "")], "", "", 1).unwrap(), Lines::Empty);
+    assert_eq!(
+        suggest_lines(&mut conn, d, &many, "", "", 1).unwrap(),
+        Lines::TooMany
+    );
+    assert_eq!(
+        suggest_lines(&mut conn, d, &[line(" ", "")], "", "", 1).unwrap(),
+        Lines::Empty
+    );
     for i in 0..3 {
         crate::desk::suggest_note(&mut conn, d, &format!("s{i}"), "Claude", 2).unwrap();
     }
-    assert_eq!(suggest_lines(&mut conn, d, &[line("one", "")], "", "", 3).unwrap(), Lines::Full);
-    assert_eq!(suggest_lines(&mut conn, 99, &[line("one", "")], "", "", 3).unwrap(), Lines::NoSuchDesk);
+    assert_eq!(
+        suggest_lines(&mut conn, d, &[line("one", "")], "", "", 3).unwrap(),
+        Lines::Full
+    );
+    assert_eq!(
+        suggest_lines(&mut conn, 99, &[line("one", "")], "", "", 3).unwrap(),
+        Lines::NoSuchDesk
+    );
 }

@@ -131,7 +131,10 @@ fn moved(app: &App, desk: i64, r: anyhow::Result<Moved>) -> Response {
             format!("a stage is one of {}", thread::STAGES.join(", ")),
         ),
         Ok(Moved::BadPr) => refused(StatusCode::BAD_REQUEST, "a PR is its number"),
-        Ok(Moved::BadUrl) => refused(StatusCode::BAD_REQUEST, "told needs an http(s) URL, one line"),
+        Ok(Moved::BadUrl) => refused(
+            StatusCode::BAD_REQUEST,
+            "told needs an http(s) URL, one line",
+        ),
         Ok(Moved::NoThread) => refused(
             StatusCode::CONFLICT,
             "this panel has no thread yet; start one with start_thread",

@@ -60,9 +60,18 @@ fn a_fix_is_told_to_no_one_and_a_feature_gets_a_release_note() {
     assert_eq!(told_default("dates on lines", &[]), RELEASE);
     assert_eq!(told_default("fix the tray", &[]), NO_ONE);
     let notes = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    assert_eq!(told_default("x", &notes(&["Fix: the tray jumps", "typo in About"])), NO_ONE);
-    assert_eq!(told_default("x", &notes(&["fix the tray", "a PDF button"])), RELEASE);
-    assert_eq!(told_default("x", &notes(&["#182 bug in md to pdf"])), NO_ONE);
+    assert_eq!(
+        told_default("x", &notes(&["Fix: the tray jumps", "typo in About"])),
+        NO_ONE
+    );
+    assert_eq!(
+        told_default("x", &notes(&["fix the tray", "a PDF button"])),
+        RELEASE
+    );
+    assert_eq!(
+        told_default("x", &notes(&["#182 bug in md to pdf"])),
+        NO_ONE
+    );
 }
 
 /// A thread merged asks once; the card's rows write a dated line in the
@@ -87,15 +96,30 @@ fn a_merge_asks_who_should_know_once() {
     assert_eq!(n.text, "post 1.48 told (X · HN · the blog)");
     assert!(n.due_at > 300);
     let thread_of: i64 = conn
-        .query_row("SELECT thread_id FROM desk_notes WHERE id = ?1", params![note], |r| r.get(0))
+        .query_row(
+            "SELECT thread_id FROM desk_notes WHERE id = ?1",
+            params![note],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(thread_of, t);
-    assert!(answer(&conn, d, &said, NO_ONE, 301).unwrap().is_none(), "answered");
+    assert!(
+        answer(&conn, d, &said, NO_ONE, 301).unwrap().is_none(),
+        "answered"
+    );
 
     // Told with a URL: the card would go, the thread says where.
     assert!(mark(&conn, d, t, "https://x.com/s/1", "", 400).unwrap());
     let th = crate::thread::get(&conn, d, t).unwrap().unwrap();
-    assert_eq!((th.told_at, th.told_url.as_str(), th.told_how.as_str(), th.stage.as_str()), (400, "https://x.com/s/1", "post", "shipped"));
+    assert_eq!(
+        (
+            th.told_at,
+            th.told_url.as_str(),
+            th.told_how.as_str(),
+            th.stage.as_str()
+        ),
+        (400, "https://x.com/s/1", "post", "shipped")
+    );
     assert!(untold(&conn, d, 500).unwrap().is_empty());
 }
 

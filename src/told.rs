@@ -117,7 +117,10 @@ pub fn ask(conn: &Connection, now: i64) -> Result<Vec<i64>> {
             .query_map(params![id], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let pick = told_default(&name, &notes);
-        let rec = options.iter().position(|o| o == pick).map_or(-1, |i| i as i64);
+        let rec = options
+            .iter()
+            .position(|o| o == pick)
+            .map_or(-1, |i| i as i64);
         conn.execute(
             "INSERT INTO turns(desk_id, thread_id, by, kind, via, text, options, recommended, created_at)
              VALUES(?1, ?2, 'snyvi', ?3, 'merge', ?4, ?5, ?6, ?7)",
@@ -157,7 +160,9 @@ fn next_weekday(now: i64, hour: u8) -> i64 {
         }
     }
     let at = Time::from_hms(hour, 0, 0).unwrap_or(Time::MIDNIGHT);
-    PrimitiveDateTime::new(d, at).assume_offset(off).unix_timestamp()
+    PrimitiveDateTime::new(d, at)
+        .assume_offset(off)
+        .unix_timestamp()
 }
 
 /// What a row of the card puts on the desk: the line and when it is due.
@@ -284,7 +289,9 @@ pub fn untold(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<(String, 
                AND shipped_at >= ?2
              ORDER BY shipped_at, id LIMIT 4",
         )?
-        .query_map(params![desk_id, now - 14 * 86_400], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .query_map(params![desk_id, now - 14 * 86_400], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
         .collect::<rusqlite::Result<_>>()?)
 }
 

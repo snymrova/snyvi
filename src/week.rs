@@ -105,9 +105,11 @@ pub struct Week {
 pub fn week(conn: &Connection, now: i64) -> Result<Option<Week>> {
     let s = sunday(now);
     let (skip, off): (i64, i64) = conn
-        .query_row("SELECT week_skip, week_off FROM home_state WHERE id = 1", [], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
+        .query_row(
+            "SELECT week_skip, week_off FROM home_state WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .optional()?
         .unwrap_or((0, 0));
     if off != 0 || skip >= s || now >= s + SHOWN_S {
@@ -256,7 +258,10 @@ pub fn file(
         )?;
         let id = conn.last_insert_rowid();
         if is_ship {
-            conn.execute("UPDATE home_state SET week_note = ?1 WHERE id = 1", params![id])?;
+            conn.execute(
+                "UPDATE home_state SET week_note = ?1 WHERE id = 1",
+                params![id],
+            )?;
         }
         ids.push(id);
     }
@@ -299,8 +304,9 @@ pub fn ship_line(conn: &Connection, desk_id: i64, now: i64) -> Result<Option<(St
 
 /// Words too common to be what two reopened lines share.
 const PLAIN: [&str; 24] = [
-    "still", "that", "this", "with", "when", "doesnt", "does", "dont", "there", "they", "from", "have",
-    "just", "into", "only", "then", "than", "work", "works", "working", "broken", "again", "after", "should",
+    "still", "that", "this", "with", "when", "doesnt", "does", "dont", "there", "they", "from",
+    "have", "just", "into", "only", "then", "than", "work", "works", "working", "broken", "again",
+    "after", "should",
 ];
 
 /// Two lines reopened on one desk within a week: snyvi suggests one line of
@@ -338,17 +344,25 @@ pub fn reopen_rule(conn: &mut Connection, desk_id: i64, now: i64) -> Result<Opti
     let b = words(&reopened[1].1);
     let shared = words(&reopened[0].1).into_iter().find(|w| b.contains(w));
     let text = match shared {
-        Some(w) => format!("Before ticking: check {w} (#{} and #{} came back for it)", reopened[1].0, reopened[0].0),
-        None => format!("Before ticking: try it as #{} and #{} were reopened", reopened[1].0, reopened[0].0),
+        Some(w) => format!(
+            "Before ticking: check {w} (#{} and #{} came back for it)",
+            reopened[1].0, reopened[0].0
+        ),
+        None => format!(
+            "Before ticking: try it as #{} and #{} were reopened",
+            reopened[1].0, reopened[0].0
+        ),
     };
     conn.execute(
         "UPDATE desks SET rule_asked_at = ?2 WHERE id = ?1",
         params![desk_id, now],
     )?;
-    Ok(match crate::desk::suggest_note(conn, desk_id, &text, "snyvi", now)? {
-        crate::desk::Suggested::Note(n) => Some(n.id),
-        _ => None,
-    })
+    Ok(
+        match crate::desk::suggest_note(conn, desk_id, &text, "snyvi", now)? {
+            crate::desk::Suggested::Note(n) => Some(n.id),
+            _ => None,
+        },
+    )
 }
 
 #[cfg(test)]

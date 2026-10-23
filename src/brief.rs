@@ -497,7 +497,9 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
                     a.to_lowercase()
                 ),
                 // snyvi's own card after a merge (`crate::told`).
-                "tell" if a == crate::told::NO_ONE => format!("You answered \"{q}\": no one; it counts as told."),
+                "tell" if a == crate::told::NO_ONE => {
+                    format!("You answered \"{q}\": no one; it counts as told.")
+                }
                 "tell" => format!("You answered \"{q}\": {a}. A dated line for it is on the desk."),
                 _ => format!("You answered \"{q}\": {a}."),
             }

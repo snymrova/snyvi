@@ -783,17 +783,14 @@ pub(crate) async fn check_desk_note(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app
-        .store
-        .clocked(|c, now| {
-            let ok = crate::desk::check_note(c, id, note, b.works, &b.say, now)?;
-            // A second reopen in a week suggests a rule (1.48, `crate::week`).
-            if ok && !b.works {
-                crate::week::reopen_rule(c, id, now)?;
-            }
-            Ok(ok)
-        })
-    {
+    match app.store.clocked(|c, now| {
+        let ok = crate::desk::check_note(c, id, note, b.works, &b.say, now)?;
+        // A second reopen in a week suggests a rule (1.48, `crate::week`).
+        if ok && !b.works {
+            crate::week::reopen_rule(c, id, now)?;
+        }
+        Ok(ok)
+    }) {
         Ok(true) => {
             notes_moved(&app, id);
             Json(json!({ "ok": true })).into_response()
@@ -884,7 +881,10 @@ pub(crate) async fn keep_desk_note(
     }
     // Keep all: the set the suggestion came in (`crate::launch`).
     if q.get("all").is_some_and(|v| v == "1") {
-        return match app.store.clocked(|c, _| crate::launch::keep_set(c, id, note)) {
+        return match app
+            .store
+            .clocked(|c, _| crate::launch::keep_set(c, id, note))
+        {
             Ok(0) => StatusCode::NOT_FOUND.into_response(),
             Ok(n) => {
                 notes_moved(&app, id);

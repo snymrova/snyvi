@@ -1462,7 +1462,9 @@ fn arrived(
                 .peer_done(p.id, &of, commit.as_deref().unwrap_or(""))?
             {
                 Some(l) => Some(l),
-                None => app.store.clocked(|c, _| crate::promise::kept(c, p.id, &of))?,
+                None => app
+                    .store
+                    .clocked(|c, _| crate::promise::kept(c, p.id, &of))?,
             };
             if let Some(line) = line {
                 peers_moved(app);

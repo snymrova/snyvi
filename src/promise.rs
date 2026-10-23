@@ -29,7 +29,8 @@ pub fn queue(
 ) -> Result<String> {
     let text: String = text.trim().chars().take(crate::peer::NOTE_CHARS).collect();
     let mut nonce = [0u8; 16];
-    getrandom::fill(&mut nonce).map_err(|e| anyhow!("reading random bytes for a promise's id: {e}"))?;
+    getrandom::fill(&mut nonce)
+        .map_err(|e| anyhow!("reading random bytes for a promise's id: {e}"))?;
     let id = blake3::hash(&nonce).to_hex().to_string();
     conn.execute(
         "INSERT INTO peer_outbox(id, peer_id, doc_id, text, re, extra, queued_at) VALUES(?1, ?2, '', ?3, ?4, ?5, ?6)",
@@ -87,7 +88,10 @@ pub fn keep(conn: &Connection, now: i64) -> Result<Vec<i64>> {
         .collect::<rusqlite::Result<_>>()?;
     let mut peers = Vec::new();
     for (frame, peer_id, text, commit) in kept {
-        let Some(p) = crate::peer::list(conn)?.into_iter().find(|p| p.id == peer_id) else {
+        let Some(p) = crate::peer::list(conn)?
+            .into_iter()
+            .find(|p| p.id == peer_id)
+        else {
             continue;
         };
         crate::peer::queue_kind(conn, &p, "done", &frame, &text, &commit, now)?;

@@ -1478,7 +1478,10 @@ mod tests {
         assert_eq!(leave_off_spec()["inputSchema"]["required"], json!(["text"]));
         // A suggestion is a line, or a launch's lines (1.48): either will do.
         assert_eq!(suggest_spec()["inputSchema"]["required"], Value::Null);
-        assert_eq!(suggest_spec()["inputSchema"]["properties"]["lines"]["maxItems"], 12);
+        assert_eq!(
+            suggest_spec()["inputSchema"]["properties"]["lines"]["maxItems"],
+            12
+        );
         for spec in [leave_off_spec(), suggest_spec()] {
             assert_eq!(spec["inputSchema"]["additionalProperties"], false);
             assert_eq!(spec["annotations"]["destructiveHint"], false);
