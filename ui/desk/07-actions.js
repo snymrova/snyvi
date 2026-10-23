@@ -222,11 +222,15 @@ async function noteAct(a, b, d) {
       () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/check`, { works: true }))) await getNotes(d.id, true);
     return;
   }
+  // Keep all: the set the line came in, one agent's lines in one call
+  // (1.48, src/launch.rs).
+  const all = b.dataset.all === "1";
+  const set = all ? noteList.filter(y => y.suggested_by === x.suggested_by && y.created_at === x.created_at) : [x];
   const by = x.suggested_by;
-  x.suggested_by = "";
+  for (const y of set) y.suggested_by = "";
   rail();
-  if (await told(b.dataset, `n${x.id}`, "Could not keep it", () => { x.suggested_by = by; },
-    () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep`, {}))) await getNotes(d.id, true);
+  if (await told(b.dataset, `n${x.id}`, "Could not keep it", () => { for (const y of set) y.suggested_by = by; },
+    () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep${all ? "?all=1" : ""}`, {}))) await getNotes(d.id, true);
 }
 
 /** Tell Trapti ✓ on a friend's ticked line: said in the row at once, put

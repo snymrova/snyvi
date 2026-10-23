@@ -864,6 +864,17 @@ pub(crate) async fn keep_desk_note(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
+    // Keep all: the set the suggestion came in (`crate::launch`).
+    if q.get("all").is_some_and(|v| v == "1") {
+        return match app.store.clocked(|c, _| crate::launch::keep_set(c, id, note)) {
+            Ok(0) => StatusCode::NOT_FOUND.into_response(),
+            Ok(n) => {
+                notes_moved(&app, id);
+                Json(json!({ "ok": true, "kept": n })).into_response()
+            }
+            Err(e) => err(e),
+        };
+    }
     match app.store.keep_desk_note(id, note) {
         Ok(true) => {
             notes_moved(&app, id);

@@ -83,6 +83,8 @@ const CSS = `
   background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); text-align: left; cursor: text; }
 button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-left-k { color: var(--fg-3); }
+/* A launch's count: tabular, so 9/11 and 10/11 are one width. */
+.dk-launch { flex: none; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 600; line-height: 16px; font-variant-numeric: tabular-nums; color: var(--fg-2); }
 .dk-left-b.none { color: var(--fg-3); opacity: 0; }
 .dk-head:is(:hover, :focus-within) .dk-left-b.none { opacity: 1; }
 .dk-left-in { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-small); padding: 1px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }

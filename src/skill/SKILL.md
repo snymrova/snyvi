@@ -45,7 +45,13 @@ notes, its threads, the user's On you list.
 - A note can carry a date the user gave it (`by fri 10`); the brief says what
   is due today. A due note is still acted on only when asked.
   `suggest_desk_note` takes `due` in the user's words when a line has a
-  natural day: a launch step, a follow-up.
+  natural day: a launch step, a follow-up. A launch is several dated lines
+  as one set (`lines`): read [launch.md](launch.md) first.
+- A tick shows what it rests on: the `commit`, the document (`about`) or a
+  URL (`evidence`). A tick with none of them reads "needs a look".
+- When a thread ships by a merge, snyvi asks the user who should know. You
+  never post: draft the release note or the post as a document when asked,
+  and `move_thread` with `told` and its `url` once they say where it went.
 - A commit that finishes a note names it, `(#129)`: once it is on main the
   note reads "check it" for the user, whatever branch carried it. A note the
   user reopened says what is still wrong; the brief leads with it.

@@ -105,7 +105,8 @@ shows as a suggestion beside their list, with Keep and a remove button, and is o
 keep it. Suggest rarely and only what the user would want to track themselves; never your own next steps \
 or a to-do for this session. A desk holds only a few suggestions waiting at once. One short line, at most \
 200 characters. When the line has a natural day -- a launch step, a follow-up -- pass `due` in the user's words \
-(`fri 10`); at that hour snyvi raises one card on their On you list.";
+(`fri 10`); at that hour snyvi raises one card on their On you list. A launch is `lines`: several dated lines as one \
+set.";
 
 const OFFER_DESCRIPTION: &str = "Offer to send one of the user's snyvi documents to one of their friends on \
 snyvi, by the friend's name (the desk brief lists them) and the document's id from send_document. Nothing is \
@@ -581,7 +582,13 @@ impl Session {
         let text = arg(args, "text");
         match self.pane.as_deref() {
             None => said("This session is not running in a snyvi desk, so there is no desk to write to.", true),
-            Some(p) => match client::suggest_desk_note(&self.paths, p, &text, &arg(args, "due"), self.by()) {
+            Some(p) => match client::suggest_desk_note(&self.paths, p, &text, &arg(args, "due"), args.get("lines").unwrap_or(&json!([])), self.by()) {
+                Ok(v) if v.get("notes").is_some() => {
+                    let n = v["notes"].as_array().map_or(0, Vec::len);
+                    let undated: Vec<&str> = v["undated"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                    let also = if undated.is_empty() { String::new() } else { format!(" These went without a date, as their `due` was not one: {}.", undated.join("; ")) };
+                    said(format!("Suggested {n} lines as one set; the user keeps them with Keep all, or one by one.{also} Mention it in your reply."), false)
+                }
                 Ok(v) => match v.get("due_error").and_then(Value::as_str) {
                     Some(why) => said(format!("Suggested, without a date: {why}. It waits beside the user's notes until they keep it or remove it; mention it in your reply."), false),
                     None => said("Suggested. It waits beside the user's notes until they keep it or remove it; mention it in your reply.", false),
@@ -768,10 +775,14 @@ fn suggest_spec() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "One short line, at most 200 characters." },
+                "text": { "type": "string", "description": "One short line, at most 200 characters. Or pass lines instead." },
+                "lines": { "type": "array", "maxItems": 12, "description": "Several dated lines as one set, a launch's: see launch.md in the skill.",
+                    "items": { "type": "object", "properties": {
+                        "text": { "type": "string" },
+                        "due": { "type": "string", "description": "In the user's words: `28 oct 10`." }
+                    }, "required": ["text"], "additionalProperties": false } },
                 "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." }
             },
-            "required": ["text"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
@@ -1464,8 +1475,11 @@ mod tests {
 
     #[test]
     fn leave_off_and_suggest_take_a_line_of_text() {
+        assert_eq!(leave_off_spec()["inputSchema"]["required"], json!(["text"]));
+        // A suggestion is a line, or a launch's lines (1.48): either will do.
+        assert_eq!(suggest_spec()["inputSchema"]["required"], Value::Null);
+        assert_eq!(suggest_spec()["inputSchema"]["properties"]["lines"]["maxItems"], 12);
         for spec in [leave_off_spec(), suggest_spec()] {
-            assert_eq!(spec["inputSchema"]["required"], json!(["text"]));
             assert_eq!(spec["inputSchema"]["additionalProperties"], false);
             assert_eq!(spec["annotations"]["destructiveHint"], false);
         }

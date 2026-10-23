@@ -266,6 +266,8 @@ function rail() {
   pageChips(vs, live);
   onYou(d);
   meta();
+  // The head's Left off slot carries a launch's count, which ticks change.
+  leftOffSlot(d);
 }
 
 /** A page lands far from where the reader is looking: they are on the panel
@@ -578,10 +580,15 @@ function noteRow(x, esc) {
   // Keep and ✕ sit where a line's tools do, always shown, since a suggestion
   // is a question and these are its two answers.
   if (x.suggested_by) {
+    // The first of a set one agent wrote at once (a launch, 1.48) carries
+    // Keep all; the rest keep one by one.
+    const set = noteList.filter(y => y.suggested_by === x.suggested_by && y.created_at === x.created_at && !y.gone);
+    const all = set.length > 1 && set[0].id === x.id
+      ? `<button type="button" class="dk-keep" data-a="note-keep" data-all="1" data-n="${x.id}" data-tip="Keep all ${set.length}" data-tip-sub="every line ${esc(x.suggested_by)} suggested with this one" aria-label="Keep all ${set.length} suggested lines">Keep all</button>` : "";
     return `<li class="dk-note dk-sug"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span>` +
       (x.sent_by ? ctx.who(x.sent_by, `From ${x.sent_by}`) : "") +
       `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
-      `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
+      `<span class="dk-sug-tools">${all}<button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
       `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
   }
   // A line is two lines at most; the whole of it is its tip, and rewriting

@@ -86,9 +86,28 @@ function leftOffSlot(d) {
     el.innerHTML = `<span class="dk-left-b" role="status"><span class="dk-left-k">Left off</span> cleared</span><button type="button" class="dk-undo" data-a="left-back">Undo</button>`;
     return;
   }
-  el.innerHTML = l
+  el.innerHTML = launchMark(d, esc) + (l
     ? `<button type="button" class="dk-left-b" data-a="left-edit" data-tip="${esc(l.text)}" data-tip-sub="${esc(l.by || "you")} · ${ctx.relShort(l.at)} · click to rewrite" data-tip-overflow><span class="dk-left-k">Left off</span> ${esc(l.text)}</button>`
-    : `<button type="button" class="dk-left-b none" data-a="left-edit" data-tip="Where did you leave off?" data-tip-sub="one line, for the next session on this desk">Left off…</button>`;
+    : `<button type="button" class="dk-left-b none" data-a="left-edit" data-tip="Where did you leave off?" data-tip-sub="one line, for the next session on this desk">Left off…</button>`);
+}
+
+/* A launch on the desk (1.48, src/launch.rs): the thread with the most dated
+ * lines -- three or more, one still open and due within two weeks -- as
+ * ticked of all, at the head of the Left off slot. The slot is there either
+ * way and the tabs keep to the right of it, so the count coming and going
+ * moves nothing but the slot's own words. */
+function launchMark(d, esc) {
+  const ns = notesAt === d.id ? noteList.filter(x => x.due_at && x.thread && !x.suggested_by && !x.gone) : [];
+  const by = new Map();
+  for (const x of ns) by.set(x.thread, [...(by.get(x.thread) || []), x]);
+  const soon = Date.now() / 1000 + 14 * 86400;
+  let xs = null;
+  for (const v of by.values()) if (v.length >= 3 && v.some(x => !x.done && x.due_at <= soon) && (!xs || v.length > xs.length)) xs = v;
+  if (!xs) return "";
+  const done = xs.filter(x => x.done).length, next = xs.filter(x => !x.done).sort((a, b) => a.due_at - b.due_at)[0];
+  const t = filed?.threads?.find(t => t.id === xs[0].thread);
+  const sub = next ? `next: ${next.text} · ${dueWord(next.due_at).w}` : "every line ticked";
+  return `<span class="dk-launch" role="img" aria-label="Launch: ${done} of ${xs.length} lines ticked" data-tip="${esc(t ? t.name : "launch")}: ${done} of ${xs.length} lines ticked" data-tip-sub="${esc(sub)}">${done}/${xs.length}</span>`;
 }
 
 /* The desk's keys: a slot at the head's right, against + -- where it once
