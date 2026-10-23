@@ -33,8 +33,9 @@
  * is this viewer's, in localStorage, since it is a preference about a page
  * and not a thing in the library, and so is the desk kept in Pick up. Arrived
  * cannot be hidden: what arrives is never put out of sight by a preference.
- * Friends shows once there is a friend, and the version, Check for updates
- * and Pair with a friend… are the foot's, with an update's card under it.
+ * Friends shows once there is a friend, and Check for updates and Pair with
+ * a friend… are the foot's, with an update's card under it. The version is
+ * the sidebar's foot's and About's to say, not a third place's.
  * Nothing here moves when something arrives: the status line is one line
  * whatever it says, On you opens over the page from it, and a widget
  * with nothing to say says so rather than going away (audit 67d008cb6f).
@@ -599,7 +600,7 @@ function draw(j) {
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
     `<div class="hm-st">${status(j)}</div>` +
     `<div class="hm-grid"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
-    `<p class="hm-foot" data-part="home.foot">snyvi ${esc(j.version || "")} · <button type="button" data-hm="check">Check for updates</button> · ` +
+    `<p class="hm-foot" data-part="home.foot"><button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
     (n ? ` · ${plural(n, "section")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p>` +
     // The update's card under the foot, where its coming moves nothing: the
