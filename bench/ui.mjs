@@ -491,6 +491,12 @@ async function railRows(p, url, md, send) {
   const rows = [];
   await p.pointerAway();
 
+  // B1 of the audit of 1.46.2: the daemon's head date and the rail's
+  // Received are one format, the page's ("Oct 23, 12:33" beside "23 Oct, 12:33").
+  const when = await p.ev(`({ head: document.querySelector(".doc-sub time[data-ts]")?.textContent || "", rail: [...document.querySelectorAll("#meta .row")].find(r => r.querySelector("b")?.textContent === "Received")?.querySelector("span")?.textContent || "" })`);
+  rows.push(["the head and the rail say one time", !!when.head && when.head === when.rail,
+    !when.head ? "no time in the document's head" : when.head === when.rail ? `"${when.head}" in both` : `the head says "${when.head}", the rail "${when.rail}"`]);
+
   const toc = await p.ev(`(() => { const t = document.querySelector("#toc"), r = document.querySelector("#rail").getBoundingClientRect(), a = document.querySelector("#meta .actions").getBoundingClientRect();
     return { entries: t.querySelectorAll("a").length, scrollable: t.scrollHeight - t.clientHeight, height: Math.round(t.clientHeight), actionsBottom: Math.round(a.bottom), railBottom: Math.round(r.bottom), hrefs: [...t.querySelectorAll("a")].map(x => x.getAttribute("href").slice(1)) }; })()`);
   rows.push(["contents scroll on their own", toc.scrollable > 0 && toc.actionsBottom <= toc.railBottom,

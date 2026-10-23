@@ -506,7 +506,13 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
     if let Some(b) = &doc.branch {
         sub.push_str(&format!(" · <span class=\"branch\">{}</span>", e(b)));
     }
-    sub.push_str(&format!(" · {}", fmt_time(doc.received_at)));
+    // The page says it again in the reader's own format (`fmt`, app.js), so
+    // the head and the rail's Received read alike; this is what shows first.
+    sub.push_str(&format!(
+        " · <time data-ts=\"{}\">{}</time>",
+        doc.received_at,
+        fmt_time(doc.received_at)
+    ));
     let send = |sub: &mut String, sep: &str| {
         sub.push_str(&format!(
             "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
@@ -606,9 +612,10 @@ fn head(doc: &Doc, body: &str, sub: &str, acts: &str, talk: &Talk) -> String {
         .iter()
         .map(|r| {
             format!(
-                "<li><b>{}</b> {} <time>{}</time></li>",
+                "<li><b>{}</b> {} <time data-ts=\"{}\">{}</time></li>",
                 e(&r.from),
                 e(&r.text),
+                r.at,
                 fmt_time(r.at)
             )
         })

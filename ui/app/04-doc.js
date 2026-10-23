@@ -694,6 +694,8 @@
   let rendered = 0;
   function afterRender() {
     const turn = ++rendered;
+    // The daemon's dates, in the one format the page writes them in.
+    for (const t of docEl.querySelectorAll("time[data-ts]")) t.textContent = fmt(+t.dataset.ts);
     overBar();
     markActive();
     buildToc();

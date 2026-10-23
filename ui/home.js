@@ -468,7 +468,7 @@ function tick() {
     if (!c || c.view() !== "home" || document.hidden || !last) return;
     if (startOfDay(Date.now() / 1000) !== drawnDay) { drawUnlessTyping(); return; }
     for (const el of c.docEl.querySelectorAll(".hm-live")) {
-      const t = el.dataset.f === "age" ? `${age(+el.dataset.t)} ago` : ago(+el.dataset.t);
+      const t = ago(+el.dataset.t);
       if (el.textContent !== t) el.textContent = t;
     }
   }, 60000);
@@ -549,18 +549,13 @@ function dayName(t) {
   return n < 7 ? d.toLocaleDateString(undefined, { weekday: "long" }) : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }
 const clock = t => new Date(t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-/** How long ago, in one short unit: "40 min", "5 h", "4 d", "6 wk". */
-function age(t) {
-  const s = Date.now() / 1000 - t;
-  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`;
-  if (s < DAY) return `${Math.round(s / 3600)} h`;
-  if (s < 14 * DAY) return `${Math.round(s / DAY)} d`;
-  return `${Math.round(s / (7 * DAY))} wk`;
-}
-const ago = t => Date.now() / 1000 - t < 60 ? "just now" : `${age(t)} ago`;
+/** How long ago, in the page's own two forms, so Home and the sidebar keep
+ *  one clock (the audit of 1.46.2 found four): "6 min ago" where there is
+ *  room, "6m" where there is not (app.js `rel`, `relShort`). */
+const ago = t => c.rel(t), age = t => c.relShort(t);
 /** A relative time in the page's text, marked so the minute's pass can move
- *  it in place (`tick`): `ago`'s words, or `age`'s with " ago" after them. */
-const live = (t, f = ago) => `<span class="hm-live" data-t="${t}"${f === age ? ' data-f="age"' : ""}>${f === age ? `${age(t)} ago` : ago(t)}</span>`;
+ *  it in place (`tick`). */
+const live = t => `<span class="hm-live" data-t="${t}">${ago(t)}</span>`;
 /** "touched 40 min ago", "touched yesterday 23:40", "touched 12 d ago". */
 function touched(t) {
   if (!t) return "not opened yet";
@@ -995,7 +990,7 @@ function desksList(j) {
       foot += `<button type="button" class="hm-link" data-hm="park" data-k="${d.id}" data-tip="Put it on the shelf" data-tip-sub="it leaves Pick up; nothing on it is closed">Park it?</button>`;
     const notes = notesOf(d, 3);
     return `<div class="hm-dk">` +
-      `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
+      `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? ago(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
       `<button type="button" class="hm-dk-add${d.open ? "" : " hm-dk-n"}" data-hm="addopen" data-k="${d.id}" data-tip="New note on ${esc(d.name)}" data-tip-sub="in the bar at the top" aria-label="A new note on ${esc(d.name)}">+</button></div>` +
       left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) + threadLines(j, d) +
       (foot ? `<div class="hm-dk-foot">${foot}</div>` : "") + `</div>`;
@@ -1140,7 +1135,7 @@ function friendRow(f, j) {
   const list = deskOpen === f.id ? `<div class="hm-keepl" role="menu" aria-label="Where ${esc(f.name)}'s things land">` +
     [{ id: 0, name: "Their own row" }, ...ds.filter(d => !d.parked)].map(d => `<button type="button" role="menuitemradio" aria-checked="${(at?.id || 0) === d.id}" class="hm-nb-o" data-hm="fdeskto" data-k="${f.id}" data-n="${d.id}"><span class="hm-nb-on">${(at?.id || 0) === d.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span></button>`).join("") + `</div>` : "";
   const where = ds.length && !more ? `<button type="button" class="hm-link" data-hm="fdesk" data-k="${f.id}" aria-haspopup="menu" aria-expanded="${deskOpen === f.id}" data-tip="Where their things land" data-tip-sub="${at ? `documents on ${esc(at.name)}, lines as its suggestions` : `From ${esc(f.name)} in the sidebar, lines in Arrived`}">→ ${esc(at ? at.name : "own row")} ▾</button>` : "";
-  const heard = `paired ${age(f.paired_at)} ago${f.last_from ? ` · from them ${age(f.last_from)} ago` : ""}${f.last_to ? ` · sent ${age(f.last_to)} ago` : ""}`;
+  const heard = `paired ${ago(f.paired_at)}${f.last_from ? ` · from them ${ago(f.last_from)}` : ""}${f.last_to ? ` · sent ${ago(f.last_to)}` : ""}`;
   // One state at a time: what is still waiting to go says so in place of
   // what became of the last thing that went.
   return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-fn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${outbox(f) || sentLine(f)}${where}` +
@@ -1161,7 +1156,7 @@ function sentLine(f) {
   const { esc } = c, mine = (peers?.sent || []).filter(x => x.peer_id === f.id);
   if (!mine.length) return "";
   const [last, ...rest] = mine;
-  return `<span class="hm-s" data-tip="${esc(last.what)} · ${esc(sentWord(last))}" data-tip-sub="${esc(rest.map(x => `${x.what}: ${sentWord(x)}`).join("; ") || `sent ${age(last.sent_at)} ago`)}">${esc(sentWord(last))}</span>`;
+  return `<span class="hm-s" data-tip="${esc(last.what)} · ${esc(sentWord(last))}" data-tip-sub="${esc(rest.map(x => `${x.what}: ${sentWord(x)}`).join("; ") || `sent ${ago(last.sent_at)}`)}">${esc(sentWord(last))}</span>`;
 }
 
 /** What has not gone to a friend yet, in their row: one that stopped trying
@@ -1214,7 +1209,7 @@ function lineRow(n, j) {
   const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
   return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
-    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at, age)}</span>` +
+    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at)}</span>` +
       (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Add it to a desk" data-tip-sub="a note there, from ${esc(n.from)}">Add to a desk… ▾</button>` : "") +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
     `</span></span>${list}</li>`;
@@ -1291,7 +1286,7 @@ async function friendAct(k, id) {
  *  is a full one again until a Claude answers and a new reading comes. */
 function windowLeft(l) {
   if (!l) return null;
-  if (l.resets_at <= Date.now() / 1000) return { left: 100, fresh: true, text: `full · reset ${age(l.resets_at)} ago` };
+  if (l.resets_at <= Date.now() / 1000) return { left: 100, fresh: true, text: `full · reset ${ago(l.resets_at)}` };
   const left = Math.round(100 - Math.max(0, Math.min(100, l.used)));
   return { left, hot: left <= 20, text: `${left}% left · resets ${resets(l.resets_at)}` };
 }
@@ -1310,7 +1305,7 @@ function claude(j) {
   const { esc, plural } = c;
   const qs = quotasOf(j), out = [];
   const bar = (label, l) => { const w = windowLeft(l); return w ? `<div><span class="hm-k">${label}</span><div class="hm-bar${w.hot ? " hot" : ""}"><i style="width:${w.left}%"></i></div><span class="fact">${w.text}</span></div>` : ""; };
-  for (const q of qs) out.push(`${qs.length > 1 ? `<p class="hm-meta">${esc(q.label || "your login")}</p>` : ""}<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${age(q.at)} ago, from the last Claude that answered${qs.length > 1 ? " as it" : ""}.</p>` : ""}`);
+  for (const q of qs) out.push(`${qs.length > 1 ? `<p class="hm-meta">${esc(q.label || "your login")}</p>` : ""}<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${ago(q.at)}, from the last Claude that answered${qs.length > 1 ? " as it" : ""}.</p>` : ""}`);
   if (j.desks) {
     const ps = j.desks.flatMap(d => d.panes.map(p => ({ ...p, desk: d.name, deskId: d.id })));
     const working = ps.filter(p => p.agent === "working").length, done = ps.filter(p => p.agent === "done").length;
