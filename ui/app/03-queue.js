@@ -173,7 +173,7 @@
       queueBar.innerHTML = `<div class="qb${one ? " one" : ""}"><span class="qb-who"></span>` +
         `<button type="button" class="icon qb-step" data-q="prev" data-tip="Open the previous one" aria-label="Open the previous one waiting">${glyph("prev", 14)}</button><span class="qb-n">${count}</span>` +
         `<button type="button" class="icon qb-step" data-q="step" data-tip="Open the next one" aria-label="Open the next one waiting">${glyph("next", 14)}</button><span class="qb-next">${next}</span>` +
-        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox?recent" class="qb-all" data-nav="inbox">Show all</a>` +
+        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd class="lk">n</kbd></button><a href="/inbox?recent" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button>` +
         `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay first in Recent" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
       qbFeel("whoa");

@@ -1682,7 +1682,7 @@ export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag,
   // waiting does, so the list under it does not move up.
   const n = state.waiting, w = n || ghost?.sec === "waiting", held = new Set(state.queue.map(d => d.id));
   return `<div class="inbox-head"><h1>${recent ? "Recent" : "Inbox"}</h1><p>${n ? `${plural(n, "document")} waiting, then the rest, newest first.` : "Newest first, across every project."}</p></div>` +
-    (w ? `<h2 class="inbox-sec">Waiting${n ? `<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button>` : ""}</h2><ul class="inbox waiting">${list("waiting", state.queue)}</ul><h2 class="inbox-sec">Earlier</h2>` : "") +
+    (w ? `<h2 class="inbox-sec">Waiting${n ? `<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd class="lk">n</kbd></button><button type="button" data-q="clear">Mark all read</button>` : ""}</h2><ul class="inbox waiting">${list("waiting", state.queue)}</ul><h2 class="inbox-sec">Earlier</h2>` : "") +
     `<ul class="inbox">${list("rest", items.filter(d => !held.has(d.id)))}</ul>`;
 }
 

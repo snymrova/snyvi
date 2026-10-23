@@ -1224,6 +1224,9 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 kbd:not(.prose kbd) { display: inline-block; min-width: 18px; padding: 0 4px; font: 500 var(--fs-micro)/16px var(--mono); text-align: center; white-space: nowrap;
   color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: var(--r-xs); }
 :is(#queue-bar, .inbox-sec, #meta .actions) kbd { margin-left: 6px; }
+/* A letter's hint is asleep while letter keys are, until Ctrl B (body.keys):
+   bright, it taught first that the keys do nothing. Del and ⏎ always work. */
+body:not(.keys) kbd.lk { opacity: .4; }
 #queue-bar .icon { width: 26px; height: 26px; }
 #find[hidden] { display: none; }
 #find { position: sticky; top: var(--head-h); z-index: 5; display: flex; align-items: center; gap: 4px; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; }

@@ -584,10 +584,15 @@ async function railRows(p, url, md, send) {
   const asleepAt = await keyState();
   await p.press("k", { raw: true }); await sleep(300);
   const asleep = await keyState();
+  // B5 of the audit of 1.46.2: the rail's letter hints sleep with the keys.
+  const hintOp = () => p.ev(`(() => { const k = document.querySelector("#meta .actions kbd.lk"); return k ? +getComputedStyle(k).opacity : null; })()`);
+  const hintAsleep = await hintOp();
   rows.push(["a letter asleep does nothing, and says why", !asleep.on && asleep.title === asleepAt.title && /show/.test(asleep.pill) && /^(⌃B|Ctrl B) for keys$/.test(asleep.says),
     asleep.title !== asleepAt.title ? "k moved without ⌃B" : `pill "${asleep.says}" (${asleep.pill})`]);
   await p.press("b", { ctrl: true }); await sleep(200);
-  const woke = await keyState();
+  const woke = await keyState(), hintAwake = await hintOp();
+  rows.push(["letter hints wait for Ctrl B", hintAsleep != null && hintAsleep < 1 && hintAwake > 0.9,
+    hintAsleep == null ? "no letter hint in the rail" : `${hintAsleep} asleep, ${hintAwake} after Ctrl B`]);
   await p.press("k", { raw: true }); await sleep(500);
   const moved = await keyState();
   await p.press("j", { raw: true }); await sleep(500);

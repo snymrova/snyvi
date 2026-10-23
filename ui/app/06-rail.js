@@ -393,12 +393,12 @@
       // `[1]` alone would not say which.
       (d.desk ? `<div class="row"><b>From</b><span><a href="/desk/${d.desk.id}" data-desk="${d.desk.id}" data-slot="${d.desk.slot}">${esc(d.desk.name)}${d.desk.slot ? ` [${d.desk.slot}]` : ""} ▸</a></span></div>` : "") +
       `<div class="actions">` +
-      (state.previous ? (comparing ? `<button data-act="back">← Back to document</button>` : `<button data-act="compare">Compare with previous<kbd>c</kbd></button>`) : "") +
-      `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd>p</kbd></button>` +
-      ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd>s</kbd></button>` : "") +
+      (state.previous ? (comparing ? `<button data-act="back">← Back to document</button>` : `<button data-act="compare">Compare with previous<kbd class="lk">c</kbd></button>`) : "") +
+      `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd class="lk">p</kbd></button>` +
+      ((d.kind === "diff" || comparing) ? `<button data-act="split">${state.split ? "Inline view" : "Split view"}<kbd class="lk">s</kbd></button>` : "") +
       previewButton() +
       `<button data-act="delete">Remove<kbd>Del</kbd></button>` +
-      `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd>o</kbd></a>` +
+      `<a href="/api/docs/${d.id}/raw" target="_blank" rel="noopener">Open source<kbd class="lk">o</kbd></a>` +
       (d.local_path ? `<button data-act="copypath" data-tip="${esc(d.local_path)}" data-tip-mono>Copy path</button>` : "") +
       (state.folder ? `<button data-act="reveal" data-tip="${esc(state.folder)}" data-tip-mono>Open in file manager</button>` : "") +
       `</div>` + historyBox();
@@ -408,7 +408,7 @@
   function previewButton() {
     if (!state.preview) return "";
     const label = state.previewOn ? "Source" : (state.preview === "pdf" ? "Open in viewer" : "Preview page");
-    return `<button data-act="preview">${label}<kbd>v</kbd></button>`;
+    return `<button data-act="preview">${label}<kbd class="lk">v</kbd></button>`;
   }
 
   function renderBrowseMeta() { if (browseMod) browseMod.meta(browseCtx()); }
