@@ -605,6 +605,21 @@ fn receipts_and_dones_land_only_on_what_went_to_that_friend() {
         .unwrap();
     assert_eq!((l.done_at, l.done_commit.as_str()), (31, "abc1234"));
 
+    // What arrived is "already" there; sent again, the row forgets what
+    // came back about the last time until it comes back again (F3, F14).
+    assert_eq!(already(&conn, &t, "d1").unwrap(), Some(21));
+    assert_eq!(already(&conn, &t, "d2").unwrap(), None);
+    assert_eq!(queue(&conn, &t, "d1", 50).unwrap(), doc, "the same row");
+    sent(&conn, &doc, 51).unwrap();
+    held_mark(&conn, &doc, 52).unwrap();
+    let d = sent_recent(&conn, 5).unwrap().into_iter().find(|x| x.id == doc).unwrap();
+    assert_eq!((d.arrived_at, d.read_at, d.held_at), (0, 0, 52), "not arrived: held for them");
+    assert_eq!(already(&conn, &t, "d1").unwrap(), None);
+    assert!(receipt(&conn, t.id, &doc, "arrived", 60).unwrap());
+    held_mark(&conn, &doc, 61).unwrap();
+    let d = sent_recent(&conn, 5).unwrap().into_iter().find(|x| x.id == doc).unwrap();
+    assert_eq!((d.arrived_at, d.held_at), (60, 52), "held is said once, before it arrived");
+
     // Answers queue as frames of their own, and a receipt twice is one.
     let r1 = queue_kind(&conn, &t, "receipt", "their-frame", "arrived", "", 40).unwrap();
     let r2 = queue_kind(&conn, &t, "receipt", "their-frame", "arrived", "", 41).unwrap();
