@@ -391,7 +391,7 @@
       // Sent from a pane: which desk and which slot, and a way back to it.
       // A link and not adjacency, because a window can have three desks and
       // `[1]` alone would not say which.
-      (d.desk ? `<div class="row"><b>From</b><span><a href="/desk/${d.desk.id}" data-desk="${d.desk.id}" data-slot="${d.desk.slot}">${esc(d.desk.name)}${d.desk.slot ? ` [${d.desk.slot}]` : ""} ▸</a></span></div>` : "") +
+      (d.desk ? `<div class="row"><b>From</b><span><a href="/desk/${d.desk.id}" data-desk="${d.desk.id}" data-slot="${d.desk.slot}">${esc(d.desk.name)}${d.desk.slot ? ` <span class="slot">[${d.desk.slot}]</span>` : ""} ${glyph("next", 10)}</a></span></div>` : "") +
       `<div class="actions">` +
       (state.previous ? (comparing ? `<button data-act="back">← Back to document</button>` : `<button data-act="compare">Compare with previous<kbd class="lk">c</kbd></button>`) : "") +
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd class="lk">p</kbd></button>` +

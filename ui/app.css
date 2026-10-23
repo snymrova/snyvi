@@ -1351,6 +1351,8 @@ pre.code .ln::before { cursor: pointer; }
 #meta .row b { font-weight: 500; color: var(--fg-2); min-width: 54px; flex: none; }
 /* Long folder and file names wrap inside the rail rather than running off it. */
 #meta .row span { min-width: 0; overflow-wrap: anywhere; }
+/* From: the panel's slot in the desk tabs' mono, and the arrow drawn, not typed. */
+#meta .row .slot { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); }
 #meta .actions { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
 #meta .actions button, #meta .actions a { color: var(--fg-2); padding: 3px 0; }
 #meta .actions button:hover, #meta .actions a:hover { color: var(--accent); text-decoration: none; }
