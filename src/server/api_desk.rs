@@ -62,6 +62,8 @@ pub(crate) async fn home(
         "threads": threads,
         "due": due,
         "wait": wait,
+        // Your week, Sunday 20:00 to Tuesday 06:00 (1.48, `crate::week`).
+        "week": if gated { super::api_week::week_json(&app) } else { serde_json::Value::Null },
         "queue": app.store.queue(5).unwrap_or_default(),
         // Arrived: the newest unread, so Home is still one read.
         "arrived": app.store.queue(ARRIVED).unwrap_or_default(),
@@ -632,7 +634,16 @@ pub(crate) async fn desk_notes(
     match app.store.desk_notes(id) {
         Ok(mut notes) => {
             settle_stages(&app, &mut notes);
-            Json(json!({ "notes": notes })).into_response()
+            // Who a line was promised to, and whether it was kept (1.48).
+            let promised = app
+                .store
+                .clocked(|c, _| crate::promise::promised(c, id))
+                .unwrap_or_default();
+            let promised: Vec<_> = promised
+                .into_iter()
+                .map(|(n, to, kept)| json!({ "note": n, "to": to, "kept": kept }))
+                .collect();
+            Json(json!({ "notes": notes, "promised": promised })).into_response()
         }
         Err(e) => err(e),
     }
@@ -772,10 +783,14 @@ pub(crate) async fn check_desk_note(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app
-        .store
-        .clocked(|c, now| crate::desk::check_note(c, id, note, b.works, &b.say, now))
-    {
+    match app.store.clocked(|c, now| {
+        let ok = crate::desk::check_note(c, id, note, b.works, &b.say, now)?;
+        // A second reopen in a week suggests a rule (1.48, `crate::week`).
+        if ok && !b.works {
+            crate::week::reopen_rule(c, id, now)?;
+        }
+        Ok(ok)
+    }) {
         Ok(true) => {
             notes_moved(&app, id);
             Json(json!({ "ok": true })).into_response()
@@ -863,6 +878,20 @@ pub(crate) async fn keep_desk_note(
 ) -> Response {
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
+    }
+    // Keep all: the set the suggestion came in (`crate::launch`).
+    if q.get("all").is_some_and(|v| v == "1") {
+        return match app
+            .store
+            .clocked(|c, _| crate::launch::keep_set(c, id, note))
+        {
+            Ok(0) => StatusCode::NOT_FOUND.into_response(),
+            Ok(n) => {
+                notes_moved(&app, id);
+                Json(json!({ "ok": true, "kept": n })).into_response()
+            }
+            Err(e) => err(e),
+        };
     }
     match app.store.keep_desk_note(id, note) {
         Ok(true) => {

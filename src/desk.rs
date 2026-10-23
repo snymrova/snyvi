@@ -1916,9 +1916,18 @@ pub fn restore_note(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     )? > 0)
 }
 
-/// One line, trimmed and bounded. Cut on a character and not a byte: a list
-/// written in any other language than English must not come back invalid.
+/// A bidi control: it shows the words after it in another order than they
+/// are in, so a friend's line could show a link's host backwards. A line
+/// never needs one; Arabic and Hebrew read right without them.
+pub fn is_bidi(c: char) -> bool {
+    matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
+/// One line, trimmed and bounded, without bidi controls (`is_bidi`). Cut on a
+/// character and not a byte: a list written in any other language than
+/// English must not come back invalid.
 fn clip(text: &str) -> String {
+    let text: String = text.chars().filter(|c| !is_bidi(*c)).collect();
     let text = text.trim();
     match text.char_indices().nth(NOTE_CHARS) {
         Some((at, _)) => text[..at].trim_end().to_string(),

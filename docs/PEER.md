@@ -208,6 +208,26 @@ in the outbox saying *their snyvi is older; this goes once they update*,
 and goes the moment a frame from them says 2. A 1.22 that is sent one
 anyway keeps it unread (`peer_held`) and reads it after its update.
 
+## A promise (1.48)
+
+A promise is a line the sender means to do by a date, sent from **Promise
+to Trapti…** on a dated line of theirs. It travels as a `note` with two
+more fields, left out when unset:
+
+| field | |
+|---|---|
+| `due_at` | when it is due, a unix time |
+| `promise` | `true`: the sender's to keep, not the reader's to do |
+
+A snyvi from 1.48 keeps it as a row on Home under the friend's name, its
+date in its words (*post the release note · by Fri 10:00*), never as a line
+on a desk. When the sender ticks the line, their snyvi sends the `done`
+that already exists, naming the promise's frame, and the row reads *· kept
+✓*. A snyvi before 1.48 reads past both fields and shows a plain line. On
+the sender's side the outbox row names its line in `re` (`note:<id>`) and
+carries its date in `extra`; the rail marks the line **→ Trapti**. The
+relay is unchanged.
+
 ## What an agent gets
 
 One tool, `offer_document(to, id)`, listed only to a reader with a friend

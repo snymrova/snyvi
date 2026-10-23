@@ -498,19 +498,15 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, peer::COLUMNS_1_19[0]),
     (7, peer::COLUMNS_1_19[1]),
     (7, desk::SENT_BY_COLUMN),
-    // 1.20: the thread a desk's line is in (`crate::thread`).
-    (8, thread::THREAD_COLUMN),
-    // 1.21: the command a `run` turn hands the reader.
-    (9, thread::CMD_COLUMN),
+    (8, thread::THREAD_COLUMN), // 1.20: the thread a desk's line is in (`crate::thread`)
+    (9, thread::CMD_COLUMN), // 1.21: the command a `run` turn hands the reader
     // 1.22: a folder's fingerprint, and who sent a friend's document
     // (`crate::peer::Folder`).
     (10, peer::COLUMNS_1_22[0]),
     (10, peer::COLUMNS_1_22[1]),
     (10, peer::COLUMNS_1_22[2]),
     (10, peer::COLUMNS_1_22[3]),
-    // 1.23: where Save wrote a friend's document, so Copy path copies a file
-    // that is there (`local_path`).
-    (11, SAVED_PATH_COLUMN),
+    (11, SAVED_PATH_COLUMN), // 1.23: where Save wrote a friend's document (`local_path`)
     // 1.23: pairing's second cut -- receipts, replies, a line told done,
     // and a line an agent offers (`crate::peer::COLUMNS_1_23`).
     (11, peer::COLUMNS_1_23[0]),
@@ -571,6 +567,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (28, crate::due::COLUMNS_1_47), // 1.47: a date on a line, its card (`crate::due`)
     (28, crate::due::TURN_COLUMN_1_47),
     (28, crate::waiting::COLUMNS_1_47), // 1.47: what waits on the reader, Approve (`crate::waiting`)
+    (29, crate::told::COLUMNS_1_48), // 1.48: a shipped thread told, where (`crate::told`)
+    (29, crate::week::COLUMNS_1_48), // 1.48: Home's week, a desk's reopen rule (`crate::week`)
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

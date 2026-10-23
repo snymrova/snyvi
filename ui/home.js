@@ -215,6 +215,11 @@ const CSS = `
 .hm-dk .hm-next { margin: 0; }
 /* This week: the log, folded under the desks until it is asked for. */
 .hm-week > summary { list-style: none; cursor: pointer; }
+.hm-wk-n { margin: 6px 0 10px; color: var(--fg-2); font-size: var(--fs-small); }
+.hm-wk-f { display: grid; grid-template-columns: 9em 1fr auto; align-items: center; gap: 8px; margin: 0 0 6px; font-size: var(--fs-small); }
+.hm-wk-k { color: var(--fg-2); }
+.hm-wk-f input { min-width: 0; padding: 3px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; }
+.hm-wk-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 10px 0 0; }
 .hm-week > summary::-webkit-details-marker { display: none; }
 .hm-week > summary > .s-chev { margin-left: 2px; }
 .hm-week:not([open]) > summary { margin-bottom: 0; }
@@ -225,6 +230,9 @@ const CSS = `
 .hm-git svg { flex: none; color: var(--fg-3); }
 a.hm-repo { color: var(--fg-2); text-decoration: none; }
 a.hm-repo:hover, a.hm-repo:focus-visible { color: var(--accent); }
+/* A link in a friend's line (linkedLine, below). */
+a.hm-ln { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+a.hm-ln:hover { text-decoration-color: currentColor; }
 a.hm-panels { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-2); text-decoration: none; }
 a.hm-panels:hover { color: var(--fg); }
 .hm-pk-go { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
@@ -295,6 +303,9 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-wait .hm-sub { margin: 6px 0 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
 .hm-wait .hm-wt-d { color: inherit; }
 .hm-wait .hm-acts > .hm-s { flex: 1 1 auto; }
+/* Four acts on a left-off row (1.48 added Park it): each one word-line,
+   the by-line giving way first. */
+.hm-acts > .hm-link { flex: none; white-space: nowrap; }
 .hm-link.hm-ok { color: var(--accent); font-weight: 600; }
 .hm-link.hm-mine { color: var(--accent); }
 .hm-stage.planned.ok { color: var(--ok); }
@@ -614,7 +625,7 @@ function draw(j) {
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
     `<div class="hm-st">${status(j)}</div>` +
-    `<div class="hm-grid"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
+    `<div class="hm-grid"><div class="hm-main">${bar(j)}${yourWeek(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot"><button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
     (n ? ` · ${plural(n, "section")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p>` +
@@ -877,16 +888,29 @@ function bar(j) {
     `<button type="button" data-hm="pendx" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${X}</button></span>` : "";
   return `<div class="hm-nb" data-part="home.bar"><div class="hm-nb-in">` +
     `<button type="button" class="hm-nb-to" data-hm="to" aria-haspopup="listbox" aria-expanded="${menu?.by === "chip"}" aria-controls="hm-nb-opts" data-tip="The desk this note goes on" data-tip-sub="or type # and its name in the note" aria-label="On ${esc(d.name)} · choose another desk"><span>${esc(d.name)}</span>${CHEV}</button>` +
-    `<input data-hm="bar" class="hm-nb-t" maxlength="500" placeholder="Add a note" aria-label="A new note on ${esc(d.name)}" value="${esc(barDraft)}" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="${menu?.by === "hash"}" aria-controls="hm-nb-opts">` +
+    `<input data-hm="bar" class="hm-nb-t" placeholder="Add a note" aria-label="A new note on ${esc(d.name)}" value="${esc(barDraft)}" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="${menu?.by === "hash"}" aria-controls="hm-nb-opts">` +
     pend + `<span class="hm-nb-say">${saidHtml()}</span></div>` +
     `<div class="hm-nb-list"${menu ? "" : " hidden"}>${menu ? menuHtml(j) : ""}</div></div>`;
+}
+
+/* A date caught at the end of a line being typed (1.48): the desk's mirror
+ * of the daemon's grammar (ui/desk/06-rail.js), only to show it was seen. */
+const DUE_TAIL = /(?:^|[\s,·;-])((?:by|on|at|due)\s+)?((?:today|tonight|tomorrow|(?:next\s+)?(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|weekend|next\s+week|in\s+\d+\s*(?:m|mins?|minutes?|h|hrs?|hours?|d|days?|w|weeks?)|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)(?:\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*$/i;
+function dueGuess(t) {
+  const m = DUE_TAIL.exec(t || "");
+  if (!m || m.index === 0 && !m[1]) return "";
+  const bare = !m[1] && !/[,·;-]\s*$/.test(t.slice(0, m.index + 1));
+  if (bare && (/^\d{1,2}(:\d{2})?\s*(am|pm)?$/i.test(m[2]) || /^(mon|tue|wed|thu|fri|sat|sun|weekend|next\s+week)/i.test(m[2]))) return "";
+  return m[2].trim();
 }
 
 /** The bar's right end: Enter's key while the bar has the hand, then what the
  *  last Enter did, for a moment -- or, until the next key, why it did not. */
 function saidHtml() {
   const { esc } = c, s = barSaid;
-  if (!s) return `<kbd class="hm-nb-k" aria-hidden="true">↵</kbd>`;
+  // A date caught at the line's end shows beside Enter (1.48), as on a desk.
+  const g = dueGuess(barDraft);
+  if (!s) return `${g ? `<span class="hm-due">due ${esc(g)}</span>` : ""}<kbd class="hm-nb-k" aria-hidden="true">↵</kbd>`;
   if (s.err) return `<span class="hm-err" role="alert">${esc(s.err)}</span>`;
   return `<span role="status">Added to <a href="/desk/${s.desk}" data-desk="${s.desk}">${esc(s.name)}</a> ·</span><button type="button" class="hm-link hm-undo" data-hm="barundo">Undo</button>`;
 }
@@ -1025,6 +1049,59 @@ function desksList(j) {
   };
   return `<div class="hm-dks">` + shown.map(card).join("") + `</div>` +
     (more > 0 ? `<button type="button" class="hm-link hm-dks-more" data-hm="desks" aria-expanded="${all}">${all ? "Show fewer desks" : `${more} more ${more === 1 ? "desk" : "desks"}`}</button>` : "") + shelved;
+}
+
+/* Your week (1.48, src/week.rs): from Sunday 20:00 to Tuesday 06:00, one
+ * box above Pick up, there only while the daemon sends `week` -- what
+ * shipped and whether it was told, what waits on you, three numbers, and
+ * three fields that become dated lines. File it, Not this week, or Hide for
+ * good. Its coming moves Pick up down once, on a Sunday evening the page is
+ * drawn for; nothing in it comes and goes while it is up. */
+let wkDraft = null, wkSaid = "";
+function yourWeek(j) {
+  const w = j.week;
+  if (!w) return "";
+  const { esc, plural } = c;
+  const name = id => esc(deskName(j, id));
+  const d = wkDraft && wkDraft.at === w.at ? wkDraft
+    : (wkDraft = { at: w.at, ship: w.ship?.text || "", tell: w.tell?.text || "", drop: w.drop?.text || "" });
+  const shipped = w.shipped.length ? `<ul class="hm-log">${w.shipped.map(t => `<li><span class="hm-g ok"${t.told_at ? "" : ` data-tip="Not told yet"`}>${t.told_at ? "✓" : "○"}</span><span class="hm-t">${esc(t.name)}</span>` +
+    `<span class="fact">${name(t.desk)}${t.told_url ? ` · <a href="${esc(t.told_url)}" target="_blank" rel="noopener" data-tip="${esc(t.told_url)}">told ↗</a>` : t.told_at ? " · told" : " · not told"}</span></li>`).join("")}</ul>`
+    : `<p class="hm-quiet">Nothing shipped this week.</p>`;
+  const n = w.numbers;
+  const nums = [
+    n.ticked ? `${n.without_you} of ${plural(n.ticked, "line")} ticked with nothing asked of you` : "",
+    n.median_s ? `a line to its tick: ${n.median_s < 86400 ? `${Math.max(1, Math.round(n.median_s / 3600))} h` : `${Math.round(n.median_s / 86400)} d`}, the median` : "",
+    n.shipped ? `told ${n.told} of ${n.shipped} shipped in thirty days` : "",
+    w.waited ? `${plural(w.waited, "thing")} waiting on you` : "",
+  ].filter(Boolean);
+  const field = (k, label, ph, p, sub) => p ? `<label class="hm-wk-f"><span class="hm-wk-k">${label}</span><input data-hm="wkf" data-k="${k}" maxlength="200" placeholder="${ph}" value="${esc(d[k])}" aria-label="${label}"><span class="fact" data-tip="${esc(sub)}">${name(p.desk)}</span></label>` : "";
+  const fields = field("ship", "Next week I ship", "what goes out", w.ship, "a line there, due Friday 17:00") +
+    field("tell", "I tell", "who hears of what", w.tell, "a line there, due Monday 10:00") +
+    field("drop", "I drop", "leave empty to keep it", w.drop, "clears that desk's Left off; Undo on the desk");
+  return `<section class="hm-w hm-wk" data-part="home.yourweek" aria-label="Your week"><div class="hm-wh"><h2>Your week</h2>` +
+    `<button type="button" class="hm-hide" data-hm="wkoff" data-tip="Hide Your week" data-tip-sub="for good; the foot's Show brings it back">Hide</button></div>` +
+    shipped + (nums.length ? `<p class="hm-wk-n">${nums.map(esc).join(" · ")}</p>` : "") + fields +
+    `<p class="hm-wk-acts">${fields ? `<button type="button" class="hm-link hm-ok" data-hm="wkgo">File it</button>` : ""}<button type="button" class="hm-link" data-hm="wkskip">${fields ? "Not this week" : "Done"}</button>${weekButton(j)}${wkSaid ? `<span class="hm-s" role="status">${esc(wkSaid)}</span>` : ""}</p></section>`;
+}
+
+/** The box's buttons. True when the click was one of them. */
+async function weekClick(k, b) {
+  if (!["wkgo", "wkskip", "wkoff"].includes(k)) return false;
+  const w = last?.week, d = wkDraft, api = c.deskApi;
+  if (!w) return true;
+  b.disabled = true;
+  try {
+    if (k === "wkgo") {
+      const f = (p, text) => p && text.trim() ? { text: text.trim(), desk: p.desk, thread: p.thread } : null;
+      await api("/api/home/week", { ship: f(w.ship, d.ship), tell: f(w.tell, d.tell) });
+      // Drop is the Left off's own, as Waiting on you's Drop is.
+      if (w.drop && d.drop.trim()) await api(`/api/desks/${w.drop.desk}/leftoff`, { text: "" });
+    } else await api("/api/home/week", { hide: k === "wkoff" ? "off" : "week" });
+    wkSaid = "";
+  } catch (e) { b.disabled = false; wkSaid = "Could not do that · Try again"; draw(last); return true; }
+  soonRefresh();
+  return true;
 }
 
 /** The log, folded at the foot of the page until it is opened, and kept
@@ -1239,12 +1316,18 @@ function onMe(id, l) {
 const deskName = (j, id) => (j.desks || []).find(d => d.id === id)?.name || "a desk";
 
 function waitBox(j) {
-  const { esc, plural } = c, due = j.due || [], wt = j.wait || [];
+  const { esc, plural } = c, due = j.due || [];
+  // A desk quiet ten days with lines still open waits on you too, with Park
+  // it (1.48): the desk card's own Park it?, said where the waiting is.
+  const old = Date.now() / 1000 - QUIET_DAYS * DAY;
+  const quiet = (j.desks || []).filter(d => !d.parked && d.open && d.touched && d.touched < old && !(j.wait || []).some(w => w.desk === d.id))
+    .map(d => ({ kind: "quiet", desk: d.id, doc: "", text: `Quiet since ${new Date(d.touched * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${plural(d.open, "line")} open`, at: d.touched }));
+  const wt = [...(j.wait || []), ...quiet];
   // A row answered here keeps its place while its words stand, with its
   // Undo, after the read that no longer has it.
-  const keyOf = x => `${x.kind === "plan" ? "p" : "l"}${x.desk}:${x.doc}`;
+  const keyOf = x => `${x.kind === "plan" ? "p" : x.kind === "quiet" ? "q" : "l"}${x.desk}:${x.doc}`;
   const present = new Set([...due.map(n => `u${n.id}`), ...wt.map(keyOf)]);
-  const ghosts = [...arrSaid].filter(([k]) => /^[ulp]/.test(k) && !present.has(k))
+  const ghosts = [...arrSaid].filter(([k]) => /^[ulpq]/.test(k) && !present.has(k))
     .map(([, s]) => `<li><span class="hm-ab"><span class="hm-t">${esc(s.item.text || "")}</span><span class="hm-acts">${saidRow(s)}</span></span></li>`).join("");
   if (!due.length && !wt.length && !ghosts) return "";
   const where = id => `<a class="hm-t hm-wt-d" href="/desk/${id}" data-desk="${id}">${esc(deskName(j, id))}</a>`;
@@ -1259,11 +1342,12 @@ function waitBox(j) {
     const head = x.kind === "plan"
       ? `<span class="hm-t">Plan <a href="/d/${esc(x.doc)}" data-id="${esc(x.doc)}">${esc(x.text)}</a> for ${x.notes.map(n => `#${n}`).join(" ")}</span>`
       : `<span class="hm-t">${esc(x.text)}</span>`;
-    const acts = x.kind === "plan"
+    const park = `<button type="button" class="hm-link" data-hm="wpark" data-k="${x.desk}" data-tip="Park it" data-tip-sub="the desk goes on the shelf; nothing on it is closed">Park it</button>`;
+    const acts = x.kind === "quiet" ? park : x.kind === "plan"
       ? `<button type="button" class="hm-link hm-ok" data-hm="wplan" data-k="${x.desk}" data-n="${esc(x.doc)}" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt">Approve</button>`
       : `<button type="button" class="hm-link hm-ok" data-hm="wok" data-k="${x.desk}" data-tip="Approve" data-tip-sub="the next step is the agent's now; its panel hears it at its next prompt">Approve</button>` +
         `<button type="button" class="hm-link" data-hm="wlater" data-k="${x.desk}" data-tip="Tomorrow" data-tip-sub="a note on its desk, due tomorrow at 9; the left-off stays">Tomorrow</button>` +
-        `<button type="button" class="hm-link" data-hm="wdrop" data-k="${x.desk}" data-tip="Drop it" data-tip-sub="clears the left-off; Undo brings it back">Drop</button>`;
+        `<button type="button" class="hm-link" data-hm="wdrop" data-k="${x.desk}" data-tip="Drop it" data-tip-sub="clears the left-off; Undo brings it back">Drop</button>` + park;
     return `<li><span class="hm-ab">${head}<span class="hm-acts">` +
       (said(key) || `<span class="hm-s">${where(x.desk)} · ${x.by ? `${esc(x.by)} · ` : ""}${live(x.at, age)}</span>${acts}`) + `</span></span></li>`;
   }).join("");
@@ -1276,11 +1360,12 @@ function waitBox(j) {
 
 /** The box's buttons, and On me. True when the click was one of them. */
 async function waitClick(k, id, b) {
-  if (!["udone", "ulater", "wplan", "wok", "wlater", "wdrop", "wundo", "onme"].includes(k)) return false;
+  if (!["udone", "ulater", "wplan", "wok", "wlater", "wdrop", "wundo", "onme", "wpark", "wunpark"].includes(k)) return false;
   const n = b.dataset.n || "", api = c.deskApi;
   const x = (last?.wait || []).find(w => w.desk === id && (k !== "wplan" || w.doc === n));
   const text = k[0] === "u" ? (last?.due || []).find(d => String(d.id) === n)?.text : x?.text;
-  const key = k[0] === "u" ? `u${n}` : `${k === "wplan" ? "p" : "l"}${id}:${x?.doc || ""}`;
+  const quiet = !x && (k === "wpark" || k === "wunpark");
+  const key = k[0] === "u" ? `u${n}` : `${k === "wplan" ? "p" : quiet ? "q" : "l"}${id}:${x?.doc || ""}`;
   b.disabled = true;
   try {
     if (k === "udone") { await api(`/api/desks/${id}/notes/${n}`, { done: true }); sayRow(key, { id, text }, "Ticked"); }
@@ -1296,6 +1381,12 @@ async function waitClick(k, id, b) {
     } else if (k === "wdrop") {
       const r = await api(`/api/desks/${id}/leftoff`, { text: "" });
       sayRow(key, { id, text, was: r.was }, "Dropped", "wundo");
+    } else if (k === "wpark") {
+      if (!(await park(id, ""))) return true;
+      sayRow(key, { id, text: text || deskName(last, id) }, `Parked ${deskName(last, id)}`, "wunpark");
+    } else if (k === "wunpark") {
+      await park(id, null);
+      for (const [kk, v] of arrSaid) if (v.undo === "wunpark" && v.item.id === id) { clearTimeout(v.t); arrSaid.delete(kk); }
     } else if (k === "wundo") {
       const s = [...arrSaid.values()].find(v => v.undo === "wundo" && v.item.id === id);
       if (s?.item.was) await api(`/api/desks/${id}/leftoff`, s.item.was);
@@ -1329,6 +1420,27 @@ function saidRow(s) {
     (s.undo ? `<button type="button" class="hm-link hm-undo" data-hm="${s.undo}" data-k="${s.item.id}">Undo</button>` : "");
 }
 
+/** A friend's line, escaped, with its web links as links out to the
+ *  desktop's browser: the rail's `webLinks`/`linked` (ui/desk/06-rail.js),
+ *  copied since chunks cannot import each other -- the same rules, http or
+ *  https, never this machine, bidi controls off, nothing fetched. Here the
+ *  text is no button, so a link is an `<a>`, which the window hands out. */
+function linkedLine(text, esc) {
+  text = text.replace(/[‪-‮⁦-⁩]/g, "");
+  let html = "", from = 0;
+  for (const m of text.matchAll(/https?:\/\/[^\s<>"'`]+/g)) {
+    let s = m[0].replace(/[.,;:!?'"]+$/, "");
+    while (s.endsWith(")") && s.split(")").length > s.split("(").length) s = s.slice(0, -1);
+    let u;
+    try { u = new URL(s); } catch { continue; }
+    if (!u.hostname || /^(localhost|127\.|0\.0\.0\.0|\[::1?\])/i.test(u.hostname)) continue;
+    const host = u.host.replace(/^www\./, ""), rest = (u.pathname === "/" ? "" : u.pathname) + u.search + u.hash;
+    html += esc(text.slice(from, m.index)) + `<a class="hm-ln" href="${esc(s)}" target="_blank" rel="noopener noreferrer" data-tip="Open ${esc(host)}" data-tip-sub="${esc(s)}">${esc(host + (rest.length > 28 ? rest.slice(0, 28) + "…" : rest))}</a>`;
+    from = m.index + s.length;
+  }
+  return html + esc(text.slice(from));
+}
+
 /** A friend's line: Keep on… puts it on a desk in one click, with their
  *  name on it; ✕ puts it away. Keep on… is the window's, where the desks are. */
 function lineRow(n, j) {
@@ -1336,7 +1448,7 @@ function lineRow(n, j) {
   const desks = [...ds.filter(d => !d.parked), ...ds.filter(d => d.parked)];
   const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
-  return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
+  return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${linkedLine(n.text, esc)}</span><span class="hm-acts">` +
     (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at)}</span>` +
       (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Add it to a desk" data-tip-sub="a note there, from ${esc(n.from)}">Add to a desk… ▾</button>` : "") +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
@@ -1498,11 +1610,12 @@ function wire() {
       if (justParked === id) { justParked = 0; clearTimeout(parkedT); }
       soonRefresh();
     }
-    else if (!(await waitClick(k, id, b))) friendClick(k, id, b);
+    else if (!(await waitClick(k, id, b)) && !(await weekClick(k, b))) friendClick(k, id, b);
   });
   el.addEventListener("input", e => {
     if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
-    else if (e.target.dataset?.hm === "bar") { barDraft = e.target.value; if (barSaid?.err) { say(null); sayNow(); } hashMenu(e.target); }
+    else if (e.target.dataset?.hm === "wkf" && wkDraft) wkDraft[e.target.dataset.k] = e.target.value;
+    else if (e.target.dataset?.hm === "bar") { barDraft = e.target.value; if (barSaid?.err) say(null); sayNow(); hashMenu(e.target); }
     else if (e.target.dataset?.hm === "find" && menu) { menu.q = e.target.value; menu.at = 0; drawMenu(); }
   });
   // The list's rows take a click without taking the hand from the field, and
@@ -1675,6 +1788,10 @@ async function addNote() {
   // until the reader writes their own -- as on the desk.
   const text = barDraft.trim() || (pics.length ? "A picture" : "");
   if (!d || !text) return;
+  // A desk keeps 200 characters of a line (`desk::NOTE_CHARS`): longer is
+  // said here, with the bar as it was, rather than cut by the daemon.
+  const n = [...text].length;
+  if (n > 200) { say({ err: `${n} characters; a note holds 200` }); sayNow(); return; }
   barDraft = ""; barPics = []; menu = null; say(null);
   draw(last); focusBar();
   let r;

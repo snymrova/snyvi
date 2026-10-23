@@ -83,6 +83,8 @@ const CSS = `
   background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); text-align: left; cursor: text; }
 button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-left-k { color: var(--fg-3); }
+/* A launch's count: tabular, so 9/11 and 10/11 are one width. */
+.dk-launch { flex: none; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 600; line-height: 16px; font-variant-numeric: tabular-nums; color: var(--fg-2); }
 .dk-left-b.none { color: var(--fg-3); opacity: 0; }
 .dk-head:is(:hover, :focus-within) .dk-left-b.none { opacity: 1; }
 .dk-left-in { flex: 1; min-width: 0; font: inherit; font-size: var(--fs-small); padding: 1px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
@@ -516,6 +518,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 27px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
 .dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 27px; right: 4px; }
 .dk-note:hover > .nm { color: var(--fg); }
+/* A link in a line: underlined, the hand over it, and its own click. */
+.nm-a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; cursor: pointer; }
+.nm-a:hover { text-decoration-color: currentColor; }
 /* Done: said twice, because a strike alone is hard to see at 12px in a dim
    rail and a dim row alone reads as disabled rather than as finished. */
 .dk-note.done > .nm { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--fg-3); }
@@ -538,6 +543,18 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* Done is quiet: the accent is for what wants looking at, and a done note
    is the one thing on the rail that does not. */
 .dk-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
+/* A date caught while typing: over the field's right end, out of the flow. */
+.dk-note.new { position: relative; }
+.dk-due-guess { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); padding: 0 5px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 14%, var(--bg)); color: var(--fg-2); font-size: var(--fs-micro); line-height: 16px; pointer-events: none; }
+/* Pick a time, at the foot of the date menu. */
+.dk-due-in { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }
+/* Keep all, under a set of suggested lines: in line with the rows' text. */
+.dk-keepall { padding-left: 20px; }
+/* A line promised to a friend: their name after an arrow, quiet; kept, ok. */
+.dk-prom { color: var(--fg-3); font-size: var(--fs-micro); white-space: nowrap; }
+.dk-prom.kept { color: var(--ok); }
+/* Ticked without evidence: the ✓ in a ring, not on a disc. */
+.dk-tick.bare[aria-checked="true"] { background: none; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: var(--fg-3); }
 .dk-tick svg { width: 9px; height: 9px; }
 /* Small to the eye and not to the hand: the press lands on 20 px. */
 .dk-tick:not(.ghost)::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; }

@@ -99,11 +99,30 @@ pub(crate) struct MoveBody {
     /// The reader moved it from the panel (the mod's `/park`): told to the
     /// panel's Claude at its next prompt, as a move on the page is.
     reader: bool,
+    /// With `told`: where the world heard of it (`crate::told`).
+    url: String,
 }
 
 fn moved(app: &App, desk: i64, r: anyhow::Result<Moved>) -> Response {
     match r {
         Ok(Moved::Thread(t)) => {
+            // Told just now: a row in Lately, lit, with where (`crate::told`),
+            // and Out there offered for the desk, once (`propose_out_there`).
+            if t.told_at != 0 && t.told_at >= t.moved_at {
+                super::api_widget::propose_out_there(app, desk);
+                lately_log(
+                    app,
+                    crate::lately::New {
+                        kind: "told",
+                        text: t.name.clone(),
+                        who: t.by.clone(),
+                        from: crate::receive::pane_origin(&app.store, Some(t.pane.as_str())),
+                        data: json!({ "url": t.told_url, "how": t.told_how, "desk": desk, "thread": t.id }),
+                        lit: true,
+                        ..Default::default()
+                    },
+                );
+            }
             threads_moved(app, desk);
             Json(json!({ "thread": t })).into_response()
         }
@@ -112,6 +131,10 @@ fn moved(app: &App, desk: i64, r: anyhow::Result<Moved>) -> Response {
             format!("a stage is one of {}", thread::STAGES.join(", ")),
         ),
         Ok(Moved::BadPr) => refused(StatusCode::BAD_REQUEST, "a PR is its number"),
+        Ok(Moved::BadUrl) => refused(
+            StatusCode::BAD_REQUEST,
+            "told needs an http(s) URL, one line",
+        ),
         Ok(Moved::NoThread) => refused(
             StatusCode::CONFLICT,
             "this panel has no thread yet; start one with start_thread",
@@ -138,6 +161,7 @@ pub(crate) async fn pane_move_thread(
         notes: b.notes,
         pane: id,
         reader: b.reader,
+        url: b.url,
     };
     let desk = placed.desk_id;
     let r = app
@@ -1055,6 +1079,7 @@ pub(crate) async fn desk_move_thread(
         notes: b.notes,
         pane: String::new(),
         reader: true,
+        url: b.url,
     };
     let r = app
         .store
@@ -1244,6 +1269,10 @@ pub(crate) async fn desk_answer_turn(
         .or((!b.answer.trim().eq_ignore_ascii_case("done")).then_some(b.answer.as_str()));
     match app.store.clocked(|c, now| match thread::turn(c, id, t)? {
         Some(due) if due.kind == crate::due::KIND => crate::due::answer(c, id, &due, later, now),
+        // Who should know (`crate::told`): a dated line on the thread, or told.
+        Some(tell) if tell.kind == crate::told::KIND => {
+            Ok(crate::told::answer(c, id, &tell, &b.answer, now)?.map(|(t, _)| t))
+        }
         _ => thread::answer(c, id, t, &b.answer, "snyvi", now),
     }) {
         Ok(Some(turn)) => {

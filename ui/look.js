@@ -39,14 +39,7 @@ const CSS = `
 @keyframes mk-swing { 0%, 100% { transform: none; } 30% { transform: rotate(-20deg); } 65% { transform: rotate(12deg); } }
 @keyframes mk-puff { from { opacity: 0; transform: translate(0, 2px) scale(.4); } 35% { opacity: 1; } to { opacity: 0; transform: translate(3px, -11px) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .mk, .mk-nub, .mk-puff { animation: none; } }
-/* Print, in 1.8: printing waits for a page long idle, and so does this. */
-@media print {
-  #side, #rail, #chrome, #toasts, #palette, #help, #about, #reset, #queue-bar, pre.code .copy { display: none !important; }
-  #app { display: block; }
-  #doc { max-width: none; padding: 0; }
-  .prose { font-size: 11.5pt; }
-  pre.code { white-space: pre-wrap; }
-}
+/* Print moved to copy.js in 1.48, beside Save as PDF (#182). */
 
 /* The beat each arrives on, capped: the last is in by --dur-instant, however
    many there are (docs/DESIGN.md §7.2). */

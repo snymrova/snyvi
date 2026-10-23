@@ -266,6 +266,8 @@ function rail() {
   pageChips(vs, live);
   onYou(d);
   meta();
+  // The head's Left off slot carries a launch's count, which ticks change.
+  leftOffSlot(d);
 }
 
 /** A page lands far from where the reader is looking: they are on the panel
@@ -538,7 +540,7 @@ function noteSec(d) {
     // opens and shuts. On an empty list it is the whole of the list.
     (notesOff === d.id ? "" : !(noteField && noteField.kind === "new")
       ? `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
-      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false">` +
+      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"><span class="dk-due-guess" aria-hidden="true" hidden></span>` +
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
         (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`));
@@ -565,6 +567,29 @@ const errLine = (k, esc, tag = "li") => rowErr && rowErr.k === k
 /** Why the field is open again, after a save the daemon refused. */
 const noteSays = esc => noteErr ? `<span class="field-err" role="alert">${esc(noteErr)}</span>` : "";
 
+/* A date caught at the end of a line being typed (1.48): a light mirror of
+ * the daemon's grammar (src/due.rs), only to show the reader it was seen.
+ * The daemon's read is the truth; a tail it does not take stays as words. */
+const DUE_TAIL = /(?:^|[\s,·;-])((?:by|on|at|due)\s+)?((?:today|tonight|tomorrow|(?:next\s+)?(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|weekend|next\s+week|in\s+\d+\s*(?:m|mins?|minutes?|h|hrs?|hours?|d|days?|w|weeks?)|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)(?:\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*$/i;
+function dueGuess(t) {
+  const m = DUE_TAIL.exec(t || "");
+  if (!m || m.index === 0 && !m[1]) return "";
+  // A weekday alone, or an hour alone, needs a word before it, as there.
+  const bare = !m[1] && !/[,·;-]\s*$/.test(t.slice(0, m.index + 1));
+  if (bare && (/^\d{1,2}(:\d{2})?\s*(am|pm)?$/i.test(m[2]) || /^(mon|tue|wed|thu|fri|sat|sun|weekend|next\s+week)/i.test(m[2]))) return "";
+  return m[2].trim();
+}
+/** The chip over the field's end: there or not, it moves nothing. */
+function dueGuessDraw(inp) {
+  const el = inp.parentElement?.querySelector(".dk-due-guess");
+  if (!el) return;
+  const g = dueGuess(inp.value);
+  el.textContent = g ? `due ${g}` : "";
+  el.hidden = !g;
+  // The words scroll short of the chip rather than under it.
+  inp.style.paddingRight = g ? `${el.offsetWidth + 12}px` : "";
+}
+
 /** One line. A line being rewritten is a field in the row's own place, so the
  *  text does not move under the cursor as it becomes editable; a line just
  *  taken off keeps its place too, holding the offer to put it back where the
@@ -578,11 +603,16 @@ function noteRow(x, esc) {
   // Keep and ✕ sit where a line's tools do, always shown, since a suggestion
   // is a question and these are its two answers.
   if (x.suggested_by) {
+    // The last of a set one agent wrote at once (a launch, 1.48) has Keep
+    // all on a line of its own under it; each row keeps on its own too.
+    const set = noteList.filter(y => y.suggested_by === x.suggested_by && y.created_at === x.created_at && y.suggested_by && !y.gone);
+    const all = set.length > 1 && set.at(-1).id === x.id
+      ? `<li class="dk-note dk-sug dk-keepall"><button type="button" class="dk-keep" data-a="note-keep" data-all="1" data-n="${set[0].id}" data-tip="Keep all ${set.length}" data-tip-sub="every line ${esc(x.suggested_by)} suggested with these" aria-label="Keep all ${set.length} suggested lines">Keep all ${set.length}</button></li>` : "";
     return `<li class="dk-note dk-sug"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span>` +
       (x.sent_by ? ctx.who(x.sent_by, `From ${x.sent_by}`) : "") +
-      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
+      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${linked(x.text, esc)}</span>` +
       `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
-      `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
+      `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc) + all;
   }
   // A line is two lines at most; the whole of it is its tip, and rewriting
   // it opens a card over the list, as tall as the text, while the row keeps
@@ -602,11 +632,14 @@ function noteRow(x, esc) {
   // A ticked line keeps its number and its pictures under it; where its
   // work went -- the commit, the PR -- is its tip and its menu, since a done
   // line is history and they were the loudest marks on it (7c0fc42885).
-  const marks = x.done ? picMark(x, esc) + tell(x, esc) : stageMark(x, esc) + dueMark(x, esc) + picMark(x, esc);
-  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : ""].filter(Boolean);
+  const marks = x.done ? picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : stageMark(x, esc) + dueMark(x, esc) + promiseMark(x, esc) + picMark(x, esc);
+  // An agent's tick with nothing to show for it -- no commit, document or
+  // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
+  const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
+  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : "", bare ? "ticked without evidence: needs a look" : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
-    `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
-    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
+    `<span class="dk-lead"><button type="button" class="dk-tick${bare ? " bare" : ""}" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
+    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${linked(x.text, esc)}</span></button>` +
     `<span class="dk-tail">` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
     replyLine(x, esc) +
@@ -745,7 +778,9 @@ function duePop(x, esc) {
   const late = new Date().getHours() >= 19;
   return `<span class="dk-due-pop" role="menu" aria-label="Move ${esc(x.text)}">` +
     DUE_TO.filter(([w]) => !(late && w === "tonight")).map(([w, l]) => `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="${w}">${l}</button>`).join("") +
-    `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="" data-tip="No date" data-tip-sub="the line stays">No date</button></span>`;
+    `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="" data-tip="No date" data-tip-sub="the line stays">No date</button>` +
+    // Pick a time… (1.48): any date the daemon reads, typed, Enter sets it.
+    `<input class="dk-due-in" data-n="${x.id}" maxlength="40" spellcheck="false" placeholder="Pick a time: fri 16" aria-label="Pick a time for ${esc(x.text)}"></span>`;
 }
 
 /** How long a plan or a read stands with nothing since before it says so. */
@@ -962,6 +997,58 @@ function tell(x, esc) {
  *  where it can be seen. The row's menu copies the one and opens the other. */
 const doneWords = x => [x.done_commit && x.done_commit.slice(0, 7), evSay(x.done_evidence)].filter(Boolean).join(" · ");
 
+/* ---------- links in a line ----------
+ *
+ * A line can carry a link, and a friend's line often is one (06981a8a31). It
+ * is drawn as one, short -- host and path, the whole address in its tip --
+ * and goes out to the desktop's browser. Only the web's: http or https with a
+ * host that is not this machine, so a line never reaches a snyvi route. The
+ * bidi controls come off first, or a friend's line could show a host
+ * backwards. Nothing is fetched to draw it. Home's Arrived keeps a copy of
+ * these two (home.js), since chunks cannot import each other.
+ */
+
+/** What the daemon keeps of a line, in characters (`desk::NOTE_CHARS`). */
+const NOTE_CHARS = 200;
+const BIDI = /[‪-‮⁦-⁩]/g;
+
+/** The web links in a text: each with where it stands, and its host. Also
+ *  the gate for opening one (07-actions.js `note-open`, and `note-ev`, a
+ *  tick's evidence): a link it does not find is not opened. */
+function webLinks(text) {
+  const out = [];
+  for (const m of text.replace(BIDI, "").matchAll(/https?:\/\/[^\s<>"'`]+/g)) {
+    // A sentence's own stop or bracket is not the link's.
+    let s = m[0].replace(/[.,;:!?'"]+$/, "");
+    while (s.endsWith(")") && s.split(")").length > s.split("(").length) s = s.slice(0, -1);
+    let u;
+    try { u = new URL(s); } catch { continue; }
+    if (!u.hostname || /^(localhost|127\.|0\.0\.0\.0|\[::1?\])/i.test(u.hostname)) continue;
+    out.push({ at: m.index, end: m.index + s.length, url: s, host: u.host.replace(/^www\./, ""), rest: (u.pathname === "/" ? "" : u.pathname) + u.search + u.hash });
+  }
+  return out;
+}
+
+/** A line's text, escaped, with its links as `data-a="note-open"` spans: a
+ *  span and not an `<a>`, since the text sits in a button. */
+function linked(text, esc) {
+  text = text.replace(BIDI, "");
+  let html = "", from = 0;
+  for (const l of webLinks(text)) {
+    const shown = l.host + (l.rest.length > 28 ? l.rest.slice(0, 28) + "…" : l.rest);
+    html += esc(text.slice(from, l.at)) + `<span class="nm-a" data-a="note-open" data-u="${esc(l.url)}" data-tip="Open ${esc(l.host)}" data-tip-sub="${esc(l.url)}">${esc(shown)}</span>`;
+    from = l.end;
+  }
+  return html + esc(text.slice(from));
+}
+
+/** What a field says of a line longer than the daemon keeps, or "": short,
+ *  since the rail's error is one line under a narrow field. */
+function tooLong(text) {
+  const n = [...text].length;
+  return n > NOTE_CHARS ? `${n} characters; a note holds ${NOTE_CHARS}` : "";
+}
+
 /** Where the finished work can be seen, in a word: a GitHub pull request or
  *  issue by its number, anything else by its host. */
 function evSay(u) {
@@ -1014,6 +1101,7 @@ function forgetNotes() {
 /** This desk's list. Asked for once, unless a write says to look again. */
 async function getNotes(id, again) {
   if (id == null || !ctx) return;
+  getFriends();
   if (!again && (notesAt === id || notesGet === id)) return;
   notesGet = id;
   // The panels' pipelines move with the same event (13-pipeline.js).
@@ -1038,11 +1126,37 @@ async function getNotes(id, again) {
   // §2.3). A tick here says it itself, below, before the list is read back.
   const ticked = notesAt === id && was.some(stillOpen) && !next.some(stillOpen) && next.filter(x => x.done).length > was.filter(x => x.done).length;
   noteList = next; notesAt = id;
+  promisedTo = new Map((j.promised || []).map(p => [p.note, p]));
   if (ticked && ctx.done) ctx.done();
   if (current()) rail();
 }
 /** A line still to do: not ticked, not on its way out, not a suggestion. */
 const stillOpen = x => !x.done && !x.gone && !x.suggested_by;
+
+/* Promises (1.48, src/promise.rs): which of this desk's lines went to a
+ * friend, by line id, from the list's own read; and the friends a line can
+ * go to, read once a desk opens -- the desk's chunk has no other way to
+ * them. A dated open line's menu has Promise to… for each. */
+let promisedTo = new Map(), friendsList = null;
+async function getFriends() {
+  if (friendsList) return friendsList;
+  try { friendsList = ((await ctx.api("/api/peers")).friends || []).filter(f => !f.removed_at); } catch { friendsList = []; }
+  return friendsList;
+}
+/** The → mark on a line promised: to whom, and kept once it is ticked. */
+function promiseMark(x, esc) {
+  const p = promisedTo.get(x.id);
+  if (!p) return "";
+  return `<span class="dk-prom${p.kept ? " kept" : ""}" data-tip="${p.kept ? `Kept: ${esc(p.to)} sees it ticked` : `Promised to ${esc(p.to)}`}" data-tip-sub="${p.kept ? "" : "they see it on their Home, and see it kept when you tick it"}">→ ${esc(p.to)}${p.kept ? " ✓" : ""}</span>`;
+}
+/** Promise to…: the line, its date and its id, to that friend. */
+async function promise(d, x, f) {
+  promisedTo.set(x.id, { note: x.id, to: f.name, kept: false });
+  rail();
+  try { await ctx.api(`/api/peers/${f.id}/note`, { text: x.text, note: x.id, due_at: x.due_at }); }
+  catch (e) { promisedTo.delete(x.id); rail(); ctx.toast(`Could not promise it to ${f.name}`, e); return; }
+  getNotes(d.id, true);
+}
 
 /** A desk's list changed -- an agent ticked or suggested a line, or another
  *  window wrote on it: read this desk's list again if it is that desk. A field being typed in is left be --
@@ -1065,7 +1179,8 @@ function noteFocus() {
   const grow = () => { if (inp.tagName === "TEXTAREA") { inp.style.height = "auto"; inp.style.height = Math.min(inp.scrollHeight + 2, 12 * 18 + 8) + "px"; } };
   grow();
   inp.addEventListener("input", grow);
-  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; if (noteErr) { noteErr = ""; inp.nextElementSibling?.remove(); } });
+  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; dueGuessDraw(inp); if (noteErr) { noteErr = ""; inp.parentElement?.querySelector(".field-err")?.remove(); } });
+  dueGuessDraw(inp);
   // Where the caret was, not the end of the line: the rail redraws on the
   // clock every 30 seconds, and a caret that jumped to the end each time
   // would make a long note impossible to correct in the middle.
@@ -1130,6 +1245,10 @@ async function saveNote(again) {
   // until the reader writes their own.
   const text = noteDraft.trim() || (pics.length ? "A picture" : "");
   if (!f || !d) return;
+  // Longer than the daemon keeps: said under the field, which stays open
+  // with every character, rather than cut where nobody sees it.
+  const long = tooLong(text);
+  if (long) { noteErr = long; rail(); return; }
   noteField = again && f.kind === "new" ? { kind: "new" } : null;
   noteDraft = ""; noteCaret = 0; noteErr = ""; if (f.kind === "new") pending = [];
   rail();

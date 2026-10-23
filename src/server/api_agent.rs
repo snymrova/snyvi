@@ -654,7 +654,7 @@ pub(crate) async fn pane_brief(
         .filter(|p| p.removed_at == 0)
         .map(|p| p.name)
         .collect();
-    let (threads, waiting, cards) = app
+    let (threads, waiting, cards, untold, ship) = app
         .store
         .clocked(|c, now| {
             Ok((
@@ -664,6 +664,8 @@ pub(crate) async fn pane_brief(
                 // stale ones only counted (`brief::brief_of`).
                 crate::thread::waiting_on(c, desk.id, true, now)?,
                 crate::thread::suggestions(c, desk.id)?,
+                crate::told::untold(c, desk.id, now)?,
+                crate::week::ship_line(c, desk.id, now)?,
             ))
         })
         .unwrap_or_default();
@@ -672,6 +674,8 @@ pub(crate) async fn pane_brief(
         threads: &threads,
         waiting: &waiting,
         cards: &cards,
+        untold: &untold,
+        ship,
     };
     let context = crate::brief::brief_of(
         &desk,
@@ -943,10 +947,32 @@ pub(crate) struct SuggestBody {
     /// When it is due, in the user's words: `fri 10` (`crate::due::parse`).
     #[serde(default)]
     pub(crate) due: String,
+    /// Several dated lines as one set, a launch's (`crate::launch`).
+    #[serde(default)]
+    pub(crate) lines: Vec<crate::launch::Line>,
 }
 
 /// An agent suggests a line for its own desk's list: `suggest_desk_note`. It
 /// shows as a ghost row with Keep and ✕, and is on the list only once kept.
+/// A set of dated lines (`crate::launch`): every one a suggestion, kept
+/// together by Keep all on the first.
+fn suggest_set(app: &App, desk: i64, desk_name: &str, pane: &str, b: &SuggestBody) -> Response {
+    let r = app
+        .store
+        .clocked(|c, now| crate::launch::suggest_lines(c, desk, &b.lines, &b.by, pane, now));
+    match r {
+        Ok(crate::launch::Lines::Set(ids, undated)) => {
+            notes_moved(app, desk);
+            (StatusCode::CREATED, Json(json!({ "notes": ids, "desk": desk_name, "undated": undated }))).into_response()
+        }
+        Ok(crate::launch::Lines::Empty) => (StatusCode::BAD_REQUEST, Json(json!({ "error": "lines needs at least one line of text" }))).into_response(),
+        Ok(crate::launch::Lines::TooMany) => (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("a set is at most {} lines", crate::launch::LINES_MAX) }))).into_response(),
+        Ok(crate::launch::Lines::Full) => (StatusCode::CONFLICT, Json(json!({ "error": format!("this desk already has {} suggestions waiting for the user (or its list is full); wait until they keep or remove them", crate::desk::SUGGESTIONS_PER_DESK) }))).into_response(),
+        Ok(crate::launch::Lines::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
 pub(crate) async fn pane_suggest_note(
     State(app): S,
     headers: HeaderMap,
@@ -957,6 +983,9 @@ pub(crate) async fn pane_suggest_note(
         Ok(p) => p,
         Err(no) => return *no,
     };
+    if !b.lines.is_empty() {
+        return suggest_set(&app, placed.desk_id, &placed.desk_name, &id, &b);
+    }
     match app.store.suggest_desk_note(placed.desk_id, &b.text, &b.by) {
         Ok(crate::desk::Suggested::Note(mut note)) => {
             // A `due` that is no date is said back rather than dropped

@@ -75,12 +75,52 @@ function alreadyOpen({ capability, toast }) {
     action: { label: "Cancel it", run: () => fetch("/api/browse/pick/cancel", { method: "POST", headers: { "x-snyvi-capability": capability } }).catch(() => {}) } });
 }
 
+/** A folder's path as one key: the trailing slash off, and a Windows path
+ *  in one spelling, as 02-tree.js's `pathKey` has it. */
+const pathKey = p => !p ? "" : /^(\\\\\?\\)?[A-Za-z]:[\\/]/.test(p)
+  ? p.replace(/^\\\\\?\\/, "").replace(/\//g, "\\").replace(/(.)\\+$/, "$1").toLowerCase()
+  : p.replace(/(.)\/+$/, "$1");
+
+/** The desk closed last on folder `f`, not yet pruned, or null. Closing a
+ *  desk keeps its documents on it, by its id: a new desk on the same folder
+ *  is a new id and opens empty, which reads as the documents gone. So the
+ *  way back to a folder is the desk that was there. A failed look is no
+ *  desk: the reader asked for one, and gets a new one as before. */
+async function closedDeskOn(ctx, f) {
+  const { state, api } = ctx;
+  const abs = f.project != null ? state.tree.find(p => p.id === f.project)?.root
+    : !f.path ? state.browse.find(r => r.id === f.root)?.path : f.abs;
+  const k = pathKey(abs);
+  if (!k) return null;
+  try {
+    const j = await api("/api/removed");
+    const rows = (j.items || []).filter(x => x.kind === "desk" && pathKey(x.from) === k);
+    return rows.sort((a, b) => b.at - a.at)[0] || null;
+  } catch { return null; }
+}
+
 /** A new desk on folder `f` -- a folder under Folders, or a project by its
  *  id -- or with none on no folder: it starts in the home directory, which
  *  the daemon names. `welcome`: asked from Welcome, which goes on to Got
- *  another one? rather than to the desk. */
-export async function make(ctx, f, welcome) {
+ *  another one? rather than to the desk. A folder whose desk was closed gets
+ *  that desk back, its documents, notes and panels with it, and the toast
+ *  offers the blank one; `fresh` is asking for the blank one outright, as
+ *  New desk here does: a second desk on a folder is a workflow. */
+export async function make(ctx, f, welcome, fresh) {
   const { toast, api } = ctx;
+  const shut = f && !fresh ? await closedDeskOn(ctx, f) : null;
+  if (shut) {
+    try {
+      await api(shut.restore, {});
+      await ctx.load();
+      if (welcome && ctx.welcomed) ctx.welcomed(shut.desk); else ctx.show(shut.desk, true);
+      toast(`Reopened ${shut.title}`, { sub: "Its documents, notes and panels are back", action: { label: "New desk instead", run: async () => {
+        try { await api(`/api/desks/${shut.desk}/delete`, {}); } catch (e) { toast("Could not close it again", { sub: e }); return; }
+        await make(ctx, f, welcome, true);
+      } } });
+      return;
+    } catch { /* gone in the meantime, pruned or reopened elsewhere: a new one */ }
+  }
   try {
     const j = await api("/api/desks", !f ? {} : f.project != null ? { project: f.project, name: f.name } : { root: f.root, path: f.path });
     // A desk for a project opens on Claude, ready: the first panel holds
@@ -368,7 +408,7 @@ function entries(ctx, el, byKey = false) {
     const here = ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === f.abs) : [];
     const root = el.matches(".b-root > summary");
     return { head: f.abs.split("/").pop() || f.abs, items: [
-      capability && { label: "New desk here", run: () => make(ctx, f) },
+      capability && { label: "New desk here", run: () => make(ctx, f, false, true) },
       ...(capability ? here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })) : []),
       capability && RULE,
       files({ root: f.root, path: f.path }), copyIt(f.abs, "Copy path"),
@@ -394,7 +434,7 @@ function entries(ctx, el, byKey = false) {
     ] };
     const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
     return { head: p.name, items: [
-      capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }) },
+      capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }, false, true) },
       ...here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })),
       { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
       files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,

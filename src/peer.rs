@@ -350,12 +350,19 @@ pub enum Content {
         #[serde(flatten)]
         at: Folder,
     },
-    /// A line for the reader's notes, with the sender's name.
+    /// A line for the reader's notes, with the sender's name. A promise
+    /// (1.48, `crate::promise`) is a line the sender means to do by
+    /// `due_at`: it lands on the reader's Home, not their list. Both are
+    /// left out when unset, and a snyvi before 1.48 reads past them.
     Note {
         text: String,
         name: String,
         #[serde(flatten)]
         at: Folder,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        due_at: i64,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        promise: bool,
     },
     /// What became of a frame this snyvi sent: `arrived` when it was kept,
     /// `read` when it was opened -- that one only when the reader allows it
@@ -2043,7 +2050,14 @@ pub fn note_arrived(
     frame: &str,
     now: i64,
 ) -> Result<i64> {
-    let text: String = text.trim().chars().take(NOTE_CHARS).collect();
+    let text: String = text
+        .chars()
+        .filter(|c| !crate::desk::is_bidi(*c))
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(NOTE_CHARS)
+        .collect();
     conn.execute(
         "INSERT INTO peer_notes(peer_id, text, frame, arrived_at) VALUES(?1, ?2, ?3, ?4)",
         params![peer_id, text, frame, now],

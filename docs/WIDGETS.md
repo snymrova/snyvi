@@ -123,6 +123,18 @@ sequenceDiagram
   D-->>A: with its next prompt, the pick and the line
 ```
 
+## Out there, from snyvi (1.48)
+
+The first time a desk's work is told (a thread shipped, and you said where
+it went out), snyvi proposes one widget of its own on that desk: **Out
+there**, `out-there.sh`, run hourly in the desk's folder. It asks your own
+`gh` for the repo behind the folder's `origin` -- stars, downloads of the
+latest release, unique visitors in two weeks (that one needs push access,
+and is left out without it) -- and prints them as one line. No GitHub
+remote, or no `gh`, and it prints an empty body, so the box clears. It comes
+on the same card an agent's proposal does, with the script to read; nothing
+runs until you **Add** it, and Not now is kept as for any name.
+
 ## A widget file
 
 ```

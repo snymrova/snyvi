@@ -18,6 +18,7 @@ mod gh;
 mod git;
 mod hook;
 mod lately;
+mod launch;
 mod links;
 mod mcp;
 mod pane;
@@ -25,6 +26,7 @@ mod peer;
 mod pipeline;
 mod platform;
 mod project;
+mod promise;
 mod prompt;
 mod receive;
 mod render;
@@ -44,10 +46,12 @@ mod store;
 mod strip;
 mod text;
 mod thread;
+mod told;
 mod update;
 mod version;
 mod waiting;
 mod watch;
+mod week;
 mod widget;
 
 /// "1 panel", "3 panels": a count in words, never "panel(s)"

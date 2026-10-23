@@ -248,9 +248,12 @@
    *  reaches the clipboard with nothing awaited before it, which WebKit
    *  asks. A click before it came waits for it. */
   let copyMod = null;
-  const useCopy = () => chunk("copy").then(m => (copyMod = m.init({ state, rawUrl, toast, keyHint })));
+  const useCopy = () => chunk("copy").then(m => (copyMod = m.init({ state, rawUrl, toast, keyHint, mmd: () => mmd })));
   const copyAll = btn => copyMod ? copyMod.copyAll(btn) : useCopy().then(m => m.copyAll(btn));
   $("#btn-copy-top").addEventListener("click", e => copyAll(e.currentTarget));
+  // Save as PDF (#182) is the same chunk's: its print sheet is in it too.
+  const printDoc = () => (copyMod ? Promise.resolve(copyMod) : useCopy()).then(m => m.printDoc());
+  $("#btn-pdf-top").addEventListener("click", printDoc);
 
   function toggleWrap() {
     const on = root.dataset.wrap !== "1";
@@ -494,6 +497,10 @@
     if (mod && !e.shiftKey && e.key.toLowerCase() === "f" && !inPanel && (!inField || e.target.id === "find-input")
         && (state.view === "doc" || (browsing() && state.browsePath)) && !(state.preview === "pdf" && state.previewOn)) {
       e.preventDefault(); openFind(); return;
+    }
+    // Print is Save as PDF where the button is; anywhere else, the browser's.
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "p" && !inPanel && !overEl.hidden && getComputedStyle($("#btn-pdf-top")).visibility === "visible") {
+      e.preventDefault(); printDoc(); return;
     }
     if (!findBar.hidden && find && !inPanel && (e.key === "F3" || (mod && e.key.toLowerCase() === "g"))) { e.preventDefault(); find.step(e.shiftKey); return; }
     if (e.key === "Escape") {

@@ -69,6 +69,11 @@ pub struct Work<'a> {
     /// session proposes nothing twice, and does not call pending what the
     /// reader has not answered.
     pub cards: &'a [Suggestion],
+    /// Threads shipped by a merge and not told, with when (`told::untold`).
+    pub untold: &'a [(String, i64)],
+    /// What the user said on Sunday they'd ship this week, on this desk,
+    /// and when it is due (`week::ship_line`).
+    pub ship: Option<(String, i64)>,
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -182,18 +187,41 @@ pub fn brief_of(
         ));
     }
     lines.extend(thread_lines(desk, slot, work.threads, work.waiting));
+    if let Some((text, due)) = &work.ship {
+        lines.push(format!(
+            "This week the user said they'd ship: \"{}\" (due {}).",
+            cut(text, LINE_CHARS),
+            crate::due::label(*due, now)
+        ));
+    }
+    if !work.untold.is_empty() {
+        let named: Vec<String> = work
+            .untold
+            .iter()
+            .map(|(name, at)| format!("\"{}\" ({})", cut(name, 60), ago(now - at)))
+            .collect();
+        lines.push(format!(
+            "Shipped, not told ({}): {}. When the user says where it went out, move_thread told with url.",
+            named.len(),
+            named.join(", ")
+        ));
+    }
     let cards: Vec<String> = work
         .cards
         .iter()
         .filter(|s| s.settled_at == 0 && (s.kind == "widget" || s.kind == "box"))
         .map(|s| {
-            let whose = desk
-                .panes
-                .iter()
-                .find(|p| p.id == s.pane)
-                .map_or("a panel since closed".to_string(), |p| {
-                    format!("panel {}", p.slot)
-                });
+            // snyvi's own proposal (Out there, 1.48) is on no panel.
+            let whose = desk.panes.iter().find(|p| p.id == s.pane).map_or_else(
+                || {
+                    if s.pane.is_empty() && s.by == "snyvi" {
+                        "snyvi".to_string()
+                    } else {
+                        "a panel since closed".to_string()
+                    }
+                },
+                |p| format!("panel {}", p.slot),
+            );
             format!("the {} {} (proposed by {whose})", s.kind, cut(&s.name, 40))
         })
         .collect();
@@ -472,6 +500,11 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
                     "The note \"{q}\" came due and the user moved it ({}).",
                     a.to_lowercase()
                 ),
+                // snyvi's own card after a merge (`crate::told`).
+                "tell" if a == crate::told::NO_ONE => {
+                    format!("You answered \"{q}\": no one; it counts as told.")
+                }
+                "tell" => format!("You answered \"{q}\": {a}. A dated line for it is on the desk."),
                 _ => format!("You answered \"{q}\": {a}."),
             }
         })
@@ -1270,8 +1303,11 @@ mod tests {
             threads: &[t, shipped],
             waiting: &[w],
             cards: &[],
+            untold: &[("1.47 dates".into(), -3 * 86_400)],
+            ship: None,
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
+        assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");
         assert!(b.contains(
             "Threads on this desk: Home + friends (building, #87 #91, claude/asides; this panel's)."
         ));

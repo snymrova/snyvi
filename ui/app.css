@@ -326,10 +326,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #chrome .over-x:hover { background: var(--rule-2); color: var(--fg); }
 /* Width, beside the way back: only where it does something, a page of
    prose. Elsewhere it keeps its room unseen, so the way back never moves. */
-#chrome :is(.over-w, .over-c) { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
+#chrome :is(.over-w, .over-p, .over-c) { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 #chrome .over-w { visibility: hidden; }
 :root:has(#doc article.kind-markdown) #chrome .over-w { visibility: visible; }
-#chrome :is(.over-w, .over-c):hover { background: var(--rule-2); color: var(--fg); }
+#chrome :is(.over-w, .over-p, .over-c):hover { background: var(--rule-2); color: var(--fg); }
 #chrome .over-w.on { color: var(--accent); }
 /* Copy all (#165), beside Width: on every page with text to copy. On a
    picture, a film, a song or a binary its place is kept and empty, so the
@@ -339,6 +339,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #chrome .over-c .c-ok, #chrome .over-c.did .c-ic { visibility: hidden; }
 #chrome .over-c.did .c-ok { visibility: visible; color: var(--ok); }
 :root:has(#doc article:is(.kind-image, .kind-video, .kind-audio, .kind-binary)) #chrome .over-c, :root:has(#doc article.sk-body) #chrome .over-c { visibility: hidden; }
+/* Save as PDF (#182), between them: on a page that prints as it reads --
+   prose, source, a diff, a table. A page drawn in its own frame, a picture,
+   a film or a binary keeps the place empty, as Width does. */
+#chrome .over-p { visibility: hidden; }
+:root:has(#doc article:is(.kind-markdown, .kind-code, .kind-diff, .kind-text, .kind-table):not(.sk-body, .preview)) #chrome .over-p { visibility: visible; }
 /* A desk draws its own head, with the desk's name in it, and the pane does
    not scroll: there the bar is only its buttons, laid over the desk's
    header, which makes room for them (desk.js, .dk-head). */

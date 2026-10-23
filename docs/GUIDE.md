@@ -1167,15 +1167,51 @@ Suggested in the rail's corner, where nothing they do moves the page.
   `post it, fri` -- so `notes from fri` stays a note; an hour alone needs
   `at` or `by`; and a date that would be in the past stays as words. Click
   the word to move it: this evening, tomorrow 9:00, Monday 9:00, next week,
-  or no date. Rewriting the line with a new date at its end moves it too.
+  no date, or type one in *Pick a time*. While you type a line, a small
+  chip at the field's end says the date it caught (**due fri 10**), on the
+  desk and in Home's note bar; the daemon's read is the one that counts.
+  Rewriting the line with a new date at its end moves it too.
   At the hour, one card rises in the rail's corner, with its chime, on
   Home's On you too: **Done** ticks the line as yours, **Tomorrow 9:00** or
-  **Monday 9:00** moves it and it rings again then, and ✕ leaves it be. A
+  **Monday 9:00** moves it and it rings again then, **Later…** has the
+  other times and a field for any, and ✕ leaves it be. A
   line rings once per date; a daemon that was off at the hour rings when it
   starts. The next panel to take a prompt on the desk hears that it came
   due and what you did; nothing is typed into a panel. A Claude can
   suggest a line with a date (`suggest_desk_note`'s `due`) when the line
   has a natural day, a launch step or a follow-up.
+- **A launch is a list.** When you say *launch*, Claude suggests its steps
+  as one set of dated lines (`suggest_desk_note`'s `lines`, from the skill's
+  `launch.md`): pictures and copy a week out, the site, the post, Show HN,
+  and what happened a week after. **Keep all** on the set's first row keeps
+  them; each row keeps or goes on its own too. While a thread has three
+  dated lines or more and one is due within two weeks, the desk's head
+  counts it, **3/6**, ticked of all, at the head of the Left off slot.
+- **Told, after shipped.** When a thread ships by a merge, one card rises,
+  once: *Shipped: 1.48. Who should know?* -- **Release note**, **A post**,
+  **Tell Trapti** (your first friend), **No one**, the ★ on No one when
+  every line in it reads as a fix. Each answer but No one writes a dated
+  line in the thread (a release note tomorrow at 9, a post the next working
+  day at 10); No one counts as told. The thread's chip reads a hollow
+  **✓ shipped** until it is told, and **✓ told** after: *Told at…* in its
+  menu takes where it went out, a URL, and a Claude can say it with
+  `move_thread` `told` and `url`. Claude never posts; it drafts the note or
+  the post as a document when you ask. The first time a desk's work is
+  told, snyvi offers **Out there**, a widget of its own: the desk's GitHub
+  stars, downloads and visitors, hourly, with your own `gh`, on the same
+  card any agent's widget comes on.
+- **A tick shows what it rests on.** A line an agent ticked with no commit,
+  no document and no link reads as a hollow ✓, *ticked without evidence:
+  needs a look*. Nothing counts them; the check is yours when you want it.
+- **A promise.** A dated open line's menu has **Promise to Trapti…**: the
+  line goes to them with its date and lands on their Home as yours to keep,
+  *post the release note · by Fri 10:00*. The rail marks it **→ Trapti**.
+  When you tick it, they see it kept. A snyvi older than 1.48 shows it as a
+  plain line.
+- **A reopen becomes a rule.** Two lines on one desk reopened within a week
+  -- *not yet…* with what is still wrong -- and snyvi suggests one line of
+  its own, *Before ticking: check dark (#12 and #14 came back for it)*, once
+  a week. Keep it or not.
 - **Approve on a plan.** A plan Claude sent for desk notes -- what
   `send_document` with `notes` makes, the lines then read **planned** --
   has **Approve** in its head, beside where it came from. Press it and those
@@ -1290,10 +1326,24 @@ step is yours, two days on, with **Approve** (the next step is Claude's
 now, and the desk's next prompt says so), **Tomorrow** (a note on that desk
 due tomorrow at 9, and the left-off stops waiting) and **Drop** (it clears,
 with Undo in the row); and a plan sent for notes that no one approved, a
-day on, with **Approve**. A Claude says a left-off is yours with
+day on, with **Approve**; and a desk quiet for ten days with lines still
+open. A left-off row and a quiet desk have **Park it** too, with Undo in
+the row. A Claude says a left-off is yours with
 `leave_off`'s `needs: you`; snyvi never reads it into the words. For one
 said before 1.47, **On me** beside Pick up's *Left off* marks it yours by
 hand.
+
+**Your week** opens above Pick up on Sunday at 20:00 and stays until
+Tuesday 06:00, so a window shut on Sunday evening sees it on Monday: what
+shipped this week and whether it was told (with where), three numbers from
+what snyvi already keeps -- lines ticked with nothing asked of you, the
+median from a line to its tick, how much of what shipped in thirty days was
+told -- and how many things wait on you. Under them three fields, filled
+from your desks and yours to change: **Next week I ship** (a line on that
+desk, due Friday 17:00, which its next Claude hears about), **I tell** (due
+Monday 10:00) and **I drop** (clears that desk's Left off). **File it**
+writes them; **Not this week** puts the box away until next Sunday;
+**Hide** turns it off for good.
 
 **The note bar** is at the top of the left column, and stays there as the
 page scrolls: one field for a line on any desk's list. The chip at its left

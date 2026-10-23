@@ -18,6 +18,7 @@ mod api_gallery;
 mod api_peer;
 mod api_pipeline;
 mod api_thread;
+mod api_week;
 mod api_widget;
 mod assets;
 mod auth;
@@ -39,6 +40,7 @@ use api_gallery::*;
 use api_peer::*;
 use api_pipeline::*;
 use api_thread::*;
+use api_week::*;
 use api_widget::*;
 use assets::*;
 use auth::*;
@@ -502,6 +504,8 @@ fn thread_routes() -> Router<Arc<App>> {
         .route("/api/desks/{id}/turns/{row}/{act}", post(desk_turn_act))
         // Approve on a plan's head (1.47, `crate::waiting`).
         .route("/api/desks/{id}/plans/{doc}/approve", post(approve_plan))
+        // Home's week: its fields, Not this week, Hide (1.48, `crate::week`).
+        .route("/api/home/week", post(home_week))
         .route(
             "/api/desks/{id}/suggestions/{row}/{act}",
             post(desk_suggestion_act),

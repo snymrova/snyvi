@@ -271,7 +271,7 @@ function arrived(d) {
   const w = fresh_[fresh_.length - 1];
   // Said, for a reader of the screen, in the desk's own live region (U8).
   const n = slotOf(d, w.pane);
-  announce(w.kind === "due" ? `Due now: ${w.text}` : `${n ? `Panel ${n}` : "An agent"} ${w.kind === "decide" ? "asks" : "hands you"}: ${w.text}`);
+  announce(w.kind === "due" ? `Due now: ${w.text}` : w.kind === "tell" ? w.text : `${n ? `Panel ${n}` : "An agent"} ${w.kind === "decide" ? "asks" : "hands you"}: ${w.text}`);
   // One chime for a burst, and the card's "+N more" counts the rest (U7):
   // cards, so a card of four questions is one.
   const burst = Date.now() - oy.rang < BURST_MS;

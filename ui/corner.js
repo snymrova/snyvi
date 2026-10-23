@@ -520,7 +520,7 @@ const whoOf = w => /^claude\b/.test(w.by || "") ? "Claude" : w.slot ? `Panel ${w
  *  command runs on its desk, where Run types it into the panel that asked. */
 function turnRow(w) {
   const { esc } = c;
-  const opts = w.kind === "decide" ? w.options || [] : w.kind === "run" ? [] : TURN_ANSWERS[w.kind] || ["Done"];
+  const opts = w.kind === "decide" || w.kind === "tell" ? w.options || [] : w.kind === "run" ? [] : TURN_ANSWERS[w.kind] || ["Done"];
   const where = `${esc(w.desk_name || "a desk")}${w.slot ? ` · panel ${w.slot}` : ""}`;
   return `<li class="cn-row cn-ask"><span class="cn-ico">${c.glyph("aside", 12)}</span><span class="cn-b">` +
     `<span class="cn-by"><b>${esc(w.by || whoOf(w))}</b> · ${where} · ${c.relShort(w.created_at)}</span>` +
@@ -586,6 +586,7 @@ function rowText(r) {
     case "tick": return [`Ticked your line: ${r.text}`, "home"];
     case "line": return [`“${r.text}”`, d.desk ? "desk" : "home"];
     case "answered": return [`You chose “${d.answer || ""}” · ${r.text}`, ""];
+    case "told": return [`Told: ${r.text}${d.url ? ` · ${d.url.replace(/^https?:\/\//, "")}` : ""}`, "desk"];
     case "offered": return [`${d.sent ? "Sent" : "Not sent"} to ${d.to || "a friend"}: ${r.text}`, ""];
     case "aside": return [r.text, r.doc ? "doc" : r.from ? "desk" : ""];
     case "snyvi": return [r.text, "start"];
@@ -818,7 +819,7 @@ async function answer(id, v) {
   const w = L.turns.find(x => x.id === id);
   if (!w) return;
   // A due card is snyvi's (1.47): Done ticks its line, a time moves it.
-  sayIn(`t${id}`, w.kind === "due" ? (v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`) : `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
+  sayIn(`t${id}`, w.kind === "due" ? (v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`) : w.kind === "tell" ? (v === "No one" ? "Told no one: it counts as told" : `${v}: a dated line is on its desk`) : `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
   try { await c.deskApi(`/api/desks/${w.desk_id}/turns/${id}/answer`, { answer: v }); }
   catch (e) { sayIn(`t${id}`, `Could not answer it: ${c.sayErr(e).why}`); }
   if (L.card?.key === `t${id}`) settle();

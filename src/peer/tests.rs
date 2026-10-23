@@ -105,6 +105,8 @@ fn a_note_travels_too_and_the_id_is_one_per_document_and_friend() {
             text: "water the beans".into(),
             name: "Sunny".into(),
             at: Folder::default(),
+            due_at: 0,
+            promise: false,
         },
         b"",
     )
@@ -465,6 +467,8 @@ fn a_frame_says_its_folder_and_older_and_newer_frames_still_open() {
             v: CONTENT_V,
             ..Default::default()
         },
+        due_at: 0,
+        promise: false,
     };
     let was: Was = serde_json::from_slice(&serde_json::to_vec(&note).unwrap()).unwrap();
     assert!(matches!(was, Was::Note { ref text, .. } if text == "hi"));
@@ -523,7 +527,9 @@ fn a_receipt_a_reply_and_a_done_travel_and_say_their_v() {
         Content::Note {
             text: "x".into(),
             name: "S".into(),
-            at: Folder::default()
+            at: Folder::default(),
+            due_at: 0,
+            promise: false,
         }
         .v(),
         0,
