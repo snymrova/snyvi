@@ -122,7 +122,8 @@ const CSS = `
 .hm-pk-left.hm-derived { color: var(--fg-2); }
 .hm-pk-left a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--rule-2); text-underline-offset: 3px; }
 .hm-pk-left a:hover { text-decoration-color: currentColor; }
-.hm-pk-left .fact { color: var(--fg-3); margin-left: 4px; }
+/* Its byline in one piece: "claude-" over "code" read as two names. */
+.hm-pk-left .fact { color: var(--fg-3); margin-left: 4px; white-space: nowrap; }
 .hm-pk-left code, .hm-log code { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); }
 /* A desk's open notes, each with the circle that ticks it where it stands. */
 .hm-next { list-style: none; margin: 0 0 8px; padding: 0; font-size: var(--fs-ui); }
@@ -346,7 +347,7 @@ let c = null, last = null, soon = 0, reading = 0, sheet = null;
 /** Where Claude Code stands here, asked once a visit to Home (/api/agents
  *  reads the agents' own files, too much for every refresh): "missing",
  *  "unconnected" or "connected"; null until it answers. The status line says
- *  "Claude idle" only of a Claude that could be at work. */
+ *  nothing of a Claude at rest: the Claude box says that in a sentence. */
 let claudeIs = null;
 function claudeAsk() {
   fetch("/api/agents").then(r => r.json()).then(a => {
@@ -660,12 +661,12 @@ function status(j) {
   if (j.desks) {
     const n = j.desks.flatMap(d => d.panes).filter(p => p.agent === "working").length;
     bits.push(n ? `${plural(n, "Claude")} working` : claudeIs === "missing" ? "Claude Code not installed"
-      : claudeIs === "unconnected" ? `<a href="/connect" data-nav="connect">Claude not connected</a>` : "Claude idle");
+      : claudeIs === "unconnected" ? `<a href="/connect" data-nav="connect">Claude not connected</a>` : "");
   }
   // With more than one account, the one with the least left, by its name.
   const qs = quotasOf(j), lq = leastOf(qs, "five_hour"), w = windowLeft(lq?.five_hour);
   if (w) bits.push(`<span data-tip="Claude's five-hour window${qs.length > 1 ? `, as ${esc(lq.label)}` : ""}" data-tip-sub="${esc(w.text)}">${qs.length > 1 ? `${esc(lq.label)}: ` : ""}5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
-  return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.join(" · ")}</p>`;
+  return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.filter(Boolean).join(" · ")}</p>`;
 }
 
 /* ---------- On you and Threads (#90) ----------
