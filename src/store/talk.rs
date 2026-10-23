@@ -94,24 +94,20 @@ impl Store {
         peer::sent_doc(&self.conn.lock().unwrap(), peer_id, doc_id)
     }
 
-    pub fn peer_add_reply(&self, peer_id: i64, doc_id: &str, text: &str) -> Result<Option<String>> {
-        peer::add_reply(&self.conn.lock().unwrap(), peer_id, doc_id, text, now())
+    /// A reply kept under `doc_id`: theirs, or the reader's own (`mine`).
+    pub fn peer_add_reply(
+        &self,
+        peer_id: i64,
+        doc_id: &str,
+        text: &str,
+        mine: bool,
+    ) -> Result<Option<String>> {
+        peer::add_reply(&self.conn.lock().unwrap(), peer_id, doc_id, text, mine, now())
     }
 
     /// The replies to a document, over every version of it.
     pub fn peer_replies(&self, id: &str) -> Result<Vec<peer::Reply>> {
-        let ids: Vec<String> = match self.get(id)? {
-            Some(Doc {
-                project_id,
-                source_path: Some(sp),
-                ..
-            }) => self
-                .history(project_id, &sp)?
-                .into_iter()
-                .map(|d| d.id)
-                .collect(),
-            _ => vec![id.to_string()],
-        };
+        let ids = self.version_ids(id)?;
         peer::replies(&self.conn.lock().unwrap(), &ids)
     }
 

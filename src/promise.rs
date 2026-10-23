@@ -6,10 +6,13 @@
 //! `promise`, which a snyvi before 1.48 reads past as a plain line (usage
 //! audit 63cc69c8c1, P6).
 //!
-//! Nothing new is stored. The outbox row of a promise names its line in
-//! `re` (`note:<id>`) and carries its date in `extra`, two columns a line
-//! sent to a friend never used; on the friend's side the date is said in
-//! the row's own words.
+//! The outbox row of a promise names its line in `re` (`note:<id>`) and
+//! carries its date in `extra`, two columns a line sent to a friend never
+//! used. On the friend's side, from 1.49, the row keeps the date, the mark
+//! and the keeping as fields (`peer::COLUMNS_1_49`), and Home draws them:
+//! "Sunny promised you · post the release note · by Fri 30 Oct · kept ✓",
+//! never a line with Keep on it (audit 6f451571c6, F4). A row from 1.48
+//! has its date in its words, and reads as it did.
 
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection};
@@ -46,16 +49,6 @@ pub fn of_row(re: &str, extra: &str) -> (i64, bool) {
         (extra.parse().unwrap_or(0), true)
     } else {
         (0, false)
-    }
-}
-
-/// A promise as the friend's Home row says it: the words, and by when in
-/// the friend's own time.
-pub fn said(text: &str, due_at: i64, now: i64) -> String {
-    if due_at > 0 {
-        format!("{text} · by {}", crate::due::label(due_at, now))
-    } else {
-        text.to_string()
     }
 }
 
@@ -107,13 +100,19 @@ pub fn keep(conn: &Connection, now: i64) -> Result<Vec<i64>> {
 }
 
 /// The friend kept a promise they made to the reader: their Done names the
-/// promise's frame, which arrived here as a Home row. The row says kept ✓.
-/// The line's words, when it was one.
-pub fn kept(conn: &Connection, peer_id: i64, frame: &str) -> Result<Option<String>> {
+/// promise's frame, which arrived here as a Home row. The row says kept ✓,
+/// with the commit when the tick named one. The line's words, once.
+pub fn kept(
+    conn: &Connection,
+    peer_id: i64,
+    frame: &str,
+    commit: &str,
+    now: i64,
+) -> Result<Option<String>> {
     let n = conn.execute(
-        "UPDATE peer_notes SET text = text || ' · kept ✓' WHERE peer_id = ?1 AND frame = ?2 AND frame != ''
-           AND text NOT LIKE '% · kept ✓'",
-        params![peer_id, frame],
+        "UPDATE peer_notes SET kept_at = ?3, kept_commit = ?4
+         WHERE peer_id = ?1 AND frame = ?2 AND frame != '' AND kept_at = 0",
+        params![peer_id, frame, now, commit],
     )?;
     if n == 0 {
         return Ok(None);

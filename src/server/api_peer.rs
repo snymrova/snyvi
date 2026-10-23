@@ -996,7 +996,10 @@ fn send_one(
         if row.kind == "receipt" && (p.v < peer::REPLIES_V || unread) {
             return Ok(peer::Deposit::Sent);
         }
-        if p.v < peer::REPLIES_V {
+        // An answer to their reply about a document of ours (`own`, 1.49)
+        // is read only from `OWN_REPLY_V`: an older snyvi would drop it.
+        let own = row.kind == "reply" && row.extra == OWN;
+        if p.v < peer::REPLIES_V || (own && p.v < peer::OWN_REPLY_V) {
             return Ok(peer::Deposit::Later {
                 why: OLDER,
                 until: None,
@@ -1024,6 +1027,7 @@ fn send_one(
                 re: row.re.clone(),
                 text: row.text.clone(),
                 name: name.to_string(),
+                own,
                 v: peer::CONTENT_V,
             },
             "done" => Content::Done {
@@ -1137,6 +1141,10 @@ const LINE_DOWN: &str = "they are offline; it goes when they or the relay can be
 /// Why a reply or a done waits in the outbox: the friend's snyvi does not
 /// read it yet. It goes the first time a frame from them says it would.
 const OLDER: &str = "their snyvi is older; this goes once they update";
+
+/// What `extra` says on an outbox reply that answers their reply about a
+/// document the reader sent (`Content::Reply::own`).
+pub(crate) const OWN: &str = "own";
 
 /// How long a folder's fingerprint is taken as read: a day. Root commits do
 /// not change; a remote, rarely.

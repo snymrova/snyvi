@@ -1134,7 +1134,7 @@ async fn a_friends_line_kept_on_a_desk_says_who_sent_it() {
             })
             .unwrap();
         let n = store
-            .peer_note_arrived(p.id, "water the beans", "")
+            .peer_note_arrived(p.id, "water the beans", "", 0, false)
             .unwrap();
         *at.lock().unwrap() = (desk.id, n);
     });

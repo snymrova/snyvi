@@ -229,6 +229,7 @@ fn friends_are_pinned_listed_renamed_muted_removed_and_restored() {
     for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(COLUMNS_1_49).unwrap();
     let (sunny, trapti) = two();
     let t = pin(&conn, &as_peer(&trapti, "Trapti"), 100).unwrap();
     assert_eq!(t.name, "Trapti");
@@ -284,7 +285,7 @@ fn friends_are_pinned_listed_renamed_muted_removed_and_restored() {
     sent(&conn, &l2, 412).unwrap();
 
     // Notes wait, are taken, put away, brought back.
-    let n = note_arrived(&conn, t2.id, "  water the beans  ", "f1", 500).unwrap();
+    let n = note_arrived(&conn, t2.id, "  water the beans  ", "f1", 0, false, 500).unwrap();
     assert_eq!(notes_waiting(&conn).unwrap()[0].text, "water the beans");
     assert!(settle_note(&conn, n, "taken", 501).unwrap());
     assert!(notes_waiting(&conn).unwrap().is_empty());
@@ -495,6 +496,7 @@ fn a_receipt_a_reply_and_a_done_travel_and_say_their_v() {
             re: "d1".into(),
             text: "looks good".into(),
             name: "Trapti".into(),
+            own: false,
             v: CONTENT_V,
         },
         Content::Done {
@@ -558,6 +560,7 @@ fn receipts_and_dones_land_only_on_what_went_to_that_friend() {
     for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(COLUMNS_1_49).unwrap();
     conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
         .unwrap();
     let (sunny, trapti) = two();
@@ -661,6 +664,7 @@ fn outbox() -> (Connection, Peer) {
     for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(COLUMNS_1_49).unwrap();
     conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
         .unwrap();
     let (_, trapti) = two();
