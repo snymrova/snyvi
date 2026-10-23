@@ -43,7 +43,7 @@ pub(crate) struct Peers {
     pub quiet_until: std::sync::atomic::AtomicI64,
     /// Friends whose line says they are away, by id, since when (1.49): the
     /// line told us (`LineSaid::Friend`), so the reader is told too --
-    /// "waiting, Trapti is away" -- and never a wrong "arrived" (F3). Not
+    /// "held, they’re away" -- and never a wrong "arrived" (F3). Not
     /// stored: it is as true as the open line, and gone with it.
     pub away: std::sync::Mutex<HashMap<i64, i64>>,
     /// Pairing threads still running (`start_pairing`): the daemon waits
@@ -2036,7 +2036,10 @@ pub(crate) async fn doc_reply(
                 .into_response();
         };
         let went = app.store.peer_sent_of_doc(&id).unwrap_or_default();
-        let Some((_, s)) = went.into_iter().find(|(_, s)| s.peer_id == p.id && s.sent_at != 0) else {
+        let Some((_, s)) = went
+            .into_iter()
+            .find(|(_, s)| s.peer_id == p.id && s.sent_at != 0)
+        else {
             return (
                 StatusCode::CONFLICT,
                 Json(json!({ "error": format!("{} has not been sent this one", p.name) })),
@@ -2055,13 +2058,21 @@ pub(crate) async fn doc_reply(
     // The reader's own words stay under their copy's head too, so it reads
     // as one thread both ways (F10).
     let _ = app.store.peer_add_reply(p.id, &id, &text, true);
-    emit(&app, "peerreply", json!({ "doc": id, "mine": true, "quiet": true }));
+    emit(
+        &app,
+        "peerreply",
+        json!({ "doc": id, "mine": true, "quiet": true }),
+    );
     let app2 = app.clone();
     let sent = tokio::task::spawn_blocking(move || flush_outbox(&app2, Some(&frame)))
         .await
         .unwrap_or(false);
     peers_moved(&app);
-    let older = if own { peer::OWN_REPLY_V } else { peer::REPLIES_V };
+    let older = if own {
+        peer::OWN_REPLY_V
+    } else {
+        peer::REPLIES_V
+    };
     Json(json!({ "sent": sent, "to": p.name, "waits": !sent && p.v < older })).into_response()
 }
 

@@ -1067,8 +1067,13 @@ fn a_friends_dated_line_keeps_its_words() {
     let home = add_note_from(&mut conn, d, "seed list by Friday", "Trapti", now)
         .unwrap()
         .unwrap();
-    assert_eq!((home.text.as_str(), home.due_at > now), ("seed list by Friday", true));
-    let mine = add_note(&mut conn, d, "seed list by Friday", now).unwrap().unwrap();
+    assert_eq!(
+        (home.text.as_str(), home.due_at > now),
+        ("seed list by Friday", true)
+    );
+    let mine = add_note(&mut conn, d, "seed list by Friday", now)
+        .unwrap()
+        .unwrap();
     assert_eq!((mine.text.as_str(), mine.due_at > now), ("seed list", true));
 }
 

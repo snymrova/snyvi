@@ -131,10 +131,19 @@ fn a_promise_made_to_the_reader_reads_kept() {
     let p = peer::list(&conn).unwrap().remove(0);
     peer::note_arrived(&conn, p.id, "post the note", "f1", 200_000, true, 0).unwrap();
     let n = peer::notes_waiting(&conn).unwrap().remove(0);
-    assert_eq!((n.text.as_str(), n.due_at, n.promise, n.kept_at), ("post the note", 200_000, true, 0));
-    assert_eq!(kept(&conn, p.id, "f1", "abc1234", 300).unwrap().as_deref(), Some("post the note"));
+    assert_eq!(
+        (n.text.as_str(), n.due_at, n.promise, n.kept_at),
+        ("post the note", 200_000, true, 0)
+    );
+    assert_eq!(
+        kept(&conn, p.id, "f1", "abc1234", 300).unwrap().as_deref(),
+        Some("post the note")
+    );
     let n = peer::notes_waiting(&conn).unwrap().remove(0);
-    assert_eq!((n.text.as_str(), n.kept_at, n.kept_commit.as_str()), ("post the note", 300, "abc1234"));
+    assert_eq!(
+        (n.text.as_str(), n.kept_at, n.kept_commit.as_str()),
+        ("post the note", 300, "abc1234")
+    );
     assert!(kept(&conn, p.id, "f1", "", 400).unwrap().is_none(), "once");
     assert!(kept(&conn, p.id, "nope", "", 400).unwrap().is_none());
 }

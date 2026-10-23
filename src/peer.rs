@@ -874,7 +874,14 @@ enum Bell {
 /// going, which stops every pairing before its runtime does -- ends the
 /// wait at once: a timer still waiting on a runtime being torn down is a
 /// panic (audit 6f451571c6, F23).
-fn ring_wait(base: &str, room: &str, stage: &str, side: &str, secs: i64, stop: &AtomicBool) -> Bell {
+fn ring_wait(
+    base: &str,
+    room: &str,
+    stage: &str,
+    side: &str,
+    secs: i64,
+    stop: &AtomicBool,
+) -> Bell {
     let Ok(rt) = tokio::runtime::Handle::try_current() else {
         return Bell::Absent;
     };
@@ -1516,7 +1523,8 @@ pub const COLUMNS_1_25: [&str; 4] = [
 /// words glued to it, and when the promise was kept and in what commit; and
 /// which replies are the reader's own, so a document's head is one thread
 /// both ways. Version 30 of `store::MIGRATIONS`.
-pub const COLUMNS_1_49: &str = "ALTER TABLE peer_outbox ADD COLUMN held_at INTEGER NOT NULL DEFAULT 0;
+pub const COLUMNS_1_49: &str =
+    "ALTER TABLE peer_outbox ADD COLUMN held_at INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE peer_notes ADD COLUMN due_at INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE peer_notes ADD COLUMN promise INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE peer_notes ADD COLUMN kept_at INTEGER NOT NULL DEFAULT 0;
@@ -1954,7 +1962,8 @@ pub struct Sent {
     pub promise: bool,
 }
 
-const SENT_COLS: &str = "o.id, o.peer_id, o.doc_id, COALESCE(d.title, o.text), o.sent_at, o.arrived_at, o.read_at,
+const SENT_COLS: &str =
+    "o.id, o.peer_id, o.doc_id, COALESCE(d.title, o.text), o.sent_at, o.arrived_at, o.read_at,
     o.done_at, o.done_commit, o.held_at, o.re LIKE 'note:%'";
 
 fn row_sent(r: &rusqlite::Row) -> rusqlite::Result<Sent> {
@@ -2005,7 +2014,7 @@ pub fn sent_of_doc(conn: &Connection, doc_ids: &[String]) -> Result<Vec<(String,
         }
     }
     // The newest per friend: a later version's send says more than v1's.
-    all.sort_by(|a, b| b.1.cmp(&a.1));
+    all.sort_by_key(|a| std::cmp::Reverse(a.1));
     let mut seen = std::collections::HashSet::new();
     Ok(all
         .into_iter()

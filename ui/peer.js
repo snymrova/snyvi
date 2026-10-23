@@ -247,6 +247,9 @@ export async function send(ctx, docId, title = "") {
       // Its row's button is spent and says so, quietly; the others can still go.
       for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = x === b;
       b.className = "pr-spent"; b.textContent = r.sent ? "Sent ✓" : "Waiting";
+      // And its line stops saying "nothing sent yet" beside it.
+      const t = b.closest("li")?.querySelector(".pr-t");
+      if (t) t.textContent = r.sent ? "just now" : "it goes when they can be reached";
       box.querySelector(".pr-foot").innerHTML = `<button type="button" class="pr-go" data-pr="close">Done</button>`;
       box.querySelector(".pr-foot .pr-go").focus();
     } catch (err) {
@@ -264,15 +267,20 @@ export async function send(ctx, docId, title = "") {
  *  got (assets.rs `went`): read again in place when what came back moves,
  *  only the button, so nothing under the reader's eyes moves (F2). */
 export async function sentNow(ctx) {
-  const id = ctx.state?.doc?.id, b = document.querySelector(".doc-send[data-sent]");
+  // The plain Send button, sent or not yet: the first send is the one that
+  // turns "Send to…" into "→ Trapti · waiting". Back to and Reply to carry
+  // a data-act and stay as they are.
+  const pick = ".doc-send:not([data-act])";
+  const id = ctx.state?.doc?.id, b = document.querySelector(pick);
   if (!id || !b) return;
   let j;
   try { j = await (await fetch(`/api/docs/${encodeURIComponent(id)}`)).json(); } catch { return; }
   if (ctx.state?.doc?.id !== id || !b.isConnected) return;
   const t = document.createElement("template"); t.innerHTML = j.html || "";
-  const n = t.content.querySelector(".doc-send[data-sent]");
+  const n = t.content.querySelector(pick);
   if (!n) return;
-  b.innerHTML = n.innerHTML; b.dataset.tipSub = n.dataset.tipSub || "";
+  b.replaceWith(n);
+  ctx.dates();
 }
 
 /** A one-line field that grows to three lines as it is typed into, so the

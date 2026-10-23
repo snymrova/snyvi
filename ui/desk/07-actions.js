@@ -785,8 +785,10 @@ export function actions(el) {
       { label: "Add a picture…", run: () => pickImages(x.id) },
       // A dated open line can go to a friend as a promise (1.48).
       ...(!x.done && x.due_at && !promisedTo.has(x.id) ? (friendsList || []).map(f => ({ label: `Promise to ${f.name}…`, run: () => promise(d, x, f) })) : []),
-      // Any open line of the reader's own can go to a friend as a line (F20).
-      ...(!x.done && !x.sent_by ? (friendsList || []).map(f => ({ label: `Send to ${f.name}`, run: () => sendLine(x, f) })) : []),
+      // An undated open line of the reader's own can go to a friend as a line
+      // (F20). A dated one goes as a promise, above: its text has the date
+      // cut out, and a plain send would lose it.
+      ...(!x.done && !x.sent_by && !x.due_at ? (friendsList || []).map(f => ({ label: `Send to ${f.name}`, run: () => sendLine(x, f) })) : []),
       // The line's first link, by its host, and the words themselves: the
       // text is a button that rewrites, so neither can be had from it.
       ...webLinks(x.text).slice(0, 1).map(l => ({ label: `Open ${l.host}`, run: () => openLink(l.url) })),

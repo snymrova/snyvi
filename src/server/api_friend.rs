@@ -54,7 +54,10 @@ pub(crate) fn follow_versions(app: &App, p: &Peer, doc: &Doc, desk: Option<&crat
     let Some(path) = doc.source_path.as_deref() else {
         return;
     };
-    let Ok(others) = app.store.peer_other_versions(&p.sign_key, path, doc.project_id) else {
+    let Ok(others) = app
+        .store
+        .peer_other_versions(&p.sign_key, path, doc.project_id)
+    else {
         return;
     };
     let Some((other_id, other_desk)) = others.into_iter().next() else {

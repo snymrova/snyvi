@@ -390,7 +390,14 @@ fn the_doorbell_and_the_pairing_speak_plainly() {
     // No runtime about, as in a plain test: the bell is not there, and
     // the pairing falls back to asking.
     assert_eq!(
-        ring_wait("http://127.0.0.1:9", &"a".repeat(64), "spake", "ab", 1),
+        ring_wait(
+            "http://127.0.0.1:9",
+            &"a".repeat(64),
+            "spake",
+            "ab",
+            1,
+            &std::sync::atomic::AtomicBool::new(false)
+        ),
         Bell::Absent
     );
 }
@@ -612,13 +619,29 @@ fn receipts_and_dones_land_only_on_what_went_to_that_friend() {
     assert_eq!(queue(&conn, &t, "d1", 50).unwrap(), doc, "the same row");
     sent(&conn, &doc, 51).unwrap();
     held_mark(&conn, &doc, 52).unwrap();
-    let d = sent_recent(&conn, 5).unwrap().into_iter().find(|x| x.id == doc).unwrap();
-    assert_eq!((d.arrived_at, d.read_at, d.held_at), (0, 0, 52), "not arrived: held for them");
+    let d = sent_recent(&conn, 5)
+        .unwrap()
+        .into_iter()
+        .find(|x| x.id == doc)
+        .unwrap();
+    assert_eq!(
+        (d.arrived_at, d.read_at, d.held_at),
+        (0, 0, 52),
+        "not arrived: held for them"
+    );
     assert_eq!(already(&conn, &t, "d1").unwrap(), None);
     assert!(receipt(&conn, t.id, &doc, "arrived", 60).unwrap());
     held_mark(&conn, &doc, 61).unwrap();
-    let d = sent_recent(&conn, 5).unwrap().into_iter().find(|x| x.id == doc).unwrap();
-    assert_eq!((d.arrived_at, d.held_at), (60, 52), "held is said once, before it arrived");
+    let d = sent_recent(&conn, 5)
+        .unwrap()
+        .into_iter()
+        .find(|x| x.id == doc)
+        .unwrap();
+    assert_eq!(
+        (d.arrived_at, d.held_at),
+        (60, 52),
+        "held is said once, before it arrived"
+    );
 
     // Answers queue as frames of their own, and a receipt twice is one.
     let r1 = queue_kind(&conn, &t, "receipt", "their-frame", "arrived", "", 40).unwrap();

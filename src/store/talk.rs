@@ -102,7 +102,14 @@ impl Store {
         text: &str,
         mine: bool,
     ) -> Result<Option<String>> {
-        peer::add_reply(&self.conn.lock().unwrap(), peer_id, doc_id, text, mine, now())
+        peer::add_reply(
+            &self.conn.lock().unwrap(),
+            peer_id,
+            doc_id,
+            text,
+            mine,
+            now(),
+        )
     }
 
     /// The replies to a document, over every version of it.

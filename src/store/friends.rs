@@ -102,7 +102,15 @@ impl Store {
         due_at: i64,
         promise: bool,
     ) -> Result<i64> {
-        peer::note_arrived(&self.conn.lock().unwrap(), peer_id, text, frame, due_at, promise, now())
+        peer::note_arrived(
+            &self.conn.lock().unwrap(),
+            peer_id,
+            text,
+            frame,
+            due_at,
+            promise,
+            now(),
+        )
     }
 
     /// `what`: taken, remove, restore (`peer::settle_note`).
@@ -272,7 +280,9 @@ impl Store {
              ORDER BY received_at DESC",
         )?;
         let rows = st
-            .query_map(params![key, source_path, but], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .query_map(params![key, source_path, but], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }

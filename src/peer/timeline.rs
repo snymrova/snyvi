@@ -78,47 +78,7 @@ pub fn timeline(conn: &Connection, peer: &Peer, before: i64, limit: usize) -> Re
     })? {
         out.push(r?);
     }
-    // What went to them: documents, lines and promises (`kind` ''), with
-    // what came back about each. A reply of the reader's is read from the
-    // replies, below, where it is kept with the document it is about.
-    let mut st = conn.prepare(
-        "SELECT o.id, o.doc_id, COALESCE(d.title, o.text), o.queued_at, o.sent_at, o.held_at, o.arrived_at,
-                o.read_at, o.done_at, o.done_commit, o.re LIKE 'note:%', o.extra, o.error
-         FROM peer_outbox o LEFT JOIN docs d ON d.id = o.doc_id AND o.doc_id != ''
-         WHERE o.peer_id = ?1 AND o.kind = '' AND o.queued_at < ?2
-         ORDER BY o.queued_at DESC LIMIT ?3",
-    )?;
-    for r in st.query_map(params![peer.id, before, n], |r| {
-        let doc_id: String = r.get(1)?;
-        let promise: bool = r.get(10)?;
-        let extra: String = r.get(11)?;
-        let sent_at: i64 = r.get(4)?;
-        Ok(Item {
-            key: format!("o:{}", r.get::<_, String>(0)?),
-            kind: if !doc_id.is_empty() {
-                "doc"
-            } else if promise {
-                "promise"
-            } else {
-                "line"
-            },
-            dir: "out",
-            text: r.get(2)?,
-            at: r.get(3)?,
-            sent_at,
-            held_at: r.get(5)?,
-            arrived_at: r.get(6)?,
-            read_at: r.get(7)?,
-            done_at: r.get(8)?,
-            commit: r.get(9)?,
-            due_at: if promise { extra.parse().unwrap_or(0) } else { 0 },
-            waiting: if sent_at == 0 { r.get(12)? } else { String::new() },
-            doc_id,
-            ..Default::default()
-        })
-    })? {
-        out.push(r?);
-    }
+    out.extend(went(conn, peer, before, n)?);
     // Their lines and promises, kept or not. A line of theirs the reader
     // ticked and told is said by the desk's line (`sent_frame`, `told_at`).
     let mut st = conn.prepare(
@@ -173,6 +133,60 @@ pub fn timeline(conn: &Connection, peer: &Peer, before: i64, limit: usize) -> Re
     Ok(out)
 }
 
+/// What went to them: documents, lines and promises (`kind` ''), with
+/// what came back about each. A reply of the reader's is read from the
+/// replies, where it is kept with the document it is about.
+fn went(conn: &Connection, peer: &Peer, before: i64, n: i64) -> Result<Vec<Item>> {
+    let mut out = Vec::new();
+    let mut st = conn.prepare(
+        "SELECT o.id, o.doc_id, COALESCE(d.title, o.text), o.queued_at, o.sent_at, o.held_at, o.arrived_at,
+                o.read_at, o.done_at, o.done_commit, o.re LIKE 'note:%', o.extra, o.error
+         FROM peer_outbox o LEFT JOIN docs d ON d.id = o.doc_id AND o.doc_id != ''
+         WHERE o.peer_id = ?1 AND o.kind = '' AND o.queued_at < ?2
+         ORDER BY o.queued_at DESC LIMIT ?3",
+    )?;
+    for r in st.query_map(params![peer.id, before, n], |r| {
+        let doc_id: String = r.get(1)?;
+        let promise: bool = r.get(10)?;
+        let extra: String = r.get(11)?;
+        let sent_at: i64 = r.get(4)?;
+        Ok(Item {
+            key: format!("o:{}", r.get::<_, String>(0)?),
+            kind: if !doc_id.is_empty() {
+                "doc"
+            } else if promise {
+                "promise"
+            } else {
+                "line"
+            },
+            dir: "out",
+            text: r.get(2)?,
+            at: r.get(3)?,
+            sent_at,
+            held_at: r.get(5)?,
+            arrived_at: r.get(6)?,
+            read_at: r.get(7)?,
+            done_at: r.get(8)?,
+            commit: r.get(9)?,
+            due_at: if promise {
+                extra.parse().unwrap_or(0)
+            } else {
+                0
+            },
+            waiting: if sent_at == 0 {
+                r.get(12)?
+            } else {
+                String::new()
+            },
+            doc_id,
+            ..Default::default()
+        })
+    })? {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,7 +207,10 @@ mod tests {
         for c in COLUMNS_1_19 {
             conn.execute_batch(c).unwrap();
         }
-        for c in COLUMNS_1_23.iter().filter(|c| c.starts_with("ALTER TABLE peer")) {
+        for c in COLUMNS_1_23
+            .iter()
+            .filter(|c| c.starts_with("ALTER TABLE peer"))
+        {
             conn.execute_batch(c).unwrap();
         }
         for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
@@ -222,7 +239,16 @@ mod tests {
         let doc = queue(&conn, &t, "d1", 20).unwrap();
         sent(&conn, &doc, 21).unwrap();
         held_mark(&conn, &doc, 22).unwrap();
-        note_arrived(&conn, t.id, "water the beans by Friday", "f1", 500, false, 30).unwrap();
+        note_arrived(
+            &conn,
+            t.id,
+            "water the beans by Friday",
+            "f1",
+            500,
+            false,
+            30,
+        )
+        .unwrap();
         note_arrived(&conn, t.id, "post the seeds", "f2", 600, true, 40).unwrap();
         add_reply(&conn, t.id, "d1", "can bed 3 take squash?", false, 50).unwrap();
         add_reply(&conn, t.id, "d1", "yes, from May", true, 60).unwrap();
@@ -241,7 +267,10 @@ mod tests {
         );
         assert_eq!((all[4].held_at, all[4].arrived_at), (22, 0));
         assert_eq!(all[2].due_at, 600);
-        assert_eq!(all[3].text, "water the beans by Friday", "their words, as they wrote them");
+        assert_eq!(
+            all[3].text, "water the beans by Friday",
+            "their words, as they wrote them"
+        );
         let older = timeline(&conn, &t, 30, 2).unwrap();
         assert_eq!(older.iter().map(|i| i.at).collect::<Vec<_>>(), vec![20, 10]);
     }

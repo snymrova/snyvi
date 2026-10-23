@@ -52,14 +52,16 @@ const STYLE = `
 let c = null, id = 0, items = [], more = false, info = null, desks = null, keepOpen = "", styled = false;
 
 /** The page for friend `fid`, drawn into the document column. */
-export async function show(ctx, fid) {
+export async function show(ctx, fid, push) {
   c = ctx; id = fid; items = []; more = false; keepOpen = "";
   if (!styled) { styled = true; document.head.append(Object.assign(document.createElement("style"), { textContent: STYLE })); }
   c.docEl.innerHTML = `<div class="fr"><p class="fr-sub">…</p></div>`;
   await load(0);
   if (c.view() !== "friend") return;
   draw();
-  c.docEl.querySelector("h1")?.focus({ preventScroll: true });
+  // Its name takes the focus when it was gone to, as a document's title does
+  // (04-doc.js): on a page loaded at /friend/{id}, a ring around it says nothing.
+  if (push) c.docEl.querySelector("h1")?.focus({ preventScroll: true });
 }
 
 async function load(before) {
@@ -110,7 +112,7 @@ function went(x) {
   if (x.done_at) return `<span class="ok">${x.kind === "promise" ? "kept" : "done"} ✓${x.commit ? ` · ${esc(x.commit.slice(0, 7))}` : ""}</span>`;
   if (x.read_at) return `<span>read ${esc(c.rel(x.read_at))}</span>`;
   if (x.arrived_at) return `<span>arrived ${esc(c.rel(x.arrived_at))}</span>`;
-  if (x.held_at) return `<span class="warn">waiting while they are away</span>`;
+  if (x.held_at) return `<span class="warn">held, they’re away</span>`;
   return `<span>sent ${esc(c.rel(x.sent_at))}</span>`;
 }
 

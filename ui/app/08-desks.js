@@ -647,7 +647,7 @@
     for (const ev of ["peeroffers", "peernotes", "peerdone", "peerreply"]) es.addEventListener(ev, onPeer);
     // A send's word in the open document's head follows what came back
     // (assets.rs `went`, F2): peer.js reads it again, in place.
-    es.addEventListener("peers", ev => { const j = parse(ev); if (j && j.friends != null) state.friends = j.friends; if (docEl.querySelector(".doc-send[data-sent]")) peerUse().then(m => m.sentNow(peerCtx), () => {}); });
+    es.addEventListener("peers", ev => { const j = parse(ev); if (j && j.friends != null) state.friends = j.friends; if (docEl.querySelector(".doc-send:not([data-act])")) peerUse().then(m => m.sentNow(peerCtx), () => {}); });
     for (const ev of HOME_EVENTS) es.addEventListener(ev, homeTick);
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {

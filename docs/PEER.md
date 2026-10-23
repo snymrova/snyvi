@@ -246,7 +246,7 @@ got:
   comes and goes (`{"friend":{"on":…}}`) and when it keeps a frame for them
   (`{"held":id}`). A held frame is `peer_outbox.held_at`; who is away is
   kept in memory (`Peers::away`) and on `/api/peers`. The sender reads
-  *waiting, Trapti is away* -- never *arrived* for what has not. A resend
+  *held, they’re away* -- never *arrived* for what has not. A resend
   forgets what came back about the last send (`peer::queue`).
 - **Already there.** A document is immutable, so the same id that arrived
   already would put nothing new in front of them: Send to… answers

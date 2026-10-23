@@ -445,7 +445,6 @@ pub(crate) struct Talk {
 /// One friend a document went to, and how far it got.
 pub(crate) struct SentTo {
     pub(crate) name: String,
-    pub(crate) peer_id: i64,
     /// waiting, away, sent, arrived or read.
     pub(crate) state: &'static str,
     /// When it got there; 0 for what has not gone.
@@ -467,12 +466,7 @@ fn sent_to(name: String, s: &crate::peer::Sent, away: bool) -> SentTo {
     } else {
         ("waiting", 0)
     };
-    SentTo {
-        name,
-        peer_id: s.peer_id,
-        state,
-        at,
-    }
+    SentTo { name, state, at }
 }
 
 /// The talk for `doc`, from the store.
@@ -782,7 +776,7 @@ fn sent_label(sent: &[SentTo]) -> String {
             } else {
                 String::new()
             };
-            format!("→ {} · {}{when}", e(&one.name), state_word(one.state, &one.name))
+            format!("→ {} · {}{when}", e(&one.name), state_word(one.state))
         }
         many => format!(
             "→ {}",
@@ -797,16 +791,18 @@ fn sent_label(sent: &[SentTo]) -> String {
 /// Each friend's word, for the button's tip.
 fn sent_tip(sent: &[SentTo]) -> String {
     sent.iter()
-        .map(|s| format!("{}: {}", s.name, state_word(s.state, &s.name)))
+        .map(|s| format!("{}: {}", s.name, state_word(s.state)))
         .collect::<Vec<_>>()
         .join(" · ")
 }
 
-fn state_word(state: &str, name: &str) -> String {
+/// The name is said beside it, in the head and in the tip, so the word
+/// never says it again.
+fn state_word(state: &str) -> &str {
     match state {
-        "away" => format!("waiting, {name} is away"),
-        "waiting" => "waiting to go".to_string(),
-        s => s.to_string(),
+        "away" => "held, they’re away",
+        "waiting" => "waiting to go",
+        s => s,
     }
 }
 

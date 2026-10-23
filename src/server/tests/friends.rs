@@ -38,7 +38,6 @@ fn send_to_says_where_it_went() {
     let talk = Talk {
         sent: vec![SentTo {
             name: "Trapti".into(),
-            peer_id: 1,
             state: "arrived",
             at: 1_792_771_354,
         }],
@@ -47,18 +46,23 @@ fn send_to_says_where_it_went() {
     let html = doc_html(&d, "", 1, &talk);
     assert!(!html.contains(">Send to…</button>"), "{html}");
     assert!(html.contains("data-sent=\"1\""), "{html}");
-    assert!(html.contains("→ Trapti · arrived <time data-ts=\"1792771354\">"), "{html}");
-    assert!(html.contains("white-space:nowrap"), "the head keeps its height");
+    assert!(
+        html.contains("→ Trapti · arrived <time data-ts=\"1792771354\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains("white-space:nowrap"),
+        "the head keeps its height"
+    );
     let away = Talk {
         sent: vec![SentTo {
             name: "Trapti".into(),
-            peer_id: 1,
             state: "away",
             at: 0,
         }],
         ..Talk::default()
     };
-    assert!(doc_html(&d, "", 1, &away).contains("→ Trapti · waiting, Trapti is away"));
+    assert!(doc_html(&d, "", 1, &away).contains("→ Trapti · held, they’re away"));
 }
 
 /// The replies under the reader's own document read both ways, and the
@@ -74,11 +78,17 @@ fn replies_read_both_ways() {
         peer_id: 7,
     };
     let talk = Talk {
-        replies: vec![r("can bed 3 take squash?", 10, false), r("yes, from May", 20, true)],
+        replies: vec![
+            r("can bed 3 take squash?", 10, false),
+            r("yes, from May", 20, true),
+        ],
         ..Talk::default()
     };
     let html = doc_html(&d, "", 1, &talk);
-    assert!(html.contains("<b>Trapti</b> can bed 3 take squash?"), "{html}");
+    assert!(
+        html.contains("<b>Trapti</b> can bed 3 take squash?"),
+        "{html}"
+    );
     assert!(html.contains("<b>You</b> → Trapti yes, from May"), "{html}");
     assert!(html.contains("data-act=\"reply\""), "{html}");
     assert!(html.contains("data-peer=\"7\""), "{html}");
@@ -89,8 +99,14 @@ fn replies_read_both_ways() {
 #[test]
 fn a_replys_link_is_a_link() {
     let html = link_line("see https://www.rhs.org.uk/veg/squash. <b>ok</b>");
-    assert!(html.starts_with("see <a href=\"https://www.rhs.org.uk/veg/squash\""), "{html}");
-    assert!(html.contains(">rhs.org.uk/veg/squash</a>. &lt;b&gt;ok&lt;/b&gt;"), "{html}");
+    assert!(
+        html.starts_with("see <a href=\"https://www.rhs.org.uk/veg/squash\""),
+        "{html}"
+    );
+    assert!(
+        html.contains(">rhs.org.uk/veg/squash</a>. &lt;b&gt;ok&lt;/b&gt;"),
+        "{html}"
+    );
     let local = link_line("open http://127.0.0.1:7777/d/x now");
     assert!(!local.contains("<a "), "{local}");
     assert_eq!(link_line("httpd is a server"), "httpd is a server");
