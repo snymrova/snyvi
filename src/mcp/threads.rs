@@ -17,7 +17,8 @@ rests: move it to shipped first if it is done.";
 
 const MOVE: &str = "Move this panel's thread: a stage (idea, planned, building, review, waiting, shipped, \
 parked), and with parked the next step to pick it up by. Add a PR number or more note ids. Call it when the \
-work changes stage, not every turn.";
+work changes stage. Shipped, then told with url once the user posts it and says where: you never post, you \
+draft.";
 
 const ASK: &str = "Put a decision on the user's On you list in snyvi: a question, two to four short options, and \
 the one you recommend; up to four at once as questions, on one card. It does not wait: the answers come with \
@@ -70,8 +71,9 @@ pub(super) fn specs() -> Vec<Value> {
         json!({
             "name": "move_thread", "title": "Move this panel's thread", "description": MOVE,
             "inputSchema": { "type": "object", "properties": {
-                "stage": { "type": "string", "enum": crate::thread::STAGES },
+                "stage": { "type": "string", "enum": crate::thread::STAGES.iter().chain(&["told"]).collect::<Vec<_>>() },
                 "next": { "type": "string", "description": "The next step, for parked." },
+                "url": { "type": "string", "description": "With told: where the user posted or released it." },
                 "pr": { "type": "string", "description": "The PR's number." },
                 "notes": notes
             }, "additionalProperties": false },
@@ -248,7 +250,7 @@ impl Session {
     pub(super) fn move_thread(&self, args: &Value) -> Value {
         let body = json!({
             "stage": arg(args, "stage"), "next": arg(args, "next"), "pr": arg(args, "pr"),
-            "notes": notes_arg(args),
+            "notes": notes_arg(args), "url": arg(args, "url"),
         });
         match self.thread_call("thread/move", body) {
             Ok(v) => said(format!("Moved: {}.", card(&v["thread"])), false),

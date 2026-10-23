@@ -44,6 +44,7 @@ mod store;
 mod strip;
 mod text;
 mod thread;
+mod told;
 mod update;
 mod version;
 mod waiting;

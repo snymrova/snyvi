@@ -654,7 +654,7 @@ pub(crate) async fn pane_brief(
         .filter(|p| p.removed_at == 0)
         .map(|p| p.name)
         .collect();
-    let (threads, waiting, cards) = app
+    let (threads, waiting, cards, untold) = app
         .store
         .clocked(|c, now| {
             Ok((
@@ -664,6 +664,7 @@ pub(crate) async fn pane_brief(
                 // stale ones only counted (`brief::brief_of`).
                 crate::thread::waiting_on(c, desk.id, true, now)?,
                 crate::thread::suggestions(c, desk.id)?,
+                crate::told::untold(c, desk.id, now)?,
             ))
         })
         .unwrap_or_default();
@@ -672,6 +673,7 @@ pub(crate) async fn pane_brief(
         threads: &threads,
         waiting: &waiting,
         cards: &cards,
+        untold: &untold,
     };
     let context = crate::brief::brief_of(
         &desk,

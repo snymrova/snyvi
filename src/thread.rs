@@ -253,6 +253,14 @@ pub struct Thread {
     pub shipped_at: i64,
     #[serde(skip_serializing_if = "is_zero")]
     pub removed_at: i64,
+    /// When the world heard of it, where and how (`crate::told`): a shipped
+    /// thread with `told_at` is told.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub told_at: i64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub told_url: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub told_how: String,
     /// When a panel last took it up (`TAKEN_COLUMN`).
     #[serde(skip)]
     pub taken_at: i64,
@@ -414,7 +422,8 @@ fn desk_open(conn: &Connection, desk_id: i64) -> Result<bool> {
 
 const THREAD_COLS: &str =
     "id, desk_id, name, stage, folder, branch, branch_seen, commits, pr, ci, merged, merged_at,
-     next, by, pane, created_at, moved_at, shipped_at, removed_at, moved_by, taken_at, pr_state";
+     next, by, pane, created_at, moved_at, shipped_at, removed_at, moved_by, taken_at, pr_state,
+     told_at, told_url, told_how";
 
 fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
     Ok(Thread {
@@ -440,6 +449,9 @@ fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
         moved_by: r.get(19)?,
         taken_at: r.get(20)?,
         pr_state: r.get(21)?,
+        told_at: r.get(22)?,
+        told_url: r.get(23)?,
+        told_how: r.get(24)?,
         rest: String::new(),
         notes: Vec::new(),
     })
@@ -697,6 +709,8 @@ pub struct Move {
     /// The reader moved it (the page, or `/park` in the panel): the move is
     /// news to every panel, the one it was typed in too.
     pub reader: bool,
+    /// With `told` for the stage: where it was told (`crate::told`).
+    pub url: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -705,6 +719,7 @@ pub enum Moved {
     Thread(Box<Thread>),
     BadStage,
     BadPr,
+    BadUrl,
     NoThread,
 }
 
@@ -716,9 +731,15 @@ pub fn move_thread(
     m: &Move,
     now: i64,
 ) -> Result<Moved> {
-    if !m.stage.is_empty() && !STAGES.contains(&m.stage.as_str()) {
+    // Told is a move, not a stage: the thread stays shipped, with where.
+    let told = m.stage == "told";
+    if !m.stage.is_empty() && !told && !STAGES.contains(&m.stage.as_str()) {
         return Ok(Moved::BadStage);
     }
+    let Some(url) = crate::told::url_ok(if told { &m.url } else { "" }) else {
+        return Ok(Moved::BadUrl);
+    };
+    let stage = if told { "" } else { m.stage.as_str() };
     let pr = if m.pr.trim().is_empty() {
         String::new()
     } else {
@@ -739,7 +760,7 @@ pub fn move_thread(
     let name = line(&m.name, NAME_CHARS);
     // Parked carries its next step; leaving parked drops it, so a stale one
     // is not read as the plan for a thread that is building again.
-    let next = match m.stage.as_str() {
+    let next = match stage {
         "parked" if next.is_empty() => t.next.clone(),
         "parked" => next,
         "" if t.stage == "parked" && !next.is_empty() => next,
@@ -762,7 +783,7 @@ pub fn move_thread(
         params![
             desk_id,
             t.id,
-            m.stage,
+            stage,
             next,
             pr,
             name,
@@ -772,6 +793,9 @@ pub fn move_thread(
         ],
     )?;
     link_notes(&tx, desk_id, t.id, &m.notes)?;
+    if told {
+        crate::told::mark(&tx, desk_id, t.id, &url, "", now)?;
+    }
     let t = get(&tx, desk_id, t.id)?.expect("the row just written");
     tx.commit()?;
     Ok(Moved::Thread(Box::new(t)))

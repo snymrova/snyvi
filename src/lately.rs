@@ -12,7 +12,8 @@
 //! - **Kinds.** `doc` and `version` (a document arrived, or a newer one),
 //!   `aside` (an agent's line, `crate::aside`), `line`, `reply` and `tick`
 //!   (a friend's), `answered` (a turn the reader answered), `offered` (an
-//!   agent's offer to a friend, once answered).
+//!   agent's offer to a friend, once answered), `told` (a shipped thread
+//!   the world heard of, with where, `crate::told`).
 //! - **Seen** is one watermark for the whole daemon: the dot means a row is
 //!   newer than it. Opening the tray in any page moves it.
 //! - **Kept.** An aside stays until the reader removes it, like a document.
@@ -50,8 +51,8 @@ CREATE TABLE IF NOT EXISTS lately_seen (
 pub const NEWS_DAYS: i64 = 14;
 /// Rows to a page of the tray; older ones come with `before`.
 pub const PAGE: usize = 50;
-pub const KINDS: [&str; 8] = [
-    "doc", "version", "aside", "line", "reply", "tick", "answered", "offered",
+pub const KINDS: [&str; 9] = [
+    "doc", "version", "aside", "line", "reply", "tick", "answered", "offered", "told",
 ];
 
 /// A row as the page reads it.

@@ -69,6 +69,8 @@ pub struct Work<'a> {
     /// session proposes nothing twice, and does not call pending what the
     /// reader has not answered.
     pub cards: &'a [Suggestion],
+    /// Threads shipped by a merge and not told, with when (`told::untold`).
+    pub untold: &'a [(String, i64)],
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -182,6 +184,18 @@ pub fn brief_of(
         ));
     }
     lines.extend(thread_lines(desk, slot, work.threads, work.waiting));
+    if !work.untold.is_empty() {
+        let named: Vec<String> = work
+            .untold
+            .iter()
+            .map(|(name, at)| format!("\"{}\" ({})", cut(name, 60), ago(now - at)))
+            .collect();
+        lines.push(format!(
+            "Shipped, not told ({}): {}. When the user says where it went out, move_thread told with url.",
+            named.len(),
+            named.join(", ")
+        ));
+    }
     let cards: Vec<String> = work
         .cards
         .iter()
@@ -472,6 +486,9 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
                     "The note \"{q}\" came due and the user moved it ({}).",
                     a.to_lowercase()
                 ),
+                // snyvi's own card after a merge (`crate::told`).
+                "tell" if a == crate::told::NO_ONE => format!("You answered \"{q}\": no one; it counts as told."),
+                "tell" => format!("You answered \"{q}\": {a}. A dated line for it is on the desk."),
                 _ => format!("You answered \"{q}\": {a}."),
             }
         })
@@ -1270,8 +1287,10 @@ mod tests {
             threads: &[t, shipped],
             waiting: &[w],
             cards: &[],
+            untold: &[("1.47 dates".into(), -3 * 86_400)],
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
+        assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");
         assert!(b.contains(
             "Threads on this desk: Home + friends (building, #87 #91, claude/asides; this panel's)."
         ));

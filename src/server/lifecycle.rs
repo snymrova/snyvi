@@ -215,6 +215,15 @@ fn ring_due(app: &App) {
         }
         Err(e) => eprintln!("snyvi: the clock for dates on notes: {e:#}"),
     }
+    // And a thread shipped by a merge asks who should know, once (`crate::told`).
+    match app.store.clocked(|c, now| crate::told::ask(c, now)) {
+        Ok(desks) => {
+            for d in desks {
+                super::api_thread::threads_moved(app, d);
+            }
+        }
+        Err(e) => eprintln!("snyvi: who should know of a shipped thread: {e:#}"),
+    }
 }
 
 /// The pending restart, as health and `snyvi restart` see it.

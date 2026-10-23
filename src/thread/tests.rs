@@ -18,6 +18,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
     conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
     conn.execute_batch(crate::due::TURN_COLUMN_1_47).unwrap();
+    conn.execute_batch(crate::told::COLUMNS_1_48).unwrap();
     for c in SUGGEST_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }

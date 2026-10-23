@@ -86,8 +86,9 @@ function threadSub(t) {
 
 
 /** The field a thread's Rename… opens, in its line. */
-const thInput = t => thField && thField.id === t.id && thField.kind === "rename"
-  ? `<input class="th-in" data-for="rename" placeholder="The thread's name" aria-label="A new name" spellcheck="false">` : "";
+const thInput = t => !thField || thField.id !== t.id ? ""
+  : thField.kind === "rename" ? `<input class="th-in" data-for="rename" placeholder="The thread's name" aria-label="A new name" spellcheck="false">`
+  : thField.kind === "told" ? `<input class="th-in" data-for="told" type="url" placeholder="Where it went out: https://…" aria-label="Where it was told: a URL" spellcheck="false">` : "";
 
 /** A panel's thread, on the panel's own row: its stage, as a small chip
  *  beside the name, and the rest -- the thread's name, the PR, the checks
@@ -101,13 +102,17 @@ function threadChip(d, pane, esc) {
   const t = paneThread(d, pane);
   if (!t) return "";
   const shipped = t.stage === "shipped";
+  // Shipped by a merge and not yet told is a hollow ✓; told, with where, is
+  // the solid one (1.48, src/told.rs).
+  const untold = shipped && t.merged_at && !t.told_at;
   const facts = [
     t.pr ? `PR ${t.pr}` : "",
     t.merged ? `merged ${t.merged.slice(0, 7)}` : t.ci ? `CI ${t.ci}` : "",
     t.notes.length ? t.notes.map(n => `#${n}`).join(" ") : "",
+    t.told_at ? `told${t.told_url ? ` at ${t.told_url}` : t.told_how === "none" ? ": no one needed to know" : ""}` : untold ? "not told yet: Told at… in its menu" : "",
   ].filter(Boolean);
-  return `<span class="dk-pth${shipped ? " shipped" : ""}" data-t="${t.id}" data-tip="${esc(t.name)}" data-tip-sub="${esc([...facts, threadSub(t)].join(" · "))}">` +
-    `<span class="th-word">${shipped ? "✓ shipped" : esc(t.stage)}</span></span>`;
+  return `<span class="dk-pth${shipped ? " shipped" : ""}${untold ? " untold" : ""}" data-t="${t.id}" data-tip="${esc(t.name)}" data-tip-sub="${esc([...facts, threadSub(t)].join(" · "))}">` +
+    `<span class="th-word">${t.told_at ? "✓ told" : shipped ? "✓ shipped" : esc(t.stage)}</span></span>`;
 }
 
 /** Under a panel's row, only for a moment: a thread just removed, with its
@@ -163,7 +168,8 @@ function qHtml(w, esc, text = w.text) {
  *  name and the program said it again on every row and cut the age off. */
 function byHtml(w, d, esc, extra = "") {
   const n = slotOf(d, w.pane);
-  const where = w.via === "dialog" ? `Claude asks in panel ${n || "?"}` : n ? `panel ${n}` : "panel closed";
+  // A tell card is snyvi's own, after a merge (src/told.rs): on no panel.
+  const where = w.kind === "tell" ? "snyvi, after the merge" : w.via === "dialog" ? `Claude asks in panel ${n || "?"}` : n ? `panel ${n}` : "panel closed";
   const tip = `${w.kind === "decide" ? "A decision" : w.kind} · ${fromOf(d, w)}${w.by ? ` · ${w.by}` : ""}`;
   return `<p class="tn-by"><span data-tip="${esc(tip)}">${esc(where)} · ${esc(ctx.relShort(w.created_at))}</span>${extra}</p>`;
 }
@@ -272,7 +278,7 @@ function turnRow(d, w, esc) {
   const from = fromOf(d, w);
   if (w.kind === "run") return runRow(d, w, n, from, esc);
   if (w.kind === "due") return dueRow(w, esc);
-  const buttons = w.kind === "decide"
+  const buttons = w.kind === "decide" || w.kind === "tell"
     ? picks(w, esc)
     : (ANSWERS[w.kind] || ["Done"]).map(o => o.endsWith("…")
       ? `<button type="button" class="tn-opt quiet" data-a="tn-change" data-w="${w.id}">${esc(o)}</button>`
@@ -514,6 +520,8 @@ function threadMenu(card) {
   if (!t || !d) return null;
   return { head: t.name, items: [
     t.stage !== "shipped" && { label: "Done", run: () => act({ dataset: { a: "th-move", t: String(t.id), stage: "shipped" } }) },
+    // Where the world heard of it: a release, a post (1.48, src/told.rs).
+    t.stage === "shipped" && { label: t.told_at ? "Told at… (change)" : "Told at…", moves: 1, run: () => { thField = { kind: "told", id: t.id }; thDraft = t.told_url || ""; rail(); } },
     { label: "Rename…", moves: 1, run: () => { thField = { kind: "rename", id: t.id }; thDraft = t.name; rail(); } },
     "rule",
     { label: "Remove", danger: true, run: () => act({ dataset: { a: "th-x", t: String(t.id) } }) },
@@ -533,7 +541,9 @@ function threadItems(v) {
 
 async function moveThread(d, t, body, again = { a: "th-move", t: String(t.id), stage: body.stage || "" }) {
   const was = { ...t };
-  Object.assign(t, body.stage ? { stage: body.stage } : {}, body.name ? { name: body.name } : {}, body.next != null ? { next: body.next } : {});
+  // Told is a move, not a stage: the thread stays shipped, with where.
+  const stage = body.stage === "told" ? { stage: "shipped", told_at: Date.now() / 1000, told_url: body.url } : body.stage ? { stage: body.stage } : {};
+  Object.assign(t, stage, body.name ? { name: body.name } : {}, body.next != null ? { next: body.next } : {});
   rail();
   if (await told(again, `t${t.id}`, "Could not move it", () => Object.assign(t, was),
     () => ctx.api(`/api/desks/${d.id}/threads/${t.id}/move`, body))) await getFiled(d.id, true);
@@ -674,7 +684,7 @@ async function filedAct(a, b, d) {
     putAway("t", t.id, t.name, restOf(d, t) ? "" : t.pane); rail();
     await told({ ...b.dataset }, `t${t.id}`, "Could not remove it", () => { filed.threads.push(t); filedGone = null; },
       () => ctx.api(`/api/desks/${d.id}/threads/${t.id}/remove`, {}));
-  } else if (a === "tn-pick" && w) await answer(d, w, b.dataset.v);
+  } else if (a === "tn-pick" && w) await answer(d, w, b.dataset.v, undefined, w.kind !== "tell");
   else if ((a === "tn-due-done" || a === "tn-later") && w) await dueAnswer(d, w, a === "tn-later" ? b.dataset.v : "");
   else if ((a === "tn-other" || a === "tn-change") && w) { thField = { kind: a === "tn-other" ? "other" : "change", id: w.id }; thDraft = ""; rail(); }
   else if (a === "tn-link") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
@@ -776,6 +786,9 @@ async function saveField() {
   if (f.kind === "rename") {
     const t = filed.threads.find(x => x.id === f.id);
     if (t && text) await moveThread(d, t, { name: text }); else rail();
+  } else if (f.kind === "told") {
+    const t = filed.threads.find(x => x.id === f.id);
+    if (t && text) await moveThread(d, t, { stage: "told", url: text }); else rail();
   } else {
     const w = filed.turns.find(x => x.id === f.id);
     if (w && text) await answer(d, w, f.kind === "change" ? `Needs changes: ${text}` : text); else rail();
@@ -789,6 +802,8 @@ const THREAD_CSS = `
    and the context, in the rail's quiet ink; the name gives way before it does. */
 .dk-pth { flex: none; margin-left: auto; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 500; line-height: 16px; color: var(--fg-2); }
 .dk-pth.shipped { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+/* Shipped, not told: the same ✓ hollow, an outline where the fill was. */
+.dk-pth.untold { background: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent); }
 .dk-pane.on .dk-pth { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--fg); }
 .dk-focus .dk-pth + .ctx { margin-left: 0; padding-left: 0; }
 .th-edit { padding: 0 3px 2px 51px; }
