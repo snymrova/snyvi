@@ -68,16 +68,18 @@ const CSS = `
 .hm .fact { font-family: var(--mono); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 /* Pick up, the desks and the week on the left, the side column beside them. */
 .hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
+.hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
+.hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
 @container (max-width: 760px) {
   /* One column, and what arrived under the bar rather than under the week:
-     the columns step aside so their sections share one order. */
+     the columns step aside so their sections share one order. After the
+     columns' own rules, which would otherwise keep them boxes in areas that
+     are gone: three tracks, and the bar drawn over the Claude box. */
   .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; }
   .hm-main, .hm-side { display: contents; }
   .hm-nb { order: -2; }
   .hm-arrived { order: -1; }
 }
-.hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
-.hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
 /* A section: a label on a hairline, and space doing the rest. */
 .hm-w { min-width: 0; }
 .hm-wh { display: flex; align-items: center; gap: 8px; height: 28px; margin: 0 0 8px; border-bottom: 1px solid var(--rule); }

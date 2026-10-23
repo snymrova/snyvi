@@ -2745,6 +2745,16 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // The page is a grid, not the reading measure.
     const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
     rows.push(["Home takes the width, with the side column beside Pick up and the desks", wide.beside, `${wide.hm}px wide; ${wide.beside ? "Pick up, the desks and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
+    // A2 of the audit of 1.46.2: at 1000 px, sidebar open, Home's container
+    // is under 760 px and the grid is one real column. It was three tracks,
+    // with the note bar drawn over the Claude box.
+    await p.width(1000);
+    const one = await p.ev(`(() => { const g = document.querySelector(".hm-grid"), nb = document.querySelector(".hm-nb"); if (!g || !nb) return null; const b = nb.getBoundingClientRect();
+      const over = [...g.querySelectorAll(":scope > * > *, :scope > *")].filter(x => x !== nb && !x.contains(nb) && !nb.contains(x) && getComputedStyle(x).display !== "contents" && x.offsetParent).find(x => { const r = x.getBoundingClientRect(); return r.height > 0 && r.top < b.bottom - 1 && r.bottom > b.top + 1 && r.left < b.right - 1 && r.right > b.left + 1; });
+      return { tracks: getComputedStyle(g).gridTemplateColumns, over: over ? (over.dataset.w || over.className) : "" }; })()`);
+    await p.wide();
+    rows.push(["Home at 1000 px is one column, the note bar over nothing", !!one && one.tracks.split(" ").length === 1 && !one.over,
+      !one ? "no grid or no note bar on Home" : one.tracks.split(" ").length !== 1 ? `the grid has tracks ${one.tracks}` : one.over ? `the note bar is drawn over ${one.over}` : `one track, ${one.tracks}, and the bar over nothing`]);
     // 1.19: the date in the head and no clock; Arrived heads the side column
     // and has no ✕; with no friend there is no Friends widget, and Pair with
     // a friend… is in the foot with the version and Check for updates.
