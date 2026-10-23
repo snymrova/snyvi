@@ -609,7 +609,7 @@ function noteRow(x, esc) {
   // A ticked line keeps its number and its pictures under it; where its
   // work went -- the commit, the PR -- is its tip and its menu, since a done
   // line is history and they were the loudest marks on it (7c0fc42885).
-  const marks = x.done ? picMark(x, esc) + tell(x, esc) : stageMark(x, esc) + dueMark(x, esc) + picMark(x, esc);
+  const marks = x.done ? picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : stageMark(x, esc) + dueMark(x, esc) + promiseMark(x, esc) + picMark(x, esc);
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
@@ -1024,6 +1024,7 @@ function forgetNotes() {
 /** This desk's list. Asked for once, unless a write says to look again. */
 async function getNotes(id, again) {
   if (id == null || !ctx) return;
+  getFriends();
   if (!again && (notesAt === id || notesGet === id)) return;
   notesGet = id;
   // The panels' pipelines move with the same event (13-pipeline.js).
@@ -1048,11 +1049,37 @@ async function getNotes(id, again) {
   // §2.3). A tick here says it itself, below, before the list is read back.
   const ticked = notesAt === id && was.some(stillOpen) && !next.some(stillOpen) && next.filter(x => x.done).length > was.filter(x => x.done).length;
   noteList = next; notesAt = id;
+  promisedTo = new Map((j.promised || []).map(p => [p.note, p]));
   if (ticked && ctx.done) ctx.done();
   if (current()) rail();
 }
 /** A line still to do: not ticked, not on its way out, not a suggestion. */
 const stillOpen = x => !x.done && !x.gone && !x.suggested_by;
+
+/* Promises (1.48, src/promise.rs): which of this desk's lines went to a
+ * friend, by line id, from the list's own read; and the friends a line can
+ * go to, read once a desk opens -- the desk's chunk has no other way to
+ * them. A dated open line's menu has Promise to… for each. */
+let promisedTo = new Map(), friendsList = null;
+async function getFriends() {
+  if (friendsList) return friendsList;
+  try { friendsList = ((await ctx.api("/api/peers")).friends || []).filter(f => !f.removed_at); } catch { friendsList = []; }
+  return friendsList;
+}
+/** The → mark on a line promised: to whom, and kept once it is ticked. */
+function promiseMark(x, esc) {
+  const p = promisedTo.get(x.id);
+  if (!p) return "";
+  return `<span class="dk-prom${p.kept ? " kept" : ""}" data-tip="${p.kept ? `Kept: ${esc(p.to)} sees it ticked` : `Promised to ${esc(p.to)}`}" data-tip-sub="${p.kept ? "" : "they see it on their Home, and see it kept when you tick it"}">→ ${esc(p.to)}${p.kept ? " ✓" : ""}</span>`;
+}
+/** Promise to…: the line, its date and its id, to that friend. */
+async function promise(d, x, f) {
+  promisedTo.set(x.id, { note: x.id, to: f.name, kept: false });
+  rail();
+  try { await ctx.api(`/api/peers/${f.id}/note`, { text: x.text, note: x.id, due_at: x.due_at }); }
+  catch (e) { promisedTo.delete(x.id); rail(); ctx.toast(`Could not promise it to ${f.name}`, e); return; }
+  getNotes(d.id, true);
+}
 
 /** A desk's list changed -- an agent ticked or suggested a line, or another
  *  window wrote on it: read this desk's list again if it is that desk. A field being typed in is left be --

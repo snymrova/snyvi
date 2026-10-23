@@ -26,6 +26,7 @@ mod peer;
 mod pipeline;
 mod platform;
 mod project;
+mod promise;
 mod prompt;
 mod receive;
 mod render;

@@ -206,7 +206,7 @@ const RESTART_IDLE_TICK: std::time::Duration = std::time::Duration::from_secs(30
 
 /// The dates on notes whose hour has come (`crate::due::ring`): a card each,
 /// on the clock this watcher already keeps. One query when nothing is due.
-fn ring_due(app: &App) {
+fn ring_due(app: &Arc<App>) {
     match app.store.clocked(|c, now| crate::due::ring(c, now)) {
         Ok(desks) => {
             for d in desks {
@@ -223,6 +223,15 @@ fn ring_due(app: &App) {
             }
         }
         Err(e) => eprintln!("snyvi: who should know of a shipped thread: {e:#}"),
+    }
+    // A promise whose line was ticked here goes across as kept (`crate::promise`).
+    match app.store.clocked(|c, now| crate::promise::keep(c, now)) {
+        Ok(peers) if !peers.is_empty() => {
+            let app = app.clone();
+            tokio::task::spawn_blocking(move || super::api_peer::flush_outbox(&app, None));
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("snyvi: keeping promises: {e:#}"),
     }
 }
 

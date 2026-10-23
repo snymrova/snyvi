@@ -634,7 +634,16 @@ pub(crate) async fn desk_notes(
     match app.store.desk_notes(id) {
         Ok(mut notes) => {
             settle_stages(&app, &mut notes);
-            Json(json!({ "notes": notes })).into_response()
+            // Who a line was promised to, and whether it was kept (1.48).
+            let promised = app
+                .store
+                .clocked(|c, _| crate::promise::promised(c, id))
+                .unwrap_or_default();
+            let promised: Vec<_> = promised
+                .into_iter()
+                .map(|(n, to, kept)| json!({ "note": n, "to": to, "kept": kept }))
+                .collect();
+            Json(json!({ "notes": notes, "promised": promised })).into_response()
         }
         Err(e) => err(e),
     }

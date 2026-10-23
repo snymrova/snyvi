@@ -540,6 +540,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* Done is quiet: the accent is for what wants looking at, and a done note
    is the one thing on the rail that does not. */
 .dk-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
+/* A line promised to a friend: their name after an arrow, quiet; kept, ok. */
+.dk-prom { color: var(--fg-3); font-size: var(--fs-micro); white-space: nowrap; }
+.dk-prom.kept { color: var(--ok); }
 /* Ticked without evidence: the ✓ in a ring, not on a disc. */
 .dk-tick.bare[aria-checked="true"] { background: none; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: var(--fg-3); }
 .dk-tick svg { width: 9px; height: 9px; }

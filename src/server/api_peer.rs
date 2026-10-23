@@ -500,6 +500,12 @@ pub(crate) async fn peer_restore(
 pub(crate) struct TextBody {
     #[serde(default)]
     pub(crate) text: String,
+    /// A promise (1.48, `crate::promise`): the line on the reader's desk it
+    /// is, and when it is due.
+    #[serde(default)]
+    pub(crate) note: i64,
+    #[serde(default)]
+    pub(crate) due_at: i64,
 }
 
 /// `POST /api/peers/{id}/note`: a line for a friend's notes. Queued, as a
@@ -532,7 +538,13 @@ pub(crate) async fn peer_note(
         )
             .into_response();
     }
-    let frame = match app.store.peer_queue_note(&p, &text) {
+    let queued = if b.note > 0 {
+        app.store
+            .clocked(|c, now| crate::promise::queue(c, &p, b.note, &text, b.due_at, now))
+    } else {
+        app.store.peer_queue_note(&p, &text)
+    };
+    let frame = match queued {
         Ok(f) => f,
         Err(e) => return err(e),
     };
@@ -1028,6 +1040,7 @@ fn send_one(
     }
     // A line: no document behind it, the words are the whole of it.
     if doc_id.is_empty() {
+        let (due_at, promise) = crate::promise::of_row(&row.re, &row.extra);
         let content = Content::Note {
             text: row.text.clone(),
             name: name.to_string(),
@@ -1035,6 +1048,8 @@ fn send_one(
                 v: peer::CONTENT_V,
                 ..Default::default()
             },
+            due_at,
+            promise,
         };
         let frame = peer::seal(me, &p, &content, b"")?;
         return leave(app, me, &p, frame_id, &frame);
@@ -1441,10 +1456,15 @@ fn arrived(
         Content::Done {
             of, text, commit, ..
         } => {
-            if let Some(line) = app
+            // Or a promise they made here, kept (`crate::promise::kept`).
+            let line = match app
                 .store
                 .peer_done(p.id, &of, commit.as_deref().unwrap_or(""))?
             {
+                Some(l) => Some(l),
+                None => app.store.clocked(|c, _| crate::promise::kept(c, p.id, &of))?,
+            };
+            if let Some(line) = line {
                 peers_moved(app);
                 let done: String = if line.is_empty() {
                     text.chars().take(peer::NOTE_CHARS).collect()
@@ -1527,8 +1547,20 @@ fn arrived(
         }
         // Held before it got here (`take_in`); nothing to keep.
         Content::Other => {}
-        Content::Note { text, .. } => {
-            if let Some(d) = &desk {
+        Content::Note {
+            text,
+            due_at,
+            promise,
+            ..
+        } => {
+            // A promise is the sender's to keep: a row on Home with its date,
+            // not a line on the reader's list (`crate::promise`).
+            let text = if promise {
+                crate::promise::said(&text, due_at, crate::store::now())
+            } else {
+                text
+            };
+            if let Some(d) = desk.as_ref().filter(|_| !promise) {
                 if let Ok(crate::desk::Suggested::Note(n)) =
                     app.store.suggest_desk_note_from(d.id, &text, &p.name)
                 {
