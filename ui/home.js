@@ -301,6 +301,9 @@ a.hm-panels:hover { color: var(--fg); }
 .inbox-removed > .t-away { width: auto; padding-left: 14px; }
 .inbox .rm { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title act" "sub act"; gap: 2px 16px; padding: 12px 14px; }
 .inbox .rm > .t-undo { grid-area: act; align-self: center; }
+/* A row removed here: the sidebar's ghost (app.css .t-ghost) at this row's
+   height, which app.js puts on its li, with this row's padding and rule. */
+.inbox > .t-gone > .t-ghost { height: 100%; align-items: center; padding: 0 14px; margin: 0 -14px; font-size: var(--fs-body-s); border-radius: 0; border-bottom: 1px solid var(--rule); }
 /* The Inbox's list and its empty state: app.css's until 1.32. */
 .inbox { list-style: none; margin: 0; padding: 0; }
 .inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: var(--r-md); color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
@@ -1658,29 +1661,33 @@ export async function removedLine(fresh, { view, capability, deskApi, docEl, esc
 
 /** The Inbox's own page, drawn here beside Home: what is waiting first,
  *  then everything, both newest first. */
-export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent }) {
+export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent, ghost }) {
   style();
   const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
+  // A document just removed here stands as its ghost where its row was
+  // (app.js's ghostRow, at the row's height) until its Undo is over.
+  const list = (sec, ds) => { const h = ds.map(row); if (ghost?.sec === sec) h.splice(ghost.at, 0, ghost.html); return h.join(""); };
   // The one empty state (docs/DESIGN.md §3.4): snyvi at rest, one
   // sentence, one button.
-  if (!items.length) return `<div class="empty-state"><span class="hero">${mascotHead("rest")}</span><h1>Nothing in the Inbox yet</h1>` +
+  if (!items.length && !ghost) return `<div class="empty-state"><span class="hero">${mascotHead("rest")}</span><h1>Nothing in the Inbox yet</h1>` +
     `<p>What your agents write lands here, filed by project.</p><button type="button" class="btn btn-primary" data-nav="start">How snyvi works</button></div>`;
   // What is waiting comes first, newest first, so the landing page answers
-  // "what is new" before "what is there".
-  const n = state.waiting;
+  // "what is new" before "what is there". Its head stands while the ghost
+  // of the last one waiting does, so the list under it does not move up.
+  const n = state.waiting, w = n || ghost?.sec === "waiting";
+  const waitHead = word => `<h2 class="inbox-sec">${word}${n ? `<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button>` : ""}</h2><ul class="inbox waiting">${list("waiting", state.queue)}</ul>`;
   // Recent is the sidebar's one row for what came: what is unread first, so
   // Monday's plan is not under ten documents read since, then the rest,
   // newest first. Each document once: the unread are not listed again.
   if (recent) {
-    if (!n) return `<div class="inbox-head"><h1>Recent</h1><p>Newest first, across every project.</p></div><ul class="inbox">${items.map(row).join("")}</ul>`;
+    if (!w) return `<div class="inbox-head"><h1>Recent</h1><p>Newest first, across every project.</p></div><ul class="inbox">${list("rest", items)}</ul>`;
     const held = new Set(state.queue.map(d => d.id));
-    return `<div class="inbox-head"><h1>Recent</h1><p>${plural(n, "document")} unread, then the rest, newest first.</p></div>` +
-      `<h2 class="inbox-sec">Unread<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul>` +
-      `<h2 class="inbox-sec">Earlier</h2><ul class="inbox">${items.filter(d => !held.has(d.id)).map(row).join("")}</ul>`;
+    return `<div class="inbox-head"><h1>Recent</h1><p>${plural(n, "document")} unread, then the rest, newest first.</p></div>` + waitHead("Unread") +
+      `<h2 class="inbox-sec">Earlier</h2><ul class="inbox">${list("rest", items.filter(d => !held.has(d.id)))}</ul>`;
   }
   return `<div class="inbox-head"><h1>Inbox</h1><p>${n ? `${plural(n, "document")} waiting to be read, then everything else, newest first.` : "Newest first, across every project."}</p></div>` +
-    (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
-    `<ul class="inbox">${items.map(row).join("")}</ul>`;
+    (w ? waitHead("Waiting") + `<h2 class="inbox-sec">Recent</h2>` : "") +
+    `<ul class="inbox">${list("rest", items)}</ul>`;
 }
 
 

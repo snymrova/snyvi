@@ -1268,6 +1268,34 @@ async function deleteRows(p, arrive) {
     rows.push(["and off it, the offer ends", settled, settled ? "the row closed once the 6 s had run" : "the ghost is still there"]);
   } else rows.push(["the ✕ leaves its Undo in the row", false, "the document's row is not in the sidebar"]);
 
+  // On the Inbox page (A1 of the audit of 1.46.2): the menu's Remove turns
+  // the page's row into the sidebar's ghost where it stood, through the
+  // page's redraw, with no toast in the corner; Undo puts the row back there.
+  const onPage = await arrive();
+  await p.goto(`${await p.ev("location.origin")}/inbox`);
+  await p.pointerAway();
+  const pageSel = JSON.stringify(`#doc .inbox a[data-id="${onPage.id}"]`);
+  const topOf = s => p.ev(`(() => { const e = document.querySelector(${s}); return e ? Math.round(e.getBoundingClientRect().top) : null; })()`);
+  await until(`!!document.querySelector(${pageSel})`);
+  const rowTop = await topOf(pageSel);
+  await p.rightClickOn(JSON.parse(pageSel));
+  await until(`!document.querySelector("#ctx").hidden`);
+  const rm = await p.ev(`(() => { const b = [...document.querySelectorAll("#ctx button")].find(b => b.textContent.startsWith("Remove")); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  if (rm && rowTop != null) {
+    await p.click(rm.x, rm.y);
+    // Past the daemon's answer and the page's redraw on its event.
+    await sleep(1200);
+    const pg = await p.ev(`(() => { const g = document.querySelector("#doc .inbox > .t-gone .t-ghost"); if (!g) return null; return { text: g.textContent, y: Math.round(g.getBoundingClientRect().top) }; })()`);
+    const t3 = await toastEl();
+    rows.push(["Remove on the Inbox page answers in the row", !!pg && Math.abs(pg.y - rowTop) <= 2 && /removed/.test(pg.text) && !t3,
+      !pg ? (t3 ? `no ghost on the page, and a toast: "${t3.text}"` : "no ghost on the page") : t3 ? `a toast came too: "${t3.text}"` : Math.abs(pg.y - rowTop) > 2 ? `the row was at y ${rowTop}, the ghost is at y ${pg.y}` : `"${pg.text}" where the row stood`]);
+    await p.clickOn("#doc .inbox > .t-gone .t-undo");
+    const returned = await until(`!!document.querySelector(${pageSel}) && !document.querySelector("#doc .inbox > .t-gone")`);
+    const backTop = returned ? await topOf(pageSel) : null;
+    rows.push(["and its Undo puts the row back where it was", returned && backTop === rowTop,
+      !returned ? "the row did not come back on the page" : backTop === rowTop ? `at y ${backTop}, its own place` : `it was at y ${rowTop}, it came back at y ${backTop}`]);
+  } else rows.push(["Remove on the Inbox page answers in the row", false, rowTop == null ? "the document's row is not on the Inbox page" : "the row's menu has no Remove"]);
+
   await p.reload();
   const stillGone = !(await listed(doomed.title));
   const found = await p.ev(`fetch("/api/search?q=" + encodeURIComponent(${JSON.stringify(doomed.title)})).then(r => r.json()).then(h => h.length)`);

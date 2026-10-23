@@ -295,6 +295,12 @@
       if (w === "dir") fillTree(rt.closest(".b-tree")); else if (w === "inbox") showInbox(false); else if (w === "home") showHome(false); else if (w === "tree") refreshTree(); else if (w === "desks") loadDesks();
       return;
     }
+    // The Inbox page's ghost answers as the sidebar's does (treesEl's click).
+    if (e.target.closest("#doc [data-undoc]")) {
+      e.preventDefault();
+      if (gone && Date.now() - gone.made > 350) undoGone(gone);
+      return;
+    }
     const b = e.target.closest("[data-q]");
     if (!b) return;
     e.preventDefault();
@@ -502,6 +508,7 @@
   function renderTree() {
     // One more draw, for bench/ui.mjs to count; nothing when it is not watching.
     window.__perf && window.__perf.renders++;
+    pageGhost();
     const projects = heldTree();
     const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
     const put = projects.length - drawn.length;

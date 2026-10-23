@@ -293,7 +293,8 @@
 
   /** The Inbox's list is home.js's (`inboxHtml`), the chunk for the pages
    *  that list, fetched alongside the list itself. */
-  const inboxHtml = (items, m) => m.inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent: state.recent });
+  const inboxHtml = (items, m) => m.inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent: state.recent,
+    ghost: gone?.page && !items.some(x => x.id === gone.id) ? { ...gone.page, html: ghostRow(gone.page.h) } : null });
 
   /* After the Undo has gone: "N removed · Show" at the foot of the Inbox,
    * drawn by home.js (`removedLine`), the chunk for the pages that list. */
@@ -528,10 +529,10 @@
     let at = performance.now(), rest = ms;
     const c = { hold: false, left: () => Math.max(0, rest / ms), stop: () => clearInterval(t), again() { rest = ms; } };
     const t = setInterval(() => {
-      const now = performance.now(), el = document.querySelector(sel);
-      if (!c.hold && !el?.matches(":hover, :focus-within")) rest -= now - at;
+      const now = performance.now(), els = [...document.querySelectorAll(sel)];
+      if (!c.hold && !els.some(el => el.matches(":hover, :focus-within"))) rest -= now - at;
       at = now;
-      el?.style.setProperty("--undo-left", c.left());
+      for (const el of els) el.style.setProperty("--undo-left", c.left());
       if (rest <= 0) { c.stop(); done(); }
     }, 100);
     return c;
@@ -564,8 +565,13 @@
     // the last thing that happened.
     if (gone) { gone.clock.stop(); unoffer(gone.undo); gone = null; }
     const g = { ...(place || { where: null }), id: d.id, d, here, waiting: waitingRow(d), drawn: false, made: Date.now() };
-    g.clock = undoClock("#tree .t-gone .t-ghost", () => ghostSettle(g));
+    g.clock = undoClock("#tree .t-gone .t-ghost, #doc .t-gone .t-ghost", () => ghostSettle(g));
     g.undo = () => undoGone(g);
+    // On the Inbox page its row there turns into the same ghost, at its place
+    // in its list and at its height; the list's redraws splice it back in.
+    const pr = state.view === "inbox" && docEl.querySelector(`.inbox a[data-id="${d.id}"]`)?.parentElement;
+    docEl.querySelector(".inbox > .t-gone")?.remove();
+    if (pr) { const ul = pr.parentElement; g.page = { sec: ul.classList.contains("waiting") ? "waiting" : "rest", at: [...ul.children].indexOf(pr), h: pr.offsetHeight }; pr.className = "t-gone"; }
     // What stands around the ghost stands with it until the offer ends, so
     // nothing above it moves the row out from under the pointer either: the
     // project, which leaves the daemon's tree with its last document.
@@ -642,6 +648,8 @@
       await refreshTree(g.d.project_id);
       // The "restored" event puts the row back in every other tab.
       if (g.here) showDoc(g.id);
+      // Here, before the ghost goes, so the row is back in its place first.
+      else if (g.page && state.view === "inbox") await showInbox(false);
     } finally {
       g.clock.stop();
       if (gone === g) gone = null;

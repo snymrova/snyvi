@@ -80,8 +80,9 @@
    *  and the clock. Captured at the click, because the refetch that
    *  follows no longer has the row to say where it was. One at a time. */
   let gone = null;
-  /** Whether the ghost can be seen: drawn, and not in a folded sidebar. */
-  const inView = g => g.drawn && root.dataset.side !== "0";
+  /** Whether the ghost can be seen: drawn, on the Inbox page or in a
+   *  sidebar that is not folded. */
+  const inView = g => g.drawn && (g.page && state.view === "inbox" || root.dataset.side !== "0");
   /** A folder just closed, whose ghost holds the Undo (`closeRoot`). */
   let shut = null;
   const LEFT_SECS = ["inbox", "desks", "folders"];
@@ -485,11 +486,18 @@
    *  place, so nothing below it moves while the offer stands. The bar along
    *  its foot is the time left; resting on it stops the clock. `--t` starts
    *  both where the last draw left them, as `moment` does for a wash. */
-  function ghostRow() {
+  function ghostRow(h) {
     const g = gone;
     g.drawn = true;
     const t = Date.now() - (g.closing || g.made);
     // A refused Undo says so in the row and holds its clock: the button is
     // its Retry. Pruned, there is nothing to retry, and the row just closes.
-    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost" role="status" style="--undo-left:${g.clock.left()}">${docIco()}<span class="title"${g.err ? ` data-tip="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed${g.versions > 1 ? ` · ${g.versions} versions` : ""}</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
+    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms${h ? `;height:${h}px` : ""}"><div class="t-ghost" role="status" style="--undo-left:${g.clock.left()}">${docIco()}<span class="title"${g.err ? ` data-tip="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed${g.versions > 1 ? ` · ${g.versions} versions` : ""}</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
+  }
+  /** The same ghost on the Inbox page, where the row stood there (`g.page`,
+   *  at that row's height), drawn again with the sidebar's so the two say
+   *  the same, and gone with it. */
+  function pageGhost() {
+    const el = docEl.querySelector(".inbox > .t-gone");
+    if (el) gone?.page && state.view === "inbox" ? el.outerHTML = ghostRow(gone.page.h) : el.remove();
   }
