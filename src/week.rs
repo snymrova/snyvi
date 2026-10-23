@@ -102,7 +102,21 @@ pub struct Week {
 
 /// The week, while its box is open: `None` outside Sunday 20:00 to Tuesday
 /// 06:00, when it is off, or when this Sunday's was put away.
+/// The clock the box is read by. A review on a weekday sees Sunday's box:
+/// debug builds only, never a release (`SNYVI_WEEK_NOW`, a unix time).
+fn clock(now: i64) -> i64 {
+    #[cfg(debug_assertions)]
+    if let Some(t) = std::env::var("SNYVI_WEEK_NOW")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        return t;
+    }
+    now
+}
+
 pub fn week(conn: &Connection, now: i64) -> Result<Option<Week>> {
+    let now = clock(now);
     let s = sunday(now);
     let (skip, off): (i64, i64) = conn
         .query_row(
@@ -273,7 +287,7 @@ pub fn file(
 pub fn skip(conn: &Connection, now: i64) -> Result<()> {
     conn.execute(
         "UPDATE home_state SET week_skip = ?1 WHERE id = 1",
-        params![sunday(now)],
+        params![sunday(clock(now))],
     )?;
     Ok(())
 }

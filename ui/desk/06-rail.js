@@ -586,6 +586,8 @@ function dueGuessDraw(inp) {
   const g = dueGuess(inp.value);
   el.textContent = g ? `due ${g}` : "";
   el.hidden = !g;
+  // The words scroll short of the chip rather than under it.
+  inp.style.paddingRight = g ? `${el.offsetWidth + 12}px` : "";
 }
 
 /** One line. A line being rewritten is a field in the row's own place, so the
@@ -601,16 +603,16 @@ function noteRow(x, esc) {
   // Keep and ✕ sit where a line's tools do, always shown, since a suggestion
   // is a question and these are its two answers.
   if (x.suggested_by) {
-    // The first of a set one agent wrote at once (a launch, 1.48) carries
-    // Keep all; the rest keep one by one.
-    const set = noteList.filter(y => y.suggested_by === x.suggested_by && y.created_at === x.created_at && !y.gone);
-    const all = set.length > 1 && set[0].id === x.id
-      ? `<button type="button" class="dk-keep" data-a="note-keep" data-all="1" data-n="${x.id}" data-tip="Keep all ${set.length}" data-tip-sub="every line ${esc(x.suggested_by)} suggested with this one" aria-label="Keep all ${set.length} suggested lines">Keep all</button>` : "";
+    // The last of a set one agent wrote at once (a launch, 1.48) has Keep
+    // all on a line of its own under it; each row keeps on its own too.
+    const set = noteList.filter(y => y.suggested_by === x.suggested_by && y.created_at === x.created_at && y.suggested_by && !y.gone);
+    const all = set.length > 1 && set.at(-1).id === x.id
+      ? `<li class="dk-note dk-sug dk-keepall"><button type="button" class="dk-keep" data-a="note-keep" data-all="1" data-n="${set[0].id}" data-tip="Keep all ${set.length}" data-tip-sub="every line ${esc(x.suggested_by)} suggested with these" aria-label="Keep all ${set.length} suggested lines">Keep all ${set.length}</button></li>` : "";
     return `<li class="dk-note dk-sug"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span>` +
       (x.sent_by ? ctx.who(x.sent_by, `From ${x.sent_by}`) : "") +
       `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
-      `<span class="dk-sug-tools">${all}<button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
-      `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
+      `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
+      `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc) + all;
   }
   // A line is two lines at most; the whole of it is its tip, and rewriting
   // it opens a card over the list, as tall as the text, while the row keeps

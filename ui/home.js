@@ -300,6 +300,9 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-wait .hm-sub { margin: 6px 0 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
 .hm-wait .hm-wt-d { color: inherit; }
 .hm-wait .hm-acts > .hm-s { flex: 1 1 auto; }
+/* Four acts on a left-off row (1.48 added Park it): each one word-line,
+   the by-line giving way first. */
+.hm-acts > .hm-link { flex: none; white-space: nowrap; }
 .hm-link.hm-ok { color: var(--accent); font-weight: 600; }
 .hm-link.hm-mine { color: var(--accent); }
 .hm-stage.planned.ok { color: var(--ok); }

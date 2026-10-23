@@ -239,7 +239,8 @@ function awayRows(f, esc) {
  *  words for a reader of the screen, not only an accent border a hover
  *  also draws (U5) -- and Other…. */
 const picks = (w, esc) => w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` aria-label="${esc(o)}, recommended" data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"><span class="tn-star" aria-hidden="true">★</span>` : ">"}${esc(o)}</button>`).join("") +
-  `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`;
+  // A tell card's rows are all it takes (src/told.rs): no Other….
+  (w.kind === "tell" ? "" : `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`);
 /** The field Other… or Needs changes… opens under a turn. */
 const otherIn = w => thField && thField.id === w.id && (thField.kind === "other" || thField.kind === "change")
   ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "change" ? "What needs to change" : "Your answer"}" aria-label="Your answer" spellcheck="false">` : "";
