@@ -16,15 +16,18 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/api_desk.rs` | 1535 | Home, desks, panels, notes, keys, pastes, Ctrl-clicked paths; every route behind `refuse_desk` |
 | `src/server/api_agent.rs` | 638 | `/api/agents`, connect, and what an agent in a panel says (`/api/panes/{id}/*`, token + running pane) |
 | `src/server/api_peer.rs` | 820 | a friend's snyvi: pairing, the friends list, Send to…, a line, an agent's offer, what is done with a frame (`docs/PEER.md`) |
+| `src/server/api_friend.rs` | 90 | a friend as one place: `/friend/{id}`, `/api/peers/{id}/talk`, and a new version landing with its earlier ones (1.49) |
 | `src/server/peer_link.rs` | 260 | the link: one WebSocket to the relay for as long as there is a friend; frames pushed, acked, swept over HTTP when the socket will not open |
 | `src/server/api_browse.rs` | 378 | browse mode over HTTP, ranged file serving |
 | `src/server/events.rs` | 249 | SSE: the stream, the window/agent mark, `resync`, focus |
 | `src/server/ws.rs` | 291 | the desk socket |
 | `src/server/lifecycle.rs` | 912 | health, about, restart and the planned exit, the update watcher, relaunch, reset |
 | `src/server/tests.rs` | 830 | the route table every route must be in, and the rest of the server's tests |
-| `src/store.rs` | 2396 | documents on disk, SQLite index, FTS5, versions, projects, workflows, inbox |
+| `src/store.rs` | 2320 | documents on disk, SQLite index, FTS5, versions, projects, workflows, inbox |
+| `src/store/friends.rs` | 270 | the store's side of friends, thin over `peer`: moved out of `store.rs` at its 2,500 lines (1.49) |
 | `src/receive.rs` | 525 | the one entry every transport calls: locate, read, render, file; a friend's bytes come in here too |
 | `src/peer.rs` | 1460 | the daemon's identity, the word code, SPAKE2 pairing, the sealed frame, the relay client, the link's address, messages and backoff, the peers tables |
+| `src/peer/timeline.rs` | 220 | everything between the reader and one friend, merged by time, for their page (1.49) |
 | `src/render.rs` | 1760 | Markdown → HTML once, at receive time; outline; code; Mermaid left to the page |
 | `src/browse.rs` | 818 | a folder read from disk, nothing stored |
 | `src/watch.rs` | 357 | mtime change detection for browse and `snyvi watch` |
@@ -89,6 +92,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/desk/01-head.js` … `08-style.js` | 123–882 each | lazy | `desk.js`, as eight parts of one module: head, socket, screen, keys and a pane, the desk, the rail, actions and the seam, style |
 | `ui/home.js` | 1330 | lazy | Home, with Friends |
 | `ui/peer.js` | 237 | lazy | pairing, Send to…, a line for a friend, an agent's offer |
+| `ui/friend.js` | 250 | lazy | a friend's page: everything between you, both ways, and a foot that sends (1.49) |
 | `ui/about.js` | 1025 | lazy | About, updates that ask |
 | `ui/mmd.js` | 987 | lazy | Mermaid driver |
 | `ui/game.js` | 701 | lazy | the rocket |
