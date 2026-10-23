@@ -198,6 +198,19 @@ async function dueAct(a, b, d) {
   return true;
 }
 
+/* The date menu's and the due card's own field (1.48): Enter sets the time
+ * typed, which the daemon reads as it reads every date (src/due.rs); a time
+ * it does not read is said in the row. */
+document.addEventListener("keydown", e => {
+  const inp = e.target.closest?.(".dk-due-in, .tn-due-in");
+  if (!inp || e.key !== "Enter" || !inp.value.trim()) return;
+  e.preventDefault(); e.stopPropagation();
+  const d = current();
+  if (!d) return;
+  if (inp.matches(".dk-due-in")) dueAct("note-due-set", { dataset: { n: inp.dataset.n, w: inp.value.trim() } }, d);
+  else { const w = filed.turns.find(t => t.id === +inp.dataset.w); if (w) { dueMore.delete(w.id); dueAnswer(d, w, inp.value.trim()); } }
+}, true);
+
 /** What each of the rail's other buttons was asked to do, for its error. */
 const VERB = { new: "open a new panel", stop: "stop the panel", start: "start the panel", all: "start the panels", drop: "close the desk",
   copy: "copy it", put: "put the points in", again: "resume it", "pane-rename": "rename the panel" };

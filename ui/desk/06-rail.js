@@ -540,7 +540,7 @@ function noteSec(d) {
     // opens and shuts. On an empty list it is the whole of the list.
     (notesOff === d.id ? "" : !(noteField && noteField.kind === "new")
       ? `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
-      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false">` +
+      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"><span class="dk-due-guess" aria-hidden="true" hidden></span>` +
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
         (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`));
@@ -566,6 +566,27 @@ const errLine = (k, esc, tag = "li") => rowErr && rowErr.k === k
 
 /** Why the field is open again, after a save the daemon refused. */
 const noteSays = esc => noteErr ? `<span class="field-err" role="alert">${esc(noteErr)}</span>` : "";
+
+/* A date caught at the end of a line being typed (1.48): a light mirror of
+ * the daemon's grammar (src/due.rs), only to show the reader it was seen.
+ * The daemon's read is the truth; a tail it does not take stays as words. */
+const DUE_TAIL = /(?:^|[\s,·;-])((?:by|on|at|due)\s+)?((?:today|tonight|tomorrow|(?:next\s+)?(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|weekend|next\s+week|in\s+\d+\s*(?:m|mins?|minutes?|h|hrs?|hours?|d|days?|w|weeks?)|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)(?:\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*$/i;
+function dueGuess(t) {
+  const m = DUE_TAIL.exec(t || "");
+  if (!m || m.index === 0 && !m[1]) return "";
+  // A weekday alone, or an hour alone, needs a word before it, as there.
+  const bare = !m[1] && !/[,·;-]\s*$/.test(t.slice(0, m.index + 1));
+  if (bare && (/^\d{1,2}(:\d{2})?\s*(am|pm)?$/i.test(m[2]) || /^(mon|tue|wed|thu|fri|sat|sun|weekend|next\s+week)/i.test(m[2]))) return "";
+  return m[2].trim();
+}
+/** The chip over the field's end: there or not, it moves nothing. */
+function dueGuessDraw(inp) {
+  const el = inp.parentElement?.querySelector(".dk-due-guess");
+  if (!el) return;
+  const g = dueGuess(inp.value);
+  el.textContent = g ? `due ${g}` : "";
+  el.hidden = !g;
+}
 
 /** One line. A line being rewritten is a field in the row's own place, so the
  *  text does not move under the cursor as it becomes editable; a line just
@@ -755,7 +776,9 @@ function duePop(x, esc) {
   const late = new Date().getHours() >= 19;
   return `<span class="dk-due-pop" role="menu" aria-label="Move ${esc(x.text)}">` +
     DUE_TO.filter(([w]) => !(late && w === "tonight")).map(([w, l]) => `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="${w}">${l}</button>`).join("") +
-    `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="" data-tip="No date" data-tip-sub="the line stays">No date</button></span>`;
+    `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="" data-tip="No date" data-tip-sub="the line stays">No date</button>` +
+    // Pick a time… (1.48): any date the daemon reads, typed, Enter sets it.
+    `<input class="dk-due-in" data-n="${x.id}" maxlength="40" spellcheck="false" placeholder="Pick a time: fri 16" aria-label="Pick a time for ${esc(x.text)}"></span>`;
 }
 
 /** How long a plan or a read stands with nothing since before it says so. */
@@ -1102,7 +1125,8 @@ function noteFocus() {
   const grow = () => { if (inp.tagName === "TEXTAREA") { inp.style.height = "auto"; inp.style.height = Math.min(inp.scrollHeight + 2, 12 * 18 + 8) + "px"; } };
   grow();
   inp.addEventListener("input", grow);
-  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; if (noteErr) { noteErr = ""; inp.nextElementSibling?.remove(); } });
+  inp.addEventListener("input", () => { noteDraft = inp.value; noteCaret = inp.selectionStart; dueGuessDraw(inp); if (noteErr) { noteErr = ""; inp.parentElement?.querySelector(".field-err")?.remove(); } });
+  dueGuessDraw(inp);
   // Where the caret was, not the end of the line: the rail redraws on the
   // clock every 30 seconds, and a caret that jumped to the end each time
   // would make a long note impossible to correct in the middle.

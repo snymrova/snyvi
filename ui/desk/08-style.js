@@ -540,6 +540,11 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* Done is quiet: the accent is for what wants looking at, and a done note
    is the one thing on the rail that does not. */
 .dk-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
+/* A date caught while typing: over the field's right end, out of the flow. */
+.dk-note.new { position: relative; }
+.dk-due-guess { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); padding: 0 5px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 14%, var(--bg)); color: var(--fg-2); font-size: var(--fs-micro); line-height: 16px; pointer-events: none; }
+/* Pick a time, at the foot of the date menu. */
+.dk-due-in { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }
 /* A line promised to a friend: their name after an arrow, quiet; kept, ok. */
 .dk-prom { color: var(--fg-3); font-size: var(--fs-micro); white-space: nowrap; }
 .dk-prom.kept { color: var(--ok); }

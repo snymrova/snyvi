@@ -887,11 +887,24 @@ function bar(j) {
     `<div class="hm-nb-list"${menu ? "" : " hidden"}>${menu ? menuHtml(j) : ""}</div></div>`;
 }
 
+/* A date caught at the end of a line being typed (1.48): the desk's mirror
+ * of the daemon's grammar (ui/desk/06-rail.js), only to show it was seen. */
+const DUE_TAIL = /(?:^|[\s,·;-])((?:by|on|at|due)\s+)?((?:today|tonight|tomorrow|(?:next\s+)?(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|weekend|next\s+week|in\s+\d+\s*(?:m|mins?|minutes?|h|hrs?|hours?|d|days?|w|weeks?)|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)(?:\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*$/i;
+function dueGuess(t) {
+  const m = DUE_TAIL.exec(t || "");
+  if (!m || m.index === 0 && !m[1]) return "";
+  const bare = !m[1] && !/[,·;-]\s*$/.test(t.slice(0, m.index + 1));
+  if (bare && (/^\d{1,2}(:\d{2})?\s*(am|pm)?$/i.test(m[2]) || /^(mon|tue|wed|thu|fri|sat|sun|weekend|next\s+week)/i.test(m[2]))) return "";
+  return m[2].trim();
+}
+
 /** The bar's right end: Enter's key while the bar has the hand, then what the
  *  last Enter did, for a moment -- or, until the next key, why it did not. */
 function saidHtml() {
   const { esc } = c, s = barSaid;
-  if (!s) return `<kbd class="hm-nb-k" aria-hidden="true">↵</kbd>`;
+  // A date caught at the line's end shows beside Enter (1.48), as on a desk.
+  const g = dueGuess(barDraft);
+  if (!s) return `${g ? `<span class="hm-due">due ${esc(g)}</span>` : ""}<kbd class="hm-nb-k" aria-hidden="true">↵</kbd>`;
   if (s.err) return `<span class="hm-err" role="alert">${esc(s.err)}</span>`;
   return `<span role="status">Added to <a href="/desk/${s.desk}" data-desk="${s.desk}">${esc(s.name)}</a> ·</span><button type="button" class="hm-link hm-undo" data-hm="barundo">Undo</button>`;
 }
@@ -1297,12 +1310,18 @@ function onMe(id, l) {
 const deskName = (j, id) => (j.desks || []).find(d => d.id === id)?.name || "a desk";
 
 function waitBox(j) {
-  const { esc, plural } = c, due = j.due || [], wt = j.wait || [];
+  const { esc, plural } = c, due = j.due || [];
+  // A desk quiet ten days with lines still open waits on you too, with Park
+  // it (1.48): the desk card's own Park it?, said where the waiting is.
+  const old = Date.now() / 1000 - QUIET_DAYS * DAY;
+  const quiet = (j.desks || []).filter(d => !d.parked && d.open && d.touched && d.touched < old && !(j.wait || []).some(w => w.desk === d.id))
+    .map(d => ({ kind: "quiet", desk: d.id, doc: "", text: `Quiet since ${new Date(d.touched * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${plural(d.open, "line")} open`, at: d.touched }));
+  const wt = [...(j.wait || []), ...quiet];
   // A row answered here keeps its place while its words stand, with its
   // Undo, after the read that no longer has it.
-  const keyOf = x => `${x.kind === "plan" ? "p" : "l"}${x.desk}:${x.doc}`;
+  const keyOf = x => `${x.kind === "plan" ? "p" : x.kind === "quiet" ? "q" : "l"}${x.desk}:${x.doc}`;
   const present = new Set([...due.map(n => `u${n.id}`), ...wt.map(keyOf)]);
-  const ghosts = [...arrSaid].filter(([k]) => /^[ulp]/.test(k) && !present.has(k))
+  const ghosts = [...arrSaid].filter(([k]) => /^[ulpq]/.test(k) && !present.has(k))
     .map(([, s]) => `<li><span class="hm-ab"><span class="hm-t">${esc(s.item.text || "")}</span><span class="hm-acts">${saidRow(s)}</span></span></li>`).join("");
   if (!due.length && !wt.length && !ghosts) return "";
   const where = id => `<a class="hm-t hm-wt-d" href="/desk/${id}" data-desk="${id}">${esc(deskName(j, id))}</a>`;
@@ -1317,11 +1336,12 @@ function waitBox(j) {
     const head = x.kind === "plan"
       ? `<span class="hm-t">Plan <a href="/d/${esc(x.doc)}" data-id="${esc(x.doc)}">${esc(x.text)}</a> for ${x.notes.map(n => `#${n}`).join(" ")}</span>`
       : `<span class="hm-t">${esc(x.text)}</span>`;
-    const acts = x.kind === "plan"
+    const park = `<button type="button" class="hm-link" data-hm="wpark" data-k="${x.desk}" data-tip="Park it" data-tip-sub="the desk goes on the shelf; nothing on it is closed">Park it</button>`;
+    const acts = x.kind === "quiet" ? park : x.kind === "plan"
       ? `<button type="button" class="hm-link hm-ok" data-hm="wplan" data-k="${x.desk}" data-n="${esc(x.doc)}" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt">Approve</button>`
       : `<button type="button" class="hm-link hm-ok" data-hm="wok" data-k="${x.desk}" data-tip="Approve" data-tip-sub="the next step is the agent's now; its panel hears it at its next prompt">Approve</button>` +
         `<button type="button" class="hm-link" data-hm="wlater" data-k="${x.desk}" data-tip="Tomorrow" data-tip-sub="a note on its desk, due tomorrow at 9; the left-off stays">Tomorrow</button>` +
-        `<button type="button" class="hm-link" data-hm="wdrop" data-k="${x.desk}" data-tip="Drop it" data-tip-sub="clears the left-off; Undo brings it back">Drop</button>`;
+        `<button type="button" class="hm-link" data-hm="wdrop" data-k="${x.desk}" data-tip="Drop it" data-tip-sub="clears the left-off; Undo brings it back">Drop</button>` + park;
     return `<li><span class="hm-ab">${head}<span class="hm-acts">` +
       (said(key) || `<span class="hm-s">${where(x.desk)} · ${x.by ? `${esc(x.by)} · ` : ""}${live(x.at, age)}</span>${acts}`) + `</span></span></li>`;
   }).join("");
@@ -1334,11 +1354,12 @@ function waitBox(j) {
 
 /** The box's buttons, and On me. True when the click was one of them. */
 async function waitClick(k, id, b) {
-  if (!["udone", "ulater", "wplan", "wok", "wlater", "wdrop", "wundo", "onme"].includes(k)) return false;
+  if (!["udone", "ulater", "wplan", "wok", "wlater", "wdrop", "wundo", "onme", "wpark", "wunpark"].includes(k)) return false;
   const n = b.dataset.n || "", api = c.deskApi;
   const x = (last?.wait || []).find(w => w.desk === id && (k !== "wplan" || w.doc === n));
   const text = k[0] === "u" ? (last?.due || []).find(d => String(d.id) === n)?.text : x?.text;
-  const key = k[0] === "u" ? `u${n}` : `${k === "wplan" ? "p" : "l"}${id}:${x?.doc || ""}`;
+  const quiet = !x && (k === "wpark" || k === "wunpark");
+  const key = k[0] === "u" ? `u${n}` : `${k === "wplan" ? "p" : quiet ? "q" : "l"}${id}:${x?.doc || ""}`;
   b.disabled = true;
   try {
     if (k === "udone") { await api(`/api/desks/${id}/notes/${n}`, { done: true }); sayRow(key, { id, text }, "Ticked"); }
@@ -1354,6 +1375,12 @@ async function waitClick(k, id, b) {
     } else if (k === "wdrop") {
       const r = await api(`/api/desks/${id}/leftoff`, { text: "" });
       sayRow(key, { id, text, was: r.was }, "Dropped", "wundo");
+    } else if (k === "wpark") {
+      if (!(await park(id, ""))) return true;
+      sayRow(key, { id, text: text || deskName(last, id) }, `Parked ${deskName(last, id)}`, "wunpark");
+    } else if (k === "wunpark") {
+      await park(id, null);
+      for (const [kk, v] of arrSaid) if (v.undo === "wunpark" && v.item.id === id) { clearTimeout(v.t); arrSaid.delete(kk); }
     } else if (k === "wundo") {
       const s = [...arrSaid.values()].find(v => v.undo === "wundo" && v.item.id === id);
       if (s?.item.was) await api(`/api/desks/${id}/leftoff`, s.item.was);
@@ -1561,7 +1588,7 @@ function wire() {
   el.addEventListener("input", e => {
     if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
     else if (e.target.dataset?.hm === "wkf" && wkDraft) wkDraft[e.target.dataset.k] = e.target.value;
-    else if (e.target.dataset?.hm === "bar") { barDraft = e.target.value; if (barSaid?.err) { say(null); sayNow(); } hashMenu(e.target); }
+    else if (e.target.dataset?.hm === "bar") { barDraft = e.target.value; if (barSaid?.err) say(null); sayNow(); hashMenu(e.target); }
     else if (e.target.dataset?.hm === "find" && menu) { menu.q = e.target.value; menu.at = 0; drawMenu(); }
   });
   // The list's rows take a click without taking the hand from the field, and

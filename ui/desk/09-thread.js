@@ -304,8 +304,13 @@ function turnRow(d, w, esc) {
  *  panel. Done ticks the line as the reader's; a time moves it there and it
  *  rings again then; ✕ leaves the line as it is. Nothing goes to a panel
  *  but the next prompt's one line, which the daemon writes. */
+/** Due cards whose Later… is open (1.48): the rest of the times, and a field. */
+const dueMore = new Set();
 function dueRow(w, esc) {
-  const later = DUE_TO.slice(1, 3).map(([v, l]) => `<button type="button" class="tn-opt quiet" data-a="tn-later" data-w="${w.id}" data-v="${v}">${l}</button>`).join("");
+  const more = dueMore.has(w.id);
+  const later = (more ? DUE_TO : DUE_TO.slice(1, 3)).map(([v, l]) => `<button type="button" class="tn-opt quiet" data-a="tn-later" data-w="${w.id}" data-v="${v}">${l}</button>`).join("") +
+    (more ? `<input class="th-in tn-due-in" data-w="${w.id}" maxlength="40" spellcheck="false" placeholder="Pick a time: fri 16" aria-label="Pick a time for ${esc(w.text)}">`
+      : `<button type="button" class="tn-opt quiet" data-a="tn-due-more" data-w="${w.id}" aria-expanded="false">Later…</button>`);
   return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` +
     `<p class="tn-by"><span data-tip="Due" data-tip-sub="by the date you gave this note">due · ${esc(ctx.relShort(w.created_at))}</span></p>` +
     `<div class="tn-acts"><button type="button" class="tn-opt rec" data-a="tn-due-done" data-w="${w.id}">Done</button>${later}` +
@@ -685,7 +690,8 @@ async function filedAct(a, b, d) {
     await told({ ...b.dataset }, `t${t.id}`, "Could not remove it", () => { filed.threads.push(t); filedGone = null; },
       () => ctx.api(`/api/desks/${d.id}/threads/${t.id}/remove`, {}));
   } else if (a === "tn-pick" && w) await answer(d, w, b.dataset.v, undefined, w.kind !== "tell");
-  else if ((a === "tn-due-done" || a === "tn-later") && w) await dueAnswer(d, w, a === "tn-later" ? b.dataset.v : "");
+  else if ((a === "tn-due-done" || a === "tn-later") && w) { dueMore.delete(w.id); await dueAnswer(d, w, a === "tn-later" ? b.dataset.v : ""); }
+  else if (a === "tn-due-more" && w) { dueMore.add(w.id); rail(); ctx.tocEl.querySelector(`.tn-due-in[data-w="${w.id}"]`)?.focus(); }
   else if ((a === "tn-other" || a === "tn-change") && w) { thField = { kind: a === "tn-other" ? "other" : "change", id: w.id }; thDraft = ""; rail(); }
   else if (a === "tn-link") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
   else if (a === "tn-send" && w) await sendNow(d, w);
