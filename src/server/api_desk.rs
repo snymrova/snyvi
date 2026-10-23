@@ -181,7 +181,11 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
 
             // The last thing that happened, for a desk no one said Left off on.
             let tick = ticks.last().map(|t| (t.at, json!({ "kind": "tick", "at": t.at, "text": t.text, "commit": t.commit })));
-            let doc = last_doc.as_ref().map(|x| (x.received_at, json!({ "kind": "doc", "at": x.received_at, "text": x.title, "id": x.id })));
+            // A friend's says whose it is: "sent" alone reads as the reader's (F13).
+            let doc = last_doc.as_ref().map(|x| {
+                let from = app.store.get(&x.id).ok().flatten().filter(|d| d.origin == "peer").map(|d| d.sender);
+                (x.received_at, json!({ "kind": "doc", "at": x.received_at, "text": x.title, "id": x.id, "from": from }))
+            });
             let last = match (tick, doc) {
                 (Some(t), Some(x)) => Some(if t.0 >= x.0 { t.1 } else { x.1 }),
                 (t, x) => t.or(x).map(|p| p.1),

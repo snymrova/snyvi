@@ -1880,6 +1880,7 @@ async fn the_doc_event_says_a_draft_is_quiet() {
 mod accounts;
 #[cfg(unix)]
 mod first_desk;
+mod friends;
 mod keys;
 mod pastes;
 mod routes;

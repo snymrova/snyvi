@@ -19,20 +19,25 @@ const CSS = `
 #peer[hidden] { display: none; }
 #peer .pr-box { width: min(440px, calc(100vw - 32px)); background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-md); box-shadow: var(--shadow-3); padding: 20px 22px 18px; color: var(--fg); }
 #peer h2 { font-size: var(--fs-h3); font-weight: 600; margin: 0 0 6px; display: flex; align-items: baseline; gap: 10px; }
-#peer h2 .pr-x { margin-left: auto; color: var(--fg-3); font-size: var(--fs-ui); }
-#peer h2 .pr-x:hover { color: var(--fg); }
+#peer h2 button.pr-x { margin-left: auto; color: var(--fg-3); font-size: var(--fs-ui); }
+#peer h2 button.pr-x:hover { color: var(--fg); }
 #peer p { margin: 0 0 10px; color: var(--fg-2); font-size: var(--fs-ui); line-height: 1.45; }
 #peer .pr-quiet { color: var(--fg-3); }
 #peer .pr-code { font-family: var(--mono); font-size: clamp(var(--fs-read), 5.4vw, var(--fs-h2)); letter-spacing: 0.02em; text-align: center; padding: 14px 10px; margin: 8px 0 6px; border: 1px dashed var(--rule-2); border-radius: var(--r-md); user-select: all; overflow-wrap: anywhere; }
 #peer .pr-url { font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-3); overflow-wrap: anywhere; }
 #peer .pr-emoji { font-size: 34px; text-align: center; padding: 10px 0 6px; letter-spacing: 0.25em; }
 #peer .pr-row { display: flex; gap: 8px; align-items: center; margin: 8px 0 0; }
-#peer input { flex: 1; min-width: 0; font: inherit; padding: 7px 10px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
-#peer input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#peer input, #peer textarea { flex: 1; min-width: 0; font: inherit; padding: 7px 10px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+#peer textarea { resize: none; line-height: 1.4; max-height: calc(3 * 1.4em + 16px); overflow-y: auto; }
+#peer .pr-row:has(textarea) { align-items: flex-end; }
+#peer input:focus, #peer textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#peer .pr-n { color: var(--fg-3); font-size: var(--fs-small); text-align: right; min-height: 1.2em; }
 #peer button { font: inherit; padding: 7px 12px; border-radius: var(--r-sm); border: 1px solid var(--rule-2); background: var(--bg); color: var(--fg); cursor: pointer; }
 #peer button:hover, #peer button:focus-visible { border-color: var(--fg-3); }
 #peer button.pr-go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 #peer button.pr-go[disabled] { opacity: .6; cursor: default; }
+/* A row's send, spent: said in the quiet style, not a faded accent. */
+#peer button.pr-spent, #peer button.pr-spent[disabled] { background: none; border-color: transparent; color: var(--fg-2); opacity: 1; cursor: default; }
 #peer button.pr-link { border: 0; background: none; padding: 2px 4px; color: var(--accent); }
 #peer ul { list-style: none; margin: 6px 0 0; padding: 0; }
 #peer li { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; border-top: 1px solid var(--rule); }
@@ -212,7 +217,9 @@ async function start(ctx, url, body) {
 
 /* ---------- send ---------- */
 
-/** Send this document to a friend. */
+/** Send this document to a friend. Each friend's row says what became of
+ *  the last send to them; a document they already have says so, with Send
+ *  again (F14). One line under the list says what happened, once (F15). */
 export async function send(ctx, docId, title = "") {
   const { esc } = ctx;
   let j;
@@ -220,30 +227,66 @@ export async function send(ctx, docId, title = "") {
   const list = (j.friends || []).filter(f => !f.removed_at);
   open(`Send <span class="pr-title">${esc(title || "this document")}</span> to…`,
     (list.length
-      ? `<ul>${list.map(f => `<li><span class="pr-nm">${esc(f.name)}</span><span class="pr-t">${f.last_to ? `last sent ${esc(ctx.rel(f.last_to))}` : "nothing sent yet"}</span><button type="button" class="pr-go" data-peer="${f.id}">Send</button></li>`).join("")}</ul>` +
-        `<p class="pr-quiet" style="margin-top:10px">Sealed to their key and left at the relay; it shows on their Home, under Arrived. The relay holds it seven days at most, read or not.</p>`
+      ? `<ul>${list.map(f => `<li><span class="pr-nm">${esc(f.name)}</span><span class="pr-t">${f.away ? "away now; it waits for them" : f.last_to ? `last sent ${esc(ctx.rel(f.last_to))}` : "nothing sent yet"}</span><button type="button" class="pr-go" data-peer="${f.id}">Send</button></li>`).join("")}</ul>` +
+        `<p class="pr-quiet" style="margin-top:10px">Sealed to their key. It lands under <b>From</b> and your name in their sidebar, or on the desk they keep your things on. The relay holds it seven days at most, read or not.</p>`
       : `<p>No friends yet. <b>Pair with a friend…</b> at the foot of Home makes one.</p>`) +
     `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
-  on("click", async e => {
-    const b = e.target.closest("button[data-peer]");
-    if (!b) return;
+  const go = async (b, again) => {
     for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = true;
     say("Sealing and sending…");
     try {
-      const r = await post(`/api/docs/${encodeURIComponent(docId)}/send`, { peer: +b.dataset.peer });
-      say(r.sent ? `Sent to ${r.to}.` : `Queued for ${r.to}; the relay could not be reached, so it goes when it can.`);
-      // Its row says so, and its button is spent; the others can still go.
-      const t = b.closest("li")?.querySelector(".pr-t");
-      if (t) t.textContent = r.sent ? "sent just now" : "waiting to go";
+      const r = await post(`/api/docs/${encodeURIComponent(docId)}/send`, { peer: +b.dataset.peer, again });
+      // This very version is with them already: nothing new would arrive.
+      if (r.already) {
+        say(`${r.to} already has this version: it arrived ${ctx.rel(r.already)}.`);
+        b.textContent = "Send again"; b.dataset.again = "1";
+        for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = false;
+        return;
+      }
+      say(r.sent ? `Sent to ${r.to}.` : `Waiting for ${r.to}: it goes when they or the relay can be reached.`);
+      // Its row's button is spent and says so, quietly; the others can still go.
       for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = x === b;
-      b.textContent = "✓"; b.setAttribute("aria-label", r.sent ? "Sent" : "Queued");
+      b.className = "pr-spent"; b.textContent = r.sent ? "Sent ✓" : "Waiting";
       box.querySelector(".pr-foot").innerHTML = `<button type="button" class="pr-go" data-pr="close">Done</button>`;
       box.querySelector(".pr-foot .pr-go").focus();
     } catch (err) {
       say(ctx.sayErr(err).why, true);
       for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = false;
     }
+  };
+  on("click", e => {
+    const b = e.target.closest("button[data-peer]");
+    if (b && !b.disabled) go(b, b.dataset.again === "1");
   });
+}
+
+/** The open document's Send to…, once it went somewhere, says how far it
+ *  got (assets.rs `went`): read again in place when what came back moves,
+ *  only the button, so nothing under the reader's eyes moves (F2). */
+export async function sentNow(ctx) {
+  const id = ctx.state?.doc?.id, b = document.querySelector(".doc-send[data-sent]");
+  if (!id || !b) return;
+  let j;
+  try { j = await (await fetch(`/api/docs/${encodeURIComponent(id)}`)).json(); } catch { return; }
+  if (ctx.state?.doc?.id !== id || !b.isConnected) return;
+  const t = document.createElement("template"); t.innerHTML = j.html || "";
+  const n = t.content.querySelector(".doc-send[data-sent]");
+  if (!n) return;
+  b.innerHTML = n.innerHTML; b.dataset.tipSub = n.dataset.tipSub || "";
+}
+
+/** A one-line field that grows to three lines as it is typed into, so the
+ *  words stay in view (F10). Enter sends; a line has no newlines. */
+function grow(el, go) {
+  const fit = () => { el.style.height = "auto"; el.style.height = el.scrollHeight + 2 + "px"; count(el); };
+  el.addEventListener("input", fit);
+  el.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  fit();
+}
+/** From 160 characters, how many of the 200 a line holds are used. */
+function count(el) {
+  const n = [...el.value].length, c = box?.querySelector(".pr-n");
+  if (c) c.textContent = n >= 160 ? `${n} / 200` : "";
 }
 
 /* ---------- a line for a friend's notes ---------- */
@@ -262,9 +305,9 @@ function overLine(t) {
 export function note(ctx, peerId, name) {
   const { esc } = ctx;
   open(`A line for ${esc(name)}`,
-    `<p>It waits on their Home until they put it on one of their desks. One line, as a note is.</p>` +
-    `<div class="pr-row"><input id="pr-line" placeholder="What should they not forget?" autocomplete="off"><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
-    `<div class="pr-said" aria-live="polite"></div>`);
+    `<p>It goes on their Home, or on the desk they keep your things on, until they keep it. One line, as a note is; a date in it ("by Friday") becomes its date there.</p>` +
+    `<div class="pr-row"><textarea id="pr-line" rows="1" placeholder="What should they not forget?" autocomplete="off"></textarea><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
+    `<div class="pr-n" aria-live="polite"></div><div class="pr-said" aria-live="polite"></div>`);
   const go = async () => {
     const t = box.querySelector("#pr-line").value.trim();
     if (!t || overLine(t)) return;
@@ -276,7 +319,7 @@ export function note(ctx, peerId, name) {
     catch (e) { say(ctx.sayErr(e).why, true); box.querySelector("[data-pr=send]").disabled = false; }
   };
   box.querySelector("[data-pr=send]").addEventListener("click", go);
-  box.querySelector("#pr-line").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  grow(box.querySelector("#pr-line"), go);
 }
 
 /* ---------- a friend's document, kept ---------- */
@@ -300,18 +343,19 @@ export function head(ctx, b) {
   if (b.dataset.act === "keep") return keepOn(ctx, [id], title);
   if (b.dataset.act === "save") return save(ctx, id, b);
   if (b.dataset.act === "unfile") return unfile(ctx, id, b);
-  if (b.dataset.act === "reply") return reply(ctx, id, b.dataset.to || "them", title);
+  if (b.dataset.act === "reply") return reply(ctx, id, b.dataset.to || "them", title, +b.dataset.peer || 0);
   return send(ctx, id, title);
 }
 
-/** One line back to the friend who sent a document: it shows under the
- *  head of their copy. Anything longer is a document of its own. */
-function reply(ctx, id, to, title) {
+/** One line back to the friend who sent a document -- or, under the
+ *  reader's own (`peer`, 1.49), an answer to that friend's reply: it shows
+ *  under the head of both copies. Anything longer is a document of its own. */
+function reply(ctx, id, to, title, peer = 0) {
   const { esc } = ctx;
   open(`Reply to ${esc(to)}`,
-    `<p>About <span class="pr-title">${esc(title || "their document")}</span>. One line; it shows under the head of their copy.</p>` +
-    `<div class="pr-row"><input id="pr-line" placeholder="Looks good; one question about step 3" autocomplete="off"><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
-    `<div class="pr-said" aria-live="polite"></div>`);
+    `<p>About <span class="pr-title">${esc(title || "their document")}</span>. One line; it shows under the head of their copy, and of yours.</p>` +
+    `<div class="pr-row"><textarea id="pr-line" rows="1" placeholder="Looks good; one question about step 3" autocomplete="off"></textarea><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
+    `<div class="pr-n" aria-live="polite"></div><div class="pr-said" aria-live="polite"></div>`);
   let busy = false;
   const go = async () => {
     const t = box.querySelector("#pr-line")?.value.trim();
@@ -321,7 +365,7 @@ function reply(ctx, id, to, title) {
     box.querySelector("[data-pr=send]").disabled = true;
     say("Sending…");
     try {
-      const r = await post(`/api/docs/${encodeURIComponent(id)}/reply`, { text: t });
+      const r = await post(`/api/docs/${encodeURIComponent(id)}/reply`, { text: t, peer });
       if (!here.isConnected) return;
       say(r.sent ? `Sent to ${r.to}.` : r.waits ? `Kept for ${r.to}: their snyvi is older, and it goes once they update.` : `Queued for ${r.to}; it goes when the relay can be reached.`);
       box.querySelector(".pr-row").remove();
@@ -331,7 +375,10 @@ function reply(ctx, id, to, title) {
     finally { busy = false; }
   };
   on("click", e => { if (e.target.closest("[data-pr=send]")) go(); });
-  on("keydown", e => { if (e.key === "Enter" && e.target.id === "pr-line") { e.preventDefault(); go(); } });
+  grow(box.querySelector("#pr-line"), go);
+  // Their copy and this one both carry it now: this head shows it when
+  // Done takes the sheet away, drawn again as the reader asked for it.
+  on("click", e => { if (e.target.closest(".pr-foot [data-pr=close]")) ctx.refreshDoc?.(id); });
 }
 
 /** Move to From <friend>: a friend's document that was filed into one of
@@ -362,7 +409,7 @@ export async function keepOn(ctx, ids, title) {
   desks = [...desks.filter(d => !d.parked), ...desks.filter(d => d.parked)];
   open(`Keep <span class="pr-title">${esc(title || "this document")}</span> on…`,
     (desks.length
-      ? `<ul>${desks.map(d => `<li><span class="pr-nm">${esc(d.name)}</span><span class="pr-t">${d.parked ? "parked" : ""}</span><button type="button" class="pr-go" data-desk="${d.id}">Keep here</button></li>`).join("")}</ul>` +
+      ? `<ul>${desks.map(d => `<li><span class="pr-nm">${esc(d.name)}</span><span class="pr-t">${d.parked ? "parked" : ""}</span><button type="button" class="pr-go" data-desk="${d.id}">Keep</button></li>`).join("")}</ul>` +
         `<p class="pr-quiet" style="margin-top:10px">${ids.length > 1 ? `All ${ids.length} move` : "It moves"} into the desk's documents, every version, and still ${ids.length > 1 ? "say" : "says"} who sent ${ids.length > 1 ? "them" : "it"}. Nothing is written into the desk's folder until you press <b>Save into the folder</b>.</p>`
       : `<p>No desk yet. <b>New desk here</b>, on a project's menu in the sidebar, makes one; then keep it there.</p>`) +
     `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
@@ -392,8 +439,9 @@ export async function save(ctx, id, b) {
   if (b) b.disabled = true;
   try {
     const r = await deskCall(`/api/docs/${encodeURIComponent(id)}/save`, {});
+    // Said where the button was; a toast only when that place is gone (F17).
     if (b && b.isConnected) { const s = Object.assign(document.createElement("span"), { textContent: `Saved as ${r.rel}` }); s.setAttribute("role", "status"); b.replaceWith(s); }
-    ctx.toast(`Saved into ${r.desk}'s folder`, { sub: r.rel });
+    else ctx.toast(`Saved into ${r.desk}'s folder`, { sub: r.rel });
     ctx.saved?.(id, r.path);
   } catch (e) {
     if (b) b.disabled = false;
@@ -406,10 +454,12 @@ export async function save(ctx, id, b) {
 /** What the page's event stream says about friends: a line, a reply or a
  *  tick from one rises in the corner (ui/corner.js), unless it came
  *  quietly, and settles there under Lately, where the daemon keeps it. An
- *  agent's offer is the corner's own, an On you row (app.js `onPeer`). */
+ *  agent's offer is the corner's own, an On you row (app.js `onPeer`).
+ *  Each card says who in its head and what in its title -- the line, the
+ *  reply, the ticked line -- and its button goes where the thing is (F5). */
 export function event(ctx, j) {
   const { esc } = ctx, from = esc(j.from || "");
-  if (j.done && !j.quiet) ctx.rise({ kind: "friend", key: `pd${Date.now()}`, from: `<b>${from}</b> ticked your line`, title: j.done + (j.commit ? ` · ${String(j.commit).slice(0, 7)}` : ""), label: "Home", go: ctx.home });
+  if (j.done && !j.quiet) ctx.rise({ kind: "friend", key: `pd${Date.now()}`, from: j.promise ? `<b>${from}</b> kept their promise` : `<b>${from}</b> ticked your line`, title: j.done + (j.commit ? ` · ${String(j.commit).slice(0, 7)}` : ""), label: "Home", go: ctx.home });
   else if (j.reply) {
     // The reply is in the head the next time the document is drawn; the
     // copy kept from before it is not. Open now, it is drawn again only
@@ -418,6 +468,10 @@ export function event(ctx, j) {
     if (!open) ctx.refreshDoc?.(j.doc);
     if (!j.quiet) ctx.rise({ kind: "friend", key: `pr${Date.now()}`, from: `<b>${from}</b> replied`, title: j.reply, label: open ? "Show it" : "Open", go: open ? () => ctx.refreshDoc(j.doc) : () => ctx.showDoc?.(j.doc) });
   }
-  else if (j.from && !j.quiet) ctx.rise({ kind: "friend", key: `pn${Date.now()}`, from: `A line from <b>${from}</b>`, title: j.desk ? `a suggestion on ${j.desk}` : "on Home", label: "Home", go: ctx.home });
+  else if (j.from && !j.quiet) {
+    // On their desk it is a suggestion there, to keep or not; else it waits
+    // on Home. A promise is theirs, said as one.
+    const where = j.desk ? { label: `Open ${j.desk}`, go: () => ctx.openDesk?.(j.desk_id) || ctx.home() } : { label: "Home", go: ctx.home };
+    ctx.rise({ kind: "friend", key: `pn${Date.now()}`, from: j.promise ? `<b>${from}</b> promised you` : `<b>${from}</b>${j.desk ? ` · a suggestion on ${esc(j.desk)}` : ""}`, title: j.text || "a line", ...where });
+  }
 }
-

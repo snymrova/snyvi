@@ -762,7 +762,7 @@ function pick(j) {
     : x
       ? `<p class="hm-pk-left hm-derived" data-tip="No one said where this was left" data-tip-sub="so this is the last thing that happened on it"><b>Last</b>${x.kind === "tick"
           ? `✓ ${esc(x.text)}${x.commit ? ` <code>${esc(x.commit.slice(0, 7))}</code>` : ""}`
-          : `sent <a href="/d/${esc(x.id)}" data-id="${esc(x.id)}">${esc(x.text)}</a>`}<span class="fact">${live(x.at)}</span></p>`
+          : `${x.from ? `from ${esc(x.from)}` : "sent"} <a href="/d/${esc(x.id)}" data-id="${esc(x.id)}">${esc(x.text)}</a>`}<span class="fact">${live(x.at)}</span></p>`
       // A new desk, nothing on it yet: the next step, not an empty field.
       : `<p class="hm-pk-left hm-quiet"><b>Next</b>ask Claude where you left off: the desk's panel has the button.</p>`;
   // A list with nothing left open is a milestone said in numbers

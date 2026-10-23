@@ -384,6 +384,8 @@
     if (!d) { metaEl.innerHTML = ""; return; }
     const rows = [
       ["Project", d.project], ["Workflow", d.workflow_title], d.branch ? ["Branch", d.branch] : null,
+      // A friend's, by their name: who it is from is never the desk's (F11).
+      d.origin === "peer" && d.sender ? ["Sender", d.sender] : null,
       ["Received", fmt(d.received_at)], ["Size", d.size > 1024 * 1024 ? (d.size / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(d.size / 1024)) + " KB"],
       d.lang ? ["Lang", d.lang] : null,
     ].filter(Boolean);
@@ -391,7 +393,7 @@
       // Sent from a pane: which desk and which slot, and a way back to it.
       // A link and not adjacency, because a window can have three desks and
       // `[1]` alone would not say which.
-      (d.desk ? `<div class="row"><b>From</b><span><a href="/desk/${d.desk.id}" data-desk="${d.desk.id}" data-slot="${d.desk.slot}">${esc(d.desk.name)}${d.desk.slot ? ` <span class="slot">[${d.desk.slot}]</span>` : ""} ${glyph("next", 10)}</a></span></div>` : "") +
+      (d.desk ? `<div class="row"><b>${d.origin === "peer" ? "On" : "From"}</b><span><a href="/desk/${d.desk.id}" data-desk="${d.desk.id}" data-slot="${d.desk.slot}">${esc(d.desk.name)}${d.desk.slot ? ` <span class="slot">[${d.desk.slot}]</span>` : ""} ${glyph("next", 10)}</a></span></div>` : "") +
       `<div class="actions">` +
       (state.previous ? (comparing ? `<button data-act="back">← Back to document</button>` : `<button data-act="compare">Compare with previous<kbd class="lk">c</kbd></button>`) : "") +
       `<button data-act="pin">${d.pinned ? "Unpin" : "Pin"}<kbd class="lk">p</kbd></button>` +
