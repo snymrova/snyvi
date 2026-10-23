@@ -329,6 +329,10 @@ a.hm-panels:hover { color: var(--fg); }
 .empty-state .hero .mk { display: block; width: 44px; height: 44px; margin: 0 auto 16px; }
 .empty-state pre { text-align: left; font-family: var(--mono); font-size: var(--fs-ui); background: var(--code-bg); padding: 12px 16px; border-radius: var(--r-sm); display: inline-block; margin: 0; }
 `;
+/* Waiting's head is as tall without its buttons as with them (24 px, a
+   button's): it stands while the ghost of the last one waiting does, and
+   shorter, the list under it moved up 7 px. */
+.inbox-head + .inbox-sec { min-height: 24px; }
 
 /** The sections that can be hidden, in the order they stand. Pick up
  *  cannot: it is what the page is for. Threads and Keys were sections until
