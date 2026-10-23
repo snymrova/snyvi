@@ -590,34 +590,12 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         doc.received_at,
         fmt_time(doc.received_at)
     ));
-    let send = |sub: &mut String, sep: &str| {
-        sub.push_str(&format!(
-            "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
-            q(&doc.id),
-            q(&doc.title)
-        ))
-    };
-    // Once it went somewhere, Send to… says where, and how far it got --
-    // "→ Trapti · arrived 21:28" -- in the same place, on one line that
-    // never wraps, so the head keeps its height as the word changes (F2).
-    // Pressed, it is Send to… still.
-    let went = |sub: &mut String, sep: &str| {
-        sub.push_str(&format!(
-            "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-sent=\"1\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Send to…\" data-tip-sub=\"{}\" style=\"max-width:24em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom\">{}</button>",
-            q(&doc.id),
-            q(&doc.title),
-            q(&sent_tip(&talk.sent)),
-            sent_label(&talk.sent)
-        ))
-    };
     // The reader's own document: Send to…, once there is a friend to send
     // to, in the sub line, so the head is the same height with it and
     // without. The page wires the click (`ui/peer.js`).
     if !theirs {
-        if !talk.sent.is_empty() {
-            went(&mut sub, " · ");
-        } else if friends > 0 {
-            send(&mut sub, " · ");
+        if friends > 0 || !talk.sent.is_empty() {
+            sub.push_str(&send_button(doc, talk, " · "));
         }
         sub.push_str(&approve_button(doc, talk));
         return head(doc, body, &sub, "", talk);
@@ -662,12 +640,34 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         ));
     }
     if friends >= 2 {
-        send(&mut acts, "");
+        acts.push_str(&send_button(doc, &Talk::default(), ""));
     }
     let acts = format!(
         "<div class=\"doc-acts\" style=\"display:flex;flex-wrap:wrap;gap:2px 18px;margin:6px 0 0;font-size:var(--fs-ui);color:var(--fg-3)\">{acts}</div>"
     );
     head(doc, body, &sub, &acts, talk)
+}
+
+/// Send to…, in a head. Once the reader's own document went somewhere it
+/// says where, and how far it got -- "→ Trapti · arrived 21:28" -- in the
+/// same place, on one line that never wraps, so the head keeps its height as
+/// the word changes (F2). Pressed, it is Send to… still.
+fn send_button(doc: &Doc, talk: &Talk, sep: &str) -> String {
+    let q = html_escape::encode_double_quoted_attribute;
+    if talk.sent.is_empty() {
+        return format!(
+            "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
+            q(&doc.id),
+            q(&doc.title)
+        );
+    }
+    format!(
+        "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-sent=\"1\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Send to…\" data-tip-sub=\"{}\" style=\"max-width:24em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom\">{}</button>",
+        q(&doc.id),
+        q(&doc.title),
+        q(&sent_tip(&talk.sent)),
+        sent_label(&talk.sent)
+    )
 }
 
 /// A plan for desk notes: Approve, the go-ahead its panel reads at its

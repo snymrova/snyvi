@@ -340,6 +340,17 @@ async function keepAll(ctx, pid, name) {
   if (!ids.length) return;
   ctx.peerCtx.peer().then(m => m.keepOn(ctx.peerCtx, ids, `everything from ${name.replace(/^From /, "")}`), () => ctx.toast("Could not open that"));
 }
+/** A friend's own row's menu: their page (1.49), Rename, Keep all, Remove.
+ *  The row's name is theirs, "From " and all (`peer::from_name`). */
+function friendRow(ctx, el, pid, p, capability) {
+  return { head: p.name, items: [
+    ctx.peerCtx && { label: `Open ${p.name.replace(/^From /, "")}'s page`, run: () => openFriend(ctx, p.name) },
+    { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
+    capability && ctx.peerCtx && { label: "Keep all on a desk…", run: () => keepAll(ctx, pid, p.name) }, RULE,
+    { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
+  ] };
+}
+
 /** A friend's page, from their row: the friend by the row's name. */
 async function openFriend(ctx, row) {
   const name = row.replace(/^From /, "").toLowerCase();
@@ -436,14 +447,7 @@ function entries(ctx, el, byKey = false) {
     if (!p) return null;
     // A friend's own row is no folder: nothing to make a desk on, to copy or
     // to show in the file manager (docs/PEER.md).
-    if (p.friend) return { head: p.name, items: [
-      // Everything with them, both ways, on their page (1.49): the row's
-      // name is theirs, "From " and all (`peer::from_name`).
-      ctx.peerCtx && { label: `Open ${p.name.replace(/^From /, "")}'s page`, run: () => openFriend(ctx, p.name) },
-      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
-      capability && ctx.peerCtx && { label: "Keep all on a desk…", run: () => keepAll(ctx, pid, p.name) }, RULE,
-      { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
-    ] };
+    if (p.friend) return friendRow(ctx, el, pid, p, capability);
     const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
     return { head: p.name, items: [
       capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }, false, true) },
