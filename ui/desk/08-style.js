@@ -538,6 +538,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* Done is quiet: the accent is for what wants looking at, and a done note
    is the one thing on the rail that does not. */
 .dk-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
+/* Ticked without evidence: the ✓ in a ring, not on a disc. */
+.dk-tick.bare[aria-checked="true"] { background: none; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: var(--fg-3); }
 .dk-tick svg { width: 9px; height: 9px; }
 /* Small to the eye and not to the hand: the press lands on 20 px. */
 .dk-tick:not(.ghost)::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; }

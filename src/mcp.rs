@@ -71,7 +71,7 @@ that is only partly done, planned, or done by someone else, and do not tick note
 tick shows your name beside the line, and the user can untick it. If the work went into a commit, pass its hash as \
 `commit` (as git log prints it); if you sent a document about it with send_document, pass its id as `about`; and \
 if the finished work can be seen somewhere -- a pull request, a deploy, a store page -- pass that URL as \
-`evidence`. Pass `say`: one line, under 160 characters, of what changed, in words the user can check against -- \
+`evidence`; a tick with none of the three shows as \"needs a look\". Pass `say`: one line, under 160 characters, of what changed, in words the user can check against -- \
 \"The hook now catches xdg-open inside prose\", not \"done\" -- which shows under the note. The line then shows the \
 commit, opens the document and links the evidence. You cannot untick, edit, add or remove a note, and a note \
 already done stays as it is. A note the user marked still broken says what is still wrong: fix that. A commit \

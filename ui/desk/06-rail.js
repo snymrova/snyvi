@@ -603,9 +603,12 @@ function noteRow(x, esc) {
   // work went -- the commit, the PR -- is its tip and its menu, since a done
   // line is history and they were the loudest marks on it (7c0fc42885).
   const marks = x.done ? picMark(x, esc) + tell(x, esc) : stageMark(x, esc) + dueMark(x, esc) + picMark(x, esc);
-  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : ""].filter(Boolean);
+  // An agent's tick with nothing to show for it -- no commit, document or
+  // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
+  const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
+  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : "", bare ? "ticked without evidence: needs a look" : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
-    `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
+    `<span class="dk-lead"><button type="button" class="dk-tick${bare ? " bare" : ""}" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
     `<span class="dk-tail">` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
