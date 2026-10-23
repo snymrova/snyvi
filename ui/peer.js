@@ -221,7 +221,7 @@ export async function send(ctx, docId, title = "") {
   open(`Send <span class="pr-title">${esc(title || "this document")}</span> to…`,
     (list.length
       ? `<ul>${list.map(f => `<li><span class="pr-nm">${esc(f.name)}</span><span class="pr-t">${f.last_to ? `last sent ${esc(ctx.rel(f.last_to))}` : "nothing sent yet"}</span><button type="button" class="pr-go" data-peer="${f.id}">Send</button></li>`).join("")}</ul>` +
-        `<p class="pr-quiet" style="margin-top:10px">Sealed to their key and left at the relay; it shows on their Home, under Arrived. The relay holds it seven days at most, unread or not.</p>`
+        `<p class="pr-quiet" style="margin-top:10px">Sealed to their key and left at the relay; it shows on their Home, under Arrived. The relay holds it seven days at most, read or not.</p>`
       : `<p>No friends yet. <b>Pair with a friend…</b> at the foot of Home makes one.</p>`) +
     `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
   on("click", async e => {

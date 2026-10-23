@@ -555,7 +555,7 @@ function doneRows(d, dones, keep, esc) {
   if (undo) return `<li class="dk-done-li" role="status"><span class="dk-cleared">${ctx.plural(cleared.xs.length, "done note")} removed<button type="button" class="dk-undo" data-a="note-unclear">Undo</button></span></li>` + shown;
   if (!n) return shown;
   return `<li class="dk-done-li"><button type="button" class="dk-new dk-done-b" data-a="notes-done" aria-expanded="${notesDone}" data-tip="${notesDone ? "Fold the done notes" : "Show the done notes"}">${ico("tick")}<span>${n} done</span></button>` +
-    `<button type="button" class="dk-new dk-done-x" data-a="note-clear" data-tip="Remove done notes" data-tip-sub="${ctx.plural(n, "done note")} · Undo brings them back">Clear</button></li>` + shown;
+    `<button type="button" class="dk-new dk-done-x" data-a="note-clear" data-tip="Remove done notes" data-tip-sub="${ctx.plural(n, "done note")} · Undo brings them back">Remove</button></li>` + shown;
 }
 
 /** The refusal for row `k`, under it: a list item, or `tag` outside a list. */
