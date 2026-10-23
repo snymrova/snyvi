@@ -1219,6 +1219,8 @@ async fn try_suggestion(app: &Arc<App>, id: i64, row: i64) -> Response {
 #[serde(default)]
 pub(crate) struct AnswerBody {
     answer: String,
+    /// A due card's Later…: when to, in the reader's words (`crate::due`).
+    later: Option<String>,
 }
 
 /// The reader answers a turn on the rail or on Home. It reaches Claude with
@@ -1234,10 +1236,16 @@ pub(crate) async fn desk_answer_turn(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app
-        .store
-        .clocked(|c, now| thread::answer(c, id, t, &b.answer, "snyvi", now))
-    {
+    // A due card is snyvi's own: Done ticks its line, a time moves it --
+    // `later`, or a time as the answer itself (Home's corner sends one).
+    let later = b
+        .later
+        .as_deref()
+        .or((!b.answer.trim().eq_ignore_ascii_case("done")).then_some(b.answer.as_str()));
+    match app.store.clocked(|c, now| match thread::turn(c, id, t)? {
+        Some(due) if due.kind == crate::due::KIND => crate::due::answer(c, id, &due, later, now),
+        _ => thread::answer(c, id, t, &b.answer, "snyvi", now),
+    }) {
         Ok(Some(turn)) => {
             log_answered(&app, &turn);
             threads_moved(&app, id);

@@ -214,18 +214,15 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn-x[data-armed] { border-radius: 0 4px 4px 0; }
 .pn-head .ren-in { flex: 1; min-width: 60px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: var(--r-xs); padding: 0 4px; outline: none; }
 .dk-head .icon:first-of-type { margin-left: auto; }
-.dk-head .dk-tabs:not(:empty) + .icon, .dk-head .dk-cap + .icon { margin-left: 0; }
-/* At the cap: the + at rest, and the count beside it in the tab strip's
- * hand, so 4/4 and the quiet + read as one thing. */
+.dk-head .dk-tabs:not(:empty) + .icon { margin-left: 0; }
+/* At the cap: the + at rest, its tip saying why. */
 .dk-head .icon:disabled { opacity: .4; cursor: default; }
 .dk-head .icon:disabled:hover { background: none; color: var(--fg-3); }
-.dk-cap { font-family: var(--mono); font-size: 11px; color: var(--fg-3); margin-left: auto; padding: 2px 0 2px 5px; font-variant-numeric: tabular-nums; }
-.dk-tabs:not(:empty) + .dk-cap { margin-left: 0; }
 /* The keys sit just before the + and come first, so what follows them
    takes no free space of its own: the +'s old auto margin, from when it led
    the right-hand group, split the space with the tabs' and left a wide gap
    between the key and the +. Here, after those rules, so it wins. */
-.dk-head .dk-keys ~ :is(.icon, .dk-cap) { margin-left: 0; }
+.dk-head .dk-keys ~ .icon { margin-left: 0; }
 /* 8px apart: room for the focused panel's 3px ring (.pn.on) with air
    between it and the next panel's line. */
 .dk-grid { flex: 1; min-height: 0; display: grid; gap: 8px; position: relative; }
@@ -583,6 +580,12 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    quiet; each a word, so the line under the text keeps its one height. */
 .dk-meta .dk-marks > .dk-chk { font-weight: 600; }
 .dk-meta .dk-marks > .dk-chk.ok { color: var(--accent); }
+.dk-meta .dk-marks > .dk-due.now { color: var(--accent); font-weight: 600; }
+.dk-meta .dk-marks > .dk-due.late { color: var(--warn); font-weight: 600; }
+.dk-meta .dk-marks > .dk-stage.planned.ok { color: var(--ok); }
+.dk-note > .dk-due-pop { position: absolute; z-index: var(--z-pop, 30); top: calc(100% - 2px); left: 27px; display: grid; gap: 1px; min-width: 140px; padding: 4px; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-due-pop > button { height: 24px; padding: 0 8px; border-radius: var(--r-xs); text-align: left; font-size: var(--fs-micro); color: var(--fg-2); }
+.dk-due-pop > button:hover, .dk-due-pop > button:focus-visible { background: var(--rule); color: var(--fg); }
 .dk-meta .dk-marks > .dk-chk:hover { text-decoration: underline; }
 .dk-meta .dk-marks > .dk-chk:not(.ok) { font-weight: 400; color: var(--fg-2); }
 /* Reopened: the reader said it is still broken. */

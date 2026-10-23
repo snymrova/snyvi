@@ -38,7 +38,7 @@ const TODAY_ROWS = 10;
 /** How long what a row's button did is said in the row. */
 const SAID_MS = 6000;
 /** What a hand-over is answered with, by kind, as Home and the desk say. */
-const TURN_ANSWERS = { try: ["Looks good"], merge: ["Merged"], key: ["Added"], do: ["Done"] };
+const TURN_ANSWERS = { try: ["Looks good"], merge: ["Merged"], key: ["Added"], do: ["Done"], due: ["Done", "Tomorrow 9"] };
 
 /** snyvi's own asides, by the moment that says each (app.js `snyviSays`),
  *  and the part of /start each one points into. */
@@ -817,7 +817,8 @@ async function post(url, body) {
 async function answer(id, v) {
   const w = L.turns.find(x => x.id === id);
   if (!w) return;
-  sayIn(`t${id}`, `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
+  // A due card is snyvi's (1.47): Done ticks its line, a time moves it.
+  sayIn(`t${id}`, w.kind === "due" ? (v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`) : `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
   try { await c.deskApi(`/api/desks/${w.desk_id}/turns/${id}/answer`, { answer: v }); }
   catch (e) { sayIn(`t${id}`, `Could not answer it: ${c.sayErr(e).why}`); }
   if (L.card?.key === `t${id}`) settle();

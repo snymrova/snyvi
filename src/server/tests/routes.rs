@@ -309,6 +309,13 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    (
+        "POST",
+        "/api/desks/1/plans/0123456789/approve",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/desks/1/keys", None, Gate::Desk, true),
     (
         "POST",

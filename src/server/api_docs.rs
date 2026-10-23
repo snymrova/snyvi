@@ -86,11 +86,7 @@ pub(crate) async fn doc_json(State(app): S, Path(id): Path<String>) -> Response 
             let preview = render::preview_kind(&doc_ext(&doc));
             // Replies and Reply… only where there is a friend to have them.
             let friends = friend_count(&app);
-            let talk = if friends > 0 {
-                talk(&app, &doc)
-            } else {
-                Talk::default()
-            };
+            let talk = talk_for(&app, &doc, friends);
             Json(json!({
                 "doc": doc,
                 "html": doc_html(&doc, &body, friends, &talk),

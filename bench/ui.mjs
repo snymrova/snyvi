@@ -491,6 +491,12 @@ async function railRows(p, url, md, send) {
   const rows = [];
   await p.pointerAway();
 
+  // B1 of the audit of 1.46.2: the daemon's head date and the rail's
+  // Received are one format, the page's ("Oct 23, 12:33" beside "23 Oct, 12:33").
+  const when = await p.ev(`({ head: document.querySelector(".doc-sub time[data-ts]")?.textContent || "", rail: [...document.querySelectorAll("#meta .row")].find(r => r.querySelector("b")?.textContent === "Received")?.querySelector("span")?.textContent || "" })`);
+  rows.push(["the head and the rail say one time", !!when.head && when.head === when.rail,
+    !when.head ? "no time in the document's head" : when.head === when.rail ? `"${when.head}" in both` : `the head says "${when.head}", the rail "${when.rail}"`]);
+
   const toc = await p.ev(`(() => { const t = document.querySelector("#toc"), r = document.querySelector("#rail").getBoundingClientRect(), a = document.querySelector("#meta .actions").getBoundingClientRect();
     return { entries: t.querySelectorAll("a").length, scrollable: t.scrollHeight - t.clientHeight, height: Math.round(t.clientHeight), actionsBottom: Math.round(a.bottom), railBottom: Math.round(r.bottom), hrefs: [...t.querySelectorAll("a")].map(x => x.getAttribute("href").slice(1)) }; })()`);
   rows.push(["contents scroll on their own", toc.scrollable > 0 && toc.actionsBottom <= toc.railBottom,
@@ -578,10 +584,15 @@ async function railRows(p, url, md, send) {
   const asleepAt = await keyState();
   await p.press("k", { raw: true }); await sleep(300);
   const asleep = await keyState();
+  // B5 of the audit of 1.46.2: the rail's letter hints sleep with the keys.
+  const hintOp = () => p.ev(`(() => { const k = document.querySelector("#meta .actions kbd.lk"); return k ? +getComputedStyle(k).opacity : null; })()`);
+  const hintAsleep = await hintOp();
   rows.push(["a letter asleep does nothing, and says why", !asleep.on && asleep.title === asleepAt.title && /show/.test(asleep.pill) && /^(⌃B|Ctrl B) for keys$/.test(asleep.says),
     asleep.title !== asleepAt.title ? "k moved without ⌃B" : `pill "${asleep.says}" (${asleep.pill})`]);
   await p.press("b", { ctrl: true }); await sleep(200);
-  const woke = await keyState();
+  const woke = await keyState(), hintAwake = await hintOp();
+  rows.push(["letter hints wait for Ctrl B", hintAsleep != null && hintAsleep < 1 && hintAwake > 0.9,
+    hintAsleep == null ? "no letter hint in the rail" : `${hintAsleep} asleep, ${hintAwake} after Ctrl B`]);
   await p.press("k", { raw: true }); await sleep(500);
   const moved = await keyState();
   await p.press("j", { raw: true }); await sleep(500);
@@ -1126,12 +1137,17 @@ async function queueRows(p, url, arrive) {
   await p.clickOn("#inbox-row .t-inbox");
   const recent = await until(`location.search === "?recent" && document.querySelector("#doc h1")?.textContent === "Recent"`);
   const page = await p.ev(`(() => { const t = s => [...document.querySelectorAll(s)].map(a => a.textContent); const un = t("#doc .inbox.waiting .title"), all = [...document.querySelectorAll("#doc .inbox a[data-id]")].map(a => a.dataset.id);
-    return { un, twice: all.length - new Set(all).size, rest: document.querySelectorAll("#doc .inbox:not(.waiting) li").length }; })()`);
+    return { un, twice: all.length - new Set(all).size, rest: document.querySelectorAll("#doc .inbox:not(.waiting) li").length, heads: [...document.querySelectorAll("#doc h2.inbox-sec")].map(h => h.firstChild?.textContent.trim()).join(", ") }; })()`);
   await p.clickOn("#inbox-row .sec-all");
   const whole = await until(`location.search === "" && document.querySelector("#doc h1")?.textContent === "Inbox" && !!document.querySelector("#doc .inbox.waiting")`);
+  // B3 of the audit of 1.46.2: All is the same page, each document once,
+  // under Waiting and Earlier, and neither page says Unread.
+  const allPage = await p.ev(`(() => { const all = [...document.querySelectorAll("#doc .inbox a[data-id]")].map(a => a.dataset.id); return { twice: all.length - new Set(all).size, heads: [...document.querySelectorAll("#doc h2.inbox-sec")].map(h => h.firstChild?.textContent.trim()).join(", ") }; })()`);
   rows.push(["Recent lists the unread first; All is the whole Inbox", recent && page.un.length === 12 && page.un[0] === served[0] && !page.twice && page.rest > 0 && whole,
     !recent ? "Recent did not open /inbox?recent" : page.un.length !== 12 ? `${page.un.length} unread on Recent` : page.un[0] !== served[0] ? `"${page.un[0]}" first, not the newest`
       : page.twice ? `${page.twice} listed twice` : !page.rest ? "nothing under the unread" : !whole ? "All did not open the Inbox with what waits" : `Recent: 12 unread, newest first, then ${page.rest} more, each once; All at /inbox`]);
+  rows.push(["each document once on both Inbox pages, Waiting then Earlier", !allPage.twice && allPage.heads === "Waiting, Earlier" && page.heads === "Waiting, Earlier",
+    allPage.twice ? `${allPage.twice} listed twice on /inbox` : `/inbox heads "${allPage.heads}", Recent "${page.heads}"`]);
   await p.goto(url);
   await until(`!document.querySelector("#queue-bar").hidden`);
 
@@ -1268,6 +1284,34 @@ async function deleteRows(p, arrive) {
     rows.push(["and off it, the offer ends", settled, settled ? "the row closed once the 6 s had run" : "the ghost is still there"]);
   } else rows.push(["the ✕ leaves its Undo in the row", false, "the document's row is not in the sidebar"]);
 
+  // On the Inbox page (A1 of the audit of 1.46.2): the menu's Remove turns
+  // the page's row into the sidebar's ghost where it stood, through the
+  // page's redraw, with no toast in the corner; Undo puts the row back there.
+  const onPage = await arrive();
+  await p.goto(`${await p.ev("location.origin")}/inbox`);
+  await p.pointerAway();
+  const pageSel = JSON.stringify(`#doc .inbox a[data-id="${onPage.id}"]`);
+  const topOf = s => p.ev(`(() => { const e = document.querySelector(${s}); return e ? Math.round(e.getBoundingClientRect().top) : null; })()`);
+  await until(`!!document.querySelector(${pageSel})`);
+  const rowTop = await topOf(pageSel);
+  await p.rightClickOn(JSON.parse(pageSel));
+  await until(`!document.querySelector("#ctx").hidden`);
+  const rm = await p.ev(`(() => { const b = [...document.querySelectorAll("#ctx button")].find(b => b.textContent.startsWith("Remove")); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  if (rm && rowTop != null) {
+    await p.click(rm.x, rm.y);
+    // Past the daemon's answer and the page's redraw on its event.
+    await sleep(1200);
+    const pg = await p.ev(`(() => { const g = document.querySelector("#doc .inbox > .t-gone .t-ghost"); if (!g) return null; return { text: g.textContent, y: Math.round(g.getBoundingClientRect().top) }; })()`);
+    const t3 = await toastEl();
+    rows.push(["Remove on the Inbox page answers in the row", !!pg && Math.abs(pg.y - rowTop) <= 2 && /removed/.test(pg.text) && !t3,
+      !pg ? (t3 ? `no ghost on the page, and a toast: "${t3.text}"` : "no ghost on the page") : t3 ? `a toast came too: "${t3.text}"` : Math.abs(pg.y - rowTop) > 2 ? `the row was at y ${rowTop}, the ghost is at y ${pg.y}` : `"${pg.text}" where the row stood`]);
+    await p.clickOn("#doc .inbox > .t-gone .t-undo");
+    const returned = await until(`!!document.querySelector(${pageSel}) && !document.querySelector("#doc .inbox > .t-gone")`);
+    const backTop = returned ? await topOf(pageSel) : null;
+    rows.push(["and its Undo puts the row back where it was", returned && backTop === rowTop,
+      !returned ? "the row did not come back on the page" : backTop === rowTop ? `at y ${backTop}, its own place` : `it was at y ${rowTop}, it came back at y ${backTop}`]);
+  } else rows.push(["Remove on the Inbox page answers in the row", false, rowTop == null ? "the document's row is not on the Inbox page" : "the row's menu has no Remove"]);
+
   await p.reload();
   const stillGone = !(await listed(doomed.title));
   const found = await p.ev(`fetch("/api/search?q=" + encodeURIComponent(${JSON.stringify(doomed.title)})).then(r => r.json()).then(h => h.length)`);
@@ -1382,6 +1426,12 @@ async function designRows(p, url, arrive) {
   for (const n of [1, 2, 3]) last = await arrive({ name, body: `# Lineage\n\nVersion ${n}.\n` });
   await p.goto(`${new URL(url).origin}/d/${last.id}`);
   await p.pointerAway();
+  // B4 of the audit of 1.46.2: the rail's versions say which is which, sent
+  // in one minute as these are; they read one date three times.
+  await until(`document.querySelectorAll("#history a").length === 3`, 30);
+  const vs = await p.ev(`[...document.querySelectorAll("#history a")].map(a => a.textContent.trim())`);
+  rows.push(["a lineage's versions say which is which", vs.length === 3 && vs.every((t, i) => t.startsWith(`v${3 - i} · `)) && new Set(vs).size === 3,
+    vs.length !== 3 ? `${vs.length} versions in the rail` : `they read ${vs.map(t => `"${t}"`).join(", ")}`]);
   await p.press("Delete");
   const three = await until(`/3 versions/.test(document.querySelector("#trees .t-ghost")?.textContent || document.querySelector("#toasts .toast")?.textContent || "")`, 30);
   rows.push(["lineage ghost says 3 versions", three, three ? "removed · 3 versions" : `it says "${await p.ev(`document.querySelector("#trees .t-ghost")?.textContent || ""`)}"`]);
@@ -2403,8 +2453,15 @@ async function deskRows(cdp, base, token) {
     // A real change: the panel needs its reader. The mark and the head's
     // count say so; the row under the pointer is still that row.
     await p.ev(`window.__still.side = 0; window.__rowA = document.querySelector('a[data-desk="${da}"]'); 1`);
+    const actsAt = `Math.round(document.querySelector('#desk-nav .sec-head[data-sec="desks"] .sec-acts button')?.getBoundingClientRect().left ?? -1)`;
+    const actsBefore = await p.ev(actsAt);
     await post(`/api/panes/${pane}/agent`, { state: "needs_you" }, { "content-type": "application/json", authorization: `Bearer ${token}` });
     const rang = await until(`!!document.querySelector('a[data-desk="${da}"] .dot.blk') && !!document.querySelector("#desk-nav .sec-n.warn")`);
+    // A3 of the audit of 1.46.2: the count has its slot at rest, so its
+    // coming moves nothing on the head.
+    const actsAfter = await p.ev(actsAt), headN = await p.ev(`document.querySelector('#desk-nav .sec-head[data-sec="desks"] .sec-n')?.textContent || ""`);
+    rows.push(["the Desks head holds still when a count arrives", rang && actsBefore >= 0 && actsAfter === actsBefore && headN === "1",
+      !rang ? "no count came on the head" : actsBefore < 0 ? "the Desks head has no buttons" : actsAfter !== actsBefore ? `its buttons moved from x ${actsBefore} to ${actsAfter}` : headN !== "1" ? `the count says "${headN}"` : `the count says 1, its buttons still at x ${actsAfter}`]);
     const after = await p.ev(`({ rowA: window.__rowA === document.querySelector('a[data-desk="${da}"]'), row: window.__row === document.querySelector('a[data-desk="${db}"]'), lit: window.__row.matches(":hover") })`);
     rows.push(["a panel that needs you changes only its mark", rang && after.rowA && after.row && after.lit,
       !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
@@ -2717,10 +2774,25 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // The page is a grid, not the reading measure.
     const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
     rows.push(["Home takes the width, with the side column beside Pick up and the desks", wide.beside, `${wide.hm}px wide; ${wide.beside ? "Pick up, the desks and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
+    // A2 of the audit of 1.46.2: at 1000 px, sidebar open, Home's container
+    // is under 760 px and the grid is one real column. It was three tracks,
+    // with the note bar drawn over the Claude box.
+    await p.width(1000);
+    const one = await p.ev(`(() => { const g = document.querySelector(".hm-grid"), nb = document.querySelector(".hm-nb"); if (!g || !nb) return null; const b = nb.getBoundingClientRect();
+      const over = [...g.querySelectorAll(":scope > * > *, :scope > *")].filter(x => x !== nb && !x.contains(nb) && !nb.contains(x) && getComputedStyle(x).display !== "contents" && x.offsetParent).find(x => { const r = x.getBoundingClientRect(); return r.height > 0 && r.top < b.bottom - 1 && r.bottom > b.top + 1 && r.left < b.right - 1 && r.right > b.left + 1; });
+      return { tracks: getComputedStyle(g).gridTemplateColumns, over: over ? (over.dataset.w || over.className) : "" }; })()`);
+    await p.wide();
+    rows.push(["Home at 1000 px is one column, the note bar over nothing", !!one && one.tracks.split(" ").length === 1 && !one.over,
+      !one ? "no grid or no note bar on Home" : one.tracks.split(" ").length !== 1 ? `the grid has tracks ${one.tracks}` : one.over ? `the note bar is drawn over ${one.over}` : `one track, ${one.tracks}, and the bar over nothing`]);
+    // B2 of the audit of 1.46.2: a running panel's desk wears the same green
+    // in the sidebar as on Home, filled; it was a hollow grey ring there.
+    const dotC = await p.ev(`(() => { const dt = document.querySelector('#desk-nav a[data-desk="${d}"] .dot'); if (!dt) return null; const ok = document.createElement("span"); ok.style.color = "var(--ok)"; document.body.append(ok); const want = getComputedStyle(ok).color; ok.remove(); return { cls: dt.className, bg: getComputedStyle(dt, "::before").backgroundColor, want }; })()`);
+    rows.push(["running is one dot: filled green in the sidebar too", !!dotC && /\brun\b/.test(dotC.cls) && dotC.bg === dotC.want,
+      !dotC ? "no mark on home-bench's row" : !/\brun\b/.test(dotC.cls) ? `the mark is "${dotC.cls}"` : `the dot is ${dotC.bg}${dotC.bg === dotC.want ? ", the --ok green" : `, not ${dotC.want}`}`]);
     // 1.19: the date in the head and no clock; Arrived heads the side column
     // and has no ✕; with no friend there is no Friends widget, and Pair with
     // a friend… is in the foot with the version and Check for updates.
-    const side = await p.ev(`(() => { const s = document.querySelector(".hm .hm-side"); const first = [...(s?.children || [])].find(x => !x.hidden); const foot = document.querySelector(".hm .hm-foot")?.textContent || ""; return { date: !!document.querySelector(".hm-head .hm-v")?.textContent.trim(), clock: !!document.querySelector(".hm-time, .hm-cal, [data-w=today], [data-w=snyvi]"), first: first?.dataset.w || first?.className || "", hide: !!document.querySelector(".hm-arrived .hm-hide"), friends: !!document.querySelector("[data-w=friends]"), foot: /snyvi \\S+ · Check for updates · Pair with a friend…/.test(foot), footText: foot, gone: [...document.querySelectorAll(".hm-keys, [data-w=keys], [data-w=threads], .hm-side .hm-upd, .hm-you")].map(x => x.dataset.w || x.className), bar: !!document.querySelector("#queue-bar:not([hidden])") }; })()`);
+    const side = await p.ev(`(() => { const s = document.querySelector(".hm .hm-side"); const first = [...(s?.children || [])].find(x => !x.hidden); const foot = document.querySelector(".hm .hm-foot")?.textContent || ""; return { date: !!document.querySelector(".hm-head .hm-v")?.textContent.trim(), clock: !!document.querySelector(".hm-time, .hm-cal, [data-w=today], [data-w=snyvi]"), first: first?.dataset.w || first?.className || "", hide: !!document.querySelector(".hm-arrived .hm-hide"), friends: !!document.querySelector("[data-w=friends]"), foot: /^Check for updates · Pair with a friend…/.test(foot.trim()), footText: foot, gone: [...document.querySelectorAll(".hm-keys, [data-w=keys], [data-w=threads], .hm-side .hm-upd, .hm-you")].map(x => x.dataset.w || x.className), bar: !!document.querySelector("#queue-bar:not([hidden])") }; })()`);
     // 1.32 (audit 67d008cb6f): seven blocks. No Keys or Threads section, the
     // update's card under the foot, On you shut until its button, and no
     // waiting bar over Home's own sticky bar.
@@ -2728,7 +2800,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // no friend here: Claude heads the column.
     const sideHead = LATELY ? "arrived" : "claude";
     rows.push([`Home: the date in the head, ${LATELY ? "Arrived" : "Claude"} first and not hideable, no Friends without a friend, Pair… in the foot, no Keys, Threads or waiting bar`, side.date && !side.clock && side.first === sideHead && !side.hide && !side.friends && side.foot && !side.gone.length && !side.bar,
-      !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== sideHead ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a Hide" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not carry the version, Check for updates and Pair…: "${side.footText}"` : side.gone.length ? `still on Home: ${side.gone.join(", ")}` : side.bar ? "the waiting bar is over Home" : `date, ${LATELY ? "Arrived, " : ""}Claude; Pair… in the foot; no Keys, Threads or waiting bar`]);
+      !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== sideHead ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a Hide" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not read Check for updates, then Pair…: "${side.footText}"` : side.gone.length ? `still on Home: ${side.gone.join(", ")}` : side.bar ? "the waiting bar is over Home" : `date, ${LATELY ? "Arrived, " : ""}Claude; Pair… in the foot; no Keys, Threads or waiting bar`]);
 
     // The note bar: one field for a line on any desk, Pick up's to start with.
     const notesOn = async id => ((await get(`/api/desks/${id}/notes`)).notes || []).map(n => n.text);
@@ -3834,6 +3906,16 @@ async function panelRows(cdp, base, token) {
     await sleep(8600);
     const spent = await q.ev(`!document.querySelector('[data-a="pane-back"]')`);
     rows.push(["the offer ends after 8 s", spent, spent ? "gone, and the panel stays closed" : "Undo is still offered"]);
+
+    // A4 of the audit of 1.46.2: at the desk's cap the head says it once,
+    // in the quiet +'s tip; the rail's Panels head has the count. It drew
+    // 4/4 twice, one each side of the Keys button.
+    const j = await (await fetch(`${base}/api/desks`, { headers: H })).json(), per = j.per_desk;
+    for (let n = j.desks.find(x => x.id === desk).panes.length; n < per; n++) await post(`/api/desks/${desk}/panes`);
+    await until(`document.querySelectorAll(".dk-pane").length === ${per}`);
+    const capped = await q.ev(`(() => { const b = document.querySelector('.dk-head .icon[data-a="new"]'); return { caps: document.querySelectorAll(".dk-head .dk-cap").length, off: b?.getAttribute("aria-disabled") === "true", sub: b?.dataset.tipSub || "" }; })()`);
+    rows.push(["the desk head says the cap once", capped.caps === 0 && capped.off && capped.sub === `A desk holds ${per}`,
+      capped.caps ? `${capped.caps} counts on the head` : !capped.off ? "the + is still offered" : `the + is quiet, its tip "${capped.sub}"`]);
   } finally {
     for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});

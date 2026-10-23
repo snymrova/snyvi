@@ -80,8 +80,9 @@
    *  and the clock. Captured at the click, because the refetch that
    *  follows no longer has the row to say where it was. One at a time. */
   let gone = null;
-  /** Whether the ghost can be seen: drawn, and not in a folded sidebar. */
-  const inView = g => g.drawn && root.dataset.side !== "0";
+  /** Whether the ghost can be seen: drawn, on the Inbox page or in a
+   *  sidebar that is not folded. */
+  const inView = g => g.drawn && (g.page && state.view === "inbox" || root.dataset.side !== "0");
   /** A folder just closed, whose ghost holds the Undo (`closeRoot`). */
   let shut = null;
   const LEFT_SECS = ["inbox", "desks", "folders"];
@@ -169,7 +170,11 @@
     const label = `<span class="sec-nm">${name}</span>`;
     const lead = o.fixed ? `<span class="sec-fold"${tip(o.tip, o.sub)}>${label}</span>`
       : `<button type="button" class="sec-fold" data-fold="${key}" aria-expanded="${open}"${tip(o.tip, o.sub)}>${label}${chev}</button>`;
-    const n = o.count == null || o.count === "" ? "" : `<span class="sec-n${o.tone ? ` ${o.tone}` : ""}${o.foldOnly ? " fold-only" : ""}"${tip(o.countTip)}>${o.count}</span>`;
+    // The count's slot is there with no count in it, so one arriving moves
+    // nothing beside it (the audit of 1.46.2 saw the Desks head's buttons
+    // slide 19 px when a panel rang).
+    const has = o.count != null && o.count !== "";
+    const n = `<span class="sec-n${has && o.tone ? ` ${o.tone}` : ""}${has && o.foldOnly ? " fold-only" : ""}"${has ? tip(o.countTip) : ""}>${has ? o.count : ""}</span>`;
     return `<div class="sec-head${o.empty ? " empty" : ""}" data-sec="${key}"${o.part ? ` data-part="${o.part}"` : ""}>${lead}${o.acts ? `<span class="sec-acts">${o.acts}</span>` : ""}${n}${o.end || ""}</div>`;
   }
   /** Whether a section is drawn folded: the reader's fold, unless `open`. */
@@ -322,7 +327,7 @@
     if (w.count) {
       const c = n || head.insertBefore(document.createElement("span"), head.querySelector(".sec-acts"));
       c.className = `sec-n${tone ? ` ${tone}` : ""}`; c.textContent = w.count;
-    } else n?.remove();
+    } else if (n) { n.className = "sec-n"; n.textContent = ""; }
     return true;
   }
   /** Every minute each seat is patched with what it last had: its age and
@@ -485,11 +490,18 @@
    *  place, so nothing below it moves while the offer stands. The bar along
    *  its foot is the time left; resting on it stops the clock. `--t` starts
    *  both where the last draw left them, as `moment` does for a wash. */
-  function ghostRow() {
+  function ghostRow(h) {
     const g = gone;
     g.drawn = true;
     const t = Date.now() - (g.closing || g.made);
     // A refused Undo says so in the row and holds its clock: the button is
     // its Retry. Pruned, there is nothing to retry, and the row just closes.
-    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms"><div class="t-ghost" role="status" style="--undo-left:${g.clock.left()}">${docIco()}<span class="title"${g.err ? ` data-tip="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed${g.versions > 1 ? ` · ${g.versions} versions` : ""}</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
+    return `<li class="t-doc t-gone${g.closing ? " leaving" : ""}${g.back || g.err ? " back" : ""}" style="--t:-${t}ms${h ? `;height:${h}px` : ""}"><div class="t-ghost" role="status" style="--undo-left:${g.clock.left()}">${docIco()}<span class="title"${g.err ? ` data-tip="${esc(g.d.title)}"` : ""}>${esc(g.err || g.d.title)}</span>${g.err ? "" : `<span class="k">removed${g.versions > 1 ? ` · ${g.versions} versions` : ""}</span>`}${g.dead ? "" : `<button type="button" class="t-undo" data-undoc>${g.err ? "Retry" : "Undo"}</button>`}</div></li>`;
+  }
+  /** The same ghost on the Inbox page, where the row stood there (`g.page`,
+   *  at that row's height), drawn again with the sidebar's so the two say
+   *  the same, and gone with it. */
+  function pageGhost() {
+    const el = docEl.querySelector(".inbox > .t-gone");
+    if (el) gone?.page && state.view === "inbox" ? el.outerHTML = ghostRow(gone.page.h) : el.remove();
   }

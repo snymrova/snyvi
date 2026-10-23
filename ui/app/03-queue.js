@@ -173,7 +173,7 @@
       queueBar.innerHTML = `<div class="qb${one ? " one" : ""}"><span class="qb-who"></span>` +
         `<button type="button" class="icon qb-step" data-q="prev" data-tip="Open the previous one" aria-label="Open the previous one waiting">${glyph("prev", 14)}</button><span class="qb-n">${count}</span>` +
         `<button type="button" class="icon qb-step" data-q="step" data-tip="Open the next one" aria-label="Open the next one waiting">${glyph("next", 14)}</button><span class="qb-next">${next}</span>` +
-        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox?recent" class="qb-all" data-nav="inbox">Show all</a>` +
+        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd class="lk">n</kbd></button><a href="/inbox?recent" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button>` +
         `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay first in Recent" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
       qbFeel("whoa");
@@ -293,6 +293,12 @@
       e.preventDefault(); e.stopPropagation();
       const w = rt.dataset.retry;
       if (w === "dir") fillTree(rt.closest(".b-tree")); else if (w === "inbox") showInbox(false); else if (w === "home") showHome(false); else if (w === "tree") refreshTree(); else if (w === "desks") loadDesks();
+      return;
+    }
+    // The Inbox page's ghost answers as the sidebar's does (treesEl's click).
+    if (e.target.closest("#doc [data-undoc]")) {
+      e.preventDefault();
+      if (gone && Date.now() - gone.made > 350) undoGone(gone);
       return;
     }
     const b = e.target.closest("[data-q]");
@@ -494,7 +500,7 @@
     // All, without the library's size: 620 is the biggest figure in the
     // head and says nothing about today (audit 7c0fc42885). It is the tip.
     const all = `<a class="sec-all" href="/inbox" data-nav="inbox" data-tip="All documents" data-tip-sub="${plural(total, "document")} · what waits, then every project, newest first">All</a>`;
-    const tip = waiting ? ` data-tip="${plural(waiting, "unread document")}" data-tip-sub="Recent lists them first"` : "";
+    const tip = waiting ? ` data-tip="${plural(waiting, "document")} waiting" data-tip-sub="Recent lists them first"` : "";
     const inbox = secHead("inbox", "Inbox", { count: waiting || "", tone: "accent", foldOnly: true, countTip: waiting ? `${waiting} waiting to be read` : "", end: all }) +
       `<a class="t-inbox s-row${waiting ? " new" : ""}" href="/inbox?recent" data-nav="inbox"${tip}>${icon("clock")}<span class="title">Recent</span><span class="n">${waiting || (last ? relShort(last) : "")}</span></a>`;
     if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;
@@ -502,6 +508,7 @@
   function renderTree() {
     // One more draw, for bench/ui.mjs to count; nothing when it is not watching.
     window.__perf && window.__perf.renders++;
+    pageGhost();
     const projects = heldTree();
     const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
     const put = projects.length - drawn.length;

@@ -540,7 +540,9 @@ plans land only with `--auto`.
 And at each prompt, Claude is handed what changed on the desk since its
 last turn, if anything did: a note you added while it worked, a line you
 ticked or put away, a document the panel beside it sent, a new left-off,
-a line another panel has taken up. Its own doings are not read back to
+a line another panel has taken up, a line that came due and what you did
+with its card, a plan or a left-off you approved. The brief says what is
+due today on the desk, and which plans you approved. Its own doings are not read back to
 it, and most prompts get nothing. It rides on your own message -- snyvi
 never starts a turn -- and the same switch in About turns it off with the
 brief.
@@ -1155,6 +1157,33 @@ Suggested in the rail's corner, where nothing they do moves the page.
   key is in -- with `remove_card` and a reason: the tray says **Removed by
   panel 1: v1.43.0 is released** for a day, with **Bring back**. Nothing is
   deleted.
+- **A date on a line.** End a note with when it is due -- `post the 1.47
+  note by fri 10`, `call the bank tomorrow`, `check the stats in 3 days`,
+  `send the invoice by 28 oct` -- and snyvi takes the date off the text and
+  keeps it beside the line: one word under it, after its stage (**due
+  Fri**, **today 10:00** in the accent, **overdue 2 d** in amber; never
+  red). Only the end of the line is read. A weekday alone, `weekend` and
+  `next week` need a word that makes them a date -- `by fri`, `on sat`,
+  `post it, fri` -- so `notes from fri` stays a note; an hour alone needs
+  `at` or `by`; and a date that would be in the past stays as words. Click
+  the word to move it: this evening, tomorrow 9:00, Monday 9:00, next week,
+  or no date. Rewriting the line with a new date at its end moves it too.
+  At the hour, one card rises in the rail's corner, with its chime, on
+  Home's On you too: **Done** ticks the line as yours, **Tomorrow 9:00** or
+  **Monday 9:00** moves it and it rings again then, and ✕ leaves it be. A
+  line rings once per date; a daemon that was off at the hour rings when it
+  starts. The next panel to take a prompt on the desk hears that it came
+  due and what you did; nothing is typed into a panel. A Claude can
+  suggest a line with a date (`suggest_desk_note`'s `due`) when the line
+  has a natural day, a launch step or a follow-up.
+- **Approve on a plan.** A plan Claude sent for desk notes -- what
+  `send_document` with `notes` makes, the lines then read **planned** --
+  has **Approve** in its head, beside where it came from. Press it and those
+  lines read **planned ✓**, and the panel that planned them is told at its
+  next prompt that you approved: go ahead. Claude waits for that, or for
+  your go-ahead in the panel, before it marks a planned line working.
+  **Approved ✓**, pressed again, takes it back. A new plan for the same
+  lines needs a new Approve.
 - **Suggested** is a panel or a desk Claude thinks the work wants, with the
   exact command it would run. **Open panel** opens it on this desk and runs
   that command; **Open desk** makes a desk for the folder. Nothing opens
@@ -1249,8 +1278,22 @@ a Tab stop too, and the arrow keys move it. The width is kept.
 The mark opens Home, at `/`: the way back into an evening's work.
 
 Under the title, one line says what needs you (a panel that rang, or a
-Claude asking), what is waiting to be read, whether a Claude is working,
-and how much of the account's five-hour window is left.
+Claude asking, what is due today and what has waited on you), what is
+waiting to be read, whether a Claude is working, and how much of the
+account's five-hour window is left.
+
+**Waiting on you** heads the right-hand column while it has something in
+it, and is gone when it has not. First the lines due by tonight across
+your desks, by the dates you gave them, each with its desk, **Done** and
+**Tomorrow**. Then what has waited on you: a left-off that says the next
+step is yours, two days on, with **Approve** (the next step is Claude's
+now, and the desk's next prompt says so), **Tomorrow** (a note on that desk
+due tomorrow at 9, and the left-off stops waiting) and **Drop** (it clears,
+with Undo in the row); and a plan sent for notes that no one approved, a
+day on, with **Approve**. A Claude says a left-off is yours with
+`leave_off`'s `needs: you`; snyvi never reads it into the words. For one
+said before 1.47, **On me** beside Pick up's *Left off* marks it yours by
+hand.
 
 **The note bar** is at the top of the left column, and stays there as the
 page scrolls: one field for a line on any desk's list. The chip at its left
@@ -1266,7 +1309,7 @@ bar, with the letter keys on.
 **Pick up** is one desk, large: the one you touched last, or the one you
 pin there with *Pin here* (*Unpin* lets it follow the desk touched last). It says when you last touched it, where the
 work was left -- or, when no one said, the last thing that happened on it,
-marked *Last* -- the open notes, what git says in its folder (the branch,
+marked *Last* -- the open notes (with their dates), what git says in its folder (the branch,
 what is changed, what is not pushed, the last commit), and each panel in
 words, and its moving threads. Enter opens it.
 

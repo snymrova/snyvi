@@ -208,8 +208,13 @@ for (const [name, branch] of REPOS) {
 // The daemon comes up the way it always does, on the first send. This is the
 // first document of DOCS rather than a throwaway: the same bytes from the same
 // path are the same document, so a warm-up send under its own name would put
-// the workflow it invented on the row instead of the one below.
-execFileSync(BIN, ["send", join(SEED, "notes.md"), "-w", "Pricing rewrite"], { env, cwd: dirs.website, encoding: "utf8" });
+// the workflow it invented on the row instead of the one below. From the
+// path DOCS copies it to: sent from the seed it was a second document of the
+// same name, two Inbox rows the audit of 1.46.2 took for one file twice.
+const warm = join(dirs.website, "docs", "notes.md");
+mkdirSync(dirname(warm), { recursive: true });
+copyFileSync(join(SEED, "notes.md"), warm);
+execFileSync(BIN, ["send", warm, "-w", "Pricing rewrite"], { env, cwd: dirs.website, encoding: "utf8" });
 const token = readFileSync(join(tmp, "config", "token"), "utf8").trim();
 const api = async (path, body, extra = {}) => {
   const r = await fetch(`${base}${path}`, {

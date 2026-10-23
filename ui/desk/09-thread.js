@@ -271,6 +271,7 @@ function turnRow(d, w, esc) {
   const n = slotOf(d, w.pane);
   const from = fromOf(d, w);
   if (w.kind === "run") return runRow(d, w, n, from, esc);
+  if (w.kind === "due") return dueRow(w, esc);
   const buttons = w.kind === "decide"
     ? picks(w, esc)
     : (ANSWERS[w.kind] || ["Done"]).map(o => o.endsWith("…")
@@ -291,6 +292,30 @@ function turnRow(d, w, esc) {
   return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` + byHtml(w, d, esc, rest) +
     `<div class="tn-acts">${add}${openPr}${buttons}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
     otherIn(w) + `</li>` + errLine(`w${w.id}`, esc);
+}
+
+/** At the hour a line was due (1.47, src/due.rs): snyvi's own card, on no
+ *  panel. Done ticks the line as the reader's; a time moves it there and it
+ *  rings again then; ✕ leaves the line as it is. Nothing goes to a panel
+ *  but the next prompt's one line, which the daemon writes. */
+function dueRow(w, esc) {
+  const later = DUE_TO.slice(1, 3).map(([v, l]) => `<button type="button" class="tn-opt quiet" data-a="tn-later" data-w="${w.id}" data-v="${v}">${l}</button>`).join("");
+  return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` +
+    `<p class="tn-by"><span data-tip="Due" data-tip-sub="by the date you gave this note">due · ${esc(ctx.relShort(w.created_at))}</span></p>` +
+    `<div class="tn-acts"><button type="button" class="tn-opt rec" data-a="tn-due-done" data-w="${w.id}">Done</button>${later}` +
+    `<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="the line keeps its date; nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div></li>` + errLine(`w${w.id}`, esc);
+}
+
+/** A due card's answer: Done, or a time to move the line to. Not one to
+ *  send into a panel, so it leaves the card at once. */
+async function dueAnswer(d, w, later) {
+  const was = { ...w };
+  w.answered_at = Date.now() / 1000; w.answer = later ? "Later" : "Done";
+  rail();
+  if (await told({ a: later ? "tn-later" : "tn-due-done", w: String(w.id), v: later || "" }, `w${w.id}`, later ? "Could not move it" : "Could not tick it",
+    () => Object.assign(w, was), () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, later ? { answer: "Later", later } : { answer: "Done" }))) {
+    await getFiled(d.id, true); getNotes(d.id, true);
+  }
 }
 
 /** Whether Run can type into a panel: running, with a Claude Code session
@@ -650,6 +675,7 @@ async function filedAct(a, b, d) {
     await told({ ...b.dataset }, `t${t.id}`, "Could not remove it", () => { filed.threads.push(t); filedGone = null; },
       () => ctx.api(`/api/desks/${d.id}/threads/${t.id}/remove`, {}));
   } else if (a === "tn-pick" && w) await answer(d, w, b.dataset.v);
+  else if ((a === "tn-due-done" || a === "tn-later") && w) await dueAnswer(d, w, a === "tn-later" ? b.dataset.v : "");
   else if ((a === "tn-other" || a === "tn-change") && w) { thField = { kind: a === "tn-other" ? "other" : "change", id: w.id }; thDraft = ""; rail(); }
   else if (a === "tn-link") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
   else if (a === "tn-send" && w) await sendNow(d, w);

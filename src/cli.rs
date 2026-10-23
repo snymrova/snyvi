@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[command(
     name = "snyvi",
     version,
-    about = "A fast, beautiful viewer for the documents your agents produce"
+    about = "All your passion projects, in one calm place"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -473,6 +473,9 @@ fn serve(paths: &config::Paths) -> Result<()> {
             return restart_self(&exe);
         }
     }
+    // The reader's time zone, while this is the only thread: dates on notes
+    // ring at their hour (`crate::due`).
+    crate::due::read_offset();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         // Renders run on blocking threads, and a thread's freed memory

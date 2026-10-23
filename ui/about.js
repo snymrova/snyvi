@@ -256,7 +256,7 @@ const ABOUT = `
 <div class="help-box about-box" role="dialog" aria-modal="true" aria-labelledby="about-title" tabindex="-1">
   <button class="icon help-close" id="about-close" data-tip="Close" data-key="esc" aria-label="Close"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   <h2 class="dlg-title" id="about-title">snyvi</h2>
-  <p id="about-say">A fast, beautiful viewer for the documents your agents produce.</p>
+  <p id="about-say">All your passion projects, in one calm place.</p>
   <section id="about-upd" class="ab-upd" aria-label="Updates"></section>
   <div id="about-facts"></div>
 </div>
@@ -409,8 +409,13 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .agent-fix details[open] summary { margin-bottom: 6px; }
 .connect-foot { margin-top: 24px; color: var(--fg-3); font-size: var(--fs-ui); }
 .agents-more { margin-top: 20px; }
-.agents-more > summary { cursor: pointer; font-size: var(--fs-body-s); color: var(--fg-2); padding: 6px 0; }
+.agents-more > summary { cursor: pointer; font-size: var(--fs-body-s); color: var(--fg-2); padding: 6px 0; list-style: none; display: flex; align-items: center; }
 .agents-more[open] > summary { margin-bottom: 8px; }
+/* The sidebar's own chevron after the words, not the browser's triangle
+   before them: right while shut, down while open. */
+.agents-more > summary::-webkit-details-marker { display: none; }
+.agents-more > summary > .s-chev { opacity: 1; margin-left: 6px; transform: translateY(-1px) rotate(-45deg); }
+.agents-more[open] > summary > .s-chev { transform: translateY(-1.5px) rotate(45deg); }
 /* Welcome: the story in two lines, one question, one button. */
 .welcome { max-width: 560px; padding-top: 6vh; }
 .welcome .w-mark .mk { width: 44px; height: 44px; }
@@ -908,7 +913,7 @@ export function connect(a, { esc, rel, cap }) {
   const rest = rows.filter(r => !shown.includes(r));
   return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Agents</h1><p class="doc-sub">An agent sends what it writes here, and snyvi shows what it is doing in its desk. Each row is what that agent's own settings say, right now.</p></header>` +
     `<ul class="agents">${shown.map(row).join("")}</ul>` +
-    (rest.length ? `<details class="agents-more"><summary>Using a different agent?</summary><ul class="agents">${rest.map(row).join("")}</ul>` +
+    (rest.length ? `<details class="agents-more"><summary>Using a different agent?<span class="s-chev" aria-hidden="true"></span></summary><ul class="agents">${rest.map(row).join("")}</ul>` +
       (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") + `</details>` : "") +
     `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand. <a href="/start" data-nav="start">How snyvi works</a>.</p></div>`;
 }
@@ -1215,7 +1220,7 @@ export function start({ cap, docs }) {
   return `<div class="connect start"><header class="doc-head"><h1 class="doc-title">How snyvi works</h1><p class="doc-sub">Six things, a paragraph each. Every key is in ${kb("?")}.</p></header>` +
     sec("desks", "A desk for each project",
       `<p>A desk is one project's workbench: its folder, and up to four real terminal panels beside what you read, each running a shell or an agent. Make one with + beside Desks, which asks which project or folder it is for, or with the desk button on a project's or a folder's row. Everything the desk's agents send is listed on its rail, next to the panel that sent it. When an agent in a panel is waiting on you, for an answer or a permission, its row turns amber and Desks counts it. Restarting snyvi stops what runs in the panels; each comes back in its folder, and offers the conversation back with one click. ${showLink("desks")}</p>`,
-      `${kb("ctrl", "`")} desk / reading · ${kb("ctrl", "⌥", "1")}–${kb("4")} a panel · ${kb("ctrl", "⌥", "N")} new panel · ${kb("ctrl", "⌥", "W")} close it (with Undo) · ${kb("ctrl", "⌥", "Z")} that panel alone. Every other key goes to the panel.`) +
+      `${kb("ctrl", "`")} desk / reading · ${kb("ctrl", "alt", "1")}–${kb("4")} a panel · ${kb("ctrl", "alt", "N")} new panel · ${kb("ctrl", "alt", "W")} close it (with Undo) · ${kb("ctrl", "alt", "Z")} that panel alone. Every other key goes to the panel.`) +
     sec("arrives", "Nothing scrolls away",
       `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you remove it, and Undo brings it back. ${showLink("arrives")}</p>`,
       `${kb("mod", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("mod", "F")} find in this one`) +

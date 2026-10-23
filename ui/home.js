@@ -33,8 +33,9 @@
  * is this viewer's, in localStorage, since it is a preference about a page
  * and not a thing in the library, and so is the desk kept in Pick up. Arrived
  * cannot be hidden: what arrives is never put out of sight by a preference.
- * Friends shows once there is a friend, and the version, Check for updates
- * and Pair with a friend… are the foot's, with an update's card under it.
+ * Friends shows once there is a friend, and Check for updates and Pair with
+ * a friend… are the foot's, with an update's card under it. The version is
+ * the sidebar's foot's and About's to say, not a third place's.
  * Nothing here moves when something arrives: the status line is one line
  * whatever it says, On you opens over the page from it, and a widget
  * with nothing to say says so rather than going away (audit 67d008cb6f).
@@ -68,16 +69,19 @@ const CSS = `
 .hm .fact { font-family: var(--mono); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 /* Pick up, the desks and the week on the left, the side column beside them. */
 .hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
+.hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
+.hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
 @container (max-width: 760px) {
   /* One column, and what arrived under the bar rather than under the week:
-     the columns step aside so their sections share one order. */
+     the columns step aside so their sections share one order. After the
+     columns' own rules, which would otherwise keep them boxes in areas that
+     are gone: three tracks, and the bar drawn over the Claude box. */
   .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; }
   .hm-main, .hm-side { display: contents; }
   .hm-nb { order: -2; }
   .hm-arrived { order: -1; }
+  .hm-wait { order: -1; }
 }
-.hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
-.hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
 /* A section: a label on a hairline, and space doing the rest. */
 .hm-w { min-width: 0; }
 .hm-wh { display: flex; align-items: center; gap: 8px; height: 28px; margin: 0 0 8px; border-bottom: 1px solid var(--rule); }
@@ -120,7 +124,8 @@ const CSS = `
 .hm-pk-left.hm-derived { color: var(--fg-2); }
 .hm-pk-left a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--rule-2); text-underline-offset: 3px; }
 .hm-pk-left a:hover { text-decoration-color: currentColor; }
-.hm-pk-left .fact { color: var(--fg-3); margin-left: 4px; }
+/* Its byline in one piece: "claude-" over "code" read as two names. */
+.hm-pk-left .fact { color: var(--fg-3); margin-left: 4px; white-space: nowrap; }
 .hm-pk-left code, .hm-log code { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); }
 /* A desk's open notes, each with the circle that ticks it where it stands. */
 .hm-next { list-style: none; margin: 0 0 8px; padding: 0; font-size: var(--fs-ui); }
@@ -283,6 +288,16 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-acts > .hm-s { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-keepl { position: absolute; right: 0; top: calc(100% - 4px); z-index: 2; display: flex; flex-direction: column; min-width: 180px; max-height: 260px; overflow-y: auto; padding: 4px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); box-shadow: var(--shadow); }
 .hm-arr-all { margin: 8px 0 0; font-size: var(--fs-small); }
+.hm-due { flex: none; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; }
+.hm-due.now { color: var(--accent); font-weight: 600; }
+.hm-due.late { color: var(--warn); font-weight: 600; }
+.hm-nt > .hm-due { margin-left: 6px; font-size: var(--fs-micro); }
+.hm-wait .hm-sub { margin: 6px 0 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
+.hm-wait .hm-wt-d { color: inherit; }
+.hm-wait .hm-acts > .hm-s { flex: 1 1 auto; }
+.hm-link.hm-ok { color: var(--accent); font-weight: 600; }
+.hm-link.hm-mine { color: var(--accent); }
+.hm-stage.planned.ok { color: var(--ok); }
 .hm-arr-all a { color: var(--fg-2); text-decoration: none; }
 .hm-arr-all a:hover { color: var(--fg); text-decoration: underline; }
 /* A friend, one line: their name, then Note… and ⋯ (Mute, Remove). */
@@ -301,6 +316,9 @@ a.hm-panels:hover { color: var(--fg); }
 .inbox-removed > .t-away { width: auto; padding-left: 14px; }
 .inbox .rm { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title act" "sub act"; gap: 2px 16px; padding: 12px 14px; }
 .inbox .rm > .t-undo { grid-area: act; align-self: center; }
+/* A row removed here: the sidebar's ghost (app.css .t-ghost) at this row's
+   height, which app.js puts on its li, with this row's padding and rule. */
+.inbox > .t-gone > .t-ghost { height: 100%; align-items: center; padding: 0 14px; margin: 0 -14px; font-size: var(--fs-body-s); border-radius: 0; border-bottom: 1px solid var(--rule); }
 /* The Inbox's list and its empty state: app.css's until 1.32. */
 .inbox { list-style: none; margin: 0; padding: 0; }
 .inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: var(--r-md); color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
@@ -311,6 +329,10 @@ a.hm-panels:hover { color: var(--fg); }
 .inbox .sub b { font-weight: 500; color: var(--fg-2); }
 .inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
 .inbox-sec { display: flex; align-items: center; gap: 10px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; margin: 32px 0 4px; }
+/* Waiting's head is as tall without its buttons as with them (24 px, a
+   button's): it stands while the ghost of the last one waiting does, and
+   shorter, the list under it moved up 7 px. */
+.inbox-head + .inbox-sec { min-height: 24px; }
 .inbox-sec .n { background: var(--accent); color: var(--on-accent); border-radius: var(--r-pill); padding: 0 7px; line-height: 17px; font-variant-numeric: tabular-nums; font-size: var(--fs-micro); }
 .inbox-sec button { margin-left: auto; font-weight: 500; font-size: var(--fs-small); color: var(--fg-2); padding: 3px 8px; border-radius: var(--r-sm); }
 .inbox-sec button + button { margin-left: 0; }
@@ -341,7 +363,7 @@ let c = null, last = null, soon = 0, reading = 0, sheet = null;
 /** Where Claude Code stands here, asked once a visit to Home (/api/agents
  *  reads the agents' own files, too much for every refresh): "missing",
  *  "unconnected" or "connected"; null until it answers. The status line says
- *  "Claude idle" only of a Claude that could be at work. */
+ *  nothing of a Claude at rest: the Claude box says that in a sentence. */
 let claudeIs = null;
 function claudeAsk() {
   fetch("/api/agents").then(r => r.json()).then(a => {
@@ -463,7 +485,7 @@ function tick() {
     if (!c || c.view() !== "home" || document.hidden || !last) return;
     if (startOfDay(Date.now() / 1000) !== drawnDay) { drawUnlessTyping(); return; }
     for (const el of c.docEl.querySelectorAll(".hm-live")) {
-      const t = el.dataset.f === "age" ? `${age(+el.dataset.t)} ago` : ago(+el.dataset.t);
+      const t = ago(+el.dataset.t);
       if (el.textContent !== t) el.textContent = t;
     }
   }, 60000);
@@ -544,18 +566,13 @@ function dayName(t) {
   return n < 7 ? d.toLocaleDateString(undefined, { weekday: "long" }) : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 }
 const clock = t => new Date(t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-/** How long ago, in one short unit: "40 min", "5 h", "4 d", "6 wk". */
-function age(t) {
-  const s = Date.now() / 1000 - t;
-  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`;
-  if (s < DAY) return `${Math.round(s / 3600)} h`;
-  if (s < 14 * DAY) return `${Math.round(s / DAY)} d`;
-  return `${Math.round(s / (7 * DAY))} wk`;
-}
-const ago = t => Date.now() / 1000 - t < 60 ? "just now" : `${age(t)} ago`;
+/** How long ago, in the page's own two forms, so Home and the sidebar keep
+ *  one clock (the audit of 1.46.2 found four): "6 min ago" where there is
+ *  room, "6m" where there is not (app.js `rel`, `relShort`). */
+const ago = t => c.rel(t), age = t => c.relShort(t);
 /** A relative time in the page's text, marked so the minute's pass can move
- *  it in place (`tick`): `ago`'s words, or `age`'s with " ago" after them. */
-const live = (t, f = ago) => `<span class="hm-live" data-t="${t}"${f === age ? ' data-f="age"' : ""}>${f === age ? `${age(t)} ago` : ago(t)}</span>`;
+ *  it in place (`tick`). */
+const live = t => `<span class="hm-live" data-t="${t}">${ago(t)}</span>`;
 /** "touched 40 min ago", "touched yesterday 23:40", "touched 12 d ago". */
 function touched(t) {
   if (!t) return "not opened yet";
@@ -591,14 +608,14 @@ function draw(j) {
   // Seven blocks, none that comes and goes above another (audit 67d008cb6f):
   // On you is the corner's tray, from the status line, a thread is a line on
   // its desk, the update card is under the foot, and keys are the desks' own.
-  const side = arrived(j) + w("claude", "Claude", claude(j)) +
+  const side = waitBox(j) + arrived(j) + w("claude", "Claude", claude(j)) +
     (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "");
   const desks = j.desks ? w("desks", "Other desks", desksList(j)) : "";
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
     `<div class="hm-st">${status(j)}</div>` +
     `<div class="hm-grid"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
-    `<p class="hm-foot" data-part="home.foot">snyvi ${esc(j.version || "")} · <button type="button" data-hm="check">Check for updates</button> · ` +
+    `<p class="hm-foot" data-part="home.foot"><button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
     (n ? ` · ${plural(n, "section")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p>` +
     // The update's card under the foot, where its coming moves nothing: the
@@ -653,19 +670,24 @@ function status(j) {
     // On you opens the corner's tray, the one every page has, so its coming
     // moves nothing (audit 67d008cb6f, plan b0bca0a11f).
     if (on) bits.push(`<button type="button" class="hm-onyou" data-hm="turns" aria-haspopup="dialog" data-key="ctrl+alt+y">${on === 1 ? "One thing is" : `${on} things are`} on you ›</button>`);
-    if (!asking.length && !on) bits.push("Nothing needs you");
+    // Lines due by tonight, and what has waited on the reader (1.47): the
+    // box at the head of the side column has them.
+    const due = (j.due || []).length, wt = (j.wait || []).length;
+    if (due) bits.push(`<span class="hm-due now">${due} due today</span>`);
+    if (wt) bits.push(`<span class="hm-due late">${wt} waiting on you</span>`);
+    if (!asking.length && !on && !due && !wt) bits.push("Nothing needs you");
     if (!on && old) bits.push(`<button type="button" class="hm-onyou old" data-hm="turns" aria-haspopup="dialog" data-tip="Older" data-tip-sub="Panels since closed, or asked over half an hour ago. They go by themselves after three days, and can come back">${old} older ›</button>`);
   }
   bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${j.waiting} waiting</a>` : bits.length ? "nothing waiting" : "Nothing waiting");
   if (j.desks) {
     const n = j.desks.flatMap(d => d.panes).filter(p => p.agent === "working").length;
     bits.push(n ? `${plural(n, "Claude")} working` : claudeIs === "missing" ? "Claude Code not installed"
-      : claudeIs === "unconnected" ? `<a href="/connect" data-nav="connect">Claude not connected</a>` : "Claude idle");
+      : claudeIs === "unconnected" ? `<a href="/connect" data-nav="connect">Claude not connected</a>` : "");
   }
   // With more than one account, the one with the least left, by its name.
   const qs = quotasOf(j), lq = leastOf(qs, "five_hour"), w = windowLeft(lq?.five_hour);
   if (w) bits.push(`<span data-tip="Claude's five-hour window${qs.length > 1 ? `, as ${esc(lq.label)}` : ""}" data-tip-sub="${esc(w.text)}">${qs.length > 1 ? `${esc(lq.label)}: ` : ""}5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
-  return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.join(" · ")}</p>`;
+  return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.filter(Boolean).join(" · ")}</p>`;
 }
 
 /* ---------- On you and Threads (#90) ----------
@@ -725,7 +747,7 @@ function pick(j) {
   if (!d) return box(`<h2>Pick up</h2><p class="hm-quiet">Every desk is parked. Unpark one under Other desks when you are ready for it.</p>`);
   const l = d.left_off, x = d.last;
   const left = l
-    ? `<p class="hm-pk-left"><b>Left off</b>${esc(l.text)}<span class="fact">${l.by ? `${esc(l.by)} · ` : ""}${live(l.at)}</span></p>`
+    ? `<p class="hm-pk-left"><b>Left off</b>${esc(l.text)}<span class="fact">${l.by ? `${esc(l.by)} · ` : ""}${live(l.at)}</span>${onMe(d.id, l)}</p>`
     : x
       ? `<p class="hm-pk-left hm-derived" data-tip="No one said where this was left" data-tip-sub="so this is the last thing that happened on it"><b>Last</b>${x.kind === "tick"
           ? `✓ ${esc(x.text)}${x.commit ? ` <code>${esc(x.commit.slice(0, 7))}</code>` : ""}`
@@ -738,8 +760,14 @@ function pick(j) {
   const g = d.git;
   const git = g ? `<span class="hm-git" data-tip="What git says in ${esc(d.root || "the desk's folder")}" data-tip-sub="${g.last ? `last commit ${ago(g.last.at)}: ${esc(g.last.subject)}` : "no commits yet"}">${BRANCH}<span class="fact">${esc(g.branch || "no branch")}</span>` +
     `<span>${g.changed ? `${plural(g.changed, "file")} changed` : "clean"}${g.ahead ? ` · ${g.ahead} not pushed` : ""}${g.last ? ` · committed ${live(g.last.at)}` : ""}</span></span>` + repoLink(g.remote) : "";
-  const panels = d.panes.map(p =>
-    `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${paneWord(p)}</span></a>`).join("");
+  // Panels that say the same are said once, "4 panels running", and one
+  // that differs by its name: four "running" in a row read as a list to
+  // scan for the one that is not (the audit of 1.46.2).
+  const said = new Map();
+  for (const p of d.panes) said.set(paneWord(p), [...(said.get(paneWord(p)) || []), p]);
+  const panels = [...said].map(([w, [p, ...more]]) => more.length
+    ? `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}">${dot(p)}${plural(more.length + 1, "panel")} <span class="hm-s">${w}</span></a>`
+    : `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${w}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
   // The other desks, as chips, only while Other desks below is hidden: it lists them.
   const chips = rest.length && hidden().includes("desks") ? `<p class="hm-chips"><span class="hm-s">or</span>${rest.map(o =>
@@ -784,7 +812,7 @@ function notesOf(d, max) {
   if (!rows.length) return d.done ? `<p class="hm-s hm-done">Notes done · ${d.done} of ${d.done}</p>` : "";
   return `<ul class="hm-next" aria-label="Open notes on ${esc(d.name)}">` + rows.map(r =>
     `<li class="hm-nt${r.done ? " done" : ""}"><button type="button" class="hm-tick" role="checkbox" aria-checked="${r.done}" data-hm="tick" data-k="${d.id}" data-n="${r.id}" aria-label="${r.done ? "Done" : "Not done"}: ${esc(r.text)}">${r.done ? TICK : ""}</button>${stageMark(r)}` +
-    `<span class="hm-nt-t" data-tip="${esc(r.text)}"${r.reply ? ` data-tip-sub="${esc(`${r.reply_by || "you"}: ${r.reply}`)}"` : " data-tip-overflow"}>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
+    `<span class="hm-nt-t" data-tip="${esc(r.text)}"${r.reply ? ` data-tip-sub="${esc(`${r.reply_by || "you"}: ${r.reply}`)}"` : " data-tip-overflow"}>${esc(r.text)}</span>${!r.done && r.due_at ? dueChip(r.due_at) : ""}${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
     (more > 0 ? `<li class="hm-s hm-nt-more"><a href="/desk/${d.id}" data-desk="${d.id}">and ${more} more</a></li>` : "") + `</ul>`;
 }
 /** A line's stage, in the slot every line keeps: the server has already
@@ -798,7 +826,7 @@ function stageMark(r) {
     return `<span class="hm-stage landed" role="img" data-tip="Shipped in ${esc(r.landed_commit.slice(0, 7))}" data-tip-sub="check it on its desk: works, or not yet" aria-label="Shipped, waiting for your check"></span>`;
   if (st === "reopened") return `<span class="hm-stage reopened" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken" aria-label="Reopened"></span>`;
   if (st === "planned" && r.stage_doc)
-    return `<a class="hm-stage planned" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>`;
+    return `<a class="hm-stage planned${r.ok_at ? " ok" : ""}" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}${r.ok_at ? ", approved by you" : ""}" data-tip-sub="${r.ok_at ? "its panel goes ahead · " : ""}click to open the plan${r.ok_at ? "" : ", and Approve it there"}" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>`;
   if (st === "working") {
     // Breathing only while the agent is at it, as on the desk's rail.
     const at = r.stage_panel ? ` in ${esc(r.stage_panel)}` : "";
@@ -990,7 +1018,7 @@ function desksList(j) {
       foot += `<button type="button" class="hm-link" data-hm="park" data-k="${d.id}" data-tip="Put it on the shelf" data-tip-sub="it leaves Pick up; nothing on it is closed">Park it?</button>`;
     const notes = notesOf(d, 3);
     return `<div class="hm-dk">` +
-      `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
+      `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? ago(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
       `<button type="button" class="hm-dk-add${d.open ? "" : " hm-dk-n"}" data-hm="addopen" data-k="${d.id}" data-tip="New note on ${esc(d.name)}" data-tip-sub="in the bar at the top" aria-label="A new note on ${esc(d.name)}">+</button></div>` +
       left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) + threadLines(j, d) +
       (foot ? `<div class="hm-dk-foot">${foot}</div>` : "") + `</div>`;
@@ -1135,7 +1163,7 @@ function friendRow(f, j) {
   const list = deskOpen === f.id ? `<div class="hm-keepl" role="menu" aria-label="Where ${esc(f.name)}'s things land">` +
     [{ id: 0, name: "Their own row" }, ...ds.filter(d => !d.parked)].map(d => `<button type="button" role="menuitemradio" aria-checked="${(at?.id || 0) === d.id}" class="hm-nb-o" data-hm="fdeskto" data-k="${f.id}" data-n="${d.id}"><span class="hm-nb-on">${(at?.id || 0) === d.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span></button>`).join("") + `</div>` : "";
   const where = ds.length && !more ? `<button type="button" class="hm-link" data-hm="fdesk" data-k="${f.id}" aria-haspopup="menu" aria-expanded="${deskOpen === f.id}" data-tip="Where their things land" data-tip-sub="${at ? `documents on ${esc(at.name)}, lines as its suggestions` : `From ${esc(f.name)} in the sidebar, lines in Arrived`}">→ ${esc(at ? at.name : "own row")} ▾</button>` : "";
-  const heard = `paired ${age(f.paired_at)} ago${f.last_from ? ` · from them ${age(f.last_from)} ago` : ""}${f.last_to ? ` · sent ${age(f.last_to)} ago` : ""}`;
+  const heard = `paired ${ago(f.paired_at)}${f.last_from ? ` · from them ${ago(f.last_from)}` : ""}${f.last_to ? ` · sent ${ago(f.last_to)}` : ""}`;
   // One state at a time: what is still waiting to go says so in place of
   // what became of the last thing that went.
   return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-fn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${outbox(f) || sentLine(f)}${where}` +
@@ -1156,7 +1184,7 @@ function sentLine(f) {
   const { esc } = c, mine = (peers?.sent || []).filter(x => x.peer_id === f.id);
   if (!mine.length) return "";
   const [last, ...rest] = mine;
-  return `<span class="hm-s" data-tip="${esc(last.what)} · ${esc(sentWord(last))}" data-tip-sub="${esc(rest.map(x => `${x.what}: ${sentWord(x)}`).join("; ") || `sent ${age(last.sent_at)} ago`)}">${esc(sentWord(last))}</span>`;
+  return `<span class="hm-s" data-tip="${esc(last.what)} · ${esc(sentWord(last))}" data-tip-sub="${esc(rest.map(x => `${x.what}: ${sentWord(x)}`).join("; ") || `sent ${ago(last.sent_at)}`)}">${esc(sentWord(last))}</span>`;
 }
 
 /** What has not gone to a friend yet, in their row: one that stopped trying
@@ -1178,6 +1206,106 @@ function outbox(f) {
  *  asides, friends' words, kept, with the rows and buttons the corner's
  *  tray has (ui/corner.js, plan b0bca0a11f). An agent's offer is On you's,
  *  in the corner. Nothing that arrives is put out of sight. */
+/* ---------- what waits on the reader (1.47) ----------
+ *
+ * At the head of the side column, only while it has rows, as Arrived: the
+ * lines due by tonight across the desks, by the dates the reader gave them
+ * (src/due.rs), and what has waited on them -- a left-off that says the next
+ * step is theirs, two days on, and a plan sent for notes that no one
+ * approved, a day on (src/waiting.rs). Each row has its answer in it, and
+ * none starts anything: Approve is a line its panel reads at its next prompt.
+ */
+
+/** A line's date in one word, and its tone: today in the accent, overdue in
+ *  the warn colour, never red (the desk rail's `dueWord`). */
+function dueWord(at) {
+  const now = Date.now() / 1000, d = new Date(at * 1000);
+  if (at <= now) { const h = (now - at) / 3600; return { w: h < 1 ? "due now" : h < 24 ? `overdue ${h | 0} h` : `overdue ${h / 24 | 0} d`, tone: " late" }; }
+  const days = Math.round((startOfDay(at) - startOfDay(now)) / DAY);
+  return days === 0 ? { w: `today ${clock(at)}`, tone: " now" } : days === 1 ? { w: `tomorrow ${clock(at)}`, tone: "" }
+    : { w: `due ${d.toLocaleDateString(undefined, days < 7 ? { weekday: "short" } : { day: "numeric", month: "short" })}`, tone: "" };
+}
+const dueChip = at => { const { w, tone } = dueWord(at); return `<span class="hm-due${tone}" data-tip="Due ${c.esc(new Date(at * 1000).toLocaleString(undefined, { weekday: "long", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }))}">${c.esc(w)}</span>`; };
+
+/** On me, on a left-off an agent said: the reader marks the next step as
+ *  theirs, which `leave_off needs` says from 1.47 on and sentences from
+ *  before it never did. Pressed again, it is not. */
+function onMe(id, l) {
+  if (!l.by || l.ok_at >= l.at && l.ok_at) return "";
+  const mine = l.needs === "you";
+  return ` <button type="button" class="hm-link${mine ? " hm-mine" : ""}" data-hm="onme" data-k="${id}" data-n="${mine ? "" : "you"}" aria-pressed="${mine}" data-tip="${mine ? "On you" : "On me"}" data-tip-sub="${mine ? "the next step is yours; after two days it waits on you here · click if it is not" : "the next step is yours: after two days it waits on you at the top of Home"}">${mine ? "on you" : "On me"}</button>`;
+}
+
+const deskName = (j, id) => (j.desks || []).find(d => d.id === id)?.name || "a desk";
+
+function waitBox(j) {
+  const { esc, plural } = c, due = j.due || [], wt = j.wait || [];
+  // A row answered here keeps its place while its words stand, with its
+  // Undo, after the read that no longer has it.
+  const keyOf = x => `${x.kind === "plan" ? "p" : "l"}${x.desk}:${x.doc}`;
+  const present = new Set([...due.map(n => `u${n.id}`), ...wt.map(keyOf)]);
+  const ghosts = [...arrSaid].filter(([k]) => /^[ulp]/.test(k) && !present.has(k))
+    .map(([, s]) => `<li><span class="hm-ab"><span class="hm-t">${esc(s.item.text || "")}</span><span class="hm-acts">${saidRow(s)}</span></span></li>`).join("");
+  if (!due.length && !wt.length && !ghosts) return "";
+  const where = id => `<a class="hm-t hm-wt-d" href="/desk/${id}" data-desk="${id}">${esc(deskName(j, id))}</a>`;
+  const said = k => { const s = arrSaid.get(k); return s ? saidRow(s) : ""; };
+  const dueRows = due.map(n => `<li><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
+    (said(`u${n.id}`) || `${dueChip(n.due_at)}<span class="hm-s">${where(n.desk)}</span>` +
+      `<button type="button" class="hm-link" data-hm="udone" data-k="${n.desk}" data-n="${n.id}" aria-label="Done: ${esc(n.text)}">Done</button>` +
+      `<button type="button" class="hm-link" data-hm="ulater" data-k="${n.desk}" data-n="${n.id}" data-tip="Tomorrow at 9" data-tip-sub="it rings again then" aria-label="Tomorrow: ${esc(n.text)}">Tomorrow</button>`) +
+    `</span></span></li>`).join("");
+  const waitRows = wt.map(x => {
+    const key = keyOf(x);
+    const head = x.kind === "plan"
+      ? `<span class="hm-t">Plan <a href="/d/${esc(x.doc)}" data-id="${esc(x.doc)}">${esc(x.text)}</a> for ${x.notes.map(n => `#${n}`).join(" ")}</span>`
+      : `<span class="hm-t">${esc(x.text)}</span>`;
+    const acts = x.kind === "plan"
+      ? `<button type="button" class="hm-link hm-ok" data-hm="wplan" data-k="${x.desk}" data-n="${esc(x.doc)}" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt">Approve</button>`
+      : `<button type="button" class="hm-link hm-ok" data-hm="wok" data-k="${x.desk}" data-tip="Approve" data-tip-sub="the next step is the agent's now; its panel hears it at its next prompt">Approve</button>` +
+        `<button type="button" class="hm-link" data-hm="wlater" data-k="${x.desk}" data-tip="Tomorrow" data-tip-sub="a note on its desk, due tomorrow at 9; the left-off stays">Tomorrow</button>` +
+        `<button type="button" class="hm-link" data-hm="wdrop" data-k="${x.desk}" data-tip="Drop it" data-tip-sub="clears the left-off; Undo brings it back">Drop</button>`;
+    return `<li><span class="hm-ab">${head}<span class="hm-acts">` +
+      (said(key) || `<span class="hm-s">${where(x.desk)} · ${x.by ? `${esc(x.by)} · ` : ""}${live(x.at, age)}</span>${acts}`) + `</span></span></li>`;
+  }).join("");
+  const sub = (t, rows) => rows && due.length && wt.length ? `<h3 class="hm-sub">${t}</h3>` : "";
+  return `<section class="hm-w hm-wait" data-part="home.wait" aria-label="Waiting on you"><div class="hm-wh"><h2>${due.length && !wt.length ? "Due today" : "Waiting on you"}${due.length + wt.length ? ` <span class="n">${due.length + wt.length}</span>` : ""}</h2></div>` +
+    (dueRows ? `${sub("Due today", dueRows)}<ul class="hm-arr">${dueRows}</ul>` : "") +
+    (waitRows ? `${sub(plural(wt.length, "thing") + " waiting", waitRows)}<ul class="hm-arr">${waitRows}</ul>` : "") +
+    (ghosts ? `<ul class="hm-arr">${ghosts}</ul>` : "") + `</section>`;
+}
+
+/** The box's buttons, and On me. True when the click was one of them. */
+async function waitClick(k, id, b) {
+  if (!["udone", "ulater", "wplan", "wok", "wlater", "wdrop", "wundo", "onme"].includes(k)) return false;
+  const n = b.dataset.n || "", api = c.deskApi;
+  const x = (last?.wait || []).find(w => w.desk === id && (k !== "wplan" || w.doc === n));
+  const text = k[0] === "u" ? (last?.due || []).find(d => String(d.id) === n)?.text : x?.text;
+  const key = k[0] === "u" ? `u${n}` : `${k === "wplan" ? "p" : "l"}${id}:${x?.doc || ""}`;
+  b.disabled = true;
+  try {
+    if (k === "udone") { await api(`/api/desks/${id}/notes/${n}`, { done: true }); sayRow(key, { id, text }, "Ticked"); }
+    else if (k === "ulater") { await api(`/api/desks/${id}/notes/${n}`, { due: "tomorrow 9" }); sayRow(key, { id, text }, "Moved to tomorrow, 9:00"); }
+    else if (k === "wplan") { await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, "Approved: its panel hears it next"); }
+    else if (k === "wok") { await api(`/api/desks/${id}/leftoff`, { approve: true }); sayRow(key, { id, text }, "Approved: its panel hears it next"); }
+    else if (k === "onme") await api(`/api/desks/${id}/leftoff`, { mark: n });
+    else if (k === "wlater" && x) {
+      const r = await api(`/api/desks/${id}/notes`, { text: x.text });
+      if (r.note?.id) await api(`/api/desks/${id}/notes/${r.note.id}`, { due: "tomorrow 9" });
+      await api(`/api/desks/${id}/leftoff`, { mark: "" });
+      sayRow(key, { id, text }, `A note on ${deskName(last, id)}, due tomorrow at 9`);
+    } else if (k === "wdrop") {
+      const r = await api(`/api/desks/${id}/leftoff`, { text: "" });
+      sayRow(key, { id, text, was: r.was }, "Dropped", "wundo");
+    } else if (k === "wundo") {
+      const s = [...arrSaid.values()].find(v => v.undo === "wundo" && v.item.id === id);
+      if (s?.item.was) await api(`/api/desks/${id}/leftoff`, s.item.was);
+      for (const [kk, v] of arrSaid) if (v === s) { clearTimeout(v.t); arrSaid.delete(kk); }
+    }
+  } catch (e) { b.disabled = false; c.peerCtx.toast("Could not do that", { sub: c.peerCtx.sayErr(e).why }); return true; }
+  soonRefresh();
+  return true;
+}
+
 function arrived(j) {
   const { plural } = c;
   // A row that was answered keeps its place while its words stand.
@@ -1209,7 +1337,7 @@ function lineRow(n, j) {
   const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
   return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
-    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at, age)}</span>` +
+    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at)}</span>` +
       (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Add it to a desk" data-tip-sub="a note there, from ${esc(n.from)}">Add to a desk… ▾</button>` : "") +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
     `</span></span>${list}</li>`;
@@ -1286,7 +1414,7 @@ async function friendAct(k, id) {
  *  is a full one again until a Claude answers and a new reading comes. */
 function windowLeft(l) {
   if (!l) return null;
-  if (l.resets_at <= Date.now() / 1000) return { left: 100, fresh: true, text: `full · reset ${age(l.resets_at)} ago` };
+  if (l.resets_at <= Date.now() / 1000) return { left: 100, fresh: true, text: `full · reset ${ago(l.resets_at)}` };
   const left = Math.round(100 - Math.max(0, Math.min(100, l.used)));
   return { left, hot: left <= 20, text: `${left}% left · resets ${resets(l.resets_at)}` };
 }
@@ -1305,7 +1433,7 @@ function claude(j) {
   const { esc, plural } = c;
   const qs = quotasOf(j), out = [];
   const bar = (label, l) => { const w = windowLeft(l); return w ? `<div><span class="hm-k">${label}</span><div class="hm-bar${w.hot ? " hot" : ""}"><i style="width:${w.left}%"></i></div><span class="fact">${w.text}</span></div>` : ""; };
-  for (const q of qs) out.push(`${qs.length > 1 ? `<p class="hm-meta">${esc(q.label || "your login")}</p>` : ""}<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${age(q.at)} ago, from the last Claude that answered${qs.length > 1 ? " as it" : ""}.</p>` : ""}`);
+  for (const q of qs) out.push(`${qs.length > 1 ? `<p class="hm-meta">${esc(q.label || "your login")}</p>` : ""}<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${ago(q.at)}, from the last Claude that answered${qs.length > 1 ? " as it" : ""}.</p>` : ""}`);
   if (j.desks) {
     const ps = j.desks.flatMap(d => d.panes.map(p => ({ ...p, desk: d.name, deskId: d.id })));
     const working = ps.filter(p => p.agent === "working").length, done = ps.filter(p => p.agent === "done").length;
@@ -1370,7 +1498,7 @@ function wire() {
       if (justParked === id) { justParked = 0; clearTimeout(parkedT); }
       soonRefresh();
     }
-    else friendClick(k, id, b);
+    else if (!(await waitClick(k, id, b))) friendClick(k, id, b);
   });
   el.addEventListener("input", e => {
     if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
@@ -1657,30 +1785,27 @@ export async function removedLine(fresh, { view, capability, deskApi, docEl, esc
 }
 
 /** The Inbox's own page, drawn here beside Home: what is waiting first,
- *  then everything, both newest first. */
-export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent }) {
+ *  then the rest, both newest first, each document once. `/inbox` and the
+ *  sidebar's Recent (`/inbox?recent`) are this one page under their own
+ *  names: they were two, one listing what waits twice, the other saying
+ *  "Unread" (the audit of 1.46.2). */
+export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent, ghost }) {
   style();
   const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
+  // A document just removed here stands as its ghost where its row was
+  // (app.js's ghostRow, at the row's height) until its Undo is over.
+  const list = (sec, ds) => { const h = ds.map(row); if (ghost?.sec === sec) h.splice(ghost.at, 0, ghost.html); return h.join(""); };
   // The one empty state (docs/DESIGN.md §3.4): snyvi at rest, one
   // sentence, one button.
-  if (!items.length) return `<div class="empty-state"><span class="hero">${mascotHead("rest")}</span><h1>Nothing in the Inbox yet</h1>` +
+  if (!items.length && !ghost) return `<div class="empty-state"><span class="hero">${mascotHead("rest")}</span><h1>Nothing in the Inbox yet</h1>` +
     `<p>What your agents write lands here, filed by project.</p><button type="button" class="btn btn-primary" data-nav="start">How snyvi works</button></div>`;
-  // What is waiting comes first, newest first, so the landing page answers
-  // "what is new" before "what is there".
-  const n = state.waiting;
-  // Recent is the sidebar's one row for what came: what is unread first, so
-  // Monday's plan is not under ten documents read since, then the rest,
-  // newest first. Each document once: the unread are not listed again.
-  if (recent) {
-    if (!n) return `<div class="inbox-head"><h1>Recent</h1><p>Newest first, across every project.</p></div><ul class="inbox">${items.map(row).join("")}</ul>`;
-    const held = new Set(state.queue.map(d => d.id));
-    return `<div class="inbox-head"><h1>Recent</h1><p>${plural(n, "document")} unread, then the rest, newest first.</p></div>` +
-      `<h2 class="inbox-sec">Unread<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul>` +
-      `<h2 class="inbox-sec">Earlier</h2><ul class="inbox">${items.filter(d => !held.has(d.id)).map(row).join("")}</ul>`;
-  }
-  return `<div class="inbox-head"><h1>Inbox</h1><p>${n ? `${plural(n, "document")} waiting to be read, then everything else, newest first.` : "Newest first, across every project."}</p></div>` +
-    (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
-    `<ul class="inbox">${items.map(row).join("")}</ul>`;
+  // What is waiting comes first, so Monday's plan is not under ten
+  // documents read since. Its head stands while the ghost of the last one
+  // waiting does, so the list under it does not move up.
+  const n = state.waiting, w = n || ghost?.sec === "waiting", held = new Set(state.queue.map(d => d.id));
+  return `<div class="inbox-head"><h1>${recent ? "Recent" : "Inbox"}</h1><p>${n ? `${plural(n, "document")} waiting, then the rest, newest first.` : "Newest first, across every project."}</p></div>` +
+    (w ? `<h2 class="inbox-sec">Waiting${n ? `<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd class="lk">n</kbd></button><button type="button" data-q="clear">Mark all read</button>` : ""}</h2><ul class="inbox waiting">${list("waiting", state.queue)}</ul><h2 class="inbox-sec">Earlier</h2>` : "") +
+    `<ul class="inbox">${list("rest", items.filter(d => !held.has(d.id)))}</ul>`;
 }
 
 

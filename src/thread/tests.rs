@@ -15,6 +15,9 @@ fn db() -> Connection {
     conn.execute_batch(GROUP_COLUMN).unwrap();
     conn.execute_batch(PR_STATE_1_43).unwrap();
     conn.execute_batch(AWAY_COLUMN_1_44).unwrap();
+    conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::due::TURN_COLUMN_1_47).unwrap();
     for c in SUGGEST_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }

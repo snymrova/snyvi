@@ -181,7 +181,9 @@
   }
   const historyBox = () => {
     const h = state.history, d = state.doc;
-    return h && d ? `<div id="history"><h4>Versions · ${h.length}</h4>` + h.map(v => `<a href="/d/${v.id}" data-id="${v.id}" class="${v.id === d.id ? "cur" : ""}" data-tip="${esc(v.workflow_title)}">${fmt(v.received_at)}${v.pinned ? " " + glyph("pin", 10) : ""}</a>`).join("") + `</div>` : "";
+    // Numbered, oldest v1, and who sent each in its tip: two sent in one
+    // minute read as one date twice (the audit of 1.46.2).
+    return h && d ? `<div id="history"><h4>Versions · ${h.length}</h4>` + h.map((v, i) => `<a href="/d/${v.id}" data-id="${v.id}" class="${v.id === d.id ? "cur" : ""}" data-tip="${esc(v.workflow_title)}"${v.desk || v.sender ? ` data-tip-sub="from ${esc(v.desk ? (v.desk.slot ? `panel ${v.desk.slot} on ` : "") + v.desk.name : v.sender)}"` : ""}>v${h.length - i} · ${fmt(v.received_at)}${v.pinned ? " " + glyph("pin", 10) : ""}</a>`).join("") + `</div>` : "";
   };
   async function renderHistory() {
     const d = state.doc;

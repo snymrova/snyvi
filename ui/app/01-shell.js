@@ -50,7 +50,7 @@
   const post = (u, b) => fetch(u, b ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) } : { method: "POST" }).catch(() => null);
   const rel = ts => {
     const d = Date.now() / 1000 - ts;
-    if (d < 45) return "just now";
+    if (d < 60) return "just now";
     if (d < 3600) return `${Math.round(d / 60)} min ago`;
     if (d < 86400) return `${Math.round(d / 3600)} h ago`;
     const dt = new Date(ts * 1000);

@@ -162,7 +162,9 @@ const CHECKS = {
       // A line that asks which platform it is on is writing the key for it.
       text = text.split("\n").filter(l => !/\bMac\b|\bMAC\b/.test(l)).join("\n");
       const strings = [...text.matchAll(/(["'`])((?:\\.|(?!\1)[^\\\n])*)\1/g)].map(m => m[2]).join("\n");
-      let n = count(strings, /\b(?:Let go|Take off|Put away|Clear done|Kill)\b|Undo for \d|\(Esc\)|\S {2,}(?:⌘|⌃|Ctrl|Esc)\b/g);
+      // "Clear" on a button and "unread" anywhere (the audit of 1.46.2):
+      // what is taken away is removed, and what is not read yet waits.
+      let n = count(strings, /\b(?:Let go|Take off|Put away|Clear done|Kill)\b|(?<![./])\b[Uu]nread\b|>Clear<|Undo for \d|\(Esc\)|\S {2,}(?:⌘|⌃|Ctrl|Esc)\b/g);
       if (!file.startsWith("app/")) n += count(strings, /⌘/g);
       return n;
     },

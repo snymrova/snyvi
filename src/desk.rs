@@ -289,6 +289,13 @@ pub struct LeftOff {
     /// Never the page's.
     #[serde(skip)]
     pub pane: String,
+    /// Whose the next step is, when it was said: `you`, `claude`, `time`
+    /// (`crate::waiting::NEEDS`), or empty. Never read into the words.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub needs: String,
+    /// When the reader approved it from Home, or 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub ok_at: i64,
 }
 
 /// How long a Left off is, at most: one sentence.
@@ -401,6 +408,16 @@ pub struct DeskNote {
     pub reply_by: String,
     #[serde(skip_serializing_if = "is_zero")]
     pub reply_at: i64,
+    /// When the line is due, from a date at the end of what was written
+    /// (`crate::due`), or 0. The text no longer carries it.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub due_at: i64,
+    /// When its card rose, or 0: `crate::brief::changes` says it came due.
+    #[serde(skip)]
+    pub due_rang_at: i64,
+    /// When the reader approved its plan (`crate::waiting`), or 0.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ok_at: i64,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -1363,7 +1380,7 @@ pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
         "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images,
                 stage, stage_by, stage_doc, stage_at, stage_pane, stage_session, done_pane, sent_by, thread_id,
                 (sent_peer != 0 AND sent_frame != ''), told_at,
-                landed_commit, landed_at, reply, reply_by, reply_at FROM desk_notes
+                landed_commit, landed_at, reply, reply_by, reply_at, due_at, due_rang_at, ok_at FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -1398,7 +1415,7 @@ pub fn add_note_from(
     now: i64,
 ) -> Result<Option<DeskNote>> {
     let sent_by: String = sent_by.trim().chars().take(60).collect();
-    let text = clip(text);
+    let (text, due_at) = dated(clip(text), now);
     if text.is_empty() {
         return Ok(None);
     }
@@ -1423,8 +1440,8 @@ pub fn add_note_from(
         return Ok(None);
     }
     tx.execute(
-        "INSERT INTO desk_notes(desk_id, text, created_at, sent_by) VALUES(?1, ?2, ?3, ?4)",
-        params![desk_id, text, now, sent_by],
+        "INSERT INTO desk_notes(desk_id, text, created_at, sent_by, due_at) VALUES(?1, ?2, ?3, ?4, ?5)",
+        params![desk_id, text, now, sent_by, due_at],
     )?;
     let id = tx.last_insert_rowid();
     tx.commit()?;
@@ -1433,6 +1450,7 @@ pub fn add_note_from(
         text,
         created_at: now,
         sent_by,
+        due_at,
         ..DeskNote::default()
     }))
 }
@@ -1457,12 +1475,18 @@ pub fn set_note(
         if text.is_empty() {
             return remove_note(conn, desk_id, id, now);
         }
+        // A date at the end of the new words moves the line there; words
+        // without one leave the date it had, which the chip shows apart.
+        let (text, due_at) = dated(text, now);
         if conn.execute(
             "UPDATE desk_notes SET text = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
             params![desk_id, id, text],
         )? == 0
         {
             return Ok(false);
+        }
+        if due_at > 0 {
+            crate::due::set(conn, desk_id, id, due_at, now)?;
         }
     }
     let Some(done) = done else {
@@ -1583,7 +1607,9 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
     };
     let working = mark.stage == "working";
     Ok(conn.execute(
+        // A new plan is a new Approve's to give (`crate::waiting`).
         "UPDATE desk_notes SET stage = ?3, stage_by = ?4, stage_doc = CASE WHEN ?5 != '' THEN ?5 ELSE stage_doc END,
+                ok_at = CASE WHEN ?5 != '' AND ?5 != stage_doc THEN 0 ELSE ok_at END,
                 stage_at = ?6, stage_pane = ?7, stage_session = ?8,
                 reply = CASE WHEN ?9 != '' THEN ?9 ELSE reply END,
                 reply_by = CASE WHEN ?9 != '' THEN ?4 ELSE reply_by END,
@@ -1728,7 +1754,7 @@ pub fn suggest_note_from(
     now: i64,
 ) -> Result<Suggested> {
     let sent_by: String = sent_by.trim().chars().take(60).collect();
-    let text = clip(text);
+    let (text, due_at) = dated(clip(text), now);
     if text.is_empty() {
         return Ok(Suggested::Empty);
     }
@@ -1760,8 +1786,8 @@ pub fn suggest_note_from(
         return Ok(Suggested::Full);
     }
     tx.execute(
-        "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by, sent_by) VALUES(?1, ?2, ?3, ?4, ?5)",
-        params![desk_id, text, now, by, sent_by],
+        "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by, sent_by, due_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+        params![desk_id, text, now, by, sent_by, due_at],
     )?;
     let id = tx.last_insert_rowid();
     tx.commit()?;
@@ -1771,6 +1797,7 @@ pub fn suggest_note_from(
         created_at: now,
         suggested_by: by,
         sent_by,
+        due_at,
         ..DeskNote::default()
     })))
 }
@@ -1802,14 +1829,23 @@ pub fn set_left_off(
     let Some(desk) = get(conn, desk_id)? else {
         return Ok(None);
     };
-    let (at, by, about, pane) = if text.is_empty() {
-        (0, String::new(), String::new(), String::new())
+    let (at, by, about, pane, needs, ok_at) = if text.is_empty() {
+        (
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            0,
+        )
     } else {
-        (to.at, by, about, to.pane.clone())
+        let needs = crate::waiting::needs_of(&to.needs);
+        (to.at, by, about, to.pane.clone(), needs, to.ok_at)
     };
     conn.execute(
-        "UPDATE desks SET left_off = ?2, left_off_at = ?3, left_off_by = ?4, left_off_about = ?5, left_off_pane = ?6 WHERE id = ?1",
-        params![desk_id, text, at, by, about, pane],
+        "UPDATE desks SET left_off = ?2, left_off_at = ?3, left_off_by = ?4, left_off_about = ?5, left_off_pane = ?6,
+                left_off_needs = ?7, left_off_ok_at = ?8 WHERE id = ?1",
+        params![desk_id, text, at, by, about, pane, needs, ok_at],
     )?;
     Ok(Some(desk.left_off))
 }
@@ -1890,6 +1926,15 @@ fn clip(text: &str) -> String {
     }
 }
 
+/// A line and its date, when it ends in one (`crate::due::split`); the line
+/// as it came and 0 otherwise.
+fn dated(text: String, now: i64) -> (String, i64) {
+    match crate::due::split(&text, now) {
+        Some((t, at)) => (t, at),
+        None => (text, 0),
+    }
+}
+
 /// One line of at most `chars` characters: runs of whitespace, newlines
 /// among them, are one space.
 fn clip_to(text: &str, chars: usize) -> String {
@@ -1934,6 +1979,9 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         reply: r.get(23)?,
         reply_by: r.get(24)?,
         reply_at: r.get(25)?,
+        due_at: r.get(26)?,
+        due_rang_at: r.get(27)?,
+        ok_at: r.get(28)?,
     })
 }
 
@@ -2036,7 +2084,7 @@ fn pane_id() -> Result<String> {
 }
 
 const DESK_COLS: &str =
-    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account, links";
+    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account, links, left_off_needs, left_off_ok_at";
 
 fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
     let text: String = r.get(7)?;
@@ -2057,6 +2105,8 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
                 by: r.get(9)?,
                 about: r.get(10)?,
                 pane: r.get(14)?,
+                needs: r.get(17)?,
+                ok_at: r.get(18)?,
             })
         },
         visited_at: r.get(11)?,

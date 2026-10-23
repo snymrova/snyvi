@@ -629,11 +629,13 @@ button.sec-fold:hover { color: var(--fg-2); }
 .sec-fold[aria-expanded="false"] .s-chev { transform: rotate(-45deg); }
 /* The count: a figure, not a pill. In the accent while something waits, in
    --warn while something is blocked; kept while folded, so a folded head
-   still says it. One the open section says itself below says it only folded. */
-.sec-n { flex: none; padding: 0 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0; color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+   still says it. One the open section says itself below says it only folded.
+   Its slot stands empty at two figures' width, so a count coming or going
+   moves nothing on the head. */
+.sec-n { flex: none; min-width: calc(2ch + 8px); padding: 0 4px; text-align: right; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0; color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sec-n.accent { color: var(--accent); }
 .sec-n.warn { color: var(--warn); }
-.sec-fold[aria-expanded="true"] ~ .sec-n.fold-only { display: none; }
+.sec-fold[aria-expanded="true"] ~ .sec-n.fold-only { visibility: hidden; }
 .sec-acts { flex: none; display: flex; align-items: center; gap: var(--sp-1); opacity: 0; transition: opacity var(--t); }
 .sec-head:is(:hover, :focus-within, .empty) > .sec-acts { opacity: 1; }
 /* New desk is always there: the + in front of Desks is the way to a desk,
@@ -847,8 +849,10 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desks .ctx { font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }
 .t-desks .dot { flex: none; order: 1; display: grid; place-items: center; width: 22px; height: 10px; }
-.t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-.t-desks .dot.run::before { content: ""; width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--fg-3); }
+/* Running is green, as on Home and the panel's head; an agent at work wears
+   Home's ring around it (DESIGN §5.2). */
+.t-desks .dot:is(.on, .run)::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.t-desks .dot.on::before { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok), transparent 75%); }
 .t-desks .dot.blk { width: auto; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; line-height: 1; white-space: nowrap; }
 .t-desks .k { display: inline-flex; align-items: center; gap: 2px; font-size: var(--fs-micro); font-family: var(--mono); color: var(--fg-2); flex: none; font-variant-numeric: tabular-nums; }
 .t-desks .k-ico { flex: none; opacity: .8; }
@@ -1220,6 +1224,9 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
 kbd:not(.prose kbd) { display: inline-block; min-width: 18px; padding: 0 4px; font: 500 var(--fs-micro)/16px var(--mono); text-align: center; white-space: nowrap;
   color: var(--fg-2); background: var(--bg-side); border: 1px solid var(--rule-2); border-radius: var(--r-xs); }
 :is(#queue-bar, .inbox-sec, #meta .actions) kbd { margin-left: 6px; }
+/* A letter's hint is asleep while letter keys are, until Ctrl B (body.keys):
+   bright, it taught first that the keys do nothing. Del and ⏎ always work. */
+body:not(.keys) kbd.lk { opacity: .4; }
 #queue-bar .icon { width: 26px; height: 26px; }
 #find[hidden] { display: none; }
 #find { position: sticky; top: var(--head-h); z-index: 5; display: flex; align-items: center; gap: 4px; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 10px 48px 0; }
@@ -1344,6 +1351,8 @@ pre.code .ln::before { cursor: pointer; }
 #meta .row b { font-weight: 500; color: var(--fg-2); min-width: 54px; flex: none; }
 /* Long folder and file names wrap inside the rail rather than running off it. */
 #meta .row span { min-width: 0; overflow-wrap: anywhere; }
+/* From: the panel's slot in the desk tabs' mono, and the arrow drawn, not typed. */
+#meta .row .slot { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); }
 #meta .actions { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
 #meta .actions button, #meta .actions a { color: var(--fg-2); padding: 3px 0; }
 #meta .actions button:hover, #meta .actions a:hover { color: var(--accent); text-decoration: none; }

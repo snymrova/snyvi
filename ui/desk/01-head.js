@@ -78,6 +78,8 @@ let noteList = [], notesAt = null, notesGet = null;
  *  the rail is redrawn whole -- by a pane's status, by the clock every 30s --
  *  and a field that lived only in the page would be swept away mid-word. */
 let noteField = null, noteDraft = "", noteCaret = 0, noteErr = "";
+/** The line whose date menu is open under its chip, or 0 (1.47). */
+let dueOpen = 0;
 /** The notes show six lines and name the rest, as the documents do. A line
  *  the reader is working on shows whatever its place: one being rewritten,
  *  one just taken off (its Undo), and one just added, so a new line never

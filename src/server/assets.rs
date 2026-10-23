@@ -98,6 +98,9 @@ pub(crate) const GALLERY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/gall
 /// one: a document with no song in it never pays for them.
 pub(crate) const PLAYER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/player.js"));
 
+/// Approve on a plan's head (1.47), fetched on its first press.
+pub(crate) const PLAN_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/plan.js"));
+
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
 
@@ -429,6 +432,8 @@ pub(crate) struct Talk {
     /// A friend's document: their name as it is now, not as it was when it
     /// came (one name everywhere). None falls back to the sender it names.
     pub(crate) from: Option<String>,
+    /// The reader's own document that is open lines' plan: Approve in its head.
+    pub(crate) plan: Option<crate::waiting::PlanFor>,
 }
 
 /// The talk for `doc`, from the store.
@@ -453,7 +458,27 @@ pub(crate) fn talk(app: &App, doc: &Doc) -> Talk {
         replies,
         reply_to,
         from: friend.map(|p| p.name),
+        plan: None,
     }
+}
+
+/// The talk a document is drawn with: a friend's side only once there is a
+/// friend, and the plan it is for whether or not -- the reader's own plan
+/// for open lines on a desk grows Approve (`crate::waiting`).
+pub(crate) fn talk_for(app: &App, doc: &Doc, friends: usize) -> Talk {
+    let mut t = if friends > 0 {
+        talk(app, doc)
+    } else {
+        Talk::default()
+    };
+    if doc.origin != "peer" {
+        t.plan = app
+            .store
+            .clocked(|c, _| crate::waiting::plan_for(c, &doc.id))
+            .ok()
+            .flatten();
+    }
+    t
 }
 
 /// Server-side document markup. `friends` is how many friends there are:
@@ -506,7 +531,13 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
     if let Some(b) = &doc.branch {
         sub.push_str(&format!(" · <span class=\"branch\">{}</span>", e(b)));
     }
-    sub.push_str(&format!(" · {}", fmt_time(doc.received_at)));
+    // The page says it again in the reader's own format (`fmt`, app.js), so
+    // the head and the rail's Received read alike; this is what shows first.
+    sub.push_str(&format!(
+        " · <time data-ts=\"{}\">{}</time>",
+        doc.received_at,
+        fmt_time(doc.received_at)
+    ));
     let send = |sub: &mut String, sep: &str| {
         sub.push_str(&format!(
             "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
@@ -521,6 +552,7 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         if friends > 0 {
             send(&mut sub, " · ");
         }
+        sub.push_str(&approve_button(doc, talk));
         return head(doc, body, &sub, "", talk);
     }
     // A friend's document: what can be done with it, in a row of its own
@@ -571,6 +603,25 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
     head(doc, body, &sub, &acts, talk)
 }
 
+/// A plan for desk notes: Approve, the go-ahead its panel reads at its
+/// next prompt (`crate::waiting`), in the sub line so the head keeps its
+/// height; the page wires the click (`ui/plan.js`). Nothing for any other
+/// document.
+fn approve_button(doc: &Doc, talk: &Talk) -> String {
+    let Some(p) = &talk.plan else {
+        return String::new();
+    };
+    let ok = p.ok_at > 0;
+    format!(
+        " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"plan\" data-desk=\"{}\" data-doc=\"{}\" data-ok=\"{}\" data-tip=\"{}\">{}</button>",
+        p.desk,
+        html_escape::encode_double_quoted_attribute(&doc.id),
+        u8::from(ok),
+        if ok { "Approved by you: its panel goes ahead. Click to take it back" } else { "The go-ahead for this plan: its panel hears it at its next prompt" },
+        if ok { "Approved ✓" } else { "Approve" }
+    )
+}
+
 /// A friend's initial in their own colour, before their name in the head of
 /// what they sent (#123): the sidebar, Waiting, Home and a desk's notes wear
 /// the same one (`ui/app/02-tree.js` `whoIco`), so a friend's reads as theirs
@@ -606,9 +657,10 @@ fn head(doc: &Doc, body: &str, sub: &str, acts: &str, talk: &Talk) -> String {
         .iter()
         .map(|r| {
             format!(
-                "<li><b>{}</b> {} <time>{}</time></li>",
+                "<li><b>{}</b> {} <time data-ts=\"{}\">{}</time></li>",
                 e(&r.from),
                 e(&r.text),
+                r.at,
                 fmt_time(r.at)
             )
         })
@@ -724,12 +776,7 @@ pub(crate) async fn shell_doc(State(app): S, Path(id): Path<String>) -> Response
         boot,
         &{
             let friends = friend_count(&app);
-            let talk = if friends > 0 {
-                talk(&app, &doc)
-            } else {
-                Talk::default()
-            };
-            doc_html(&doc, &body, friends, &talk)
+            doc_html(&doc, &body, friends, &talk_for(&app, &doc, friends))
         },
         &title,
     )
@@ -804,6 +851,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("sidebars.js", SIDEBARS_JS, JS),
     ("gallery.js", GALLERY_JS, JS),
     ("player.js", PLAYER_JS, JS),
+    ("plan.js", PLAN_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.

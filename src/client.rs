@@ -1125,11 +1125,18 @@ pub fn changes(
 }
 
 /// Say where the work on this pane's desk was left: `leave_off`.
-pub fn leave_off(paths: &Paths, pane: &str, text: &str, about: &str, by: &str) -> Result<Value> {
+pub fn leave_off(
+    paths: &Paths,
+    pane: &str,
+    text: &str,
+    about: &str,
+    needs: &str,
+    by: &str,
+) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/leftoff"),
-        serde_json::json!({ "text": text, "about": about, "by": by }),
+        serde_json::json!({ "text": text, "about": about, "needs": needs, "by": by }),
     )?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_json()?),
@@ -1142,11 +1149,17 @@ pub fn leave_off(paths: &Paths, pane: &str, text: &str, about: &str, by: &str) -
 }
 
 /// Suggest a line for this pane's desk's list: `suggest_desk_note`.
-pub fn suggest_desk_note(paths: &Paths, pane: &str, text: &str, by: &str) -> Result<Value> {
+pub fn suggest_desk_note(
+    paths: &Paths,
+    pane: &str,
+    text: &str,
+    due: &str,
+    by: &str,
+) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/suggest"),
-        serde_json::json!({ "text": text, "by": by }),
+        serde_json::json!({ "text": text, "due": due, "by": by }),
     )?;
     match resp.status().as_u16() {
         201 => Ok(resp.body_mut().read_json()?),

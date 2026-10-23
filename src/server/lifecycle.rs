@@ -204,6 +204,19 @@ pub(crate) fn waiting_named(app: &App, ids: &[String]) -> Vec<serde_json::Value>
 const RESTART_TICK: std::time::Duration = std::time::Duration::from_secs(5);
 const RESTART_IDLE_TICK: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// The dates on notes whose hour has come (`crate::due::ring`): a card each,
+/// on the clock this watcher already keeps. One query when nothing is due.
+fn ring_due(app: &App) {
+    match app.store.clocked(|c, now| crate::due::ring(c, now)) {
+        Ok(desks) => {
+            for d in desks {
+                notes_moved(app, d);
+            }
+        }
+        Err(e) => eprintln!("snyvi: the clock for dates on notes: {e:#}"),
+    }
+}
+
 /// The pending restart, as health and `snyvi restart` see it.
 pub(crate) fn restart_json(app: &App) -> serde_json::Value {
     match *app.restart.lock().unwrap() {
@@ -247,6 +260,7 @@ pub(crate) fn spawn_restart_watcher(app: Arc<App>) {
             // amber at a day, a failure ageing out -- and with the panels a
             // pending restart waits on; nothing else would say so.
             emit_update_if_changed(&app);
+            ring_due(&app);
             let pending = *app.restart.lock().unwrap();
             match pending {
                 Some(p) => {

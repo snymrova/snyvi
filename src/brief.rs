@@ -119,7 +119,12 @@ pub fn brief_of(
         } else {
             l.by.as_str()
         };
-        lines.push(format!("Left off ({who}, {}): {}", ago(now - l.at), l.text));
+        lines.push(format!(
+            "Left off ({who}, {}{}): {}",
+            ago(now - l.at),
+            left_needs(l, now),
+            l.text
+        ));
     }
     // By name only. A value reaches a command through `snyvi key`, which the
     // shell expands, and the environment of a panel started after it was
@@ -143,6 +148,7 @@ pub fn brief_of(
         .filter(|n| !n.done && n.suggested_by.is_empty())
         .collect();
     lines.extend(loose_ends(&open));
+    lines.extend(dated(&open, now));
     if !open.is_empty() {
         let named: Vec<String> = open
             .iter()
@@ -155,7 +161,12 @@ pub fn brief_of(
                 } else {
                     format!(" (from {})", n.sent_by)
                 };
-                format!("#{} {}{from}", n.id, cut(&n.text, LINE_CHARS))
+                let due = if n.due_at > 0 {
+                    format!(" (due {})", crate::due::label(n.due_at, now))
+                } else {
+                    String::new()
+                };
+                format!("#{} {}{from}{due}", n.id, cut(&n.text, LINE_CHARS))
             })
             .collect();
         let more = open.len().saturating_sub(OPEN_SHOWN);
@@ -265,6 +276,59 @@ fn loose_ends(open: &[&DeskNote]) -> Vec<String> {
         lines.push(format!(
             "Landed on main and waiting for the user's check, not yours to tick: {}.",
             landed.join(", ")
+        ));
+    }
+    lines
+}
+
+/// How a left-off's head says whose the next step is, and the user's
+/// Approve on it once given (`crate::waiting`).
+fn left_needs(l: &LeftOff, now: i64) -> String {
+    if l.ok_at >= l.at && l.ok_at > 0 {
+        format!("; the user approved it {}, so go ahead", ago(now - l.ok_at))
+    } else if l.needs.is_empty() {
+        String::new()
+    } else {
+        format!(", needs {}", l.needs)
+    }
+}
+
+/// What the dates on the list say: the lines due by the end of the user's
+/// day, overdue ones with them (`crate::due`), and the plans the user
+/// approved, which are the go-ahead to start (`crate::waiting`).
+fn dated(open: &[&DeskNote], now: i64) -> Vec<String> {
+    let mut lines = Vec::new();
+    let end = crate::due::end_of_day(now);
+    let due: Vec<String> = open
+        .iter()
+        .filter(|n| n.due_at > 0 && n.due_at <= end)
+        .map(|n| {
+            format!(
+                "#{} {} ({})",
+                n.id,
+                cut(&n.text, OLDER_CHARS),
+                crate::due::label(n.due_at, now)
+            )
+        })
+        .collect();
+    if !due.is_empty() {
+        lines.push(format!(
+            "Due today on this desk, by the dates the user gave them: {}. Still the user's to set you on.",
+            due.join("; ")
+        ));
+    }
+    let mut plans: Vec<(&str, Vec<String>, i64)> = Vec::new();
+    for n in open.iter().filter(|n| n.ok_at > 0 && n.stage == "planned") {
+        match plans.iter_mut().find(|p| p.0 == n.stage_doc) {
+            Some(p) => p.1.push(format!("#{}", n.id)),
+            None => plans.push((n.stage_doc.as_str(), vec![format!("#{}", n.id)], n.ok_at)),
+        }
+    }
+    for (doc, ids, at) in plans {
+        lines.push(format!(
+            "The user approved the plan {doc} for {} ({}): go ahead when set on them.",
+            ids.join(" "),
+            ago(now - at)
         ));
     }
     lines
@@ -400,6 +464,14 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
                 "merge" => format!("You merged: \"{q}\"."),
                 "key" => format!("You added the key: \"{q}\"."),
                 "do" => format!("You did: \"{q}\"."),
+                // snyvi's own card, at the hour a line was due (`crate::due`).
+                "due" if a == "Done" => {
+                    format!("The note \"{q}\" came due and the user ticked it.")
+                }
+                "due" => format!(
+                    "The note \"{q}\" came due and the user moved it ({}).",
+                    a.to_lowercase()
+                ),
                 _ => format!("You answered \"{q}\": {a}."),
             }
         })
@@ -584,6 +656,7 @@ pub fn changes(c: &Changes) -> String {
     if !gone.is_empty() {
         lines.push(format!("Taken off the list: {}.", gone.join("; ")));
     }
+    lines.extend(dated_news(c));
     lines.extend(new_keys(c.keys, c.since));
     // Only `working`, and only another pane's: it is the one stage that
     // says "leave it to them". `read` and `planned` carry no pane, so this
@@ -650,6 +723,44 @@ pub fn changes(c: &Changes) -> String {
     }
     lines.insert(0, CHANGES_HEAD.into());
     capped(lines)
+}
+
+/// What the dates and the user's Approve did since: lines that came due, a
+/// plan approved, a left-off approved from Home. Each once, as `since` moves.
+fn dated_news(c: &Changes) -> Vec<String> {
+    let mut lines = Vec::new();
+    let rang: Vec<String> = c
+        .notes
+        .iter()
+        .filter(|n| !n.done && n.due_rang_at > c.since)
+        .map(|n| format!("#{} \"{}\"", n.id, cut(&n.text, LINE_CHARS)))
+        .collect();
+    if !rang.is_empty() {
+        lines.push(format!(
+            "Came due, by the date the user gave it: {}.",
+            rang.join("; ")
+        ));
+    }
+    let mut plans: Vec<(&str, Vec<String>)> = Vec::new();
+    for n in c.notes.iter().filter(|n| !n.done && n.ok_at > c.since) {
+        match plans.iter_mut().find(|p| p.0 == n.stage_doc) {
+            Some(p) => p.1.push(format!("#{}", n.id)),
+            None => plans.push((n.stage_doc.as_str(), vec![format!("#{}", n.id)])),
+        }
+    }
+    for (doc, ids) in plans {
+        lines.push(format!(
+            "The user approved the plan {doc} for {} in snyvi: go ahead.",
+            ids.join(" ")
+        ));
+    }
+    if let Some(l) = c.left_off.filter(|l| l.ok_at > c.since && l.ok_at >= l.at) {
+        lines.push(format!(
+            "The user approved where the work was left (\"{}\"): go ahead.",
+            cut(&l.text, LINE_CHARS)
+        ));
+    }
+    lines
 }
 
 /// The news line for keys kept since `since`, by name: usable at once with
@@ -759,6 +870,7 @@ mod tests {
             by: "claude-code".into(),
             about: String::new(),
             pane: String::new(),
+            ..LeftOff::default()
         };
         let mut done = note(9, "fix hover", true);
         done.done_commit = "90f09d6".into();
@@ -969,6 +1081,7 @@ mod tests {
             by: "claude-code".into(),
             about: String::new(),
             pane: "p1".into(),
+            ..LeftOff::default()
         };
         let c = changes(&Changes {
             slot: 2,
@@ -1164,5 +1277,84 @@ mod tests {
         ));
         assert!(b.contains("On the user (their On you list in snyvi): #0 try: Try it on 7871."));
         assert!(!b.contains("Old"));
+    }
+
+    /// 1.47: what is due today, a plan approved, whose a left-off is; and
+    /// at the next prompt, what came due and what the user approved.
+    #[test]
+    fn the_brief_and_the_changes_carry_dates_and_approvals() {
+        let now = 1_000_000;
+        let mut due = note(7, "post the note", false);
+        due.due_at = now + 3600;
+        let mut later = note(8, "send the invoice", false);
+        later.due_at = now + 9 * 86_400;
+        let mut planned = note(9, "dates on lines", false);
+        planned.stage = "planned".into();
+        planned.stage_doc = "7a1c2b3d4e".into();
+        planned.ok_at = now - 7200;
+        let left = LeftOff {
+            text: "If you approve, ship it".into(),
+            at: now - 3 * 86_400,
+            by: "claude-code".into(),
+            needs: "you".into(),
+            ..LeftOff::default()
+        };
+        let notes = [due.clone(), later, planned.clone()];
+        let b = brief(&desk(1, Some(left.clone())), 1, &notes, &[], &[], None, now);
+        assert!(
+            b.contains("Left off (claude-code, 3 days ago, needs you): If you approve, ship it"),
+            "{b}"
+        );
+        assert!(b.contains("Due today on this desk, by the dates the user gave them: #7 post the note (today 14:46)."), "{b}");
+        assert!(
+            !b.contains("(today 14:46); #8"),
+            "next week's line is not due today: {b}"
+        );
+        assert!(b.contains("#8 send the invoice (due 21 Jan 13:46)"), "{b}");
+        assert!(b.contains("The user approved the plan 7a1c2b3d4e for #9 (2 h ago): go ahead when set on them."), "{b}");
+
+        let mut rang = due;
+        rang.due_rang_at = now - 10;
+        let approved = LeftOff {
+            ok_at: now - 5,
+            ..left
+        };
+        let card = Turn {
+            kind: "due".into(),
+            text: "post the note".into(),
+            answer: "Later: Mon 9:00".into(),
+            answered_at: now - 3,
+            ..Turn::default()
+        };
+        let c = changes(&Changes {
+            slot: 1,
+            pane: "p1",
+            notes: &[rang, planned],
+            removed: &[],
+            docs: &[],
+            keys: &[],
+            left_off: Some(&approved),
+            since: now - 7300,
+            now,
+            panes: &[],
+            answers: &[card],
+            threads: &[],
+            opened: &[],
+        });
+        assert!(
+            c.contains(
+                "The note \"post the note\" came due and the user moved it (later: mon 9:00)."
+            ),
+            "{c}"
+        );
+        assert!(
+            c.contains("Came due, by the date the user gave it: #7 \"post the note\"."),
+            "{c}"
+        );
+        assert!(
+            c.contains("The user approved the plan 7a1c2b3d4e for #9 in snyvi: go ahead."),
+            "{c}"
+        );
+        assert!(c.contains("The user approved where the work was left (\"If you approve, ship it\"): go ahead."), "{c}");
     }
 }
