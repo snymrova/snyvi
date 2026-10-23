@@ -43,7 +43,7 @@ the result carries.";
 const ASIDE_DESCRIPTION: &str = "Leave the user a short personal aside in snyvi -- the kind of remark a friend \
 working beside them would make, about the work and about them at it: that a hard part just landed after several \
 evenings, that the thing they worried about turned out fine, that it is late and the rest keeps, one next step as \
-a question. Ground every one in something that happened here -- a note, a commit, a test, a left-off line -- or do \
+a question; the first time a desk's work is told, a launch's last line ticked, a promise kept on its day. Ground every one in something that happened here -- a note, a commit, a test, a left-off line -- or do \
 not send it: a line that reads the person rather than the record is wrong the first time it is slightly off. Use \
 it rarely -- a few times in a long session at most, never as a status update, never a summary of a document you \
 just sent, never advice about anything but this project, never mid-task. One or two plain sentences (at most 280 \

@@ -106,8 +106,10 @@ pub(crate) struct MoveBody {
 fn moved(app: &App, desk: i64, r: anyhow::Result<Moved>) -> Response {
     match r {
         Ok(Moved::Thread(t)) => {
-            // Told just now: a row in Lately, lit, with where (`crate::told`).
+            // Told just now: a row in Lately, lit, with where (`crate::told`),
+            // and Out there offered for the desk, once (`propose_out_there`).
             if t.told_at != 0 && t.told_at >= t.moved_at {
+                super::api_widget::propose_out_there(app, desk);
                 lately_log(
                     app,
                     crate::lately::New {

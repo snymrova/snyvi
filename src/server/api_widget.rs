@@ -1418,7 +1418,37 @@ pub(crate) async fn pane_propose_widget(
     let Ok(b) = serde_json::from_slice::<ProposeBody>(&body) else {
         return refused(StatusCode::BAD_REQUEST, "not a widget");
     };
-    if let Some(no) = propose_refusal(&app, placed.desk_id, &b) {
+    propose(&app, placed.desk_id, id, b)
+}
+
+/// The widget snyvi proposes itself (1.48): Out there, the desk's GitHub
+/// repo as the world sees it, the first time a thread on the desk is told.
+/// A card on On you like any agent's: nothing runs without the reader's
+/// Add. Refused quietly where the name is taken, waiting or was declined.
+pub(crate) fn propose_out_there(app: &App, desk: i64) {
+    let b = ProposeBody {
+        name: "out-there".into(),
+        title: "Out there".into(),
+        command: "sh \"$SNYVI_WIDGET_DIR/out-there.sh\"".into(),
+        every: 3600,
+        timeout: 20,
+        lines: 1,
+        script_name: "out-there.sh".into(),
+        script: include_str!("../widget/out_there/out-there.sh").into(),
+        why: "It is out: stars, downloads and visitors for this desk's GitHub repo, hourly, with your own gh.".into(),
+        by: "snyvi".into(),
+        ..Default::default()
+    };
+    let r = propose(app, desk, String::new(), b);
+    if !r.status().is_success() && r.status() != StatusCode::CONFLICT {
+        eprintln!("snyvi: proposing Out there on desk {desk}: {}", r.status());
+    }
+}
+
+/// A widget file proposed on `desk`, from `pane` (empty for snyvi's own):
+/// checked, written where proposals wait, and a card on On you.
+fn propose(app: &App, desk: i64, id: String, b: ProposeBody) -> Response {
+    if let Some(no) = propose_refusal(app, desk, &b) {
         return *no;
     }
     let command = b.command.trim();
@@ -1428,7 +1458,7 @@ pub(crate) async fn pane_propose_widget(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos() & 0xffff)
         .unwrap_or(0);
-    let stage = proposed_dir(&app).join(format!("{}-{nonce:04x}-{}", crate::store::now(), b.name));
+    let stage = proposed_dir(app).join(format!("{}-{nonce:04x}-{}", crate::store::now(), b.name));
     let wrote = write_proposal(&stage, &b, command);
     if let Err(e) = wrote {
         return refused(
@@ -1440,7 +1470,7 @@ pub(crate) async fn pane_propose_widget(
     // script goes back to the agent with how to write it (#111).
     let read = widget::files::read(&stage, &b.name)
         .and_then(|s| widget::files::settings_ok(&s).map(|_| s))
-        .and_then(|s| widget::files::keys_ok(&s, placed.desk_id).map(|_| s))
+        .and_then(|s| widget::files::keys_ok(&s, desk).map(|_| s))
         .and_then(|s| widget::files::lint(&s, &stage).map(|_| s));
     // The card is the folder as it is now: Try once and Add refuse a folder
     // that changed after it (an agent has a shell as the reader).
@@ -1489,13 +1519,12 @@ pub(crate) async fn pane_propose_widget(
         lasts: b.lasts,
         detail: detail.to_string(),
     };
-    let desk = placed.desk_id;
     match app
         .store
         .clocked(|c, now| crate::thread::suggest(c, desk, &s, now))
     {
         Ok(crate::thread::Suggested::Card(card)) => {
-            threads_moved(&app, desk);
+            threads_moved(app, desk);
             (StatusCode::CREATED, Json(json!({ "suggestion": card }))).into_response()
         }
         Ok(crate::thread::Suggested::Full) => {
