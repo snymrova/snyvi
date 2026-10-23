@@ -2768,6 +2768,11 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     await p.wide();
     rows.push(["Home at 1000 px is one column, the note bar over nothing", !!one && one.tracks.split(" ").length === 1 && !one.over,
       !one ? "no grid or no note bar on Home" : one.tracks.split(" ").length !== 1 ? `the grid has tracks ${one.tracks}` : one.over ? `the note bar is drawn over ${one.over}` : `one track, ${one.tracks}, and the bar over nothing`]);
+    // B2 of the audit of 1.46.2: a running panel's desk wears the same green
+    // in the sidebar as on Home, filled; it was a hollow grey ring there.
+    const dotC = await p.ev(`(() => { const dt = document.querySelector('#desk-nav a[data-desk="${d}"] .dot'); if (!dt) return null; const ok = document.createElement("span"); ok.style.color = "var(--ok)"; document.body.append(ok); const want = getComputedStyle(ok).color; ok.remove(); return { cls: dt.className, bg: getComputedStyle(dt, "::before").backgroundColor, want }; })()`);
+    rows.push(["running is one dot: filled green in the sidebar too", !!dotC && /\brun\b/.test(dotC.cls) && dotC.bg === dotC.want,
+      !dotC ? "no mark on home-bench's row" : !/\brun\b/.test(dotC.cls) ? `the mark is "${dotC.cls}"` : `the dot is ${dotC.bg}${dotC.bg === dotC.want ? ", the --ok green" : `, not ${dotC.want}`}`]);
     // 1.19: the date in the head and no clock; Arrived heads the side column
     // and has no ✕; with no friend there is no Friends widget, and Pair with
     // a friend… is in the foot with the version and Check for updates.

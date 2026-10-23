@@ -849,8 +849,10 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desks .ctx { font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }
 .t-desks .dot { flex: none; order: 1; display: grid; place-items: center; width: 22px; height: 10px; }
-.t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-.t-desks .dot.run::before { content: ""; width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--fg-3); }
+/* Running is green, as on Home and the panel's head; an agent at work wears
+   Home's ring around it (DESIGN §5.2). */
+.t-desks .dot:is(.on, .run)::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.t-desks .dot.on::before { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok), transparent 75%); }
 .t-desks .dot.blk { width: auto; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; line-height: 1; white-space: nowrap; }
 .t-desks .k { display: inline-flex; align-items: center; gap: 2px; font-size: var(--fs-micro); font-family: var(--mono); color: var(--fg-2); flex: none; font-variant-numeric: tabular-nums; }
 .t-desks .k-ico { flex: none; opacity: .8; }
