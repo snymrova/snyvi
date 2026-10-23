@@ -37,7 +37,7 @@ mkdir -p "$out"
 cat > "$out/snyvi.json" <<JSON
 {
     "version": "$version",
-    "description": "A fast, beautiful viewer for the documents your agents produce",
+    "description": "All your passion projects, in one calm place",
     "homepage": "https://mrova.rocks/snyvi",
     "license": "MIT",
     "url": "$base/$name.zip",

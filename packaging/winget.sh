@@ -98,7 +98,7 @@ PackageName: snyvi
 PackageUrl: https://mrova.rocks/snyvi
 License: MIT
 LicenseUrl: https://github.com/$repo/blob/main/LICENSE
-ShortDescription: A fast, beautiful viewer for the documents your agents produce
+ShortDescription: All your passion projects, in one calm place
 Description: |-
   snyvi opens every Markdown file your coding agents write -- plans, specs,
   reviews -- in a window of its own, as it is written. Connect Claude Code

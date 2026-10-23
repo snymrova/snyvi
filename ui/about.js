@@ -256,7 +256,7 @@ const ABOUT = `
 <div class="help-box about-box" role="dialog" aria-modal="true" aria-labelledby="about-title" tabindex="-1">
   <button class="icon help-close" id="about-close" data-tip="Close" data-key="esc" aria-label="Close"><svg class="g-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   <h2 class="dlg-title" id="about-title">snyvi</h2>
-  <p id="about-say">A fast, beautiful viewer for the documents your agents produce.</p>
+  <p id="about-say">All your passion projects, in one calm place.</p>
   <section id="about-upd" class="ab-upd" aria-label="Updates"></section>
   <div id="about-facts"></div>
 </div>

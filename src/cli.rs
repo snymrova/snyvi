@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[command(
     name = "snyvi",
     version,
-    about = "A fast, beautiful viewer for the documents your agents produce"
+    about = "All your passion projects, in one calm place"
 )]
 struct Cli {
     #[command(subcommand)]
