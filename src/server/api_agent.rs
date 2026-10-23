@@ -654,7 +654,7 @@ pub(crate) async fn pane_brief(
         .filter(|p| p.removed_at == 0)
         .map(|p| p.name)
         .collect();
-    let (threads, waiting, cards, untold) = app
+    let (threads, waiting, cards, untold, ship) = app
         .store
         .clocked(|c, now| {
             Ok((
@@ -665,6 +665,7 @@ pub(crate) async fn pane_brief(
                 crate::thread::waiting_on(c, desk.id, true, now)?,
                 crate::thread::suggestions(c, desk.id)?,
                 crate::told::untold(c, desk.id, now)?,
+                crate::week::ship_line(c, desk.id, now)?,
             ))
         })
         .unwrap_or_default();
@@ -674,6 +675,7 @@ pub(crate) async fn pane_brief(
         waiting: &waiting,
         cards: &cards,
         untold: &untold,
+        ship,
     };
     let context = crate::brief::brief_of(
         &desk,

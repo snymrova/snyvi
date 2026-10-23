@@ -168,7 +168,8 @@ const OLD_1_46_1: &str =
 /// 1.48's columns, taken away again: a 1.47 database.
 const OLD_1_47: &str =
     "ALTER TABLE threads DROP COLUMN told_at; ALTER TABLE threads DROP COLUMN told_url;
-     ALTER TABLE threads DROP COLUMN told_how; ALTER TABLE threads DROP COLUMN ask_told_at;";
+     ALTER TABLE threads DROP COLUMN told_how; ALTER TABLE threads DROP COLUMN ask_told_at;
+     DROP TABLE home_state; ALTER TABLE desks DROP COLUMN rule_asked_at;";
 
 const OLD_1_46_2: &str =
     "ALTER TABLE desk_notes DROP COLUMN due_at; ALTER TABLE desk_notes DROP COLUMN due_rang_at;

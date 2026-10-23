@@ -568,6 +568,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (28, crate::due::TURN_COLUMN_1_47),
     (28, crate::waiting::COLUMNS_1_47), // 1.47: what waits on the reader, Approve (`crate::waiting`)
     (29, crate::told::COLUMNS_1_48), // 1.48: a shipped thread told, where (`crate::told`)
+    (29, crate::week::COLUMNS_1_48), // 1.48: Home's week, a desk's reopen rule (`crate::week`)
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

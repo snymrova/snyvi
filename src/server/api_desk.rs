@@ -62,6 +62,8 @@ pub(crate) async fn home(
         "threads": threads,
         "due": due,
         "wait": wait,
+        // Your week, Sunday 20:00 to Tuesday 06:00 (1.48, `crate::week`).
+        "week": if gated { super::api_week::week_json(&app) } else { serde_json::Value::Null },
         "queue": app.store.queue(5).unwrap_or_default(),
         // Arrived: the newest unread, so Home is still one read.
         "arrived": app.store.queue(ARRIVED).unwrap_or_default(),
@@ -774,7 +776,14 @@ pub(crate) async fn check_desk_note(
     }
     match app
         .store
-        .clocked(|c, now| crate::desk::check_note(c, id, note, b.works, &b.say, now))
+        .clocked(|c, now| {
+            let ok = crate::desk::check_note(c, id, note, b.works, &b.say, now)?;
+            // A second reopen in a week suggests a rule (1.48, `crate::week`).
+            if ok && !b.works {
+                crate::week::reopen_rule(c, id, now)?;
+            }
+            Ok(ok)
+        })
     {
         Ok(true) => {
             notes_moved(&app, id);

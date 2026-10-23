@@ -71,6 +71,9 @@ pub struct Work<'a> {
     pub cards: &'a [Suggestion],
     /// Threads shipped by a merge and not told, with when (`told::untold`).
     pub untold: &'a [(String, i64)],
+    /// What the user said on Sunday they'd ship this week, on this desk,
+    /// and when it is due (`week::ship_line`).
+    pub ship: Option<(String, i64)>,
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -184,6 +187,13 @@ pub fn brief_of(
         ));
     }
     lines.extend(thread_lines(desk, slot, work.threads, work.waiting));
+    if let Some((text, due)) = &work.ship {
+        lines.push(format!(
+            "This week the user said they'd ship: \"{}\" (due {}).",
+            cut(text, LINE_CHARS),
+            crate::due::label(*due, now)
+        ));
+    }
     if !work.untold.is_empty() {
         let named: Vec<String> = work
             .untold
@@ -1288,6 +1298,7 @@ mod tests {
             waiting: &[w],
             cards: &[],
             untold: &[("1.47 dates".into(), -3 * 86_400)],
+            ship: None,
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
         assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");

@@ -50,6 +50,7 @@ mod update;
 mod version;
 mod waiting;
 mod watch;
+mod week;
 mod widget;
 
 /// "1 panel", "3 panels": a count in words, never "panel(s)"

@@ -215,6 +215,11 @@ const CSS = `
 .hm-dk .hm-next { margin: 0; }
 /* This week: the log, folded under the desks until it is asked for. */
 .hm-week > summary { list-style: none; cursor: pointer; }
+.hm-wk-n { margin: 6px 0 10px; color: var(--fg-2); font-size: var(--fs-small); }
+.hm-wk-f { display: grid; grid-template-columns: 9em 1fr auto; align-items: center; gap: 8px; margin: 0 0 6px; font-size: var(--fs-small); }
+.hm-wk-k { color: var(--fg-2); }
+.hm-wk-f input { min-width: 0; padding: 3px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; }
+.hm-wk-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 10px 0 0; }
 .hm-week > summary::-webkit-details-marker { display: none; }
 .hm-week > summary > .s-chev { margin-left: 2px; }
 .hm-week:not([open]) > summary { margin-bottom: 0; }
@@ -614,7 +619,7 @@ function draw(j) {
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
     `<div class="hm-st">${status(j)}</div>` +
-    `<div class="hm-grid"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
+    `<div class="hm-grid"><div class="hm-main">${bar(j)}${yourWeek(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot"><button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
     (n ? ` · ${plural(n, "section")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p>` +
@@ -1025,6 +1030,59 @@ function desksList(j) {
   };
   return `<div class="hm-dks">` + shown.map(card).join("") + `</div>` +
     (more > 0 ? `<button type="button" class="hm-link hm-dks-more" data-hm="desks" aria-expanded="${all}">${all ? "Show fewer desks" : `${more} more ${more === 1 ? "desk" : "desks"}`}</button>` : "") + shelved;
+}
+
+/* Your week (1.48, src/week.rs): from Sunday 20:00 to Tuesday 06:00, one
+ * box above Pick up, there only while the daemon sends `week` -- what
+ * shipped and whether it was told, what waits on you, three numbers, and
+ * three fields that become dated lines. File it, Not this week, or Hide for
+ * good. Its coming moves Pick up down once, on a Sunday evening the page is
+ * drawn for; nothing in it comes and goes while it is up. */
+let wkDraft = null, wkSaid = "";
+function yourWeek(j) {
+  const w = j.week;
+  if (!w) return "";
+  const { esc, plural } = c;
+  const name = id => esc(deskName(j, id));
+  const d = wkDraft && wkDraft.at === w.at ? wkDraft
+    : (wkDraft = { at: w.at, ship: w.ship?.text || "", tell: w.tell?.text || "", drop: w.drop?.text || "" });
+  const shipped = w.shipped.length ? `<ul class="hm-log">${w.shipped.map(t => `<li><span class="hm-g ok"${t.told_at ? "" : ` data-tip="Not told yet"`}>${t.told_at ? "✓" : "○"}</span><span class="hm-t">${esc(t.name)}</span>` +
+    `<span class="fact">${name(t.desk)}${t.told_url ? ` · <a href="${esc(t.told_url)}" target="_blank" rel="noopener" data-tip="${esc(t.told_url)}">told ↗</a>` : t.told_at ? " · told" : " · not told"}</span></li>`).join("")}</ul>`
+    : `<p class="hm-quiet">Nothing shipped this week.</p>`;
+  const n = w.numbers;
+  const nums = [
+    n.ticked ? `${n.without_you} of ${plural(n.ticked, "line")} ticked with nothing asked of you` : "",
+    n.median_s ? `a line to its tick: ${n.median_s < 86400 ? `${Math.max(1, Math.round(n.median_s / 3600))} h` : `${Math.round(n.median_s / 86400)} d`}, the median` : "",
+    n.shipped ? `told ${n.told} of ${n.shipped} shipped in thirty days` : "",
+    w.waited ? `${plural(w.waited, "thing")} waiting on you` : "",
+  ].filter(Boolean);
+  const field = (k, label, ph, p, sub) => p ? `<label class="hm-wk-f"><span class="hm-wk-k">${label}</span><input data-hm="wkf" data-k="${k}" maxlength="200" placeholder="${ph}" value="${esc(d[k])}" aria-label="${label}"><span class="fact" data-tip="${esc(sub)}">${name(p.desk)}</span></label>` : "";
+  const fields = field("ship", "Next week I ship", "what goes out", w.ship, "a line there, due Friday 17:00") +
+    field("tell", "I tell", "who hears of what", w.tell, "a line there, due Monday 10:00") +
+    field("drop", "I drop", "leave empty to keep it", w.drop, "clears that desk's Left off; Undo on the desk");
+  return `<section class="hm-w hm-wk" data-part="home.yourweek" aria-label="Your week"><div class="hm-wh"><h2>Your week</h2>` +
+    `<button type="button" class="hm-hide" data-hm="wkoff" data-tip="Hide Your week" data-tip-sub="for good; the foot's Show brings it back">Hide</button></div>` +
+    shipped + (nums.length ? `<p class="hm-wk-n">${nums.map(esc).join(" · ")}</p>` : "") + fields +
+    `<p class="hm-wk-acts">${fields ? `<button type="button" class="hm-link hm-ok" data-hm="wkgo">File it</button>` : ""}<button type="button" class="hm-link" data-hm="wkskip">${fields ? "Not this week" : "Done"}</button>${weekButton(j)}${wkSaid ? `<span class="hm-s" role="status">${esc(wkSaid)}</span>` : ""}</p></section>`;
+}
+
+/** The box's buttons. True when the click was one of them. */
+async function weekClick(k, b) {
+  if (!["wkgo", "wkskip", "wkoff"].includes(k)) return false;
+  const w = last?.week, d = wkDraft, api = c.deskApi;
+  if (!w) return true;
+  b.disabled = true;
+  try {
+    if (k === "wkgo") {
+      const f = (p, text) => p && text.trim() ? { text: text.trim(), desk: p.desk, thread: p.thread } : null;
+      await api("/api/home/week", { ship: f(w.ship, d.ship), tell: f(w.tell, d.tell) });
+      // Drop is the Left off's own, as Waiting on you's Drop is.
+      if (w.drop && d.drop.trim()) await api(`/api/desks/${w.drop.desk}/leftoff`, { text: "" });
+    } else await api("/api/home/week", { hide: k === "wkoff" ? "off" : "week" });
+    wkSaid = "";
+  } catch (e) { b.disabled = false; wkSaid = "Could not do that · Try again"; draw(last); return true; }
+  soonRefresh();
+  return true;
 }
 
 /** The log, folded at the foot of the page until it is opened, and kept
@@ -1498,10 +1556,11 @@ function wire() {
       if (justParked === id) { justParked = 0; clearTimeout(parkedT); }
       soonRefresh();
     }
-    else if (!(await waitClick(k, id, b))) friendClick(k, id, b);
+    else if (!(await waitClick(k, id, b)) && !(await weekClick(k, b))) friendClick(k, id, b);
   });
   el.addEventListener("input", e => {
     if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
+    else if (e.target.dataset?.hm === "wkf" && wkDraft) wkDraft[e.target.dataset.k] = e.target.value;
     else if (e.target.dataset?.hm === "bar") { barDraft = e.target.value; if (barSaid?.err) { say(null); sayNow(); } hashMenu(e.target); }
     else if (e.target.dataset?.hm === "find" && menu) { menu.q = e.target.value; menu.at = 0; drawMenu(); }
   });

@@ -316,6 +316,13 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    (
+        "POST",
+        "/api/home/week",
+        Some(r#"{"hide":"week"}"#),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/desks/1/keys", None, Gate::Desk, true),
     (
         "POST",
