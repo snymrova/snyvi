@@ -500,7 +500,7 @@
     // All, without the library's size: 620 is the biggest figure in the
     // head and says nothing about today (audit 7c0fc42885). It is the tip.
     const all = `<a class="sec-all" href="/inbox" data-nav="inbox" data-tip="All documents" data-tip-sub="${plural(total, "document")} · what waits, then every project, newest first">All</a>`;
-    const tip = waiting ? ` data-tip="${plural(waiting, "unread document")}" data-tip-sub="Recent lists them first"` : "";
+    const tip = waiting ? ` data-tip="${plural(waiting, "document")} waiting" data-tip-sub="Recent lists them first"` : "";
     const inbox = secHead("inbox", "Inbox", { count: waiting || "", tone: "accent", foldOnly: true, countTip: waiting ? `${waiting} waiting to be read` : "", end: all }) +
       `<a class="t-inbox s-row${waiting ? " new" : ""}" href="/inbox?recent" data-nav="inbox"${tip}>${icon("clock")}<span class="title">Recent</span><span class="n">${waiting || (last ? relShort(last) : "")}</span></a>`;
     if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;

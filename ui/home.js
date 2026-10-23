@@ -1663,7 +1663,10 @@ export async function removedLine(fresh, { view, capability, deskApi, docEl, esc
 }
 
 /** The Inbox's own page, drawn here beside Home: what is waiting first,
- *  then everything, both newest first. */
+ *  then the rest, both newest first, each document once. `/inbox` and the
+ *  sidebar's Recent (`/inbox?recent`) are this one page under their own
+ *  names: they were two, one listing what waits twice, the other saying
+ *  "Unread" (the audit of 1.46.2). */
 export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent, ghost }) {
   style();
   const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
@@ -1674,23 +1677,13 @@ export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag,
   // sentence, one button.
   if (!items.length && !ghost) return `<div class="empty-state"><span class="hero">${mascotHead("rest")}</span><h1>Nothing in the Inbox yet</h1>` +
     `<p>What your agents write lands here, filed by project.</p><button type="button" class="btn btn-primary" data-nav="start">How snyvi works</button></div>`;
-  // What is waiting comes first, newest first, so the landing page answers
-  // "what is new" before "what is there". Its head stands while the ghost
-  // of the last one waiting does, so the list under it does not move up.
-  const n = state.waiting, w = n || ghost?.sec === "waiting";
-  const waitHead = word => `<h2 class="inbox-sec">${word}${n ? `<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button>` : ""}</h2><ul class="inbox waiting">${list("waiting", state.queue)}</ul>`;
-  // Recent is the sidebar's one row for what came: what is unread first, so
-  // Monday's plan is not under ten documents read since, then the rest,
-  // newest first. Each document once: the unread are not listed again.
-  if (recent) {
-    if (!w) return `<div class="inbox-head"><h1>Recent</h1><p>Newest first, across every project.</p></div><ul class="inbox">${list("rest", items)}</ul>`;
-    const held = new Set(state.queue.map(d => d.id));
-    return `<div class="inbox-head"><h1>Recent</h1><p>${plural(n, "document")} unread, then the rest, newest first.</p></div>` + waitHead("Unread") +
-      `<h2 class="inbox-sec">Earlier</h2><ul class="inbox">${list("rest", items.filter(d => !held.has(d.id)))}</ul>`;
-  }
-  return `<div class="inbox-head"><h1>Inbox</h1><p>${n ? `${plural(n, "document")} waiting to be read, then everything else, newest first.` : "Newest first, across every project."}</p></div>` +
-    (w ? waitHead("Waiting") + `<h2 class="inbox-sec">Recent</h2>` : "") +
-    `<ul class="inbox">${list("rest", items)}</ul>`;
+  // What is waiting comes first, so Monday's plan is not under ten
+  // documents read since. Its head stands while the ghost of the last one
+  // waiting does, so the list under it does not move up.
+  const n = state.waiting, w = n || ghost?.sec === "waiting", held = new Set(state.queue.map(d => d.id));
+  return `<div class="inbox-head"><h1>${recent ? "Recent" : "Inbox"}</h1><p>${n ? `${plural(n, "document")} waiting, then the rest, newest first.` : "Newest first, across every project."}</p></div>` +
+    (w ? `<h2 class="inbox-sec">Waiting${n ? `<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button>` : ""}</h2><ul class="inbox waiting">${list("waiting", state.queue)}</ul><h2 class="inbox-sec">Earlier</h2>` : "") +
+    `<ul class="inbox">${list("rest", items.filter(d => !held.has(d.id)))}</ul>`;
 }
 
 

@@ -244,9 +244,9 @@
     landLine: n => { history.replaceState(history.state, "", `${location.pathname}#L${n}`); jumpToHash(); } }), e => { pathsLoading = null; throw e; }));
   addEventListener("keydown", e => { if (e.key === "Control" && capability && !pathsLoading) pathsUse().catch(() => {}); });
 
-  /** The Inbox's page: what waits, then everything newest first -- or, as
-   *  Recent (`/inbox?recent`, the row under the Inbox's head), only the
-   *  newest first. A redraw in place keeps whichever it is. */
+  /** The Inbox's page: what waits, then the rest, newest first. As Recent
+   *  (`/inbox?recent`, the row under the Inbox's head) it is the same page
+   *  under that name. A redraw in place keeps whichever it is. */
   async function showInbox(push = true, recent = push ? false : !!state.recent) {
     if (push) leave();
     offDesk();

@@ -1132,12 +1132,17 @@ async function queueRows(p, url, arrive) {
   await p.clickOn("#inbox-row .t-inbox");
   const recent = await until(`location.search === "?recent" && document.querySelector("#doc h1")?.textContent === "Recent"`);
   const page = await p.ev(`(() => { const t = s => [...document.querySelectorAll(s)].map(a => a.textContent); const un = t("#doc .inbox.waiting .title"), all = [...document.querySelectorAll("#doc .inbox a[data-id]")].map(a => a.dataset.id);
-    return { un, twice: all.length - new Set(all).size, rest: document.querySelectorAll("#doc .inbox:not(.waiting) li").length }; })()`);
+    return { un, twice: all.length - new Set(all).size, rest: document.querySelectorAll("#doc .inbox:not(.waiting) li").length, heads: [...document.querySelectorAll("#doc h2.inbox-sec")].map(h => h.firstChild?.textContent.trim()).join(", ") }; })()`);
   await p.clickOn("#inbox-row .sec-all");
   const whole = await until(`location.search === "" && document.querySelector("#doc h1")?.textContent === "Inbox" && !!document.querySelector("#doc .inbox.waiting")`);
+  // B3 of the audit of 1.46.2: All is the same page, each document once,
+  // under Waiting and Earlier, and neither page says Unread.
+  const allPage = await p.ev(`(() => { const all = [...document.querySelectorAll("#doc .inbox a[data-id]")].map(a => a.dataset.id); return { twice: all.length - new Set(all).size, heads: [...document.querySelectorAll("#doc h2.inbox-sec")].map(h => h.firstChild?.textContent.trim()).join(", ") }; })()`);
   rows.push(["Recent lists the unread first; All is the whole Inbox", recent && page.un.length === 12 && page.un[0] === served[0] && !page.twice && page.rest > 0 && whole,
     !recent ? "Recent did not open /inbox?recent" : page.un.length !== 12 ? `${page.un.length} unread on Recent` : page.un[0] !== served[0] ? `"${page.un[0]}" first, not the newest`
       : page.twice ? `${page.twice} listed twice` : !page.rest ? "nothing under the unread" : !whole ? "All did not open the Inbox with what waits" : `Recent: 12 unread, newest first, then ${page.rest} more, each once; All at /inbox`]);
+  rows.push(["each document once on both Inbox pages, Waiting then Earlier", !allPage.twice && allPage.heads === "Waiting, Earlier" && page.heads === "Waiting, Earlier",
+    allPage.twice ? `${allPage.twice} listed twice on /inbox` : `/inbox heads "${allPage.heads}", Recent "${page.heads}"`]);
   await p.goto(url);
   await until(`!document.querySelector("#queue-bar").hidden`);
 
