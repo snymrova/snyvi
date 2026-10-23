@@ -314,7 +314,16 @@ pub(crate) async fn pane_notes(
                     .map(|x| dir.join(x).to_string_lossy().to_string())
                     .collect();
             }
-            Json(json!({ "desk": placed.desk_name, "notes": notes })).into_response()
+            // A date, as the reader says it, in the daemon's offset: the MCP
+            // process has none of its own to read it in.
+            let now = crate::store::now();
+            let mut v = json!(notes);
+            for n in v.as_array_mut().into_iter().flatten() {
+                if let Some(at) = n.get("due_at").and_then(serde_json::Value::as_i64) {
+                    n["due"] = json!(crate::due::label(at, now));
+                }
+            }
+            Json(json!({ "desk": placed.desk_name, "notes": v })).into_response()
         }
         Err(e) => err(e),
     }
@@ -876,6 +885,9 @@ pub(crate) struct AgentLeftOffBody {
     /// The agent's name, as its MCP client gave it.
     #[serde(default)]
     pub(crate) by: String,
+    /// Whose the next step is: `you`, `claude`, `time` (`crate::waiting`).
+    #[serde(default)]
+    pub(crate) needs: String,
 }
 
 /// An agent says where it left the work on its own desk: `leave_off`. The
@@ -909,6 +921,8 @@ pub(crate) async fn pane_left_off(
         by,
         about: b.about,
         pane: id.clone(),
+        needs: b.needs,
+        ok_at: 0,
     };
     match app.store.set_left_off(placed.desk_id, &to) {
         Ok(Some(_)) => {
@@ -926,6 +940,9 @@ pub(crate) struct SuggestBody {
     pub(crate) text: String,
     #[serde(default)]
     pub(crate) by: String,
+    /// When it is due, in the user's words: `fri 10` (`crate::due::parse`).
+    #[serde(default)]
+    pub(crate) due: String,
 }
 
 /// An agent suggests a line for its own desk's list: `suggest_desk_note`. It
@@ -941,9 +958,22 @@ pub(crate) async fn pane_suggest_note(
         Err(no) => return *no,
     };
     match app.store.suggest_desk_note(placed.desk_id, &b.text, &b.by) {
-        Ok(crate::desk::Suggested::Note(note)) => {
+        Ok(crate::desk::Suggested::Note(mut note)) => {
+            // A `due` that is no date is said back rather than dropped
+            // quietly: the line is there, without one.
+            let mut said = serde_json::Value::Null;
+            if !b.due.trim().is_empty() {
+                let now = crate::store::now();
+                match crate::due::parse(&b.due, now) {
+                    Some(at) => {
+                        let _ = app.store.clocked(|c, now| crate::due::set(c, placed.desk_id, note.id, at, now));
+                        note.due_at = at;
+                    }
+                    None => said = json!(format!("\"{}\" is not a date snyvi reads (try `fri 10`, `tomorrow`, `in 3 days`, `28 oct`); the line has none", b.due.trim())),
+                }
+            }
             notes_moved(&app, placed.desk_id);
-            (StatusCode::CREATED, Json(json!({ "note": note, "desk": placed.desk_name }))).into_response()
+            (StatusCode::CREATED, Json(json!({ "note": note, "desk": placed.desk_name, "due_error": said }))).into_response()
         }
         Ok(crate::desk::Suggested::Empty) => (
             StatusCode::BAD_REQUEST,

@@ -390,6 +390,8 @@
     else if (w === "connect") connectClaude(b);
     // A friend's buttons in a document's head: Send to…, Keep on a desk…, Save.
     else if (w === "send") peerUse().then(m => m.head(peerCtx, b), () => toast("Could not open that"));
+    // Approve on a plan's head (1.47): ui/plan.js, on the first press.
+    else if (w === "plan") chunk("plan").then(m => m.press(b, deskApi, state.cache));
     // A song or a video is a button until it is pressed, its player waiting
     // inert in the template beside it (render.rs `player`, #117 #120): the
     // press puts the player in the button's box, plays it and hands it the

@@ -580,6 +580,12 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    quiet; each a word, so the line under the text keeps its one height. */
 .dk-meta .dk-marks > .dk-chk { font-weight: 600; }
 .dk-meta .dk-marks > .dk-chk.ok { color: var(--accent); }
+.dk-meta .dk-marks > .dk-due.now { color: var(--accent); font-weight: 600; }
+.dk-meta .dk-marks > .dk-due.late { color: var(--warn); font-weight: 600; }
+.dk-meta .dk-marks > .dk-stage.planned.ok { color: var(--ok); }
+.dk-note > .dk-due-pop { position: absolute; z-index: var(--z-pop, 30); top: calc(100% - 2px); left: 27px; display: grid; gap: 1px; min-width: 140px; padding: 4px; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-due-pop > button { height: 24px; padding: 0 8px; border-radius: var(--r-xs); text-align: left; font-size: var(--fs-micro); color: var(--fg-2); }
+.dk-due-pop > button:hover, .dk-due-pop > button:focus-visible { background: var(--rule); color: var(--fg); }
 .dk-meta .dk-marks > .dk-chk:hover { text-decoration: underline; }
 .dk-meta .dk-marks > .dk-chk:not(.ok) { font-weight: 400; color: var(--fg-2); }
 /* Reopened: the reader said it is still broken. */

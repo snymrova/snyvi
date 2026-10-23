@@ -12,6 +12,7 @@ mod client;
 mod config;
 mod desk;
 mod desktop;
+mod due;
 mod frontmatter;
 mod gh;
 mod git;
@@ -45,6 +46,7 @@ mod text;
 mod thread;
 mod update;
 mod version;
+mod waiting;
 mod watch;
 mod widget;
 

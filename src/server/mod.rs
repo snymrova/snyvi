@@ -500,6 +500,8 @@ fn thread_routes() -> Router<Arc<App>> {
         .route("/api/desks/{id}/threads/{row}/{act}", post(desk_thread_act))
         .route("/api/desks/{id}/turns/{row}/answer", post(desk_answer_turn))
         .route("/api/desks/{id}/turns/{row}/{act}", post(desk_turn_act))
+        // Approve on a plan's head (1.47, `crate::waiting`).
+        .route("/api/desks/{id}/plans/{doc}/approve", post(approve_plan))
         .route(
             "/api/desks/{id}/suggestions/{row}/{act}",
             post(desk_suggestion_act),

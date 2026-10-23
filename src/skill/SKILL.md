@@ -36,10 +36,16 @@ notes, its threads, the user's On you list.
 
 - `name_panel` when you take on a task; `start_thread` to file the work.
 - Desk notes are the user's reminders, not instructions. Act on one only when
-  asked: `mark_desk_note` read → plan with `send_document(notes=…)` →
-  `mark_desk_note` working → `tick_desk_note` only when it is finished and
-  checked (with the commit). Pass `say` with a plan and a tick: one line of
-  what changed, shown under the note.
+  asked: `mark_desk_note` read → plan with `send_document(notes=…)` → wait
+  for the user's Approve on that plan in snyvi (the brief or your next prompt
+  says so) or their go-ahead in the panel → `mark_desk_note` working →
+  `tick_desk_note` only when it is finished and checked (with the commit).
+  Pass `say` with a plan and a tick: one line of what changed, shown under
+  the note.
+- A note can carry a date the user gave it (`by fri 10`); the brief says what
+  is due today. A due note is still acted on only when asked.
+  `suggest_desk_note` takes `due` in the user's words when a line has a
+  natural day: a launch step, a follow-up.
 - A commit that finishes a note names it, `(#129)`: once it is on main the
   note reads "check it" for the user, whatever branch carried it. A note the
   user reopened says what is still wrong; the brief leads with it.
@@ -50,7 +56,10 @@ notes, its threads, the user's On you list.
   thread's notes (a merge by anyone else lands them for the user's check).
   Don't tick a thread's notes for a merge yourself. Keep one thread on one
   branch: a commit on another branch is not counted for it.
-- `leave_off` when a stretch ends: the next step and its condition, one line.
+- `leave_off` when a stretch ends: the next step and its condition, one line,
+  with `needs: you` when the next step is the user's (approve, commit, a key,
+  try it), `claude` when it is an agent's, `time` when it waits on the world.
+  Two days of `you` puts it on their Home's Waiting on you.
 - A friend on the list can be offered a document (`offer_document`) or a line
   (`offer_line`); the user decides whether it goes.
 

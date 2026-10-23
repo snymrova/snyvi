@@ -602,7 +602,7 @@ function noteRow(x, esc) {
   // A ticked line keeps its number and its pictures under it; where its
   // work went -- the commit, the PR -- is its tip and its menu, since a done
   // line is history and they were the loudest marks on it (7c0fc42885).
-  const marks = x.done ? picMark(x, esc) + tell(x, esc) : stageMark(x, esc) + picMark(x, esc);
+  const marks = x.done ? picMark(x, esc) + tell(x, esc) : stageMark(x, esc) + dueMark(x, esc) + picMark(x, esc);
   const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
@@ -611,7 +611,7 @@ function noteRow(x, esc) {
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
     replyLine(x, esc) +
     `<span class="dk-meta"><button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button>` +
-    `<span class="dk-marks">${marks}</span></span>` +
+    `<span class="dk-marks">${marks}</span></span>` + duePop(x, esc) +
     // A friend's open line says whose it is, on a line of its own; ticked,
     // its "Tell Trapti ✓" is one of the marks above.
     // Their initial, in their colour, as everywhere a friend shows (#123).
@@ -686,8 +686,13 @@ function stageMark(x, esc) {
   // quieter, so a line nobody followed up does not look under way.
   const old = (st === "planned" || st === "read") && x.stage_at && Date.now() / 1000 - x.stage_at > STALE_S;
   const age = old ? ` · ${ctx.relShort(x.stage_at)}` : "", dim = old ? " stale" : "";
+  // Approved by the reader on the plan's head (1.47): a tick after the word,
+  // and its panel goes ahead.
+  if (st === "planned" && x.stage_doc && x.ok_at) {
+    return `<button type="button" class="dk-stage planned ok" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}, approved by you ${esc(ctx.relShort(x.ok_at))}" data-tip-sub="its panel goes ahead · click to open the plan" aria-label="Open the approved plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned ✓</span></button>`;
+  }
   if (st === "planned" && x.stage_doc) {
-    return `<button type="button" class="dk-stage planned${dim}" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="${old ? "nothing since · " : ""}click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned${age}</span></button>`;
+    return `<button type="button" class="dk-stage planned${dim}" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="${old ? "nothing since · " : ""}click to open the plan, and Approve it there" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned${age}</span></button>`;
   }
   if (st === "working") {
     // The dot breathes only while that agent is at it; between its turns
@@ -703,6 +708,44 @@ function stageMark(x, esc) {
   }
   if (st === "read" || st === "planned") return `<span class="dk-stage read${dim}" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet${old ? " · nothing since" : ""}" aria-label="Read by ${by}"><span class="w">read${age}</span></span>`;
   return "";
+}
+
+/* ---------- a date on a line (1.47) ----------
+ *
+ * Written at the end of the line -- "post the note by fri 10" -- and read by
+ * the daemon, which keeps it as `due_at` and takes the words off the text
+ * (src/due.rs). Here it is one word under the line, after its stage: the
+ * day, today in the accent, overdue in the warn colour, never red. A click
+ * opens a few times to move it to, over the rows below, so nothing moves.
+ */
+
+/** A line's date in one word, and its tone. */
+function dueWord(at) {
+  const now = Date.now() / 1000, d = new Date(at * 1000), t = new Date();
+  if (at <= now) { const h = (now - at) / 3600; return { w: h < 1 ? "due now" : h < 24 ? `overdue ${h | 0} h` : `overdue ${h / 24 | 0} d`, tone: " late" }; }
+  const hm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(t.getFullYear(), t.getMonth(), t.getDate())) / 864e5);
+  if (days === 0) return { w: `today ${hm}`, tone: " now" };
+  if (days === 1) return { w: `tomorrow ${hm}`, tone: "" };
+  return { w: `due ${d.toLocaleDateString([], days < 7 ? { weekday: "short" } : { day: "numeric", month: "short" })}`, tone: "" };
+}
+const dueWhen = at => new Date(at * 1000).toLocaleString([], { weekday: "long", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+function dueMark(x, esc) {
+  if (!x.due_at) return "";
+  const { w, tone } = dueWord(x.due_at);
+  return `<button type="button" class="dk-due${tone}" data-a="note-due" data-n="${x.id}" aria-expanded="${dueOpen === x.id}" data-tip="Due ${esc(dueWhen(x.due_at))}" data-tip-sub="a card rises then · click to move it" aria-label="Due ${esc(dueWhen(x.due_at))}: move it">${esc(w)}</button>`;
+}
+
+/** Where a date can move to: the words the daemon reads, as the menu says them. */
+const DUE_TO = [["tonight", "This evening"], ["tomorrow 9", "Tomorrow 9:00"], ["mon 9", "Monday 9:00"], ["next week", "Next week"]];
+
+function duePop(x, esc) {
+  if (dueOpen !== x.id) return "";
+  const late = new Date().getHours() >= 19;
+  return `<span class="dk-due-pop" role="menu" aria-label="Move ${esc(x.text)}">` +
+    DUE_TO.filter(([w]) => !(late && w === "tonight")).map(([w, l]) => `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="${w}">${l}</button>`).join("") +
+    `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="" data-tip="No date" data-tip-sub="the line stays">No date</button></span>`;
 }
 
 /** How long a plan or a read stands with nothing since before it says so. */

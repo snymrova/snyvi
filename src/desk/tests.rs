@@ -10,6 +10,8 @@ fn db() -> Connection {
     conn.execute_batch(SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::thread::THREAD_COLUMN).unwrap();
     conn.execute_batch(LOOP_COLUMNS_1_37).unwrap();
+    conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
     conn.execute_batch(crate::links::COLUMN_1_43).unwrap();
     conn.execute_batch(crate::accounts::SCHEMA).unwrap();
     for c in crate::accounts::COLUMNS_1_30 {
@@ -1160,6 +1162,7 @@ fn left_off_is_one_line_and_hands_back_the_one_before() {
         by: "claude-code".into(),
         about: "82CC8F2D3C".into(),
         pane: "p1".into(),
+        ..LeftOff::default()
     };
     assert_eq!(set_left_off(&conn, d, &first).unwrap(), Some(None));
     let got = get(&conn, d).unwrap().unwrap().left_off.unwrap();

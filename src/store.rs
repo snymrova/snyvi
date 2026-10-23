@@ -535,16 +535,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (12, peer::COLUMNS_1_25[1]),
     (12, peer::COLUMNS_1_25[2]),
     (12, peer::COLUMNS_1_25[3]),
-    // 1.26: when a panel last took a thread up, so a click on the rail never
-    // takes a panel's thread from it (`thread::TAKEN_COLUMN`).
-    (13, thread::TAKEN_COLUMN),
+    (13, thread::TAKEN_COLUMN), // 1.26: when a panel last took a thread up
     (13, thread::TAKEN_FILL),
     // 1.30: the Claude account a desk and a panel start as (`accounts::COLUMNS_1_30`).
     (14, accounts::COLUMNS_1_30[0]),
     (14, accounts::COLUMNS_1_30[1]),
     (14, accounts::COLUMNS_1_30[2]),
-    // 1.30 too: the questions an agent asked as one card (#110).
-    (15, thread::GROUP_COLUMN),
+    (15, thread::GROUP_COLUMN), // 1.30 too: the questions an agent asked as one card (#110)
     // 1.30: widgets on chosen desks, for a chosen while, and their card (#111).
     (16, widget::PREFS_COLUMNS_1_30[0]),
     (16, widget::PREFS_COLUMNS_1_30[1]),
@@ -571,6 +568,9 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (25, thread::AWAY_COLUMN_1_44), // 1.44: why an agent put an On you card away
     (26, widget::PROPOSED_BY_1_46), // 1.46: which pane proposed a widget file
     (27, desk::NAME_BY_COLUMNS_1_46), // 1.46.2: who named a pane, the reader or its agent (#176)
+    (28, crate::due::COLUMNS_1_47), // 1.47: a date on a line, its card (`crate::due`)
+    (28, crate::due::TURN_COLUMN_1_47),
+    (28, crate::waiting::COLUMNS_1_47), // 1.47: what waits on the reader, Approve (`crate::waiting`)
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

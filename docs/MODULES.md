@@ -60,6 +60,8 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/session.rs` | 128 | session id ↔ cwd/pane bookkeeping shared by hook and MCP |
 | `src/statusline.rs` | 514 | Claude Code status line: feeds the panel, prints its line in a desk panel |
 | `src/links.rs` | 252 | a desk's links in the rail's foot (`pin_link`) |
+| `src/due.rs` | 530 | a date on a line (1.47): the tail grammar (`by fri 10`), the local offset read once, the clock that raises one `due` card at the hour, its Done and Later |
+| `src/waiting.rs` | 198 | what waits on the reader (1.47): `needs` on a left-off, Approve on a plan and on a left-off, Home's Waiting on you rows |
 | `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |
 | `src/agents.rs` | 1157 | the registry: claude, codex, cursor, gemini; what each has |
 | `src/client.rs` | 1153 | CLI/MCP → daemon over HTTP with the token; starts the daemon if needed |
@@ -95,6 +97,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/corner.js` | 743 | lazy | the corner on every page: the card that rises, the pill, the tray (On you and Lately), snyvi's own lines, the chime; a desk's corner draws its parts (`docs/DESIGN.md` §4.5) |
 | `ui/palette.js` | 304 | lazy | ⌘K |
 | `ui/player.js` | 114 | lazy | a song's own controls, and one player sounding at a time; fetched on the first press |
+| `ui/plan.js` | 34 | lazy | Approve on a plan's head (1.47); fetched on the first press |
 | `ui/toast.js`, `ui/tip.js`, `ui/keys.js`, `ui/paths.js`, `ui/frame.js`, `ui/find.js`, `ui/browse.js`, `ui/diff.js` | < 200 each | lazy | one thing each |
 
 ## Benches (`bench/`)

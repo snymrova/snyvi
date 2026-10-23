@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (await filedAct(a, b, d) || keysAct(a, b, d))) return;
+    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || await dueAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -174,6 +174,28 @@ async function act(b, byKey) {
         () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))))) await getNotes(d.id, true);
     }
   } catch (e) { ctx.toast(`Could not ${VERB[a] || "do it"}`, e); }
+}
+
+/** A line's date (1.47): its chip opens a few times to move it to, and one
+ *  of them tells the daemon, which reads the words (src/due.rs). Any other
+ *  press closes the menu. False for what is not the date's. */
+async function dueAct(a, b, d) {
+  if (a !== "note-due" && a !== "note-due-set") { dueOpen = 0; return false; }
+  const x = noteList.find(y => y.id === +b.dataset.n);
+  if (a === "note-due") {
+    dueOpen = dueOpen === x?.id ? 0 : x?.id || 0;
+    rail();
+    if (dueOpen) ctx.tocEl.querySelector(".dk-due-pop button")?.focus();
+    return true;
+  }
+  dueOpen = 0;
+  if (!x) return true;
+  const was = x.due_at;
+  if (!b.dataset.w) x.due_at = 0;
+  rail();
+  if (await told(b.dataset, `n${x.id}`, "Could not move it", () => { x.due_at = was; },
+    () => ctx.api(`/api/desks/${d.id}/notes/${x.id}`, { due: b.dataset.w }))) await getNotes(d.id, true);
+  return true;
 }
 
 /** What each of the rail's other buttons was asked to do, for its error. */

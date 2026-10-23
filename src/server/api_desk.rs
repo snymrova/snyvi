@@ -36,25 +36,32 @@ pub(crate) async fn home(
     // On you across desks, each marked fresh or stale, and the threads by
     // stage (`crate::thread`): behind the same gate as the desks they are
     // on. What has waited three days is put away first.
-    let (turns, threads) = if gated {
+    // And what is due by the end of the reader's day, and what has waited
+    // on them long enough to say so (`crate::due`, `crate::waiting`).
+    let null = serde_json::Value::Null;
+    let (turns, threads, due, wait) = if gated {
         app.store
             .clocked(|c, now| {
                 crate::thread::retire(c, now)?;
                 Ok((
                     crate::thread::waiting(c, now)?,
                     crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN)?,
+                    crate::due::due_by(c, crate::due::end_of_day(now))?,
+                    crate::waiting::rows(c, now)?,
                 ))
             })
-            .map(|(t, th)| (json!(t), json!(th)))
-            .unwrap_or((serde_json::Value::Null, serde_json::Value::Null))
+            .map(|(t, th, du, w)| (json!(t), json!(th), json!(du), json!(w)))
+            .unwrap_or((null.clone(), null.clone(), null.clone(), null))
     } else {
-        (serde_json::Value::Null, serde_json::Value::Null)
+        (null.clone(), null.clone(), null.clone(), null)
     };
     Json(json!({
         "desks": desks,
         "days": days,
         "turns": turns,
         "threads": threads,
+        "due": due,
+        "wait": wait,
         "queue": app.store.queue(5).unwrap_or_default(),
         // Arrived: the newest unread, so Home is still one read.
         "arrived": app.store.queue(ARRIVED).unwrap_or_default(),
@@ -132,6 +139,7 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                 .map(|n| json!({ "id": n.id, "text": n.text, "stage": n.stage, "stage_by": n.stage_by,
                     "stage_doc": n.stage_doc, "stage_panel": n.stage_panel,
                     "landed_commit": n.landed_commit, "reply": n.reply, "reply_by": n.reply_by,
+                    "due_at": n.due_at, "ok_at": n.ok_at,
                     // Its dot breathes only while the agent is at it.
                     "stage_busy": n.stage == "working" && app.panes.status(&n.stage_pane).agent == "working" }))
                 .collect();
@@ -342,6 +350,10 @@ pub(crate) struct NoteEditBody {
     pub(crate) text: Option<String>,
     #[serde(default)]
     pub(crate) done: Option<bool>,
+    /// A date on its own, in the reader's words (`crate::due::parse`), or
+    /// empty to clear it: the chip's menu.
+    #[serde(default)]
+    pub(crate) due: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -692,12 +704,46 @@ pub(crate) async fn set_desk_note(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
+    if let Some(words) = b.due.as_deref() {
+        return set_due(&app, id, note, words);
+    }
     match app.store.set_desk_note(id, note, b.text.as_deref(), b.done) {
         Ok(true) => {
             notes_moved(&app, id);
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// A line's date from the chip's menu: words the daemon reads
+/// (`crate::due::parse`), or empty to clear. A date it cannot read is said
+/// back, so the menu's "pick a time" can say why.
+fn set_due(app: &App, desk: i64, note: i64, words: &str) -> Response {
+    let words = words.trim();
+    let r = app.store.clocked(|c, now| {
+        let at = if words.is_empty() {
+            0
+        } else {
+            match crate::due::parse(words, now) {
+                Some(at) => at,
+                None => return Ok(None),
+            }
+        };
+        Ok(Some((crate::due::set(c, desk, note, at, now)?, at)))
+    });
+    match r {
+        Ok(Some((true, at))) => {
+            notes_moved(app, desk);
+            Json(json!({ "ok": true, "due_at": at })).into_response()
+        }
+        Ok(Some((false, _))) => StatusCode::NOT_FOUND.into_response(),
+        Ok(None) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("\"{words}\" is not a time snyvi reads: try fri 10, tomorrow, in 3 days, 28 oct") })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
@@ -973,17 +1019,89 @@ pub(crate) async fn desk_left_off(
     headers: HeaderMap,
     Path(id): Path<i64>,
     Query(q): Query<std::collections::HashMap<String, String>>,
-    Json(b): Json<crate::desk::LeftOff>,
+    Json(b): Json<LeftOffBody>,
 ) -> Response {
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.set_left_off(id, &b) {
+    // Home's Approve and *On me* change the sentence's standing, not the
+    // sentence (`crate::waiting`).
+    let standing = match (b.approve, b.mark.as_deref()) {
+        (Some(yes), _) => Some(
+            app.store
+                .clocked(|c, now| crate::waiting::approve_left_off(c, id, !yes, now)),
+        ),
+        (None, Some(needs)) => Some(
+            app.store
+                .clocked(|c, _| crate::waiting::set_needs(c, id, needs)),
+        ),
+        (None, None) => None,
+    };
+    if let Some(r) = standing {
+        return match r {
+            Ok(true) => {
+                desks_moved(&app);
+                Json(json!({ "ok": true })).into_response()
+            }
+            Ok(false) => StatusCode::NOT_FOUND.into_response(),
+            Err(e) => err(e),
+        };
+    }
+    match app.store.set_left_off(id, &b.left) {
         Ok(Some(was)) => {
             desks_moved(&app);
             Json(json!({ "ok": true, "was": was })).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// The desk head's sentence, or Home's word on it: `approve` (false takes
+/// an Approve back) or `mark` (whose the next step is) leave the sentence
+/// as it is.
+#[derive(Deserialize)]
+pub(crate) struct LeftOffBody {
+    #[serde(flatten)]
+    pub(crate) left: crate::desk::LeftOff,
+    #[serde(default)]
+    pub(crate) approve: Option<bool>,
+    #[serde(default)]
+    pub(crate) mark: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct ApproveBody {
+    #[serde(default)]
+    pub(crate) undo: bool,
+}
+
+/// Approve on a plan's head (`crate::waiting::approve_plan`): every open
+/// line on the desk whose plan the document is. Its panel hears it at its
+/// next prompt; snyvi starts nothing.
+pub(crate) async fn approve_plan(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, doc)): Path<(i64, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<ApproveBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if !crate::desk::doc_ok(&doc) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let doc = doc.to_ascii_lowercase();
+    match app
+        .store
+        .clocked(|c, now| crate::waiting::approve_plan(c, id, &doc, b.undo, now))
+    {
+        Ok(notes) if notes.is_empty() => StatusCode::NOT_FOUND.into_response(),
+        Ok(notes) => {
+            notes_moved(&app, id);
+            Json(json!({ "ok": true, "notes": notes })).into_response()
+        }
         Err(e) => err(e),
     }
 }
