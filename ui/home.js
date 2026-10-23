@@ -132,6 +132,7 @@ const CSS = `
 .hm-next li { display: flex; align-items: center; gap: 8px; min-height: 24px; min-width: 0; }
 .hm-nt-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-nt.done .hm-nt-t { color: var(--fg-3); text-decoration: line-through; }
+.hm-nt > .r-who { flex: none; display: inline-grid; width: 14px; height: 14px; margin-right: 2px; }
 .hm-next .hm-s a { color: inherit; }
 .hm-next .hm-s a:hover { color: var(--fg); }
 .hm-tick { position: relative; flex: none; display: grid; place-items: center; width: 12px; height: 12px; padding: 0; border: 0; border-radius: 50%; background: none; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; cursor: pointer; transition: box-shadow var(--t), background var(--t); }
@@ -833,7 +834,8 @@ function notesOf(d, max) {
   if (!rows.length) return d.done ? `<p class="hm-s hm-done">Notes done · ${d.done} of ${d.done}</p>` : "";
   return `<ul class="hm-next" aria-label="Open notes on ${esc(d.name)}">` + rows.map(r =>
     `<li class="hm-nt${r.done ? " done" : ""}"><button type="button" class="hm-tick" role="checkbox" aria-checked="${r.done}" data-hm="tick" data-k="${d.id}" data-n="${r.id}" aria-label="${r.done ? "Done" : "Not done"}: ${esc(r.text)}">${r.done ? TICK : ""}</button>${stageMark(r)}` +
-    `<span class="hm-nt-t" data-tip="${esc(r.text)}"${r.reply ? ` data-tip-sub="${esc(`${r.reply_by || "you"}: ${r.reply}`)}"` : " data-tip-overflow"}>${esc(r.text)}</span>${!r.done && r.due_at ? dueChip(r.due_at) : ""}${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
+    // A friend's line wears their face and keeps its link, as on the desk (F21).
+    `${r.sent_by ? c.who(r.sent_by) : ""}<span class="hm-nt-t" data-tip="${esc(r.text)}"${r.reply ? ` data-tip-sub="${esc(`${r.reply_by || "you"}: ${r.reply}`)}"` : r.sent_by ? ` data-tip-sub="from ${esc(r.sent_by)}"` : " data-tip-overflow"}>${r.sent_by ? linkedLine(r.text, esc) : esc(r.text)}</span>${!r.done && r.due_at ? dueChip(r.due_at) : ""}${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
     (more > 0 ? `<li class="hm-s hm-nt-more"><a href="/desk/${d.id}" data-desk="${d.id}">and ${more} more</a></li>` : "") + `</ul>`;
 }
 /** A line's stage, in the slot every line keeps: the server has already

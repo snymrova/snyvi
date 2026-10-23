@@ -611,7 +611,9 @@ function noteRow(x, esc) {
     return `<li class="dk-note dk-sug"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span>` +
       (x.sent_by ? ctx.who(x.sent_by, `From ${x.sent_by}`) : "") +
       `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${linked(x.text, esc)}</span>` +
-      `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
+      // A friend's dated line keeps their words and wears its date (F7):
+      // said, not a button, until it is kept and the date is the reader's.
+      `<span class="dk-sug-tools">${x.due_at ? (({ w, tone }) => `<span class="dk-due${tone}" data-tip="Due ${esc(dueWhen(x.due_at))}">${esc(w)}</span>`)(dueWord(x.due_at)) : ""}<button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
       `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc) + all;
   }
   // A line is two lines at most; the whole of it is its tip, and rewriting
@@ -986,11 +988,12 @@ function copySha(b, said = "copied") {
 }
 
 /** A friend's line, ticked: one press tells them (pairing's second cut),
- *  at the end of the line under it, so nothing moves. */
+ *  at the end of the line under it, so nothing moves. Drawn as Keep is,
+ *  since it is a thing to press and not a word about the line (F19). */
 function tell(x, esc) {
   if (!x.done || !x.tellable) return "";
   return x.told ? `<span>told ✓</span>`
-    : `<button type="button" data-a="note-tell" data-n="${x.id}" data-tip="Tell ${esc(x.sent_by)} it is done" data-tip-sub="${esc(x.done_commit ? `with ${x.done_commit.slice(0, 7)}` : "one line back to them")}">Tell ${esc(x.sent_by)} ✓</button>`;
+    : `<button type="button" class="dk-keep dk-tell" data-a="note-tell" data-n="${x.id}" data-tip="Tell ${esc(x.sent_by)} it is done" data-tip-sub="${esc(x.done_commit ? `with ${x.done_commit.slice(0, 7)}` : "one line back to them")}">Tell ${esc(x.sent_by)} ✓</button>`;
 }
 
 /** Where a ticked line's work went, in words for its tip: the commit and
@@ -1156,6 +1159,15 @@ async function promise(d, x, f) {
   try { await ctx.api(`/api/peers/${f.id}/note`, { text: x.text, note: x.id, due_at: x.due_at }); }
   catch (e) { promisedTo.delete(x.id); rail(); ctx.toast(`Could not promise it to ${f.name}`, e); return; }
   getNotes(d.id, true);
+}
+/** Send to…: the line as it stands, to that friend, a line for their list
+ *  -- not a promise; from the desk where it was written, not only from
+ *  Home's Note… (audit 6f451571c6, F20). Said in a toast, as Copy is. */
+async function sendLine(x, f) {
+  let r;
+  try { r = await ctx.api(`/api/peers/${f.id}/note`, { text: x.text }); }
+  catch (e) { ctx.toast(`Could not send it to ${f.name}`, e); return; }
+  ctx.toast(r?.sent ? `Sent to ${f.name}` : `Waiting for ${f.name}; it goes when they can be reached`, x.text);
 }
 
 /** A desk's list changed -- an agent ticked or suggested a line, or another
