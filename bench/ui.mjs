@@ -296,6 +296,7 @@ async function main() {
     await section("a widget's box, failing and long", () => widgetBoxRows(cdp, base, tmp));
     await section("the keys sheet: Claude as, then keys", () => keysSheetRows(cdp, base));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
+    await section("panels in the back: a chip, a drawer, one that dies", () => backPanelRows(cdp, base));
     await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -3929,6 +3930,69 @@ async function panelRows(cdp, base, token) {
  *  cards rise above it and move nothing; focus follows a settled pointer
  *  when asked to, and a sweep takes nothing; a run in steps is one card,
  *  stepped through in order. */
+/* 1.49: panels in the back (ui/desk/18-back.js). A dev server leaves the
+ * grid for a chip in the desk's head; the drawer it opens is laid out all
+ * along, so opening it moves nothing; one that dies there needs the reader. */
+async function backPanelRows(cdp, base) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const slotOf = async (desk, pane) => { const j = await (await fetch(`${base}/api/desks`, { headers: H })).json(); return j.desks.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot; };
+  const d = await post("/api/desks", { name: "the back" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  const front = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  const server = (await post(`/api/desks/${desk}/panes`, { back: true })).pane;
+  await post(`/api/panes/${front}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  await post(`/api/panes/${server.id}/start`, { cmd: `echo serving; while :; do ${sleepBin} 1; done` });
+  let dies = null;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const chip = id => `.dk-tabs .dk-back .dk-chip[data-drawer="${id}"]`;
+  const box = sel => `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r ? [r.x, r.y, r.width, r.height].map(Math.round).join(",") : ""; })()`;
+  try {
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    const chipped = await until(`!!document.querySelector('${chip(server.id)}') && document.querySelectorAll(".dk-grid > .pn").length === 1`);
+    const shut = await q.ev(`!document.querySelector(".dk-drawer")?.classList.contains("open")`);
+    rows.push(["a panel in the back is a chip, not a slot", server.slot > 4 && chipped && shut,
+      server.slot <= 4 ? `it opened in slot ${server.slot}, in the grid` : !chipped ? "no chip in the head, or it took a place in the grid" : !shut ? "the drawer opened on its own" : `slot ${server.slot}: a chip in the head, the grid holds the one panel`]);
+
+    const grid = await q.ev(box(".dk-grid")), inBack = await q.ev(box(`.dk-drawer .pn[data-id="${server.id}"]`));
+    await q.ev(`document.querySelector('${chip(server.id)}').click(); 1`);
+    const opened = await until(`document.querySelector(".dk-drawer")?.classList.contains("open")`);
+    await sleep(200);
+    const grid2 = await q.ev(box(".dk-grid")), inBack2 = await q.ev(box(`.dk-drawer .pn[data-id="${server.id}"]`));
+    rows.push(["the drawer opens over the grid and moves nothing", opened && !!inBack && grid2 === grid && inBack2 === inBack,
+      !opened ? "the chip opened no drawer" : !inBack ? "the panel was not laid out in the drawer while it was shut" : grid2 !== grid ? `the grid moved: ${grid} to ${grid2}` : inBack2 !== inBack ? `the panel took a new size: ${inBack} to ${inBack2}` : `the grid at ${grid}, the panel at ${inBack}, before and after`]);
+    await q.ev(`document.querySelector(".dk-drawer .dk-dr-x")?.click(); 1`);
+    const closed = await until(`!document.querySelector(".dk-drawer").classList.contains("open")`);
+    rows.push(["and its ✕ shuts it", closed, closed ? "shut, the chip still in the head" : "the drawer stayed open"]);
+
+    // A dev server that falls over while nobody looks: the chip and the
+    // desk's row say so, as any panel that needs its reader does.
+    dies = (await post(`/api/desks/${desk}/panes`, { back: true })).pane.id;
+    await post(`/api/panes/${dies}/start`, { cmd: `${sleepBin} 1; echo 'Error: port taken'; exit 3` });
+    const died = await until(`!!document.querySelector('${chip(dies)}.blk') && !!document.querySelector('a[data-desk="${desk}"] .dot.blk')`, 100);
+    const hint = died ? "" : await q.ev(`(document.querySelector('${chip(dies)}')?.className || "no chip") + " / " + (document.querySelector('a[data-desk="${desk}"] .dot')?.className || "no dot")`);
+    rows.push(["a panel that dies in the back needs you", died, died ? "its chip amber, the desk's dot too" : `after it exited 3: ${hint}`]);
+
+    await post(`/api/panes/${server.id}/back`, { back: false });
+    const forward = await until(`!!document.querySelector('.dk-grid > .pn[data-id="${server.id}"]') && !document.querySelector('${chip(server.id)}')`);
+    const slot = await slotOf(desk, server.id);
+    rows.push(["brought forward, it takes the grid's next place", forward && slot === 2,
+      !forward ? "it is still a chip, or not in the grid" : `in the grid at slot ${slot}`]);
+  } finally {
+    for (const pane of [front, server.id, dies]) if (pane) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 async function footRows(cdp, base, token) {
   const rows = [];
   const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
