@@ -1277,6 +1277,9 @@ function friendSub(f) {
   return `<span class="hm-fsub">${t}</span>`;
 }
 const sentAt = x => x.done_at || x.read_at || x.arrived_at || x.held_at || x.sent_at;
+/** What became of a thing that went: kept or done, read, arrived, held
+ *  while they are away, or sent. */
+const sentWord = x => x.done_at ? `${x.promise ? "kept" : "done"} ✓${x.done_commit ? ` · ${x.done_commit.slice(0, 7)}` : ""}` : x.read_at ? "read" : x.arrived_at ? "arrived" : x.held_at ? "waiting while they are away" : "sent";
 
 /** What has not gone to a friend yet, in their row: one that stopped trying
  *  says why, with Retry; the rest are a count, the oldest's reason in its

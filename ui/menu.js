@@ -340,6 +340,15 @@ async function keepAll(ctx, pid, name) {
   if (!ids.length) return;
   ctx.peerCtx.peer().then(m => m.keepOn(ctx.peerCtx, ids, `everything from ${name.replace(/^From /, "")}`), () => ctx.toast("Could not open that"));
 }
+/** A friend's page, from their row: the friend by the row's name. */
+async function openFriend(ctx, row) {
+  const name = row.replace(/^From /, "").toLowerCase();
+  let j = null;
+  try { j = await (await fetch("/api/peers")).json(); } catch {}
+  const f = (j?.friends || []).find(x => !x.removed_at && x.name.toLowerCase() === name);
+  if (f) ctx.peerCtx.friend(f.id); else ctx.toast("Could not find that friend");
+}
+
 /** How many friends there are to send to: what the page was told when it
  *  was served (`boot.friends`), then what each `peers` event says
  *  (`state.friends`), so the first menu after pairing already offers Send
@@ -428,6 +437,9 @@ function entries(ctx, el, byKey = false) {
     // A friend's own row is no folder: nothing to make a desk on, to copy or
     // to show in the file manager (docs/PEER.md).
     if (p.friend) return { head: p.name, items: [
+      // Everything with them, both ways, on their page (1.49): the row's
+      // name is theirs, "From " and all (`peer::from_name`).
+      ctx.peerCtx && { label: `Open ${p.name.replace(/^From /, "")}'s page`, run: () => openFriend(ctx, p.name) },
       { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
       capability && ctx.peerCtx && { label: "Keep all on a desk…", run: () => keepAll(ctx, pid, p.name) }, RULE,
       { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },

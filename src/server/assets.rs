@@ -101,6 +101,9 @@ pub(crate) const PLAYER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/playe
 /// Approve on a plan's head (1.47), fetched on its first press.
 pub(crate) const PLAN_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/plan.js"));
 
+/// A friend's page (`/friend/{id}`, 1.49), fetched when it opens.
+pub(crate) const FRIEND_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/friend.js"));
+
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
 
@@ -1030,6 +1033,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("gallery.js", GALLERY_JS, JS),
     ("player.js", PLAYER_JS, JS),
     ("plan.js", PLAN_JS, JS),
+    ("friend.js", FRIEND_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.

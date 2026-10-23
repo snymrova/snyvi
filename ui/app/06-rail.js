@@ -86,7 +86,7 @@
         markCur(links, cur);
       });
     }
-    rail.classList.toggle("empty", state.view === "inbox" || state.view === "home" || state.view === "connect" || state.view === "start" || state.view === "welcome");
+    rail.classList.toggle("empty", state.view === "inbox" || state.view === "home" || state.view === "connect" || state.view === "start" || state.view === "welcome" || state.view === "friend");
   }
 
   /* A contents entry is a hash link, and the browser's own handling of one

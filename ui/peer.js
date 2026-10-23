@@ -350,7 +350,7 @@ export function head(ctx, b) {
 /** One line back to the friend who sent a document -- or, under the
  *  reader's own (`peer`, 1.49), an answer to that friend's reply: it shows
  *  under the head of both copies. Anything longer is a document of its own. */
-function reply(ctx, id, to, title, peer = 0) {
+export function reply(ctx, id, to, title, peer = 0) {
   const { esc } = ctx;
   open(`Reply to ${esc(to)}`,
     `<p>About <span class="pr-title">${esc(title || "their document")}</span>. One line; it shows under the head of their copy, and of yours.</p>` +

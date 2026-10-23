@@ -355,6 +355,24 @@
     afterRender();
     if (push) docEl.querySelector("h1")?.focus({ preventScroll: true });
   }
+  /** A friend's page, at `/friend/{id}` (1.49): everything between the
+   *  reader and them, drawn by friend.js, a chunk, so first paint carries
+   *  only this. Its stream ticks are `homeTick`'s. */
+  let friendMod = null;
+  async function showFriend(id, push = true) {
+    if (push) leave();
+    offDesk();
+    state.view = "friend"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    if (push) history.pushState({ friend: id }, "", `/friend/${id}`);
+    renderTree(); markActive();
+    try { friendMod = await chunk("friend"); }
+    catch (e) { toast("Could not open that page", { sub: e }); return; }
+    if (state.view !== "friend") return;
+    await friendMod.show({ docEl, main, esc, rel, who: whoIco, sayErr, deskApi, peerCtx, view: () => state.view }, id);
+    if (push) swapIn();
+    main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+  }
   /** Home, at `/`: the page the mark opens. Drawn by home.js, a chunk, from
    *  one call; the Inbox is at `/inbox`. */
   let homeMod = null, homeLoading = null;
@@ -377,7 +395,7 @@
     afterRender();
   }
   /** Something Home shows moved: read it again, soon. */
-  const homeTick = e => { if (state.view === "home" && homeMod) homeMod.soonRefresh(e.type); };
+  const homeTick = e => { if (state.view === "home" && homeMod) homeMod.soonRefresh(e.type); else if (state.view === "friend") friendMod?.refresh(); };
 
   // Welcome's question, and Connect wherever it is offered.
   docEl.addEventListener("click", async e => {
