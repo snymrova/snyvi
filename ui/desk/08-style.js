@@ -518,6 +518,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-note > .dk-note-over { position: absolute; z-index: var(--z-pop, 30); top: 1px; left: 27px; right: 4px; margin: 0; resize: none; overflow-y: auto; background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
 .dk-note.editing > .field-err { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 27px; right: 4px; }
 .dk-note:hover > .nm { color: var(--fg); }
+/* A link in a line: underlined, the hand over it, and its own click. */
+.nm-a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; cursor: pointer; }
+.nm-a:hover { text-decoration-color: currentColor; }
 /* Done: said twice, because a strike alone is hard to see at 12px in a dim
    rail and a dim row alone reads as disabled rather than as finished. */
 .dk-note.done > .nm { color: var(--fg-3); text-decoration: line-through; text-decoration-color: var(--fg-3); }

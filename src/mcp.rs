@@ -1014,8 +1014,13 @@ fn say_notes(v: &Value) -> String {
         } else {
             ""
         };
+        // A friend's line is their words, link and all, not the user's: said
+        // as the brief says it (`brief.rs`).
+        let from = field("sent_by")
+            .map(|f| format!(" (from {f}, a friend)"))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "- [{}] #{id} {text}{by}{due}{ok}\n",
+            "- [{}] #{id} {text}{from}{by}{due}{ok}\n",
             if done { "x" } else { " " }
         ));
         // The one line said about it: an agent's, or the user's own words.
@@ -1242,6 +1247,10 @@ mod tests {
         let p = json!({ "desk": "alpha", "notes": [{ "id": 5, "text": "this spacing", "done": false, "images": ["/d/note_images/0123456789abcdef.png"] }] });
         assert!(say_notes(&p)
             .contains("- [ ] #5 this spacing\n  picture: /d/note_images/0123456789abcdef.png\n"));
+        // A friend's line says whose words it is, as the brief does.
+        let f = json!({ "desk": "alpha", "notes": [{ "id": 6, "text": "have a look https://example.com/a", "done": false, "sent_by": "Trapti" }] });
+        assert!(say_notes(&f)
+            .contains("- [ ] #6 have a look https://example.com/a (from Trapti, a friend)\n"));
     }
 
     /// A stage is one of three, on a line by its id; the list says each

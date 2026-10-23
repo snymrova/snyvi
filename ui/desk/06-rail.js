@@ -610,7 +610,7 @@ function noteRow(x, esc) {
       ? `<li class="dk-note dk-sug dk-keepall"><button type="button" class="dk-keep" data-a="note-keep" data-all="1" data-n="${set[0].id}" data-tip="Keep all ${set.length}" data-tip-sub="every line ${esc(x.suggested_by)} suggested with these" aria-label="Keep all ${set.length} suggested lines">Keep all ${set.length}</button></li>` : "";
     return `<li class="dk-note dk-sug"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span>` +
       (x.sent_by ? ctx.who(x.sent_by, `From ${x.sent_by}`) : "") +
-      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
+      `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${linked(x.text, esc)}</span>` +
       `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
       `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc) + all;
   }
@@ -639,7 +639,7 @@ function noteRow(x, esc) {
   const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : "", bare ? "ticked without evidence: needs a look" : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<span class="dk-lead"><button type="button" class="dk-tick${bare ? " bare" : ""}" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
-    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
+    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${linked(x.text, esc)}</span></button>` +
     `<span class="dk-tail">` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
     replyLine(x, esc) +
@@ -997,6 +997,58 @@ function tell(x, esc) {
  *  where it can be seen. The row's menu copies the one and opens the other. */
 const doneWords = x => [x.done_commit && x.done_commit.slice(0, 7), evSay(x.done_evidence)].filter(Boolean).join(" · ");
 
+/* ---------- links in a line ----------
+ *
+ * A line can carry a link, and a friend's line often is one (06981a8a31). It
+ * is drawn as one, short -- host and path, the whole address in its tip --
+ * and goes out to the desktop's browser. Only the web's: http or https with a
+ * host that is not this machine, so a line never reaches a snyvi route. The
+ * bidi controls come off first, or a friend's line could show a host
+ * backwards. Nothing is fetched to draw it. Home's Arrived keeps a copy of
+ * these two (home.js), since chunks cannot import each other.
+ */
+
+/** What the daemon keeps of a line, in characters (`desk::NOTE_CHARS`). */
+const NOTE_CHARS = 200;
+const BIDI = /[‪-‮⁦-⁩]/g;
+
+/** The web links in a text: each with where it stands, and its host. Also
+ *  the gate for opening one (07-actions.js `note-open`, and `note-ev`, a
+ *  tick's evidence): a link it does not find is not opened. */
+function webLinks(text) {
+  const out = [];
+  for (const m of text.replace(BIDI, "").matchAll(/https?:\/\/[^\s<>"'`]+/g)) {
+    // A sentence's own stop or bracket is not the link's.
+    let s = m[0].replace(/[.,;:!?'"]+$/, "");
+    while (s.endsWith(")") && s.split(")").length > s.split("(").length) s = s.slice(0, -1);
+    let u;
+    try { u = new URL(s); } catch { continue; }
+    if (!u.hostname || /^(localhost|127\.|0\.0\.0\.0|\[::1?\])/i.test(u.hostname)) continue;
+    out.push({ at: m.index, end: m.index + s.length, url: s, host: u.host.replace(/^www\./, ""), rest: (u.pathname === "/" ? "" : u.pathname) + u.search + u.hash });
+  }
+  return out;
+}
+
+/** A line's text, escaped, with its links as `data-a="note-open"` spans: a
+ *  span and not an `<a>`, since the text sits in a button. */
+function linked(text, esc) {
+  text = text.replace(BIDI, "");
+  let html = "", from = 0;
+  for (const l of webLinks(text)) {
+    const shown = l.host + (l.rest.length > 28 ? l.rest.slice(0, 28) + "…" : l.rest);
+    html += esc(text.slice(from, l.at)) + `<span class="nm-a" data-a="note-open" data-u="${esc(l.url)}" data-tip="Open ${esc(l.host)}" data-tip-sub="${esc(l.url)}">${esc(shown)}</span>`;
+    from = l.end;
+  }
+  return html + esc(text.slice(from));
+}
+
+/** What a field says of a line longer than the daemon keeps, or "": short,
+ *  since the rail's error is one line under a narrow field. */
+function tooLong(text) {
+  const n = [...text].length;
+  return n > NOTE_CHARS ? `${n} characters; a note holds ${NOTE_CHARS}` : "";
+}
+
 /** Where the finished work can be seen, in a word: a GitHub pull request or
  *  issue by its number, anything else by its host. */
 function evSay(u) {
@@ -1193,6 +1245,10 @@ async function saveNote(again) {
   // until the reader writes their own.
   const text = noteDraft.trim() || (pics.length ? "A picture" : "");
   if (!f || !d) return;
+  // Longer than the daemon keeps: said under the field, which stays open
+  // with every character, rather than cut where nobody sees it.
+  const long = tooLong(text);
+  if (long) { noteErr = long; rail(); return; }
   noteField = again && f.kind === "new" ? { kind: "new" } : null;
   noteDraft = ""; noteCaret = 0; noteErr = ""; if (f.kind === "new") pending = [];
   rail();

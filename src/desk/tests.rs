@@ -415,6 +415,24 @@ fn a_long_line_is_cut_where_a_character_ends() {
     assert_eq!(notes(&conn, d).unwrap()[0].text, n.text);
 }
 
+/// A bidi control never reaches a line: one could show a friend's link with
+/// its host backwards (06981a8a31). Hebrew keeps its letters.
+#[test]
+fn a_line_loses_its_bidi_controls() {
+    let mut conn = db();
+    let d = create(&conn, "/w", None, 0).unwrap().id;
+    let n = add_note_from(
+        &mut conn,
+        d,
+        "see https://\u{202e}moc.elgoog/x \u{2067}שלום\u{2069}",
+        "Trapti",
+        0,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(n.text, "see https://moc.elgoog/x שלום");
+}
+
 /// Closing a desk deletes nothing: it leaves every list, its notes stay
 /// on it with their ticks, and reopening it brings both back -- with the
 /// panes that closed with it, in their order, and not one closed before.

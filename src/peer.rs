@@ -2050,7 +2050,14 @@ pub fn note_arrived(
     frame: &str,
     now: i64,
 ) -> Result<i64> {
-    let text: String = text.trim().chars().take(NOTE_CHARS).collect();
+    let text: String = text
+        .chars()
+        .filter(|c| !crate::desk::is_bidi(*c))
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(NOTE_CHARS)
+        .collect();
     conn.execute(
         "INSERT INTO peer_notes(peer_id, text, frame, arrived_at) VALUES(?1, ?2, ?3, ?4)",
         params![peer_id, text, frame, now],

@@ -32,7 +32,7 @@ async function act(b, byKey) {
       // Closed, not deleted: its notes wait on it, and Undo brings it back
       // with the panels that closed with it, stopped.
       await ctx.api(`/api/desks/${d.id}/delete`, {}); await ctx.refresh(); ctx.go(null, true);
-      ctx.toast(`Closed ${d.name}`, "Its notes are kept", null, { label: "Undo", run: async () => { await ctx.api(`/api/desks/${d.id}/reopen`, {}); await ctx.refresh(); ctx.go(d.id, true); } });
+      ctx.toast(`Closed ${d.name}`, "Its documents and notes are kept", null, { label: "Undo", run: async () => { await ctx.api(`/api/desks/${d.id}/reopen`, {}); await ctx.refresh(); ctx.go(d.id, true); } });
     }
     else if (a === "rename") renameDesk(d);
     else if (a === "reveal") ctx.reveal({ desk: d.id });
@@ -119,7 +119,7 @@ async function act(b, byKey) {
     // A line's number has no room for "copied": its tick says so instead.
     else if (a === "note-num") copySha(b, "✓");
     else if (a === "note-doc") ctx.read(b.dataset.d);
-    else if (a === "note-ev") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
+    else if (a === "note-ev" || a === "note-open") { if (webLinks(b.dataset.u || "").length) openLink(b.dataset.u); }
     else if (a === "note-keep" || a === "note-works" || a === "note-broken") await noteAct(a, b, d);
     else if (a === "note-tell") await tellNote(d, b);
     else if (a === "left-edit") leftOffEdit(d);
@@ -759,6 +759,8 @@ export function actions(el) {
     return { head: x.title, items: [
       { label: "Open", moves: 1, run: () => ctx.read(x.id) },
       x.local_path && { label: "Copy path", run: () => { navigator.clipboard?.writeText(x.local_path); ctx.toast("Copied", x.local_path); } },
+      // A /d/ link opens only in this snyvi; a friend is sent the page itself.
+      ctx.peer && ctx.peer.state.friends > 0 && { label: "Send to a friend…", run: () => ctx.peer.peer().then(m => m.send(ctx.peer, x.id, x.title), () => ctx.toast("Could not open Send to…")) },
       { label: "Copy link", run: () => { const u = `${location.origin}/d/${x.id}`; navigator.clipboard?.writeText(u); ctx.toast("Copied", u); } }, R,
       { label: "Remove from this list", run: () => act({ dataset: { a: "doc-x", d: x.id } }) },
     ] };
@@ -783,6 +785,10 @@ export function actions(el) {
       { label: "Add a picture…", run: () => pickImages(x.id) },
       // A dated open line can go to a friend as a promise (1.48).
       ...(!x.done && x.due_at && !promisedTo.has(x.id) ? (friendsList || []).map(f => ({ label: `Promise to ${f.name}…`, run: () => promise(d, x, f) })) : []),
+      // The line's first link, by its host, and the words themselves: the
+      // text is a button that rewrites, so neither can be had from it.
+      ...webLinks(x.text).slice(0, 1).map(l => ({ label: `Open ${l.host}`, run: () => openLink(l.url) })),
+      { label: "Copy text", run: () => { navigator.clipboard?.writeText(x.text); ctx.toast("Copied", x.text); } },
       { label: `Copy #${x.id}`, run: () => copySha(note.querySelector(".dk-num"), "✓") },
       ...(x.done && x.done_doc ? [{ label: "Open what it sent", run: () => ctx.read(x.done_doc) }] : []),
       // Where a ticked line's work went is its tip, not marks on the row:

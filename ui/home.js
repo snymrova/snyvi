@@ -230,6 +230,9 @@ const CSS = `
 .hm-git svg { flex: none; color: var(--fg-3); }
 a.hm-repo { color: var(--fg-2); text-decoration: none; }
 a.hm-repo:hover, a.hm-repo:focus-visible { color: var(--accent); }
+/* A link in a friend's line (linkedLine, below). */
+a.hm-ln { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+a.hm-ln:hover { text-decoration-color: currentColor; }
 a.hm-panels { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-2); text-decoration: none; }
 a.hm-panels:hover { color: var(--fg); }
 .hm-pk-go { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
@@ -885,7 +888,7 @@ function bar(j) {
     `<button type="button" data-hm="pendx" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${X}</button></span>` : "";
   return `<div class="hm-nb" data-part="home.bar"><div class="hm-nb-in">` +
     `<button type="button" class="hm-nb-to" data-hm="to" aria-haspopup="listbox" aria-expanded="${menu?.by === "chip"}" aria-controls="hm-nb-opts" data-tip="The desk this note goes on" data-tip-sub="or type # and its name in the note" aria-label="On ${esc(d.name)} · choose another desk"><span>${esc(d.name)}</span>${CHEV}</button>` +
-    `<input data-hm="bar" class="hm-nb-t" maxlength="500" placeholder="Add a note" aria-label="A new note on ${esc(d.name)}" value="${esc(barDraft)}" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="${menu?.by === "hash"}" aria-controls="hm-nb-opts">` +
+    `<input data-hm="bar" class="hm-nb-t" placeholder="Add a note" aria-label="A new note on ${esc(d.name)}" value="${esc(barDraft)}" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="${menu?.by === "hash"}" aria-controls="hm-nb-opts">` +
     pend + `<span class="hm-nb-say">${saidHtml()}</span></div>` +
     `<div class="hm-nb-list"${menu ? "" : " hidden"}>${menu ? menuHtml(j) : ""}</div></div>`;
 }
@@ -1417,6 +1420,27 @@ function saidRow(s) {
     (s.undo ? `<button type="button" class="hm-link hm-undo" data-hm="${s.undo}" data-k="${s.item.id}">Undo</button>` : "");
 }
 
+/** A friend's line, escaped, with its web links as links out to the
+ *  desktop's browser: the rail's `webLinks`/`linked` (ui/desk/06-rail.js),
+ *  copied since chunks cannot import each other -- the same rules, http or
+ *  https, never this machine, bidi controls off, nothing fetched. Here the
+ *  text is no button, so a link is an `<a>`, which the window hands out. */
+function linkedLine(text, esc) {
+  text = text.replace(/[‪-‮⁦-⁩]/g, "");
+  let html = "", from = 0;
+  for (const m of text.matchAll(/https?:\/\/[^\s<>"'`]+/g)) {
+    let s = m[0].replace(/[.,;:!?'"]+$/, "");
+    while (s.endsWith(")") && s.split(")").length > s.split("(").length) s = s.slice(0, -1);
+    let u;
+    try { u = new URL(s); } catch { continue; }
+    if (!u.hostname || /^(localhost|127\.|0\.0\.0\.0|\[::1?\])/i.test(u.hostname)) continue;
+    const host = u.host.replace(/^www\./, ""), rest = (u.pathname === "/" ? "" : u.pathname) + u.search + u.hash;
+    html += esc(text.slice(from, m.index)) + `<a class="hm-ln" href="${esc(s)}" target="_blank" rel="noopener noreferrer" data-tip="Open ${esc(host)}" data-tip-sub="${esc(s)}">${esc(host + (rest.length > 28 ? rest.slice(0, 28) + "…" : rest))}</a>`;
+    from = m.index + s.length;
+  }
+  return html + esc(text.slice(from));
+}
+
 /** A friend's line: Keep on… puts it on a desk in one click, with their
  *  name on it; ✕ puts it away. Keep on… is the window's, where the desks are. */
 function lineRow(n, j) {
@@ -1424,7 +1448,7 @@ function lineRow(n, j) {
   const desks = [...ds.filter(d => !d.parked), ...ds.filter(d => d.parked)];
   const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
-  return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
+  return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${linkedLine(n.text, esc)}</span><span class="hm-acts">` +
     (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at)}</span>` +
       (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Add it to a desk" data-tip-sub="a note there, from ${esc(n.from)}">Add to a desk… ▾</button>` : "") +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
@@ -1764,6 +1788,10 @@ async function addNote() {
   // until the reader writes their own -- as on the desk.
   const text = barDraft.trim() || (pics.length ? "A picture" : "");
   if (!d || !text) return;
+  // A desk keeps 200 characters of a line (`desk::NOTE_CHARS`): longer is
+  // said here, with the bar as it was, rather than cut by the daemon.
+  const n = [...text].length;
+  if (n > 200) { say({ err: `${n} characters; a note holds 200` }); sayNow(); return; }
   barDraft = ""; barPics = []; menu = null; say(null);
   draw(last); focusBar();
   let r;

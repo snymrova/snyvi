@@ -197,6 +197,21 @@ export function retheme() {
   for (const fig of figs) mmdReserve(fig);
 }
 
+/** Every diagram on the page drawn, for a print (copy.js `printDoc`): one
+ *  still waiting to come near the screen is a hole in the PDF. One held
+ *  back for its size is drawn too, since printing asks for the whole page;
+ *  one that failed stays as it is. Resolves once none is queued or drawing;
+ *  the caller bounds the wait. */
+export async function drawAll() {
+  const figs = [...docEl.querySelectorAll(".mmd")];
+  for (const fig of figs) {
+    if (fig.dataset.state === "error") continue;
+    mmdWatcher?.unobserve(fig);
+    mmdEnqueue(fig);
+  }
+  while (figs.some(f => f.isConnected && /^(queued|rendering)$/.test(f.dataset.state))) await new Promise(r => setTimeout(r, 100));
+}
+
 /** A figure, in the state it starts in: a box of about the right size, and
  *  either a place in the queue or an offer to draw it. Shared by the first
  *  pass over a document and by a theme change, which starts them all over. */

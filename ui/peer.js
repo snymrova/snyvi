@@ -248,15 +248,26 @@ export async function send(ctx, docId, title = "") {
 
 /* ---------- a line for a friend's notes ---------- */
 
+/** A line, or a reply, longer than the 200 characters both daemons keep
+ *  (`peer::NOTE_CHARS`): said in the sheet, and not sent. The field has no
+ *  maxlength, since a browser cuts a paste at one without a word, and a long
+ *  link cut there arrives broken (06981a8a31). */
+function overLine(t) {
+  const n = [...t].length;
+  if (n <= 200) return false;
+  say(`${n} characters; a line holds 200. A long link goes as a document, with Send to….`, true);
+  return true;
+}
+
 export function note(ctx, peerId, name) {
   const { esc } = ctx;
   open(`A line for ${esc(name)}`,
     `<p>It waits on their Home until they put it on one of their desks. One line, as a note is.</p>` +
-    `<div class="pr-row"><input id="pr-line" maxlength="200" placeholder="What should they not forget?" autocomplete="off"><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
+    `<div class="pr-row"><input id="pr-line" placeholder="What should they not forget?" autocomplete="off"><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
     `<div class="pr-said" aria-live="polite"></div>`);
   const go = async () => {
     const t = box.querySelector("#pr-line").value.trim();
-    if (!t) return;
+    if (!t || overLine(t)) return;
     box.querySelector("[data-pr=send]").disabled = true;
     say("Sending…");
     // A relay that cannot be reached keeps the line in the outbox, as it
@@ -299,12 +310,12 @@ function reply(ctx, id, to, title) {
   const { esc } = ctx;
   open(`Reply to ${esc(to)}`,
     `<p>About <span class="pr-title">${esc(title || "their document")}</span>. One line; it shows under the head of their copy.</p>` +
-    `<div class="pr-row"><input id="pr-line" maxlength="200" placeholder="Looks good; one question about step 3" autocomplete="off"><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
+    `<div class="pr-row"><input id="pr-line" placeholder="Looks good; one question about step 3" autocomplete="off"><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
     `<div class="pr-said" aria-live="polite"></div>`);
   let busy = false;
   const go = async () => {
     const t = box.querySelector("#pr-line")?.value.trim();
-    if (!t || busy) return;
+    if (!t || busy || overLine(t)) return;
     busy = true;
     const here = box.querySelector(".pr-box");
     box.querySelector("[data-pr=send]").disabled = true;

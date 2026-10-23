@@ -84,10 +84,12 @@ const WINDOW_MARK: &str = concat!("window=", env!("CARGO_PKG_VERSION"));
 /// and draws the three buttons a title bar had (the next five: leaving full
 /// screen too, which the desktop will not maximise out of). The eighth is for
 /// `FRAME_CHECK` below; the ninth lets a desk nudge the taskbar when a turn
-/// is put on the reader while the window is behind another (#116); and the
-/// last is this window's own command, `allow_foreground`, declared to the ACL
-/// in build.rs.
-const PAGE_WINDOW_COMMANDS: [&str; 10] = [
+/// is put on the reader while the window is behind another (#116); the tenth
+/// is printing, for Save as PDF (#182) -- `window.print` is the page's own on
+/// Linux and Windows, and on macOS Tauri answers it with this command, so
+/// without it the button did nothing on a Mac; and the last is this window's
+/// own command, `allow_foreground`, declared to the ACL in build.rs.
+const PAGE_WINDOW_COMMANDS: [&str; 11] = [
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-minimize",
@@ -97,6 +99,7 @@ const PAGE_WINDOW_COMMANDS: [&str; 10] = [
     "core:window:allow-set-fullscreen",
     "core:window:allow-set-decorations",
     "core:window:allow-request-user-attention",
+    "core:webview:allow-print",
     "allow-allow-foreground",
 ];
 
