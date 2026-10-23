@@ -238,6 +238,12 @@ pub struct Screen {
     /// blocked, and the only signal used for it -- a guess from silence would
     /// call every idle shell blocked.
     pub bell: bool,
+    /// 1.49: how the last command in the shell ended, as `OSC 133;D;<exit>`
+    /// says -- the command-finished mark of the prompt snyvi dresses
+    /// (`crate::prompt`), and of any shell set up for it -- since this was
+    /// last taken. A status, like the bell: it lights a dot for a panel in the
+    /// back and is never typed anywhere.
+    pub cmd_exit: Option<i32>,
     /// What the terminal answers back to the program -- cursor position, the
     /// device attributes -- written to the PTY by the caller. A program that
     /// asks and hears nothing can wait forever.
@@ -296,6 +302,7 @@ impl Screen {
             mouse_sgr: false,
             title: String::new(),
             bell: false,
+            cmd_exit: None,
             replies: Vec::new(),
             scrollback: VecDeque::new(),
             scrollback_bytes: 0,
@@ -1470,6 +1477,13 @@ impl vte::Perform for Screen {
             // A desktop notification, the way iTerm2 (9) and urxvt (777) take
             // one: a program asking for its reader. Counted as a bell.
             Some(b"9") | Some(b"777") => self.bell = true,
+            // Semantic prompts: only D, a command finished, and only its code.
+            Some(b"133") if params.get(1) == Some(&&b"D"[..]) => {
+                self.cmd_exit = params
+                    .get(2)
+                    .and_then(|c| std::str::from_utf8(c).ok())
+                    .and_then(|c| c.parse().ok());
+            }
             // 52 is a clipboard write from the program. Declined, and not
             // silently: `docs/DESK.md` says so. Nothing else here is acted on.
             _ => {}
@@ -1915,6 +1929,23 @@ mod tests {
         let (mut s, mut p) = screen(10, 2);
         feed(&mut s, &mut p, "\x1b]52;c;aGVsbG8=\x07");
         assert!(!s.bell);
+    }
+
+    /// 1.49: the command-finished mark of a semantic prompt is kept as its
+    /// exit code, and nothing else of it -- not a bell, not text.
+    #[test]
+    fn a_finished_command_mark_is_its_exit_code() {
+        let (mut s, mut p) = screen(10, 2);
+        feed(&mut s, &mut p, "\x1b]133;D;1\x07");
+        assert_eq!(s.cmd_exit.take(), Some(1));
+        assert!(!s.bell);
+        feed(&mut s, &mut p, "\x1b]133;D;0\x1b\\");
+        assert_eq!(s.cmd_exit.take(), Some(0));
+        // A, B and C mark the prompt and the command; a D with no code says
+        // nothing about how it ended.
+        feed(&mut s, &mut p, "\x1b]133;A\x07\x1b]133;C\x07\x1b]133;D\x07");
+        assert_eq!(s.cmd_exit, None);
+        assert_eq!(row(&s, 0), "");
     }
 
     /// A program that asks for the mouse, or goes to the alternate screen,

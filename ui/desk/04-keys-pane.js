@@ -137,7 +137,7 @@ function makeView(p) {
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
     // and the zoom.
-    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWR]|Bracket(Left|Right))$/.test(e.code))) return;
+    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWRB]|Bracket(Left|Right))$/.test(e.code))) return;
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
@@ -407,7 +407,10 @@ async function run(v, cmd, quiet, again, once) {
     // `cmd` with the conversation offered -- a panel unshown for minutes.
     const was = document.activeElement;
     const j = await ctx.api(`/api/panes/${v.id}/start`, { ...(again ? { resume: true } : {}), ...(once ? { once: true } : {}), marked: !!quiet, cmd, cols: c, rows: r, accent: accent() });
-    v.status = j.status;
+    // A command that ended at once -- a dev server whose port is taken --
+    // can be heard ending on the socket before this answer: that end is
+    // newer than the start it answers, and stays.
+    if (!(v.status.since === j.status.since && !v.status.running && v.status.exit != null)) v.status = j.status;
     // The account picked is not the one running: its token is gone, or a
     // key Claude Code ranks above it is set.
     if (j.account_missing) ctx.toast(`Panel ${v.pane.slot} started as your login`, "its account's token is missing: add it again in Keys");

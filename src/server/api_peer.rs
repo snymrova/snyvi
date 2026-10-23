@@ -41,6 +41,31 @@ pub(crate) struct Peers {
     /// Until when the relay asked for quiet (seconds), 0 for not at all:
     /// read receipts wait, and the link reconnects no faster than a minute.
     pub quiet_until: std::sync::atomic::AtomicI64,
+    /// Friends whose line says they are away, by id, since when (1.49): the
+    /// line told us (`LineSaid::Friend`), so the reader is told too --
+    /// "held, they’re away" -- and never a wrong "arrived" (F3). Not
+    /// stored: it is as true as the open line, and gone with it.
+    pub away: std::sync::Mutex<HashMap<i64, i64>>,
+    /// Pairing threads still running (`start_pairing`): the daemon waits
+    /// for them to see their stop before its runtime goes (`stop_pairings`).
+    pub pairing_threads: std::sync::atomic::AtomicUsize,
+}
+
+impl Peers {
+    /// The daemon is going: every pairing stops, and this waits -- a second
+    /// and a half at most -- for their threads to notice, so none is left
+    /// waiting on a timer of a runtime being dropped (F23).
+    pub(crate) async fn stop_pairings(&self) {
+        for p in self.pairings.lock().unwrap().values() {
+            p.stop.store(true, Ordering::Relaxed);
+        }
+        for _ in 0..30 {
+            if self.pairing_threads.load(Ordering::Relaxed) == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
 }
 
 /// The wake-up every socket task listens for: a counter each has its own
@@ -188,6 +213,19 @@ pub(crate) async fn peers_list(State(app): S) -> Response {
         .collect();
     // What went lately, and what came back about it: arrived, read, done.
     let sent = app.store.peer_sent_recent(SENT_SHOWN).unwrap_or_default();
+    // Who the line says is away, since when (1.49): their row says so.
+    let away = app.peers.away.lock().unwrap().clone();
+    let friends: Vec<_> = friends
+        .into_iter()
+        .map(|f| {
+            let since = away.get(&f.id).copied();
+            let mut v = json!(f);
+            if let Some(since) = since {
+                v["away"] = json!(since);
+            }
+            v
+        })
+        .collect();
     Json(json!({
         "friends": friends,
         "notes": notes,
@@ -355,9 +393,12 @@ fn start_pairing(app: &Arc<App>, code: String, name: String, made: bool) -> i64 
         let app2 = app.clone();
         let c = code.clone();
         let halt = stop.clone();
+        app.peers.pairing_threads.fetch_add(1, Ordering::Relaxed);
         let r = tokio::task::spawn_blocking(move || -> anyhow::Result<(Peer, String)> {
-            let me = identity_blocking(&app2)?;
-            peer::pair(&me, &c, &name, until, &halt)
+            let me = identity_blocking(&app2);
+            let r = me.and_then(|me| peer::pair(&me, &c, &name, until, &halt));
+            app2.peers.pairing_threads.fetch_sub(1, Ordering::Relaxed);
+            r
         })
         .await;
         // Cancelled while the last message was on its way: nothing is pinned,
@@ -506,6 +547,10 @@ pub(crate) struct TextBody {
     pub(crate) note: i64,
     #[serde(default)]
     pub(crate) due_at: i64,
+    /// A reply under the reader's own document (1.49): the friend it
+    /// answers, whose reply it is under.
+    #[serde(default)]
+    pub(crate) peer: i64,
 }
 
 /// `POST /api/peers/{id}/note`: a line for a friend's notes. Queued, as a
@@ -607,6 +652,14 @@ fn keep_line(app: &Arc<App>, id: i64, desk: i64) -> Response {
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // A promise is theirs to keep, not a line for the reader's list (F4).
+    if n.promise {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("a promise is {}'s to keep", n.from) })),
+        )
+            .into_response();
+    }
     let Ok(Some(d)) = app.store.desk(desk) else {
         return (
             StatusCode::NOT_FOUND,
@@ -616,6 +669,13 @@ fn keep_line(app: &Arc<App>, id: i64, desk: i64) -> Response {
     };
     match app.store.add_desk_note_from(desk, &n.text, &n.from) {
         Ok(Some(note)) => {
+            // The date as it was read when the line came, not again now: a
+            // "before Thursday" kept on Friday is still last Thursday's.
+            if n.due_at > 0 {
+                let _ = app
+                    .store
+                    .clocked(|c, now| crate::due::set(c, desk, note.id, n.due_at, now));
+            }
             let _ = app.store.settle_peer_note(id, "taken");
             // Theirs still: a tick on it can be told back.
             if !n.frame.is_empty() {
@@ -638,6 +698,10 @@ fn keep_line(app: &Arc<App>, id: i64, desk: i64) -> Response {
 pub(crate) struct SendBody {
     #[serde(default)]
     pub(crate) peer: i64,
+    /// Send again: this very document already arrived, and the reader
+    /// means it to go anyway.
+    #[serde(default)]
+    pub(crate) again: bool,
 }
 
 /// `POST /api/docs/{id}/send`: this document to that friend. Queued, so a
@@ -674,6 +738,14 @@ pub(crate) async fn doc_send(
             Json(json!({ "error": TOO_LARGE })),
         )
             .into_response();
+    }
+    // This very document is with them already: a document never changes,
+    // so sending it again puts nothing new in front of them, and the sheet
+    // says so, with Send again (audit 6f451571c6, F14).
+    if !b.again {
+        if let Ok(Some(at)) = app.store.peer_already(&p, &id) {
+            return Json(json!({ "sent": false, "already": at, "to": p.name })).into_response();
+        }
     }
     let frame = match app.store.peer_queue(&p, &id) {
         Ok(f) => f,
@@ -996,7 +1068,10 @@ fn send_one(
         if row.kind == "receipt" && (p.v < peer::REPLIES_V || unread) {
             return Ok(peer::Deposit::Sent);
         }
-        if p.v < peer::REPLIES_V {
+        // An answer to their reply about a document of ours (`own`, 1.49)
+        // is read only from `OWN_REPLY_V`: an older snyvi would drop it.
+        let own = row.kind == "reply" && row.extra == OWN;
+        if p.v < peer::REPLIES_V || (own && p.v < peer::OWN_REPLY_V) {
             return Ok(peer::Deposit::Later {
                 why: OLDER,
                 until: None,
@@ -1024,6 +1099,7 @@ fn send_one(
                 re: row.re.clone(),
                 text: row.text.clone(),
                 name: name.to_string(),
+                own,
                 v: peer::CONTENT_V,
             },
             "done" => Content::Done {
@@ -1137,6 +1213,10 @@ const LINE_DOWN: &str = "they are offline; it goes when they or the relay can be
 /// Why a reply or a done waits in the outbox: the friend's snyvi does not
 /// read it yet. It goes the first time a frame from them says it would.
 const OLDER: &str = "their snyvi is older; this goes once they update";
+
+/// What `extra` says on an outbox reply that answers their reply about a
+/// document the reader sent (`Content::Reply::own`).
+pub(crate) const OWN: &str = "own";
 
 /// How long a folder's fingerprint is taken as read: a day. Root commits do
 /// not change; a remote, rarely.
@@ -1425,13 +1505,20 @@ fn arrived(
                 peers_moved(app);
             }
         }
-        Content::Reply { re, text, .. } => {
-            // Only to a document this snyvi sent them.
+        Content::Reply { re, text, own, .. } => {
+            // Only to a document this snyvi sent them -- or, `own` (1.49),
+            // their answer about one they sent this snyvi, `re` being their
+            // id for it, which the copy here keeps as `peer_ref`.
             // Kept as stored -- one line -- and said once; the page under the
             // reader's eyes is not redrawn for it: it is in the head the next
             // time the document opens.
-            if app.store.peer_sent_doc(p.id, &re)? {
-                if let Some(text) = app.store.peer_add_reply(p.id, &re, &text)? {
+            let doc = if own {
+                app.store.peer_copy_of(&p.sign_key, &re)?
+            } else {
+                app.store.peer_sent_doc(p.id, &re)?.then(|| re.clone())
+            };
+            if let Some(re) = doc {
+                if let Some(text) = app.store.peer_add_reply(p.id, &re, &text, false)? {
                     emit(
                         app,
                         "peerreply",
@@ -1457,17 +1544,20 @@ fn arrived(
             of, text, commit, ..
         } => {
             // Or a promise they made here, kept (`crate::promise::kept`).
-            let line = match app
-                .store
-                .peer_done(p.id, &of, commit.as_deref().unwrap_or(""))?
-            {
-                Some(l) => Some(l),
-                None => app
-                    .store
-                    .clocked(|c, _| crate::promise::kept(c, p.id, &of))?,
+            let c7 = commit.as_deref().unwrap_or("");
+            let (line, promise) = match app.store.peer_done(p.id, &of, c7)? {
+                Some(l) => (Some(l), false),
+                None => (
+                    app.store
+                        .clocked(|c, now| crate::promise::kept(c, p.id, &of, c7, now))?,
+                    true,
+                ),
             };
             if let Some(line) = line {
                 peers_moved(app);
+                if promise {
+                    emit(app, "peernotes", json!({}));
+                }
                 let done: String = if line.is_empty() {
                     text.chars().take(peer::NOTE_CHARS).collect()
                 } else {
@@ -1476,7 +1566,7 @@ fn arrived(
                 emit(
                     app,
                     "peerdone",
-                    json!({ "from": p.name, "done": done, "commit": commit, "quiet": p.muted }),
+                    json!({ "from": p.name, "done": done, "commit": commit, "promise": promise, "quiet": p.muted }),
                 );
                 if !p.muted {
                     lately_log(
@@ -1526,6 +1616,11 @@ fn arrived(
             };
             let received = receive::receive(&app.store, &app.renderer, payload)?;
             let _ = app.store.set_peer_key(&received.doc.id, &p.sign_key);
+            // A new version joins its earlier ones (F8): not one filed into
+            // the reader's own folder for the repository, which is its place.
+            if filed.is_none() && !received.existing {
+                follow_versions(app, p, &received.doc, desk.as_ref());
+            }
             let _ = app
                 .store
                 .set_peer_frame(&received.doc.id, frame, &sender_id);
@@ -1556,11 +1651,13 @@ fn arrived(
             ..
         } => {
             // A promise is the sender's to keep: a row on Home with its date,
-            // not a line on the reader's list (`crate::promise`).
-            let text = if promise {
-                crate::promise::said(&text, due_at, crate::store::now())
+            // not a line on the reader's list (`crate::promise`). A line keeps
+            // the sender's words as they wrote them; the date in them, if
+            // any, is read here and kept beside them (F7).
+            let due_at = if promise {
+                due_at
             } else {
-                text
+                crate::due::split(&text, crate::store::now()).map_or(0, |(_, at)| at)
             };
             if let Some(d) = desk.as_ref().filter(|_| !promise) {
                 if let Ok(crate::desk::Suggested::Note(n)) =
@@ -1572,7 +1669,7 @@ fn arrived(
                     emit(
                         app,
                         "peernotes",
-                        json!({ "from": p.name, "quiet": p.muted, "desk": d.name }),
+                        json!({ "from": p.name, "quiet": p.muted, "desk": d.name, "desk_id": d.id, "text": text }),
                     );
                     if !p.muted {
                         lately_log(
@@ -1590,12 +1687,13 @@ fn arrived(
                     return Ok(());
                 }
             }
-            app.store.peer_note_arrived(p.id, &text, frame)?;
+            app.store
+                .peer_note_arrived(p.id, &text, frame, due_at, promise)?;
             said(app);
             emit(
                 app,
                 "peernotes",
-                json!({ "from": p.name, "quiet": p.muted }),
+                json!({ "from": p.name, "quiet": p.muted, "text": text, "promise": promise, "due_at": due_at }),
             );
             if !p.muted {
                 lately_log(
@@ -1680,7 +1778,7 @@ fn lineage(at: &peer::Folder, file: Option<&str>) -> Option<String> {
 }
 
 /// A desk as a document's origin: the desk, no panel.
-fn on_desk(d: &crate::desk::Desk) -> crate::desk::Origin {
+pub(crate) fn on_desk(d: &crate::desk::Desk) -> crate::desk::Origin {
     crate::desk::Origin {
         id: d.id,
         name: d.name.clone(),
@@ -1911,30 +2009,71 @@ pub(crate) async fn doc_reply(
         Ok(f) => f,
         Err(e) => return err(e),
     };
-    let friend = app
-        .store
-        .peer_by_key(&key)
-        .ok()
-        .flatten()
-        .filter(|p| p.removed_at == 0);
-    let (Some(p), false) = (friend, re.is_empty()) else {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": "this one came before replies could be sent; a line from Home reaches them" })),
-        )
-            .into_response();
+    // Under a friend's document: to them, about their id for it. Under the
+    // reader's own (1.49): an answer to the friend's reply, about the
+    // version they have, which they keep as their copy's `peer_ref`.
+    let (p, re, own) = if !key.is_empty() {
+        let friend = app
+            .store
+            .peer_by_key(&key)
+            .ok()
+            .flatten()
+            .filter(|p| p.removed_at == 0);
+        let (Some(p), false) = (friend, re.is_empty()) else {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "this one came before replies could be sent; a line from Home reaches them" })),
+            )
+                .into_response();
+        };
+        (p, re, false)
+    } else {
+        let Ok(Some(p)) = app.store.peer(b.peer) else {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "no such friend" })),
+            )
+                .into_response();
+        };
+        let went = app.store.peer_sent_of_doc(&id).unwrap_or_default();
+        let Some((_, s)) = went
+            .into_iter()
+            .find(|(_, s)| s.peer_id == p.id && s.sent_at != 0)
+        else {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": format!("{} has not been sent this one", p.name) })),
+            )
+                .into_response();
+        };
+        (p, s.doc_id, true)
     };
-    let frame = match app.store.peer_queue_kind(&p, "reply", &re, &text, "") {
+    let frame = match app
+        .store
+        .peer_queue_kind(&p, "reply", &re, &text, if own { OWN } else { "" })
+    {
         Ok(f) => f,
         Err(e) => return err(e),
     };
+    // The reader's own words stay under their copy's head too, so it reads
+    // as one thread both ways (F10).
+    let _ = app.store.peer_add_reply(p.id, &id, &text, true);
+    emit(
+        &app,
+        "peerreply",
+        json!({ "doc": id, "mine": true, "quiet": true }),
+    );
     let app2 = app.clone();
     let sent = tokio::task::spawn_blocking(move || flush_outbox(&app2, Some(&frame)))
         .await
         .unwrap_or(false);
     peers_moved(&app);
-    Json(json!({ "sent": sent, "to": p.name, "waits": !sent && p.v < peer::REPLIES_V }))
-        .into_response()
+    let older = if own {
+        peer::OWN_REPLY_V
+    } else {
+        peer::REPLIES_V
+    };
+    Json(json!({ "sent": sent, "to": p.name, "waits": !sent && p.v < older })).into_response()
 }
 
 #[derive(Deserialize, Default)]

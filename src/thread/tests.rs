@@ -857,6 +857,32 @@ fn suggestions_wait_settle_and_are_told_once() {
     assert!(take_opened(&conn, d, "p1", &[], 6).unwrap().is_empty());
 }
 
+/// 1.49: a panel card can be for the back; a widget's word for how long
+/// is not one a panel keeps, nor `back` one a widget does.
+#[test]
+fn a_panel_card_can_be_for_the_back() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let card = |kind: &str, lasts: &str| Suggest {
+        kind: kind.into(),
+        name: "dev".into(),
+        cmd: "npm run dev".into(),
+        folder: "/w/.proposed/dev".into(),
+        why: "the site".into(),
+        lasts: lasts.into(),
+        ..Suggest::default()
+    };
+    let lasts = |conn: &mut Connection, kind: &str, l: &str| {
+        let Suggested::Card(c) = suggest(conn, d, &card(kind, l), 1).unwrap() else {
+            panic!("a card")
+        };
+        c.lasts
+    };
+    assert_eq!(lasts(&mut conn, "panel", "back"), "back");
+    assert_eq!(lasts(&mut conn, "panel", "week"), "");
+    assert_eq!(lasts(&mut conn, "widget", "back"), "");
+}
+
 #[test]
 fn a_pr_is_a_number() {
     assert_eq!(pr_number("#57").as_deref(), Some("57"));

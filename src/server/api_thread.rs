@@ -421,6 +421,8 @@ pub(crate) struct SuggestPanelBody {
     folder: String,
     why: String,
     by: String,
+    /// 1.49: a panel to open in the back (`desk::BACK`).
+    back: bool,
 }
 
 pub(crate) async fn pane_suggest_panel(
@@ -460,6 +462,7 @@ async fn pane_suggest(
         why: b.why,
         by: b.by,
         pane: id,
+        lasts: if b.back { "back".into() } else { String::new() },
         ..Suggest::default()
     };
     let desk = placed.desk_id;

@@ -229,6 +229,7 @@ fn friends_are_pinned_listed_renamed_muted_removed_and_restored() {
     for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(COLUMNS_1_49).unwrap();
     let (sunny, trapti) = two();
     let t = pin(&conn, &as_peer(&trapti, "Trapti"), 100).unwrap();
     assert_eq!(t.name, "Trapti");
@@ -284,7 +285,7 @@ fn friends_are_pinned_listed_renamed_muted_removed_and_restored() {
     sent(&conn, &l2, 412).unwrap();
 
     // Notes wait, are taken, put away, brought back.
-    let n = note_arrived(&conn, t2.id, "  water the beans  ", "f1", 500).unwrap();
+    let n = note_arrived(&conn, t2.id, "  water the beans  ", "f1", 0, false, 500).unwrap();
     assert_eq!(notes_waiting(&conn).unwrap()[0].text, "water the beans");
     assert!(settle_note(&conn, n, "taken", 501).unwrap());
     assert!(notes_waiting(&conn).unwrap().is_empty());
@@ -389,7 +390,14 @@ fn the_doorbell_and_the_pairing_speak_plainly() {
     // No runtime about, as in a plain test: the bell is not there, and
     // the pairing falls back to asking.
     assert_eq!(
-        ring_wait("http://127.0.0.1:9", &"a".repeat(64), "spake", "ab", 1),
+        ring_wait(
+            "http://127.0.0.1:9",
+            &"a".repeat(64),
+            "spake",
+            "ab",
+            1,
+            &std::sync::atomic::AtomicBool::new(false)
+        ),
         Bell::Absent
     );
 }
@@ -495,6 +503,7 @@ fn a_receipt_a_reply_and_a_done_travel_and_say_their_v() {
             re: "d1".into(),
             text: "looks good".into(),
             name: "Trapti".into(),
+            own: false,
             v: CONTENT_V,
         },
         Content::Done {
@@ -558,6 +567,7 @@ fn receipts_and_dones_land_only_on_what_went_to_that_friend() {
     for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(COLUMNS_1_49).unwrap();
     conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
         .unwrap();
     let (sunny, trapti) = two();
@@ -601,6 +611,37 @@ fn receipts_and_dones_land_only_on_what_went_to_that_friend() {
         .find(|x| x.id == line)
         .unwrap();
     assert_eq!((l.done_at, l.done_commit.as_str()), (31, "abc1234"));
+
+    // What arrived is "already" there; sent again, the row forgets what
+    // came back about the last time until it comes back again (F3, F14).
+    assert_eq!(already(&conn, &t, "d1").unwrap(), Some(21));
+    assert_eq!(already(&conn, &t, "d2").unwrap(), None);
+    assert_eq!(queue(&conn, &t, "d1", 50).unwrap(), doc, "the same row");
+    sent(&conn, &doc, 51).unwrap();
+    held_mark(&conn, &doc, 52).unwrap();
+    let d = sent_recent(&conn, 5)
+        .unwrap()
+        .into_iter()
+        .find(|x| x.id == doc)
+        .unwrap();
+    assert_eq!(
+        (d.arrived_at, d.read_at, d.held_at),
+        (0, 0, 52),
+        "not arrived: held for them"
+    );
+    assert_eq!(already(&conn, &t, "d1").unwrap(), None);
+    assert!(receipt(&conn, t.id, &doc, "arrived", 60).unwrap());
+    held_mark(&conn, &doc, 61).unwrap();
+    let d = sent_recent(&conn, 5)
+        .unwrap()
+        .into_iter()
+        .find(|x| x.id == doc)
+        .unwrap();
+    assert_eq!(
+        (d.arrived_at, d.held_at),
+        (60, 52),
+        "held is said once, before it arrived"
+    );
 
     // Answers queue as frames of their own, and a receipt twice is one.
     let r1 = queue_kind(&conn, &t, "receipt", "their-frame", "arrived", "", 40).unwrap();
@@ -661,6 +702,7 @@ fn outbox() -> (Connection, Peer) {
     for c in COLUMNS_1_25.iter().filter(|c| c.contains("peer_outbox")) {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(COLUMNS_1_49).unwrap();
     conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
         .unwrap();
     let (_, trapti) = two();

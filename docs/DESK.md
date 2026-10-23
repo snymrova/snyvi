@@ -1,7 +1,7 @@
 # Desks: real shells in the window, and what keeps them there
 
 A **desk** is a named workspace rooted at a folder, holding up to four panes
-in a fixed two-column grid. Several desks can exist, and two can share a
+in a fixed two-column grid, and up to four more in the back (1.49). Several desks can exist, and two can share a
 root. A desk takes the whole of `#main`: it is a view, not a band under a
 document, and it is not a document. It has its own tables and its own id
 space, and it never appears in search, the inbox or the queue.
@@ -70,6 +70,39 @@ nobody is watching costs is kept small instead. Its frames run once a second
 rather than sixty times (`pane::UNWATCHED_FRAME`), a page that attaches is
 caught up at once, and its scrollback is still capped at 2 MB. The test is
 `desk::tests::twelve_panes_on_three_desks_all_open`.
+
+**Four more in the back (1.49).** A dev server took a slot and a quarter of
+the screen for a log nobody read until it broke. A pane can go **in the
+back**: it keeps running out of the grid, as a chip in the desk's head, and a
+drawer opens over the bottom of the grid when the reader looks (`⌃⌥B`, a click
+on the chip; `⌃⌥B` again shuts it, and so does Esc outside the panel, where
+Esc is the program's). The cap is about what a reader can follow, and
+nobody follows a dev server's log, so the back holds four more
+(`desk::BACK`); a fifth thing to keep running is a second desk.
+
+- **Slots 5 to 8 are the back.** A pane's slot already says where it is, so
+  nothing new is stored for it: `⌃⌥1..4`, Move to position N and full view
+  keep meaning the grid. Each side closes up on its own (`desk::send_back`,
+  `close_pane`), and what the panes sent is renumbered in the same
+  transaction. `panes_closed.back` keeps the side for Undo and for a reopened
+  desk. Move to the back and Bring forward are on the panel's menu and
+  `⌃⌥⇧B`; a panel's head dropped on the chips sends it back. The route is
+  `POST /api/panes/{id}/back`, a page route behind the capability.
+- **It starts unseen.** A pane starts on its first real size, and a pane with
+  no size never starts. The drawer is always laid out, hidden: every pane in
+  the back is mounted in it, stacked in one box, so each has the drawer's size
+  from the first layout and starts the way a visible pane does. Opening it only
+  flips visibility, so a program's columns never change under it. Shut, its
+  panes are framed as unwatched ones are, once a second.
+- **Dying is needs you.** A pane in the back that ends on its own, or whose
+  shell says a command failed (`OSC 133;D;<exit>` from the prompt, §5), is
+  `blocked`, which the chip, the sidebar, the rail, Home and On you already
+  read. Not after Stop, not within 2 s of the reader's own keys, and not for
+  130, a ctrl-C. The mark is a status: it lights a dot and is never typed
+  anywhere. A shell snyvi does not dress only has its own end heard, and the
+  drawer says so.
+- **Agents only suggest it.** `suggest_panel` takes `back: true`; the card
+  says Open in the back, and opening it is the reader's click.
 
 **Slots, not splits.** There are two columns and four slots. An odd pane out
 spans its row, and the whole layout is two fractions. The grid counts its own
@@ -328,6 +361,11 @@ A prompt framework already installed is taken back off rather than raced:
 Powerlevel10k has a teardown of its own, and the others are hooks, removed
 from the arrays they were put in. The hook snyvi adds keeps itself last, so a
 framework that installs on the first prompt still does not get the last word.
+
+The hook also says how the last command ended, first thing, as the standard
+command-finished mark `OSC 133;D;<exit>` (1.49). `src/screen.rs` keeps the
+code in `cmd_exit` as it keeps the bell, and a pane in the back takes a
+failure as needing the reader (§1). It is read, never acted on.
 
 The accent travels with the request that starts the pane -- the page sends
 `#rrggbb` as its CSS resolved it -- and is written into the rc files then.

@@ -14,6 +14,7 @@ mod api_agent;
 mod api_browse;
 mod api_desk;
 mod api_docs;
+mod api_friend;
 mod api_gallery;
 mod api_peer;
 mod api_pipeline;
@@ -36,6 +37,7 @@ use api_agent::*;
 use api_browse::*;
 use api_desk::*;
 use api_docs::*;
+use api_friend::*;
 use api_gallery::*;
 use api_peer::*;
 use api_pipeline::*;
@@ -363,6 +365,7 @@ fn peer_routes() -> Router<Arc<App>> {
         .route("/api/peers/{id}/remove", post(peer_remove))
         .route("/api/peers/{id}/restore", post(peer_restore))
         .route("/api/peers/{id}/note", post(peer_note))
+        .route("/api/peers/{id}/talk", get(peer_talk))
         .route("/api/peers/notes/{id}", post(peer_note_settle))
         .route("/api/peers/offers/{id}", post(offer_answer))
         .route("/api/docs/{id}/send", post(doc_send))
@@ -384,6 +387,7 @@ fn pane_routes() -> Router<Arc<App>> {
     Router::new()
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/restore", post(restore_pane))
+        .route("/api/panes/{id}/back", post(back_pane))
         .route("/api/panes/{id}/rename", post(rename_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))
@@ -435,6 +439,7 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/widgets", get(pane_widgets))
         .route("/api/widgets", get(list_widgets).post(set_widget))
         .route("/sidebars", get(shell_sidebars))
+        .route("/friend/{id}", get(shell_friend))
         .route("/api/widgets/{name}/allow", post(allow_widget))
         .route("/api/widgets/{name}/prefs", post(widget_prefs))
         .route("/api/widgets/{name}/retry", post(retry_widget))
@@ -795,6 +800,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     axum::serve(nodelay(listener), router)
         .with_graceful_shutdown(asked_to_stop(stop_rx, told))
         .await?;
+    // A pairing still waiting at the relay stops before the runtime does.
+    leaving.peers.stop_pairings().await;
     // Every pane's text is written down and every process is hung up on: a
     // daemon that is going takes its shells with it, and they do not come
     // back with the next one. What comes back is the text, greyed -- and,

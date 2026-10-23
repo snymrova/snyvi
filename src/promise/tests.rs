@@ -30,6 +30,7 @@ fn db() -> Connection {
     {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(peer::COLUMNS_1_49).unwrap();
     conn
 }
 
@@ -116,8 +117,9 @@ fn a_promise_is_queued_marked_and_kept_once_its_line_is_ticked() {
     assert!(promised(&conn, d).unwrap()[0].2, "kept");
 }
 
-/// On the friend's side the promise is a Home row with its date, and their
-/// Done marks it kept.
+/// On the friend's side the promise is a Home row with its date and its
+/// mark as fields, its words as they were, and their Done marks it kept,
+/// once, with the commit it names.
 #[test]
 fn a_promise_made_to_the_reader_reads_kept() {
     let conn = db();
@@ -127,13 +129,21 @@ fn a_promise_made_to_the_reader_reads_kept() {
     )
     .unwrap();
     let p = peer::list(&conn).unwrap().remove(0);
-    let text = said("post the note", 0, 0);
-    assert_eq!(text, "post the note");
-    peer::note_arrived(&conn, p.id, &said("post the note", 200_000, 0), "f1", 0).unwrap();
+    peer::note_arrived(&conn, p.id, "post the note", "f1", 200_000, true, 0).unwrap();
+    let n = peer::notes_waiting(&conn).unwrap().remove(0);
     assert_eq!(
-        kept(&conn, p.id, "f1").unwrap().unwrap(),
-        format!("{} · kept ✓", said("post the note", 200_000, 0))
+        (n.text.as_str(), n.due_at, n.promise, n.kept_at),
+        ("post the note", 200_000, true, 0)
     );
-    assert!(kept(&conn, p.id, "f1").unwrap().is_none(), "once");
-    assert!(kept(&conn, p.id, "nope").unwrap().is_none());
+    assert_eq!(
+        kept(&conn, p.id, "f1", "abc1234", 300).unwrap().as_deref(),
+        Some("post the note")
+    );
+    let n = peer::notes_waiting(&conn).unwrap().remove(0);
+    assert_eq!(
+        (n.text.as_str(), n.kept_at, n.kept_commit.as_str()),
+        ("post the note", 300, "abc1234")
+    );
+    assert!(kept(&conn, p.id, "f1", "", 400).unwrap().is_none(), "once");
+    assert!(kept(&conn, p.id, "nope", "", 400).unwrap().is_none());
 }

@@ -219,14 +219,66 @@ more fields, left out when unset:
 | `due_at` | when it is due, a unix time |
 | `promise` | `true`: the sender's to keep, not the reader's to do |
 
-A snyvi from 1.48 keeps it as a row on Home under the friend's name, its
-date in its words (*post the release note · by Fri 10:00*), never as a line
-on a desk. When the sender ticks the line, their snyvi sends the `done`
-that already exists, naming the promise's frame, and the row reads *· kept
-✓*. A snyvi before 1.48 reads past both fields and shows a plain line. On
-the sender's side the outbox row names its line in `re` (`note:<id>`) and
-carries its date in `extra`; the rail marks the line **→ Trapti**. The
-relay is unchanged.
+A snyvi from 1.48 keeps it as a row on Home under the friend's name, never
+as a line on a desk. From 1.49 the row keeps the date, the mark and the
+keeping as fields (`peer_notes.due_at`, `promise`, `kept_at`,
+`kept_commit`) and reads *Sunny promised you: post the release note*, a
+**by Fri 30 Oct** chip and, once kept, **kept ✓** -- with only ✕, no Keep
+(1.48 glued the date and *· kept ✓* onto the words, and offered Keep). When
+the sender ticks the line, their snyvi sends the `done` that already
+exists, naming the promise's frame. A snyvi before 1.48 reads past both
+fields and shows a plain line. On the sender's side the outbox row names
+its line in `re` (`note:<id>`) and carries its date in `extra`; the rail
+marks the line **→ Trapti**. The relay is unchanged.
+
+## Where it stands, and a friend's page (1.49)
+
+The audit of sending and receiving (6f451571c6) found the plumbing sound
+and the telling thin. 1.49 says, everywhere, who sent what and how far it
+got:
+
+- **The sender sees where it went.** On the reader's own document, Send to…
+  becomes **→ Trapti · arrived 21:28** once it went (later *read*), in the
+  same place and on one line, so the head keeps its height; it follows what
+  comes back as it comes. A friend's row on Home has, always, one line under
+  their name: *you sent Seed list · arrived 3 min ago*.
+- **Away is said.** The line tells a daemon when the other side's socket
+  comes and goes (`{"friend":{"on":…}}`) and when it keeps a frame for them
+  (`{"held":id}`). A held frame is `peer_outbox.held_at`; who is away is
+  kept in memory (`Peers::away`) and on `/api/peers`. The sender reads
+  *held, they’re away* -- never *arrived* for what has not. A resend
+  forgets what came back about the last send (`peer::queue`).
+- **Already there.** A document is immutable, so the same id that arrived
+  already would put nothing new in front of them: Send to… answers
+  *Trapti already has this version*, with **Send again**.
+- **A friend's document says who.** It rises in the corner as *Sunny sent
+  you* with its title; a line rises as the line itself, its button where it
+  is (its desk, or Home).
+- **Their words stay theirs.** A friend's line keeps its words as they wrote
+  them; a date in them is read beside them (`peer_notes.due_at`, and the
+  desk line's `due_at` on Keep or as a suggestion), shown as a chip.
+- **Versions follow the document.** A new version lands with its earlier
+  ones: with a desk set for the friend, the earlier ones on their row move
+  onto it; with none, the new one joins them where the reader kept them
+  (`api_friend::follow_versions`).
+- **Replies go both ways.** The reader's own replies stay under their copy
+  (`peer_replies.mine`), and under the reader's own document the friend's
+  reply can be answered: a `reply` with `own: true`, `re` the reader's own id
+  for it, which the friend kept as their copy's `peer_ref`. It is read from
+  `v` 4 (`OWN_REPLY_V`, `CONTENT_V` is 4); to an older friend it waits in the
+  outbox, *their snyvi is older*, and goes once they update.
+- **A page per friend.** `/friend/{id}` (`ui/friend.js`) lists everything
+  between the reader and one friend, both ways, newest first
+  (`GET /api/peers/{id}/talk?before=`, `peer::timeline`), each row with its
+  own buttons, and a foot that sends a line or a document found by name.
+  From their name on Home, their sidebar row's menu, and Ctrl K.
+- **Pairing in the same moment.** The room's PUT read its sides and wrote
+  them back with other requests let in between, so two first messages at
+  once could drop one side (404 *not a side of this room*); the relay does
+  it under `blockConcurrencyWhile` now, and a daemon puts its message in
+  again once on that 404 for a relay not yet deployed with it. A daemon
+  going stops its pairings first: a doorbell wait on a runtime being torn
+  down was a panic.
 
 ## What an agent gets
 
@@ -379,7 +431,10 @@ once.
 ## Where it lives
 
 `src/peer.rs` (keys, code, frame, relay client, the link's pieces, the
-tables), `src/server/api_peer.rs` (routes, pairing tasks, what to do with
-a frame), `src/server/peer_link.rs` (the socket to the relay),
-`ui/peer.js` (the sheets), `ui/home.js` (Arrived, Friends), `relay/` (the Worker).
+tables), `src/peer/timeline.rs` (a friend's page's list), `src/server/api_peer.rs`
+(routes, pairing tasks, what to do with a frame), `src/server/api_friend.rs`
+(the page per friend, versions following), `src/server/peer_link.rs` (the
+socket to the relay), `src/store/friends.rs` (the store's side),
+`ui/peer.js` (the sheets), `ui/friend.js` (a friend's page), `ui/home.js`
+(Arrived, Friends), `relay/` (the Worker).
 `SNYVI_RELAY` points a daemon at another relay.

@@ -518,7 +518,10 @@
     // First in the library, wherever the reader is -- on a desk, most
     // often -- and not just first into an empty inbox: a reader with a
     // year of documents is not told this one is their first.
+    // A friend's says who sent it, in its own card below, not snyvi's tip (F1).
+    const friend = d.origin === "peer" && !j.quiet && !opens && !superseded;
     if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
+    else if (friend) corner(m => m.rise({ kind: "friend", key: `d${d.id}`, from: `<b>${esc(d.sender)}</b> sent you`, title: d.title, label: "Open", go: () => showDoc(d.id, true) }));
     else if (state.waiting > 1) snyviSays("two-waiting");
     else if (j.supersedes) snyviSays("version");
     if (opens) {
@@ -642,7 +645,9 @@
       renderDesks();
     });
     for (const ev of ["peeroffers", "peernotes", "peerdone", "peerreply"]) es.addEventListener(ev, onPeer);
-    es.addEventListener("peers", ev => { const j = parse(ev); if (j && j.friends != null) state.friends = j.friends; });
+    // A send's word in the open document's head follows what came back
+    // (assets.rs `went`, F2): peer.js reads it again, in place.
+    es.addEventListener("peers", ev => { const j = parse(ev); if (j && j.friends != null) state.friends = j.friends; if (docEl.querySelector(".doc-send:not([data-act])")) peerUse().then(m => m.sentNow(peerCtx), () => {}); });
     for (const ev of HOME_EVENTS) es.addEventListener(ev, homeTick);
     // Another tab named a project or a workflow.
     es.addEventListener("renamed", ev => {

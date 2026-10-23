@@ -74,6 +74,7 @@ fn strip_ui() {
         ("gallery.js", strip::Lang::Js),
         ("player.js", strip::Lang::Js),
         ("plan.js", strip::Lang::Js),
+        ("friend.js", strip::Lang::Js),
         ("app.css", strip::Lang::Css),
         ("themes.css", strip::Lang::Css),
     ] {

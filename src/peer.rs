@@ -313,11 +313,17 @@ pub fn emoji(a: &[u8; 32], b: &[u8; 32]) -> String {
 /// which repository it is about; 2 from 1.23, which reads the kinds that
 /// close the loop -- a receipt, a reply, a line done. A frame without one is
 /// older. What a friend's last frame said is kept (`Peer::v`), and those
-/// kinds go only to a friend at `REPLIES_V` or past it.
-pub const CONTENT_V: u32 = 3;
+/// kinds go only to a friend at `REPLIES_V` or past it. 3 from 1.25 (the
+/// line), 4 from 1.49, which reads an answer to a reply (`Reply::own`).
+pub const CONTENT_V: u32 = 4;
 
 /// The first `v` that reads `Receipt`, `Reply` and `Done`.
 pub const REPLIES_V: u32 = 2;
+
+/// The first `v` that reads a reply about a document it sent (`own`): a
+/// snyvi before it looks the document up among its own sends, finds
+/// nothing, and drops it, so such a reply waits for its update.
+pub const OWN_REPLY_V: u32 = 4;
 
 /// The first `v` that speaks on a line (`line_ws`): a friend at it is sent
 /// everything down the line, and a frame from them comes the same way. An
@@ -375,10 +381,15 @@ pub enum Content {
     },
     /// One line back about a document the friend sent: `re` is the sender's
     /// id for it (`Document::id`), so it lands under that document's head.
+    /// With `own` (1.49) it is the other way round: an answer about a
+    /// document this side sent them, `re` being this side's own id for it,
+    /// which the friend's snyvi kept as the copy's `peer_ref`.
     Reply {
         re: String,
         text: String,
         name: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        own: bool,
         #[serde(default)]
         v: u32,
     },
@@ -781,6 +792,12 @@ fn exchange(
     // message is read at once. Where the bell will not open (an older relay,
     // a proxy that drops WebSockets) the wait is a long poll instead.
     let mut bell = true;
+    // A room that forgot this side: two sides that put their first message
+    // in the same moment can each be written over by the other at a relay
+    // before its fix (relay/src/index.ts `sides`), and this side then reads
+    // "not a side of this room" -- the 404 the audit hit joining within a
+    // second (6f451571c6, F22). Its message goes in again, once.
+    let mut again = true;
     loop {
         go_on(stop)?;
         let left = until - crate::store::now();
@@ -788,7 +805,7 @@ fn exchange(
             bail!(late);
         }
         let wait = if bell {
-            match ring_wait(base, room, stage, side, left.min(25)) {
+            match ring_wait(base, room, stage, side, left.min(25), stop) {
                 Bell::Rang | Bell::Quiet => 0,
                 Bell::Absent => {
                     bell = false;
@@ -812,6 +829,18 @@ fn exchange(
                 std::thread::sleep(Duration::from_secs(1))
             }
             204 => {}
+            404 if std::mem::take(&mut again) => {
+                let mut resp = agent
+                    .put(&url)
+                    .header("x-snyvi-side", side)
+                    .send(mine)
+                    .context("reaching the relay")?;
+                match resp.status().as_u16() {
+                    200 => return read_all(&mut resp),
+                    202 => bell = true,
+                    s => return Err(pair_refused(s)),
+                }
+            }
             s => return Err(pair_refused(s)),
         }
     }
@@ -841,7 +870,18 @@ enum Bell {
 /// Wait up to `secs` on the room's doorbell for the other side's `stage`.
 /// Blocking, like the rest of the pairing: it borrows the daemon's runtime
 /// for the socket, from the `spawn_blocking` thread the pairing runs on.
-fn ring_wait(base: &str, room: &str, stage: &str, side: &str, secs: i64) -> Bell {
+/// It looks at `stop` four times a second, so a Cancel -- or the daemon
+/// going, which stops every pairing before its runtime does -- ends the
+/// wait at once: a timer still waiting on a runtime being torn down is a
+/// panic (audit 6f451571c6, F23).
+fn ring_wait(
+    base: &str,
+    room: &str,
+    stage: &str,
+    side: &str,
+    secs: i64,
+    stop: &AtomicBool,
+) -> Bell {
     let Ok(rt) = tokio::runtime::Handle::try_current() else {
         return Bell::Absent;
     };
@@ -864,9 +904,15 @@ fn ring_wait(base: &str, room: &str, stage: &str, side: &str, secs: i64) -> Bell
             }
             Bell::Quiet
         };
-        let bell = tokio::time::timeout(Duration::from_secs(secs.max(1) as u64), ring)
-            .await
-            .unwrap_or(Bell::Quiet);
+        let stopped = async {
+            while !stop.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        };
+        let bell = tokio::select! {
+            b = tokio::time::timeout(Duration::from_secs(secs.max(1) as u64), ring) => b.unwrap_or(Bell::Quiet),
+            _ = stopped => return Bell::Quiet,
+        };
         let _ = socket.close(None).await;
         bell
     })
@@ -1319,6 +1365,19 @@ pub struct PeerNote {
     /// told back (`Content::Done`).
     #[serde(skip)]
     pub frame: String,
+    /// When it is due: the date the sender gave a promise, or the one this
+    /// snyvi read in a line's own words, which stay as they were (F7).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub due_at: i64,
+    /// The sender's promise to the reader, not a line for the reader's list
+    /// (`crate::promise`): Home shows it as theirs, with no Keep.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub promise: bool,
+    /// When they said they kept it, and in what commit.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub kept_at: i64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub kept_commit: String,
 }
 
 /// An agent's offer to send a document, waiting for the reader's Send.
@@ -1457,6 +1516,20 @@ pub const COLUMNS_1_25: [&str; 4] = [
     "CREATE INDEX IF NOT EXISTS peer_outbox_unsent ON peer_outbox(queued_at) WHERE sent_at = 0",
     "CREATE INDEX IF NOT EXISTS desk_notes_thread ON desk_notes(thread_id) WHERE thread_id != 0",
 ];
+
+/// 1.49: when the line kept a frame for a friend who was away (`held_at`),
+/// so the sender reads "waiting, they are away" and not "arrived"; a
+/// friend's line's date and whether it is their promise, as fields and not
+/// words glued to it, and when the promise was kept and in what commit; and
+/// which replies are the reader's own, so a document's head is one thread
+/// both ways. Version 30 of `store::MIGRATIONS`.
+pub const COLUMNS_1_49: &str =
+    "ALTER TABLE peer_outbox ADD COLUMN held_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE peer_notes ADD COLUMN due_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE peer_notes ADD COLUMN promise INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE peer_notes ADD COLUMN kept_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE peer_notes ADD COLUMN kept_commit TEXT NOT NULL DEFAULT '';
+ALTER TABLE peer_replies ADD COLUMN mine INTEGER NOT NULL DEFAULT 0;";
 
 /// A reply is one line, as a note is.
 pub const REPLY_CHARS: usize = NOTE_CHARS;
@@ -1610,17 +1683,44 @@ pub fn touch(conn: &Connection, id: i64, from: bool, now: i64) -> Result<()> {
 }
 
 /// A document queued for a friend; the same document for the same friend is
-/// the same row, queued again.
+/// the same row, queued again. What came back about the last time it went
+/// goes with it: a resend has not arrived, been read or been held yet, and
+/// the row must not say it has (audit 6f451571c6, F3).
 pub fn queue(conn: &Connection, peer: &Peer, doc_id: &str, now: i64) -> Result<String> {
     let id = frame_id(doc_id, &peer.sign_key);
     conn.execute(
         "INSERT INTO peer_outbox(id, peer_id, doc_id, queued_at) VALUES(?1, ?2, ?3, ?4)
-         ON CONFLICT(id) DO UPDATE SET queued_at = excluded.queued_at, sent_at = 0, tries = 0, later = 0, next_at = 0, error = ''",
+         ON CONFLICT(id) DO UPDATE SET queued_at = excluded.queued_at, sent_at = 0, tries = 0, later = 0, next_at = 0,
+           error = '', arrived_at = 0, read_at = 0, held_at = 0",
         params![id, peer.id, doc_id, now],
     )?;
     // The reader believes they are there: whatever else waits for them goes too.
     due_now(conn, peer.id)?;
     Ok(id)
+}
+
+/// When this very document already arrived at that friend, if it did: a
+/// document is immutable, so the same id is the same bytes, and sending it
+/// again would put nothing new in front of them (F14). A new version has
+/// an id of its own and is never "already" there.
+pub fn already(conn: &Connection, peer: &Peer, doc_id: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT arrived_at FROM peer_outbox WHERE id = ?1 AND arrived_at != 0",
+            params![frame_id(doc_id, &peer.sign_key)],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
+/// The line kept a frame for a friend who is away (`LineSaid::Held`): sent,
+/// as far as the reader can do anything, but not with them yet. Said once.
+pub fn held_mark(conn: &Connection, id: &str, now: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE peer_outbox SET held_at = ?2 WHERE id = ?1 AND held_at = 0 AND arrived_at = 0",
+        params![id, now],
+    )?;
+    Ok(())
 }
 
 /// A line queued for a friend, as a document is: said once, so each is its
@@ -1854,36 +1954,73 @@ pub struct Sent {
     pub done_at: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub done_commit: String,
+    /// The line kept it for them while they were away (`held_mark`).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub held_at: i64,
+    /// A promise (`crate::promise`), not a line for their list.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub promise: bool,
+}
+
+const SENT_COLS: &str =
+    "o.id, o.peer_id, o.doc_id, COALESCE(d.title, o.text), o.sent_at, o.arrived_at, o.read_at,
+    o.done_at, o.done_commit, o.held_at, o.re LIKE 'note:%'";
+
+fn row_sent(r: &rusqlite::Row) -> rusqlite::Result<Sent> {
+    Ok(Sent {
+        id: r.get(0)?,
+        peer_id: r.get(1)?,
+        doc_id: r.get(2)?,
+        what: r.get(3)?,
+        sent_at: r.get(4)?,
+        arrived_at: r.get(5)?,
+        read_at: r.get(6)?,
+        done_at: r.get(7)?,
+        done_commit: r.get(8)?,
+        held_at: r.get(9)?,
+        promise: r.get(10)?,
+    })
 }
 
 /// The last `limit` that went to each friend.
 pub fn sent_recent(conn: &Connection, limit: i64) -> Result<Vec<Sent>> {
     let rows = conn
-        .prepare(
-            "SELECT id, peer_id, doc_id, what, sent_at, arrived_at, read_at, done_at, done_commit FROM (
-               SELECT o.id, o.peer_id, o.doc_id, COALESCE(d.title, o.text) AS what, o.sent_at, o.arrived_at, o.read_at,
-                      o.done_at, o.done_commit,
-                      ROW_NUMBER() OVER (PARTITION BY o.peer_id ORDER BY o.sent_at DESC, o.id) AS n
+        .prepare(&format!(
+            "SELECT * FROM (
+               SELECT {SENT_COLS}, ROW_NUMBER() OVER (PARTITION BY o.peer_id ORDER BY o.sent_at DESC, o.id) AS n
                FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
                LEFT JOIN docs d ON d.id = o.doc_id AND o.doc_id != ''
                WHERE o.sent_at != 0 AND o.kind = '' AND p.removed_at = 0)
-             WHERE n <= ?1 ORDER BY sent_at DESC, id",
-        )?
-        .query_map(params![limit], |r| {
-            Ok(Sent {
-                id: r.get(0)?,
-                peer_id: r.get(1)?,
-                doc_id: r.get(2)?,
-                what: r.get(3)?,
-                sent_at: r.get(4)?,
-                arrived_at: r.get(5)?,
-                read_at: r.get(6)?,
-                done_at: r.get(7)?,
-                done_commit: r.get(8)?,
-            })
-        })?
+             WHERE n <= ?1 ORDER BY 5 DESC, 1"
+        ))?
+        .query_map(params![limit], row_sent)?
         .collect::<std::result::Result<_, _>>()?;
     Ok(rows)
+}
+
+/// Where a document went, over every version of it (`doc_ids`): one row
+/// per friend, the newest send to them, for the head of the reader's copy
+/// (F2). Waiting ones too: `sent_at` 0 says it has not gone yet.
+pub fn sent_of_doc(conn: &Connection, doc_ids: &[String]) -> Result<Vec<(String, Sent)>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SENT_COLS}, p.name, o.queued_at FROM peer_outbox o JOIN peers p ON p.id = o.peer_id
+         LEFT JOIN docs d ON d.id = o.doc_id
+         WHERE o.doc_id = ?1 AND o.kind = '' AND p.removed_at = 0"
+    ))?;
+    let mut all: Vec<(String, i64, Sent)> = Vec::new();
+    for id in doc_ids {
+        for row in stmt.query_map(params![id], |r| Ok((r.get(11)?, r.get(12)?, row_sent(r)?)))? {
+            all.push(row?);
+        }
+    }
+    // The newest per friend: a later version's send says more than v1's.
+    all.sort_by_key(|a| std::cmp::Reverse(a.1));
+    let mut seen = std::collections::HashSet::new();
+    Ok(all
+        .into_iter()
+        .filter(|(_, _, s)| seen.insert(s.peer_id))
+        .map(|(name, _, s)| (name, s))
+        .collect())
 }
 
 /// A friend says a frame this snyvi sent arrived, or was read. Only a frame
@@ -1951,28 +2088,44 @@ pub fn sent_doc(conn: &Connection, peer_id: i64, doc_id: &str) -> Result<bool> {
         .is_some())
 }
 
-/// A friend's one-line reply to a document, kept under it.
+/// A one-line reply about a document, kept under its head: a friend's, or
+/// (1.49) the reader's own to them, so the head reads as one thread both
+/// ways. `from` is the friend either way: who it was from, or to.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct Reply {
     pub from: String,
     pub text: String,
     pub at: i64,
+    /// The reader's own, said to `from`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub mine: bool,
+    pub peer_id: i64,
 }
 
+/// A reply kept under the document `doc_id` here: theirs as it came, or the
+/// reader's own as it went (`mine`).
 pub fn add_reply(
     conn: &Connection,
     peer_id: i64,
     doc_id: &str,
     text: &str,
+    mine: bool,
     now: i64,
 ) -> Result<Option<String>> {
-    let text: String = text.trim().chars().take(REPLY_CHARS).collect();
+    let text: String = text
+        .chars()
+        .filter(|c| !crate::desk::is_bidi(*c))
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(REPLY_CHARS)
+        .collect();
     if text.is_empty() {
         return Ok(None);
     }
     conn.execute(
-        "INSERT INTO peer_replies(peer_id, doc_id, text, at) VALUES(?1, ?2, ?3, ?4)",
-        params![peer_id, doc_id, text, now],
+        "INSERT INTO peer_replies(peer_id, doc_id, text, at, mine) VALUES(?1, ?2, ?3, ?4, ?5)",
+        params![peer_id, doc_id, text, now, mine],
     )?;
     Ok(Some(text))
 }
@@ -1982,7 +2135,7 @@ pub fn add_reply(
 pub fn replies(conn: &Connection, doc_ids: &[String]) -> Result<Vec<Reply>> {
     let mut out = Vec::new();
     let mut stmt = conn.prepare(
-        "SELECT p.name, r.text, r.at FROM peer_replies r JOIN peers p ON p.id = r.peer_id
+        "SELECT p.name, r.text, r.at, r.mine, r.peer_id FROM peer_replies r JOIN peers p ON p.id = r.peer_id
          WHERE r.doc_id = ?1 AND p.removed_at = 0",
     )?;
     for id in doc_ids {
@@ -1991,6 +2144,8 @@ pub fn replies(conn: &Connection, doc_ids: &[String]) -> Result<Vec<Reply>> {
                 from: r.get(0)?,
                 text: r.get(1)?,
                 at: r.get(2)?,
+                mine: r.get(3)?,
+                peer_id: r.get(4)?,
             })
         })?;
         for row in rows {
@@ -2042,12 +2197,15 @@ pub fn prune_held(conn: &Connection, before: i64) -> Result<usize> {
     Ok(conn.execute("DELETE FROM peer_held WHERE held_at < ?1", params![before])?)
 }
 
-/// A friend's line arrives.
+/// A friend's line arrives, in their words as they wrote them, with the
+/// date it carries (`due_at`, 0 for none) and whether it is their promise.
 pub fn note_arrived(
     conn: &Connection,
     peer_id: i64,
     text: &str,
     frame: &str,
+    due_at: i64,
+    promise: bool,
     now: i64,
 ) -> Result<i64> {
     let text: String = text
@@ -2059,8 +2217,8 @@ pub fn note_arrived(
         .take(NOTE_CHARS)
         .collect();
     conn.execute(
-        "INSERT INTO peer_notes(peer_id, text, frame, arrived_at) VALUES(?1, ?2, ?3, ?4)",
-        params![peer_id, text, frame, now],
+        "INSERT INTO peer_notes(peer_id, text, frame, arrived_at, due_at, promise) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+        params![peer_id, text, frame, now, due_at.max(0), promise],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -2069,7 +2227,8 @@ pub fn note_arrived(
 pub fn notes_waiting(conn: &Connection) -> Result<Vec<PeerNote>> {
     let rows = conn
         .prepare(
-            "SELECT n.id, n.peer_id, p.name, n.text, n.arrived_at, n.frame FROM peer_notes n JOIN peers p ON p.id = n.peer_id
+            "SELECT n.id, n.peer_id, p.name, n.text, n.arrived_at, n.frame, n.due_at, n.promise, n.kept_at, n.kept_commit
+             FROM peer_notes n JOIN peers p ON p.id = n.peer_id
              WHERE n.taken_at = 0 AND n.removed_at = 0 AND p.removed_at = 0 ORDER BY n.arrived_at, n.id",
         )?
         .query_map([], |r| {
@@ -2080,6 +2239,10 @@ pub fn notes_waiting(conn: &Connection) -> Result<Vec<PeerNote>> {
                 text: r.get(3)?,
                 arrived_at: r.get(4)?,
                 frame: r.get(5)?,
+                due_at: r.get(6)?,
+                promise: r.get(7)?,
+                kept_at: r.get(8)?,
+                kept_commit: r.get(9)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;
@@ -2266,6 +2429,8 @@ pub fn unb64(s: &str) -> Option<Vec<u8>> {
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+pub mod timeline;
 
 #[cfg(test)]
 mod tests;

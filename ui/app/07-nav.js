@@ -134,6 +134,8 @@
     const k = location.pathname.match(/^\/desk\/(\d+)$/);
     if (k || location.pathname === "/desks") return showDesk(k ? +k[1] : null, false);
     if (location.pathname === "/inbox") return showInbox(false, location.search === "?recent");
+    const f = location.pathname.match(/^\/friend\/(\d+)$/);
+    if (f) return showFriend(+f[1], false);
     showHome(false);
   });
 

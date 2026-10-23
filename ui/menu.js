@@ -340,6 +340,26 @@ async function keepAll(ctx, pid, name) {
   if (!ids.length) return;
   ctx.peerCtx.peer().then(m => m.keepOn(ctx.peerCtx, ids, `everything from ${name.replace(/^From /, "")}`), () => ctx.toast("Could not open that"));
 }
+/** A friend's own row's menu: their page (1.49), Rename, Keep all, Remove.
+ *  The row's name is theirs, "From " and all (`peer::from_name`). */
+function friendRow(ctx, el, pid, p, capability) {
+  return { head: p.name, items: [
+    ctx.peerCtx && { label: `Open ${p.name.replace(/^From /, "")}'s page`, run: () => openFriend(ctx, p.name) },
+    { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
+    capability && ctx.peerCtx && { label: "Keep all on a desk…", run: () => keepAll(ctx, pid, p.name) }, RULE,
+    { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
+  ] };
+}
+
+/** A friend's page, from their row: the friend by the row's name. */
+async function openFriend(ctx, row) {
+  const name = row.replace(/^From /, "").toLowerCase();
+  let j = null;
+  try { j = await (await fetch("/api/peers")).json(); } catch {}
+  const f = (j?.friends || []).find(x => !x.removed_at && x.name.toLowerCase() === name);
+  if (f) ctx.peerCtx.friend(f.id); else ctx.toast("Could not find that friend");
+}
+
 /** How many friends there are to send to: what the page was told when it
  *  was served (`boot.friends`), then what each `peers` event says
  *  (`state.friends`), so the first menu after pairing already offers Send
@@ -427,11 +447,7 @@ function entries(ctx, el, byKey = false) {
     if (!p) return null;
     // A friend's own row is no folder: nothing to make a desk on, to copy or
     // to show in the file manager (docs/PEER.md).
-    if (p.friend) return { head: p.name, items: [
-      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
-      capability && ctx.peerCtx && { label: "Keep all on a desk…", run: () => keepAll(ctx, pid, p.name) }, RULE,
-      { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
-    ] };
+    if (p.friend) return friendRow(ctx, el, pid, p, capability);
     const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
     return { head: p.name, items: [
       capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }, false, true) },
@@ -472,7 +488,7 @@ function entries(ctx, el, byKey = false) {
     if (!d || !capability) return null;
     return { head: d.name, items: [
       !here && { label: "Show", run: () => ctx.show(id, true) },
-      d.panes.length < ctx.state.desks.per_desk && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, id) },
+      d.panes.filter(p => p.slot <= ctx.state.desks.per_desk).length < ctx.state.desks.per_desk && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, id) },
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },

@@ -101,6 +101,9 @@ pub(crate) const PLAYER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/playe
 /// Approve on a plan's head (1.47), fetched on its first press.
 pub(crate) const PLAN_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/plan.js"));
 
+/// A friend's page (`/friend/{id}`, 1.49), fetched when it opens.
+pub(crate) const FRIEND_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/friend.js"));
+
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
 
@@ -434,6 +437,36 @@ pub(crate) struct Talk {
     pub(crate) from: Option<String>,
     /// The reader's own document that is open lines' plan: Approve in its head.
     pub(crate) plan: Option<crate::waiting::PlanFor>,
+    /// The reader's own document: where it went, each friend's newest send
+    /// and what became of it (1.49, F2), said in Send to…'s place.
+    pub(crate) sent: Vec<SentTo>,
+}
+
+/// One friend a document went to, and how far it got.
+pub(crate) struct SentTo {
+    pub(crate) name: String,
+    /// waiting, away, sent, arrived or read.
+    pub(crate) state: &'static str,
+    /// When it got there; 0 for what has not gone.
+    pub(crate) at: i64,
+}
+
+/// How far a send got, in one word, and when: read, arrived, held for a
+/// friend who is away, sent, or not gone yet -- waiting, or away when the
+/// line says they are.
+fn sent_to(name: String, s: &crate::peer::Sent, away: bool) -> SentTo {
+    let (state, at) = if s.read_at > 0 {
+        ("read", s.read_at)
+    } else if s.arrived_at > 0 {
+        ("arrived", s.arrived_at)
+    } else if s.held_at > 0 || (s.sent_at == 0 && away) {
+        ("away", s.held_at)
+    } else if s.sent_at > 0 {
+        ("sent", s.sent_at)
+    } else {
+        ("waiting", 0)
+    };
+    SentTo { name, state, at }
 }
 
 /// The talk for `doc`, from the store.
@@ -449,16 +482,29 @@ pub(crate) fn talk(app: &App, doc: &Doc) -> Talk {
         .filter(|p| p.removed_at == 0)
         .filter(|_| frame.as_ref().is_some_and(|(_, _, re)| !re.is_empty()))
         .map(|p| p.name.clone());
-    let replies = if doc.origin == "peer" {
+    // One thread both ways (1.49): theirs and the reader's own, under
+    // either side's copy.
+    let replies = app.store.peer_replies(&doc.id).unwrap_or_default();
+    let sent = if doc.origin == "peer" {
         Vec::new()
     } else {
-        app.store.peer_replies(&doc.id).unwrap_or_default()
+        let away = app.peers.away.lock().unwrap().clone();
+        app.store
+            .peer_sent_of_doc(&doc.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, s)| {
+                let gone = away.contains_key(&s.peer_id);
+                sent_to(name, &s, gone)
+            })
+            .collect()
     };
     Talk {
         replies,
         reply_to,
         from: friend.map(|p| p.name),
         plan: None,
+        sent,
     }
 }
 
@@ -538,19 +584,12 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         doc.received_at,
         fmt_time(doc.received_at)
     ));
-    let send = |sub: &mut String, sep: &str| {
-        sub.push_str(&format!(
-            "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
-            q(&doc.id),
-            q(&doc.title)
-        ))
-    };
     // The reader's own document: Send to…, once there is a friend to send
     // to, in the sub line, so the head is the same height with it and
     // without. The page wires the click (`ui/peer.js`).
     if !theirs {
-        if friends > 0 {
-            send(&mut sub, " · ");
+        if friends > 0 || !talk.sent.is_empty() {
+            sub.push_str(&send_button(doc, talk, " · "));
         }
         sub.push_str(&approve_button(doc, talk));
         return head(doc, body, &sub, "", talk);
@@ -577,7 +616,7 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
     if doc.filed {
         let row = crate::peer::from_name(who);
         acts.push_str(&format!(
-            "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"unfile\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Back to {}\" data-tip-sub=\"with every version; nothing on disk moves\">Move to {}</button>",
+            "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"unfile\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Off the desk, back under {}\" data-tip-sub=\"with every version; nothing on disk moves\">Back to {}</button>",
             q(&doc.id),
             q(&doc.title),
             q(&row),
@@ -595,12 +634,34 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         ));
     }
     if friends >= 2 {
-        send(&mut acts, "");
+        acts.push_str(&send_button(doc, &Talk::default(), ""));
     }
     let acts = format!(
         "<div class=\"doc-acts\" style=\"display:flex;flex-wrap:wrap;gap:2px 18px;margin:6px 0 0;font-size:var(--fs-ui);color:var(--fg-3)\">{acts}</div>"
     );
     head(doc, body, &sub, &acts, talk)
+}
+
+/// Send to…, in a head. Once the reader's own document went somewhere it
+/// says where, and how far it got -- "→ Trapti · arrived 21:28" -- in the
+/// same place, on one line that never wraps, so the head keeps its height as
+/// the word changes (F2). Pressed, it is Send to… still.
+fn send_button(doc: &Doc, talk: &Talk, sep: &str) -> String {
+    let q = html_escape::encode_double_quoted_attribute;
+    if talk.sent.is_empty() {
+        return format!(
+            "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-send=\"{}\" data-send-title=\"{}\">Send to…</button>",
+            q(&doc.id),
+            q(&doc.title)
+        );
+    }
+    format!(
+        "{sep}<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-sent=\"1\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Send to…\" data-tip-sub=\"{}\" style=\"max-width:24em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom\">{}</button>",
+        q(&doc.id),
+        q(&doc.title),
+        q(&sent_tip(&talk.sent)),
+        sent_label(&talk.sent)
+    )
 }
 
 /// A plan for desk notes: Approve, the go-ahead its panel reads at its
@@ -652,23 +713,47 @@ fn head(doc: &Doc, body: &str, sub: &str, acts: &str, talk: &Talk) -> String {
     let e = html_escape::encode_text;
     // What friends said back, under the head, oldest first: part of the
     // page as it is drawn, so nothing arrives under the reader's eyes.
+    // Both ways (1.49): the reader's own say You, and under their own
+    // document, to whom. Their links are links (F10).
+    let theirs = doc.origin == "peer";
     let replies: String = talk
         .replies
         .iter()
         .map(|r| {
+            let who = match (r.mine, theirs) {
+                (false, _) => format!("<b>{}</b>", e(&r.from)),
+                (true, true) => "<b>You</b>".to_string(),
+                (true, false) => format!("<b>You</b> → {}", e(&r.from)),
+            };
             format!(
-                "<li><b>{}</b> {} <time data-ts=\"{}\">{}</time></li>",
-                e(&r.from),
-                e(&r.text),
+                "<li>{who} {} <time data-ts=\"{}\">{}</time></li>",
+                link_line(&r.text),
                 r.at,
                 fmt_time(r.at)
             )
         })
         .collect();
+    // Under the reader's own document, the last friend who replied can be
+    // answered there (`Reply::own`); under theirs, Reply to … is in the row
+    // above.
+    let answer = (!theirs)
+        .then(|| talk.replies.iter().rev().find(|r| !r.mine))
+        .flatten()
+        .map(|r| {
+            format!(
+                "<li><button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"reply\" data-send=\"{}\" data-send-title=\"{}\" data-to=\"{}\" data-peer=\"{}\">Reply to {}…</button></li>",
+                html_escape::encode_double_quoted_attribute(&doc.id),
+                html_escape::encode_double_quoted_attribute(&doc.title),
+                html_escape::encode_double_quoted_attribute(&r.from),
+                r.peer_id,
+                e(&r.from)
+            )
+        })
+        .unwrap_or_default();
     let replies = if replies.is_empty() {
         replies
     } else {
-        format!("<ul class=\"doc-replies\">{replies}</ul>")
+        format!("<ul class=\"doc-replies\">{replies}{answer}</ul>")
     };
     format!(
         "<header class=\"doc-head\"><h1 class=\"doc-title\">{}</h1><p class=\"doc-sub\">{}</p>{acts}{}</header><article class=\"prose kind-{}\">{}</article>",
@@ -678,6 +763,98 @@ fn head(doc: &Doc, body: &str, sub: &str, acts: &str, talk: &Talk) -> String {
         doc.kind.as_str(),
         render::chunk_code(body)
     )
+}
+
+/// Where a document went, on Send to…'s button: one friend and how far it
+/// got, with its time, or the friends' names when several.
+fn sent_label(sent: &[SentTo]) -> String {
+    let e = html_escape::encode_text;
+    match sent {
+        [one] => {
+            let when = if one.at > 0 {
+                format!(" <time data-ts=\"{}\">{}</time>", one.at, fmt_time(one.at))
+            } else {
+                String::new()
+            };
+            format!("→ {} · {}{when}", e(&one.name), state_word(one.state))
+        }
+        many => format!(
+            "→ {}",
+            many.iter()
+                .map(|s| e(&s.name).to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+/// Each friend's word, for the button's tip.
+fn sent_tip(sent: &[SentTo]) -> String {
+    sent.iter()
+        .map(|s| format!("{}: {}", s.name, state_word(s.state)))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The name is said beside it, in the head and in the tip, so the word
+/// never says it again.
+fn state_word(state: &str) -> &str {
+    match state {
+        "away" => "held, they’re away",
+        "waiting" => "waiting to go",
+        s => s,
+    }
+}
+
+/// A reply's words, escaped, with each web link a link out: http or https,
+/// never this machine, bidi controls gone -- the page's `linkedLine`
+/// (ui/home.js), said here because the head is drawn here.
+pub(crate) fn link_line(text: &str) -> String {
+    let e = html_escape::encode_text;
+    let q = html_escape::encode_double_quoted_attribute;
+    let text: String = text.chars().filter(|c| !crate::desk::is_bidi(*c)).collect();
+    let mut out = String::new();
+    let mut rest = text.as_str();
+    while let Some(at) = rest.find("http") {
+        let (before, from) = rest.split_at(at);
+        let end = from
+            .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '\'' | '`'))
+            .unwrap_or(from.len());
+        let url = from[..end].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', '"', '\'']);
+        let host = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .map(|r| r.split(['/', '?', '#']).next().unwrap_or(""))
+            .unwrap_or("");
+        let local = host.is_empty()
+            || host.starts_with("localhost")
+            || host.starts_with("127.")
+            || host.starts_with("0.0.0.0")
+            || host.starts_with("[::1]");
+        out.push_str(&e(before));
+        if local {
+            out.push_str(&e(&from[..url.len().max(4)]));
+            rest = &from[url.len().max(4)..];
+            continue;
+        }
+        let shown = url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_start_matches("www.");
+        let shown: String = if shown.chars().count() > 40 {
+            shown.chars().take(40).chain(std::iter::once('…')).collect()
+        } else {
+            shown.to_string()
+        };
+        out.push_str(&format!(
+            "<a href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">{}</a>",
+            q(url),
+            e(&shown)
+        ));
+        rest = &from[url.len()..];
+    }
+    out.push_str(&e(rest));
+    out
 }
 
 /// How many friends there are, removed ones left out: what decides whether
@@ -852,6 +1029,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("gallery.js", GALLERY_JS, JS),
     ("player.js", PLAYER_JS, JS),
     ("plan.js", PLAN_JS, JS),
+    ("friend.js", FRIEND_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.

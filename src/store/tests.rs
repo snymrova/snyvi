@@ -166,10 +166,19 @@ const OLD_1_46_1: &str =
 /// And of 1.46.2's: a date on a line and its card, and Approve (step 28,
 /// `due::COLUMNS_1_47`, `due::TURN_COLUMN_1_47`, `waiting::COLUMNS_1_47`).
 /// 1.48's columns, taken away again: a 1.47 database.
+const OLD_1_48: &str =
+    "ALTER TABLE peer_outbox DROP COLUMN held_at; ALTER TABLE peer_notes DROP COLUMN due_at;
+     ALTER TABLE peer_notes DROP COLUMN promise; ALTER TABLE peer_notes DROP COLUMN kept_at;
+     ALTER TABLE peer_notes DROP COLUMN kept_commit; ALTER TABLE peer_replies DROP COLUMN mine;";
+
 const OLD_1_47: &str =
     "ALTER TABLE threads DROP COLUMN told_at; ALTER TABLE threads DROP COLUMN told_url;
      ALTER TABLE threads DROP COLUMN told_how; ALTER TABLE threads DROP COLUMN ask_told_at;
      DROP TABLE home_state; ALTER TABLE desks DROP COLUMN rule_asked_at;";
+
+/// 1.49's column, taken away: which side a closed pane was on (step 31,
+/// `desk::BACK_COLUMN_1_49`).
+const OLD_1_49_BACK: &str = "ALTER TABLE panes_closed DROP COLUMN back;";
 
 const OLD_1_46_2: &str =
     "ALTER TABLE desk_notes DROP COLUMN due_at; ALTER TABLE desk_notes DROP COLUMN due_rang_at;
@@ -518,6 +527,52 @@ fn a_moved_pane_takes_its_documents_slot_with_it() {
     assert_eq!(slot_of("From two"), 1);
     assert!(!s.move_pane(desk.id, 3, 1).unwrap(), "no pane at 3");
     assert_eq!(slot_of("From one"), 2, "a refused move changes nothing");
+}
+
+/// 1.49: a pane sent to the back takes what it sent with it, and the grid
+/// that closed up behind it renumbers; a close in the back leaves the grid's
+/// documents alone.
+#[test]
+fn a_pane_sent_back_takes_its_documents_and_the_grid_closes_up() {
+    let (s, _d) = temp_store();
+    let desk = s.create_desk("/home/p/snyvi", None).unwrap();
+    let mut ids = vec![];
+    for _ in 0..3 {
+        let Opened::Pane(p) = s.open_pane(desk.id, "/home/p/snyvi", "", false).unwrap() else {
+            panic!("room on the desk")
+        };
+        ids.push(p.id);
+    }
+    for (slot, title) in [(1, "From one"), (2, "From two"), (3, "From three")] {
+        let o = Origin {
+            id: desk.id,
+            name: "snyvi".into(),
+            slot,
+        };
+        let mut d = new_doc(title, title, "w");
+        d.desk = Some(&o);
+        s.insert(&new_id(title), d).unwrap();
+    }
+    let slot_of = |title: &str| {
+        s.desk_docs(desk.id, 40, false)
+            .unwrap()
+            .into_iter()
+            .find(|d| d.title == title)
+            .unwrap()
+            .slot
+    };
+    let back = crate::desk::GRID + 1;
+    assert!(matches!(
+        s.send_back(&ids[0], true).unwrap(),
+        crate::desk::Sent::Moved { from: 1, .. }
+    ));
+    assert_eq!(slot_of("From one"), back);
+    assert_eq!(slot_of("From two"), 1);
+    assert_eq!(slot_of("From three"), 2);
+    assert!(s.close_pane(&ids[0]).unwrap());
+    assert_eq!(slot_of("From one"), 0, "closed, it is no panel's");
+    assert_eq!(slot_of("From two"), 1, "the grid's stay put");
+    assert_eq!(slot_of("From three"), 2);
 }
 
 /// The rail's Documents list: what a pane on this desk sent, newest
@@ -984,7 +1039,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1018,7 +1073,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
     assert_eq!(kind, "terminal");
     assert_eq!(boards, "/home/me/Studio", "the column is left as it was");
     // And it takes the four panels every desk holds.
-    for _ in 1..crate::desk::PER_DESK {
+    for _ in 1..crate::desk::GRID {
         assert!(matches!(
             s.open_pane(studio, "/home/me/Studio", "", false).unwrap(),
             crate::desk::Opened::Pane(_)
@@ -1273,7 +1328,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1806,7 +1861,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1849,7 +1904,7 @@ fn a_1_46_1_database_keeps_its_panel_names() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
+        "{OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
     ))
     .unwrap();
     drop(conn);

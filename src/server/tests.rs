@@ -1134,7 +1134,7 @@ async fn a_friends_line_kept_on_a_desk_says_who_sent_it() {
             })
             .unwrap();
         let n = store
-            .peer_note_arrived(p.id, "water the beans", "")
+            .peer_note_arrived(p.id, "water the beans", "", 0, false)
             .unwrap();
         *at.lock().unwrap() = (desk.id, n);
     });
@@ -1297,7 +1297,7 @@ async fn a_friends_document_is_kept_on_a_desk_then_saved_into_its_folder() {
     assert!(garden.path.join("from-trapti/seeds-2.md").exists());
 }
 
-/// A friend's document in one of the reader's folders says so, and Move to
+/// A friend's document in one of the reader's folders says so, and Back to
 /// From Trapti takes it back to their row, off the desk; nobody else's
 /// document moves that way.
 #[tokio::test]
@@ -1880,6 +1880,7 @@ async fn the_doc_event_says_a_draft_is_quiet() {
 mod accounts;
 #[cfg(unix)]
 mod first_desk;
+mod friends;
 mod keys;
 mod pastes;
 mod routes;

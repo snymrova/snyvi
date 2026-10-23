@@ -224,6 +224,10 @@ _snyvi_branch() {{
 }}
 
 _snyvi_prompt() {{
+  # How the last command ended, for snyvi (`OSC 133;D`): a panel in the back
+  # whose command failed says needs you. Read first, before anything here
+  # sets $? again.
+  printf '\e]133;D;%s\a' "$?"
   # Whatever was installed after this hook -- a framework that adds its own on
   # the first prompt -- would otherwise set PROMPT last and win. Staying at the
   # end of the array is how this one stays the prompt the reader sees.
@@ -312,6 +316,8 @@ _snyvi_branch() {{
 # line's width in characters the reader can see, and wraps where it should.
 _snyvi_prompt() {{
   local ok=$?
+  # How the last command ended, for snyvi (`OSC 133;D`): see the zsh prompt.
+  printf '\e]133;D;%s\a' "$ok"
   local acc='\[\e[38;2;{r};{g};{b}m\]' dim='\[\e[38;5;244m\]' red='\[\e[31m\]' off='\[\e[0m\]'
   local branch=""
   _snyvi_branch
@@ -529,6 +535,18 @@ mod tests {
             assert!(!rc.contains("rev-parse"), "a prompt runs git rev-parse");
             assert!(rc.contains("HEAD"), "a prompt reads no HEAD");
         }
+    }
+
+    /// 1.49: the dressed prompts say how the last command ended, first
+    /// thing, before anything in the hook sets `$?` again.
+    #[test]
+    fn the_prompt_says_how_the_last_command_ended() {
+        let (z, b) = (zshrc("#2dd4bf"), bashrc("#2dd4bf"));
+        let mark = r"printf '\e]133;D;%s\a'";
+        let hook = z.find("_snyvi_prompt() {").unwrap();
+        assert_eq!(z[hook..].find(mark), z[hook..].find("printf"));
+        assert!(z[hook..].find(mark).unwrap() < z[hook..].find("[[").unwrap());
+        assert!(b.contains(&format!("{mark} \"$ok\"")));
     }
 
     #[test]

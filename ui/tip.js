@@ -114,7 +114,9 @@ export function init({ keyHint, since = performance.now() }) {
 
   function show(t) {
     const name = words(t);
-    if (!name) return hide();
+    // A button whose menu is open: the menu is what it says now, and a tip
+    // would lie over its first item (audit 6f451571c6, F16).
+    if (!name || t.getAttribute("aria-expanded") === "true" && t.hasAttribute("aria-haspopup")) return hide();
     el = t;
     // A letter, Del or the backslash acts only once ⌃B has turned the letter keys on
     // (app.js `keys`); until then a tip naming one taught a key that did

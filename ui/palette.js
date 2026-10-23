@@ -24,6 +24,7 @@ let previewing = false;
  *  typed while this chunk was on its way. */
 export function open(deps) {
   if (!d) { d = deps; wire(); }
+  friendList = null;
   const { input, browsing, codePre, state } = d;
   input.placeholder = browsing() ? `Find a file in ${state.browseRoot.name} · :120 for a line`
     : codePre() ? "Search documents · :120 for a line" : "Search documents · p:project · kind:md · > commands";
@@ -157,6 +158,17 @@ function pairItems(q) {
   return COMMANDS.filter(c => c.cmd === "pair" || c.cmd === "join");
 }
 
+/** A friend's page by their name (1.49): the friends, read once each time
+ *  the palette opens, only when there is a query to match them to. */
+let friendList = null;
+async function friendItems(q) {
+  const l = q.trim().toLowerCase();
+  if (l.length < 2 || !d.peerCtx) return [];
+  if (!friendList) { try { friendList = ((await (await fetch("/api/peers")).json()).friends || []).filter(f => !f.removed_at); } catch { friendList = []; } }
+  return friendList.filter(f => `${f.name} ${f.name}'s page friend`.toLowerCase().includes(l))
+    .map(f => ({ friend: f.id, t: `${f.name}'s page`, s: "Everything between you, both ways" }));
+}
+
 /** The keyboard's way to the `+` beside Folders. */
 function folderItems(q) {
   const l = q.trim().toLowerCase();
@@ -206,8 +218,9 @@ async function search(q) {
   found = off ? [] : browsing() ? found.map(p => ({ file: p })) : q.trim() ? found : found.map(x => ({ ...x, snippet: "" }));
   // Theme rows are each drawn in their theme, so the sheet has to be in.
   if (themeItems(q).length) await d.loadThemes();
+  const friends = await friendItems(q);
   if (mine !== seq || pal.hidden) return;
-  items = themeItems(q).concat(deskItems(q), folderItems(q), pairItems(q), found); sel = 0;
+  items = themeItems(q).concat(deskItems(q), folderItems(q), friends, pairItems(q), found); sel = 0;
   list.innerHTML = items.map(row).join("") + (off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : items.length ? "" : none(q));
   pal.classList.toggle("themes", items.some(it => it.theme));
   lit();
@@ -223,6 +236,7 @@ function pick(it) {
   if (it.theme) previewing = false;
   close();
   if (it.cmd === "parts") { parts(); return; }
+  if (it.friend) { d.peerCtx.friend(it.friend); return; }
   if (it.cmd === "pair" || it.cmd === "join") { const p = d.peerCtx, m = it.cmd === "join" ? "join" : ""; p.peer().then(x => x.pair(p, "", m), () => p.toast("Could not open the pairing sheet")); return; }
   if (it.cmd) {
     const c = it.cmd;

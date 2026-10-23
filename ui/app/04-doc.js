@@ -307,8 +307,8 @@
   const peerUse = () => chunk("peer");
   // Saved into a folder: Copy path has a file here to give now (#99).
   const savedHere = (id, path) => { state.cache.delete(id); if (state.doc && state.doc.id === id) { state.doc.local_path = path; renderMeta(); } };
-  const peerCtx = { esc, rel, sayErr, toast, state, refreshDoc, saved: savedHere, peer: peerUse, home: () => showHome(true),
-    showDoc: id => showDoc(id, true), rise: card => corner(m => m.rise(card)) };
+  const peerCtx = { esc, rel, dates, sayErr, toast, state, refreshDoc, saved: savedHere, peer: peerUse, home: () => showHome(true),
+    showDoc: id => showDoc(id, true), rise: card => corner(m => m.rise(card)), openDesk: id => id && showDesk(id, true), friend: id => showFriend(id, true) };
   const removedLine = fresh => homeUse().then(m => m.removedLine(fresh, { view: () => state.view, capability, deskApi, docEl, esc, rel, post, loadDesks, toast }), () => { homeLoading = null; });
 
   // ---------- connect an agent ----------
@@ -355,6 +355,24 @@
     afterRender();
     if (push) docEl.querySelector("h1")?.focus({ preventScroll: true });
   }
+  /** A friend's page, at `/friend/{id}` (1.49): everything between the
+   *  reader and them, drawn by friend.js, a chunk, so first paint carries
+   *  only this. Its stream ticks are `homeTick`'s. */
+  let friendMod = null;
+  async function showFriend(id, push = true) {
+    if (push) leave();
+    offDesk();
+    state.view = "friend"; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
+    if (push) history.pushState({ friend: id }, "", `/friend/${id}`);
+    renderTree(); markActive();
+    try { friendMod = await chunk("friend"); }
+    catch (e) { toast("Could not open that page", { sub: e }); return; }
+    if (state.view !== "friend") return;
+    await friendMod.show({ docEl, main, esc, rel, who: whoIco, sayErr, deskApi, peerCtx, view: () => state.view }, id, push);
+    if (push) swapIn();
+    main.scrollTo({ top: 0, behavior: "instant" });
+    afterRender();
+  }
   /** Home, at `/`: the page the mark opens. Drawn by home.js, a chunk, from
    *  one call; the Inbox is at `/inbox`. */
   let homeMod = null, homeLoading = null;
@@ -377,7 +395,7 @@
     afterRender();
   }
   /** Something Home shows moved: read it again, soon. */
-  const homeTick = e => { if (state.view === "home" && homeMod) homeMod.soonRefresh(e.type); };
+  const homeTick = e => { if (state.view === "home" && homeMod) homeMod.soonRefresh(e.type); else if (state.view === "friend") friendMod?.refresh(); };
 
   // Welcome's question, and Connect wherever it is offered.
   docEl.addEventListener("click", async e => {
@@ -693,11 +711,13 @@
    *  now; the sidebar, the code blocks' controls and the versions wait for the
    *  first paint, so a click shows the document before anything else is done
    *  about it. A page left before its turn came skips the rest. */
+  /** The daemon's dates, in the one format the page writes them in: after
+   *  a page is drawn, redrawn in place, or a head's button swapped in. */
+  function dates() { for (const t of docEl.querySelectorAll("time[data-ts]")) t.textContent = fmt(+t.dataset.ts); }
   let rendered = 0;
   function afterRender() {
     const turn = ++rendered;
-    // The daemon's dates, in the one format the page writes them in.
-    for (const t of docEl.querySelectorAll("time[data-ts]")) t.textContent = fmt(+t.dataset.ts);
+    dates();
     overBar();
     markActive();
     buildToc();
@@ -721,6 +741,7 @@
 
   /** The body was swapped under the reader: rebuild what hangs off it, keep the sidebar. */
   function afterRefresh() {
+    dates();
     buildToc();
     renderMeta(false);
     enhanceCode();

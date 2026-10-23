@@ -47,11 +47,12 @@ async function watch() {
 }
 
 /** A pane the reader cannot see: the window is hidden, a document is read
- *  over the desk, or the grid had no room for it. Its frames are taken in
+ *  over the desk, the grid had no room for it, or it is in the back and the
+ *  drawer is not open on it (18-back.js). Its frames are taken in
  *  but not drawn (`paint`), and the daemon sends it one a second, not
  *  sixty: a desk left behind a document used to cost as much as one in
  *  view. */
-const seen = v => !document.hidden && reading == null && v.el.isConnected;
+const seen = v => !document.hidden && reading == null && v.el.isConnected && (!isBack(v.pane) || drawerOn === v.id);
 let paced = null;
 function pace() {
   const slow = [...views.values()].filter(v => !seen(v)).map(v => v.id).sort();
@@ -93,7 +94,7 @@ function receive(f) {
     // a panel that stopped instead has nothing left to switch.
     if (v.whenDone && f.s.agent !== "working" && f.s.agent !== "needs_you") { const k = v.whenDone; v.whenDone = null; v.pending = null; header(v); if (f.s.running) k(); }
     if (mark(f.s) !== was) rail();
-    else { named(v); if (v.id === focused) meta(); }
+    else { named(v); if (v.id === focused) meta(); if (isBack(v.pane)) backHead(current()); }
   }
   else if (f.t === "old") {
     const rows = f.lines.slice(-KEEP_LINES);

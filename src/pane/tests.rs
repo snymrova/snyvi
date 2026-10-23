@@ -255,6 +255,7 @@ async fn a_resume_mark_rides_the_status_until_the_pane_starts_or_it_lapses() {
             args: &[],
             env: &[],
             account: 0,
+            back: false,
         };
         let status = panes.get(late).start(s, &panes).unwrap();
         assert!(!status.resume);
@@ -325,6 +326,7 @@ async fn a_pane_runs_a_process_and_its_output_arrives_as_frames() {
             args: &[],
             env: &[("SNYVI_T".to_string(), "x".to_string())],
             account: 0,
+            back: false,
         },
         &panes,
     )
@@ -510,6 +512,7 @@ async fn a_verbatim_folder_starts_the_panel_in_that_folder() {
             args: &[],
             env: &[],
             account: 0,
+            back: false,
         },
         &panes,
     )
@@ -622,6 +625,7 @@ async fn an_unwatched_pane_is_caught_up_when_a_page_attaches() {
             args: &[],
             env: &[],
             account: 0,
+            back: false,
         },
         &panes,
     )
@@ -668,6 +672,7 @@ async fn a_folder_through_a_link_is_not_a_move() {
             args: &[],
             env: &[],
             account: 0,
+            back: false,
         },
         &panes,
     )
@@ -721,6 +726,7 @@ async fn an_agent_state_is_set_on_a_running_pane_once_per_change() {
             args: &[],
             env: &[],
             account: 0,
+            back: false,
         },
         &panes,
     )
@@ -802,6 +808,7 @@ async fn an_agent_is_in_from_its_start_to_its_end() {
             args: &[],
             env: &[],
             account: 0,
+            back: false,
         },
         &panes,
     )
@@ -850,6 +857,7 @@ async fn a_new_title_reaches_the_desk_and_not_the_sidebar() {
             args: &[],
             env: &[],
             account: 0,
+            back: false,
         },
         &panes,
     )
@@ -967,6 +975,7 @@ async fn a_step_is_one_argument_and_no_shell_reads_it() {
             offer: false,
             env: &[],
             account: 0,
+            back: false,
         },
         &panes,
     )
@@ -990,5 +999,119 @@ async fn a_step_is_one_argument_and_no_shell_reads_it() {
     assert_eq!(&got[..got.len() - 1], &args[..]);
     for f in ["pwned1", "pwned2", "pwned3"] {
         assert!(!dir.path.join(f).exists(), "{f} was run");
+    }
+}
+
+/// Start `cmd` in a pane, in the back or not, and the statuses it sends
+/// until `until` says enough or ten seconds pass.
+#[cfg(unix)]
+async fn run_until(
+    panes: &Arc<Panes>,
+    id: &str,
+    cmd: &str,
+    back: bool,
+    until: impl Fn(&serde_json::Value) -> bool,
+) -> Option<serde_json::Value> {
+    let live = panes.get(id);
+    let (_, mut rx) = live.attach();
+    let cwd = std::env::temp_dir().to_string_lossy().to_string();
+    live.start(
+        Start {
+            cwd: &cwd,
+            root: &cwd,
+            cmd,
+            desk: "d",
+            slot: if back { crate::desk::GRID + 1 } else { 1 },
+            cols: 80,
+            rows: 10,
+            accent: "",
+            offer: false,
+            args: &[],
+            env: &[],
+            account: 0,
+            back,
+        },
+        panes,
+    )
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while tokio::time::Instant::now() < deadline {
+        let Ok(Ok(msg)) = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await else {
+            break;
+        };
+        let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        if v["t"] == "status" && until(&v["s"]) {
+            return Some(v["s"].clone());
+        }
+    }
+    None
+}
+
+/// 1.49: a panel in the back that ends on its own needs the reader -- its
+/// status is `blocked`, which everything that shows needs you reads. In the
+/// grid an end is just an end, and a Stop is the reader's own.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panel_in_the_back_that_dies_needs_you() {
+    let dir = crate::store::tempdir::Dir::new("snyvi-pane-back");
+    let (events, _) = broadcast::channel(64);
+    let panes = Panes::new(&dir.path, events);
+    let ended = |s: &serde_json::Value| s["running"] == false && s["exit"].is_number();
+
+    let s = run_until(
+        &panes,
+        "00000000000000000000000000000b01",
+        "exit 3",
+        true,
+        ended,
+    )
+    .await;
+    assert_eq!(s.unwrap()["blocked"], true, "died in the back");
+
+    let s = run_until(
+        &panes,
+        "00000000000000000000000000000b02",
+        "exit 3",
+        false,
+        ended,
+    )
+    .await;
+    assert_eq!(s.unwrap()["blocked"], false, "ended in the grid");
+
+    let id = "00000000000000000000000000000b03";
+    let running = |s: &serde_json::Value| s["running"] == true;
+    run_until(&panes, id, "sleep 30", true, running)
+        .await
+        .unwrap();
+    let (_, mut rx) = panes.get(id).attach();
+    panes.get(id).stop();
+    let mut stopped = None;
+    while let Ok(Ok(msg)) = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await {
+        let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        if v["t"] == "status" && ended(&v["s"]) {
+            stopped = Some(v["s"].clone());
+            break;
+        }
+    }
+    assert_eq!(stopped.unwrap()["blocked"], false, "Stop is the reader's");
+
+    // A command in its shell that failed, as the prompt's mark says; a
+    // ctrl-C's 130 is the reader's.
+    let failed = run_until(
+        &panes,
+        "00000000000000000000000000000b04",
+        r"printf '\033]133;D;1\007'; sleep 30",
+        true,
+        |s| s["blocked"] == true,
+    )
+    .await;
+    assert!(failed.is_some_and(|s| s["running"] == true));
+    let id = "00000000000000000000000000000b05";
+    let cmd = r"printf '\033]133;D;130\007'; sleep 30";
+    run_until(&panes, id, cmd, true, running).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(!panes.status(id).blocked, "a ctrl-C is the reader's");
+    for id in ["00000000000000000000000000000b04", id] {
+        panes.get(id).stop();
     }
 }
