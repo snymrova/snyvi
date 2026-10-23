@@ -409,8 +409,13 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .agent-fix details[open] summary { margin-bottom: 6px; }
 .connect-foot { margin-top: 24px; color: var(--fg-3); font-size: var(--fs-ui); }
 .agents-more { margin-top: 20px; }
-.agents-more > summary { cursor: pointer; font-size: var(--fs-body-s); color: var(--fg-2); padding: 6px 0; }
+.agents-more > summary { cursor: pointer; font-size: var(--fs-body-s); color: var(--fg-2); padding: 6px 0; list-style: none; display: flex; align-items: center; }
 .agents-more[open] > summary { margin-bottom: 8px; }
+/* The sidebar's own chevron after the words, not the browser's triangle
+   before them: right while shut, down while open. */
+.agents-more > summary::-webkit-details-marker { display: none; }
+.agents-more > summary > .s-chev { opacity: 1; margin-left: 6px; transform: translateY(-1px) rotate(-45deg); }
+.agents-more[open] > summary > .s-chev { transform: translateY(-1.5px) rotate(45deg); }
 /* Welcome: the story in two lines, one question, one button. */
 .welcome { max-width: 560px; padding-top: 6vh; }
 .welcome .w-mark .mk { width: 44px; height: 44px; }
@@ -908,7 +913,7 @@ export function connect(a, { esc, rel, cap }) {
   const rest = rows.filter(r => !shown.includes(r));
   return `<div class="connect"><header class="doc-head"><h1 class="doc-title">Agents</h1><p class="doc-sub">An agent sends what it writes here, and snyvi shows what it is doing in its desk. Each row is what that agent's own settings say, right now.</p></header>` +
     `<ul class="agents">${shown.map(row).join("")}</ul>` +
-    (rest.length ? `<details class="agents-more"><summary>Using a different agent?</summary><ul class="agents">${rest.map(row).join("")}</ul>` +
+    (rest.length ? `<details class="agents-more"><summary>Using a different agent?<span class="s-chev" aria-hidden="true"></span></summary><ul class="agents">${rest.map(row).join("")}</ul>` +
       (line ? `<div class="connect-line"><p>The line that makes an agent send what it writes, for its instructions file or its rules setting:</p>${cmd(line)}</div>` : "") + `</details>` : "") +
     `<p class="connect-foot">From a terminal, <code>${esc(a ? a.program : "snyvi")} send PLAN.md</code> sends a file by hand. <a href="/start" data-nav="start">How snyvi works</a>.</p></div>`;
 }
