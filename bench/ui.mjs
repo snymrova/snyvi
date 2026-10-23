@@ -3879,6 +3879,16 @@ async function panelRows(cdp, base, token) {
     await sleep(8600);
     const spent = await q.ev(`!document.querySelector('[data-a="pane-back"]')`);
     rows.push(["the offer ends after 8 s", spent, spent ? "gone, and the panel stays closed" : "Undo is still offered"]);
+
+    // A4 of the audit of 1.46.2: at the desk's cap the head says it once,
+    // in the quiet +'s tip; the rail's Panels head has the count. It drew
+    // 4/4 twice, one each side of the Keys button.
+    const j = await (await fetch(`${base}/api/desks`, { headers: H })).json(), per = j.per_desk;
+    for (let n = j.desks.find(x => x.id === desk).panes.length; n < per; n++) await post(`/api/desks/${desk}/panes`);
+    await until(`document.querySelectorAll(".dk-pane").length === ${per}`);
+    const capped = await q.ev(`(() => { const b = document.querySelector('.dk-head .icon[data-a="new"]'); return { caps: document.querySelectorAll(".dk-head .dk-cap").length, off: b?.getAttribute("aria-disabled") === "true", sub: b?.dataset.tipSub || "" }; })()`);
+    rows.push(["the desk head says the cap once", capped.caps === 0 && capped.off && capped.sub === `A desk holds ${per}`,
+      capped.caps ? `${capped.caps} counts on the head` : !capped.off ? "the + is still offered" : `the + is quiet, its tip "${capped.sub}"`]);
   } finally {
     for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});

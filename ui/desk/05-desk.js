@@ -471,9 +471,9 @@ function tabs(d, all, shown) {
     : `data-tip="${need(v) ? "Needs you" : `Panel ${v.pane.slot}`}" data-tip-sub="${full ? "full view shows one" : "not enough room"}" data-key="ctrl+alt+${v.pane.slot}"`;
   t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}" ${tip(v)}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "";
   // The + goes quiet when there is no pane to add, and says why under the
-  // cursor. At the desk's own cap the count sits beside it -- 4/4 -- which
-  // is what ties the greyed + to the panes on the desk.
-  const plus = ctx.docEl.querySelector(".dk-head .icon[data-a=\"new\"]"), why = noNew(d), j = ctx.desks;
+  // cursor: "A desk holds 4". The rail's Panels head says the count, 4 of 4,
+  // so the head does not say it again (the audit of 1.46.2 found it twice).
+  const plus = ctx.docEl.querySelector(".dk-head .icon[data-a=\"new\"]"), why = noNew(d);
   if (plus) {
     // Quiet rather than disabled, so the keyboard still reaches it and can
     // hear why: the reason is a hidden line it points to (A4 draws it).
@@ -483,10 +483,6 @@ function tabs(d, all, shown) {
     let say = plus.nextElementSibling?.id === "dk-plus-why" ? plus.nextElementSibling : null;
     if (!say) { say = Object.assign(document.createElement("span"), { id: "dk-plus-why", className: "vh" }); plus.after(say); plus.setAttribute("aria-describedby", say.id); }
     say.textContent = why || "";
-    let n = plus.previousElementSibling?.classList.contains("dk-cap") ? plus.previousElementSibling : null;
-    const atCap = d.panes.length >= j.per_desk;
-    if (atCap && !n) { n = document.createElement("span"); n.className = "dk-cap"; plus.before(n); }
-    if (n) { if (atCap) { n.textContent = `${d.panes.length}/${j.per_desk}`; n.dataset.tip = why; } else n.remove(); }
   }
 }
 
