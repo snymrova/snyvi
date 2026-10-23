@@ -629,11 +629,13 @@ button.sec-fold:hover { color: var(--fg-2); }
 .sec-fold[aria-expanded="false"] .s-chev { transform: rotate(-45deg); }
 /* The count: a figure, not a pill. In the accent while something waits, in
    --warn while something is blocked; kept while folded, so a folded head
-   still says it. One the open section says itself below says it only folded. */
-.sec-n { flex: none; padding: 0 4px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0; color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+   still says it. One the open section says itself below says it only folded.
+   Its slot stands empty at two figures' width, so a count coming or going
+   moves nothing on the head. */
+.sec-n { flex: none; min-width: 2ch; padding: 0 4px; text-align: right; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0; color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sec-n.accent { color: var(--accent); }
 .sec-n.warn { color: var(--warn); }
-.sec-fold[aria-expanded="true"] ~ .sec-n.fold-only { display: none; }
+.sec-fold[aria-expanded="true"] ~ .sec-n.fold-only { visibility: hidden; }
 .sec-acts { flex: none; display: flex; align-items: center; gap: var(--sp-1); opacity: 0; transition: opacity var(--t); }
 .sec-head:is(:hover, :focus-within, .empty) > .sec-acts { opacity: 1; }
 /* New desk is always there: the + in front of Desks is the way to a desk,

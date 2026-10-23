@@ -170,7 +170,11 @@
     const label = `<span class="sec-nm">${name}</span>`;
     const lead = o.fixed ? `<span class="sec-fold"${tip(o.tip, o.sub)}>${label}</span>`
       : `<button type="button" class="sec-fold" data-fold="${key}" aria-expanded="${open}"${tip(o.tip, o.sub)}>${label}${chev}</button>`;
-    const n = o.count == null || o.count === "" ? "" : `<span class="sec-n${o.tone ? ` ${o.tone}` : ""}${o.foldOnly ? " fold-only" : ""}"${tip(o.countTip)}>${o.count}</span>`;
+    // The count's slot is there with no count in it, so one arriving moves
+    // nothing beside it (the audit of 1.46.2 saw the Desks head's buttons
+    // slide 19 px when a panel rang).
+    const has = o.count != null && o.count !== "";
+    const n = `<span class="sec-n${has && o.tone ? ` ${o.tone}` : ""}${has && o.foldOnly ? " fold-only" : ""}"${has ? tip(o.countTip) : ""}>${has ? o.count : ""}</span>`;
     return `<div class="sec-head${o.empty ? " empty" : ""}" data-sec="${key}"${o.part ? ` data-part="${o.part}"` : ""}>${lead}${o.acts ? `<span class="sec-acts">${o.acts}</span>` : ""}${n}${o.end || ""}</div>`;
   }
   /** Whether a section is drawn folded: the reader's fold, unless `open`. */
@@ -323,7 +327,7 @@
     if (w.count) {
       const c = n || head.insertBefore(document.createElement("span"), head.querySelector(".sec-acts"));
       c.className = `sec-n${tone ? ` ${tone}` : ""}`; c.textContent = w.count;
-    } else n?.remove();
+    } else if (n) { n.className = "sec-n"; n.textContent = ""; }
     return true;
   }
   /** Every minute each seat is patched with what it last had: its age and

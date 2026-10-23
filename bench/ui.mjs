@@ -2431,8 +2431,15 @@ async function deskRows(cdp, base, token) {
     // A real change: the panel needs its reader. The mark and the head's
     // count say so; the row under the pointer is still that row.
     await p.ev(`window.__still.side = 0; window.__rowA = document.querySelector('a[data-desk="${da}"]'); 1`);
+    const actsAt = `Math.round(document.querySelector('#desk-nav .sec-head[data-sec="desks"] .sec-acts button')?.getBoundingClientRect().left ?? -1)`;
+    const actsBefore = await p.ev(actsAt);
     await post(`/api/panes/${pane}/agent`, { state: "needs_you" }, { "content-type": "application/json", authorization: `Bearer ${token}` });
     const rang = await until(`!!document.querySelector('a[data-desk="${da}"] .dot.blk') && !!document.querySelector("#desk-nav .sec-n.warn")`);
+    // A3 of the audit of 1.46.2: the count has its slot at rest, so its
+    // coming moves nothing on the head.
+    const actsAfter = await p.ev(actsAt), headN = await p.ev(`document.querySelector('#desk-nav .sec-head[data-sec="desks"] .sec-n')?.textContent || ""`);
+    rows.push(["the Desks head holds still when a count arrives", rang && actsBefore >= 0 && actsAfter === actsBefore && headN === "1",
+      !rang ? "no count came on the head" : actsBefore < 0 ? "the Desks head has no buttons" : actsAfter !== actsBefore ? `its buttons moved from x ${actsBefore} to ${actsAfter}` : headN !== "1" ? `the count says "${headN}"` : `the count says 1, its buttons still at x ${actsAfter}`]);
     const after = await p.ev(`({ rowA: window.__rowA === document.querySelector('a[data-desk="${da}"]'), row: window.__row === document.querySelector('a[data-desk="${db}"]'), lit: window.__row.matches(":hover") })`);
     rows.push(["a panel that needs you changes only its mark", rang && after.rowA && after.row && after.lit,
       !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
