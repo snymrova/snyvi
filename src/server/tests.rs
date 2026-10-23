@@ -1297,7 +1297,7 @@ async fn a_friends_document_is_kept_on_a_desk_then_saved_into_its_folder() {
     assert!(garden.path.join("from-trapti/seeds-2.md").exists());
 }
 
-/// A friend's document in one of the reader's folders says so, and Move to
+/// A friend's document in one of the reader's folders says so, and Back to
 /// From Trapti takes it back to their row, off the desk; nobody else's
 /// document moves that way.
 #[tokio::test]

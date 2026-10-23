@@ -641,7 +641,7 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
     if doc.filed {
         let row = crate::peer::from_name(who);
         acts.push_str(&format!(
-            "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"unfile\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Back to {}\" data-tip-sub=\"with every version; nothing on disk moves\">Move to {}</button>",
+            "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"unfile\" data-send=\"{}\" data-send-title=\"{}\" data-tip=\"Off the desk, back under {}\" data-tip-sub=\"with every version; nothing on disk moves\">Back to {}</button>",
             q(&doc.id),
             q(&doc.title),
             q(&row),

@@ -381,7 +381,7 @@ function reply(ctx, id, to, title, peer = 0) {
   on("click", e => { if (e.target.closest(".pr-foot [data-pr=close]")) ctx.refreshDoc?.(id); });
 }
 
-/** Move to From <friend>: a friend's document that was filed into one of
+/** Back to From <friend>: a friend's document that was filed into one of
  *  the reader's folders (both have the repository) or kept on a desk goes
  *  back under the friend's row, every version with it. Said where the
  *  button was; the head is drawn again as it lands, with Keep on a desk… */

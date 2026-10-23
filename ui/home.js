@@ -311,9 +311,19 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-stage.planned.ok { color: var(--ok); }
 .hm-arr-all a { color: var(--fg-2); text-decoration: none; }
 .hm-arr-all a:hover { color: var(--fg); text-decoration: underline; }
-/* A friend, one line: their name, then Note… and ⋯ (Mute, Remove). */
-.hm-friend { position: relative; gap: 10px; }
-.hm-friend > .hm-fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg); }
+/* A friend: their name (their page), then Note… and ⋯ (Mute, Remove);
+   under it, always, one line of what last passed between you, so the row
+   is the same height whatever it says (F9). */
+.hm-friend { position: relative; gap: 2px 10px; flex-wrap: wrap; padding: 2px 0; }
+.hm-friend > .hm-fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg); padding: 0; border: 0; background: none; font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
+.hm-friend > .hm-fn:hover { text-decoration: underline; }
+.hm-friend > .hm-fsub { order: 9; flex-basis: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-3); font-size: var(--fs-small); }
+/* A friend's line on Home keeps two lines of its words, never one cut
+   short; a promise is theirs, said as one (F4, F18). */
+.hm-arrived .hm-ab > .hm-t { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.hm-arrived .hm-pr { color: var(--fg-3); }
+.hm-kept { color: var(--ok); font-weight: 600; white-space: nowrap; }
+@media (max-width: 480px) { .hm-arrived .hm-acts { flex-wrap: wrap; } .hm-arrived .hm-acts > .hm-s { flex-basis: 100%; } }
 .hm-friend > .hm-ren { flex: 1; min-width: 0; font: inherit; font-weight: 500; line-height: inherit; padding: 0 4px; margin: 0 0 0 -5px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
 /* Keys, folded like the week. */
 .hm-meta { margin: 10px 0 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1241,28 +1251,30 @@ function friendRow(f, j) {
     [{ id: 0, name: "Their own row" }, ...ds.filter(d => !d.parked)].map(d => `<button type="button" role="menuitemradio" aria-checked="${(at?.id || 0) === d.id}" class="hm-nb-o" data-hm="fdeskto" data-k="${f.id}" data-n="${d.id}"><span class="hm-nb-on">${(at?.id || 0) === d.id ? TICK : ""}</span><span class="hm-t">${esc(d.name)}</span></button>`).join("") + `</div>` : "";
   const where = ds.length && !more ? `<button type="button" class="hm-link" data-hm="fdesk" data-k="${f.id}" aria-haspopup="menu" aria-expanded="${deskOpen === f.id}" data-tip="Where their things land" data-tip-sub="${at ? `documents on ${esc(at.name)}, lines as its suggestions` : `From ${esc(f.name)} in the sidebar, lines in Arrived`}">→ ${esc(at ? at.name : "own row")} ▾</button>` : "";
   const heard = `paired ${ago(f.paired_at)}${f.last_from ? ` · from them ${ago(f.last_from)}` : ""}${f.last_to ? ` · sent ${ago(f.last_to)}` : ""}`;
-  // One state at a time: what is still waiting to go says so in place of
-  // what became of the last thing that went.
-  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><span class="hm-fn" data-tip="${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</span>${outbox(f) || sentLine(f)}${where}` +
+  // What still waits to go says so in the row, with Retry; what became of
+  // the last thing that went is the line under it, which is always there.
+  return `<li class="hm-pj hm-friend" data-peer="${f.id}"><button type="button" class="hm-fn" data-hm="fopen" data-k="${f.id}" data-tip="Everything with ${esc(f.name)}" data-tip-sub="${esc(heard)}">${esc(f.name)}${f.muted ? ` <span class="hm-s">muted</span>` : ""}</button>${outbox(f)}${where}` +
     (more
       ? `<button type="button" class="hm-link" data-hm="fren" data-k="${f.id}" data-tip="The one name they have here" data-tip-sub="their row in the sidebar follows">Rename…</button>` +
         `<button type="button" class="hm-link" data-hm="fmute" data-k="${f.id}" data-tip="${f.muted ? "What they send lights up again" : "What they send arrives read"}">${f.muted ? "Unmute" : "Mute"}</button>` +
         `<button type="button" class="hm-link" data-hm="freceipts" data-k="${f.id}" data-tip="${f.read_receipts ? `${esc(f.name)} is told when you open what they sent` : `${esc(f.name)} hears only that it arrived`}">${f.read_receipts ? "Stop telling reads" : "Tell them when read"}</button>` +
         `<button type="button" class="hm-link" data-hm="fremove" data-k="${f.id}" data-tip="Remove ${esc(f.name)}" data-tip-sub="keys kept; Restore brings them back">Remove</button>`
       : `<button type="button" class="hm-link" data-hm="fnote" data-k="${f.id}" data-tip="A line for their notes">Note…</button>`) +
-    `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Rename, mute, read receipts or remove"}">⋯</button>${list}</li>`;
+    `<button type="button" class="hm-link" data-hm="fmore" data-k="${f.id}" aria-expanded="${more}" aria-label="${more ? "Fewer" : "More"} for ${esc(f.name)}" data-tip="${more ? "Back" : "Rename, mute, read receipts or remove"}">⋯</button>${list}${friendSub(f)}</li>`;
 }
 
-/** What became of the last thing that went to a friend, in their row: sent,
- *  arrived, read (when they allow it), or a line of yours they ticked and
- *  told you of. The rest of the last few are in its tip. */
-const sentWord = x => x.done_at ? `✓ done${x.done_commit ? ` · ${x.done_commit.slice(0, 7)}` : ""}` : x.read_at ? "read" : x.arrived_at ? "arrived" : "sent";
-function sentLine(f) {
-  const { esc } = c, mine = (peers?.sent || []).filter(x => x.peer_id === f.id);
-  if (!mine.length) return "";
-  const [last, ...rest] = mine;
-  return `<span class="hm-s" data-tip="${esc(last.what)} · ${esc(sentWord(last))}" data-tip-sub="${esc(rest.map(x => `${x.what}: ${sentWord(x)}`).join("; ") || `sent ${ago(last.sent_at)}`)}">${esc(sentWord(last))}</span>`;
+/** The line under a friend's name: what last went to them and how far it
+ *  got -- "you sent Seed list · arrived 3 min ago" -- or that they are
+ *  away, or when you last heard from them. Yours, said as yours: the word
+ *  beside their name read as theirs (audit 6f451571c6, F9). */
+function friendSub(f) {
+  const { esc } = c, last = (peers?.sent || []).find(x => x.peer_id === f.id);
+  let t = last ? `you sent ${last.promise ? "a promise, " : ""}“${esc(last.what)}” · ${esc(sentWord(last))}${sentAt(last) ? ` ${ago(sentAt(last))}` : ""}`
+    : f.last_from ? `last heard from ${ago(f.last_from)}` : `paired ${ago(f.paired_at)}`;
+  if (f.away) t = `away now; what you send waits for them · ${t}`;
+  return `<span class="hm-fsub">${t}</span>`;
 }
+const sentAt = x => x.done_at || x.read_at || x.arrived_at || x.held_at || x.sent_at;
 
 /** What has not gone to a friend yet, in their row: one that stopped trying
  *  says why, with Retry; the rest are a count, the oldest's reason in its
@@ -1279,7 +1291,7 @@ function outbox(f) {
 /* ---------- Lately ---------- */
 
 /** What came, in one place: a friend's line still waiting for a desk, with
- *  its Add to a desk…, then the corner's Lately drawn large -- documents,
+ *  its Keep on, then the corner's Lately drawn large -- documents,
  *  asides, friends' words, kept, with the rows and buttons the corner's
  *  tray has (ui/corner.js, plan b0bca0a11f). An agent's offer is On you's,
  *  in the corner. Nothing that arrives is put out of sight. */
@@ -1441,16 +1453,21 @@ function linkedLine(text, esc) {
   return html + esc(text.slice(from));
 }
 
-/** A friend's line: Keep on… puts it on a desk in one click, with their
- *  name on it; ✕ puts it away. Keep on… is the window's, where the desks are. */
+/** A friend's line: Keep on ▾ puts it on a desk in one click, with their
+ *  name on it; ✕ puts it away. Keep on is the window's, where the desks are.
+ *  Their words stay as they wrote them, a date in them its chip (F7). A
+ *  promise is theirs, not the reader's to do: "Sunny promised you", its
+ *  date, kept ✓ once they keep it, and only ✕ (F4). */
 function lineRow(n, j) {
   const { esc } = c, s = arrSaid.get("n" + n.id), ds = j.desks || [];
   const desks = [...ds.filter(d => !d.parked), ...ds.filter(d => d.parked)];
   const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
-  return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${linkedLine(n.text, esc)}</span><span class="hm-acts">` +
-    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at)}</span>` +
-      (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Add it to a desk" data-tip-sub="a note there, from ${esc(n.from)}">Add to a desk… ▾</button>` : "") +
+  const date = n.kept_at ? `<span class="hm-kept" data-tip="Kept ${esc(new Date(n.kept_at * 1000).toLocaleString())}"${n.kept_commit ? ` data-tip-sub="in ${esc(n.kept_commit.slice(0, 7))}"` : ""}>kept ✓</span>` : n.due_at ? dueChip(n.due_at) : "";
+  const keep = n.promise || !desks.length ? "" : `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Keep it on a desk" data-tip-sub="a note there, from ${esc(n.from)}">Keep on ▾</button>`;
+  const words = n.promise ? `<span class="hm-pr">${esc(n.from)} promised you:</span> ${linkedLine(n.text, esc)}` : linkedLine(n.text, esc);
+  return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${words}</span><span class="hm-acts">` +
+    (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at)}</span>${date}${keep}` +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
     `</span></span>${list}</li>`;
 }
@@ -1571,7 +1588,7 @@ function wire() {
     // Lately's rows are the corner's, and so are their buttons.
     const cn = e.target.closest("button[data-a^='cn-']");
     if (cn && cornerMod?.act(cn.dataset.a, cn)) return;
-    // A click anywhere else closes an Add to a desk… list.
+    // A click anywhere else closes a Keep on list.
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
@@ -1716,6 +1733,7 @@ async function friendClick(k, id, b) {
   if (await arrivedClick(k, id, b)) return;
   if (k === "pair") c.peerCtx.peer().then(m => m.pair(c.peerCtx), () => c.peerCtx.toast("Could not open the pairing sheet"));
   else if (k === "fnote") { const f = friendsOf().find(x => x.id === id); if (f) c.peerCtx.peer().then(m => m.note(c.peerCtx, id, f.name), () => {}); }
+  else if (k === "fopen") c.peerCtx.friend(id);
   else if (k === "fren") friendRename(id);
   else if (k === "fmore") { friendMore = friendMore === id ? 0 : id; draw(last); c.docEl.querySelector(`[data-hm=fmore][data-k="${id}"]`)?.focus({ preventScroll: true }); }
   else if (k === "fdesk") { deskOpen = deskOpen === id ? 0 : id; draw(last); c.docEl.querySelector(deskOpen ? `[data-hm=fdeskto][data-k="${id}"][aria-checked=true]` : `[data-hm=fdesk][data-k="${id}"]`)?.focus({ preventScroll: true }); }
