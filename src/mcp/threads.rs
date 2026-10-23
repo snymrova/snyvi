@@ -180,6 +180,13 @@ fn also_open(v: &Value) -> String {
 fn card(t: &Value) -> String {
     let s = |k: &str| t.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let mut parts = vec![s("name"), s("stage")];
+    // Told (1.48, `crate::told`): said, with where, so the move is seen to hold.
+    if t.get("told_at").and_then(Value::as_i64).unwrap_or(0) != 0 {
+        parts.push(match s("told_url") {
+            u if u.is_empty() => "told".to_string(),
+            u => format!("told at {u}"),
+        });
+    }
     let notes: Vec<String> = t
         .get("notes")
         .and_then(Value::as_array)

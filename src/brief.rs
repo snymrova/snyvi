@@ -211,13 +211,17 @@ pub fn brief_of(
         .iter()
         .filter(|s| s.settled_at == 0 && (s.kind == "widget" || s.kind == "box"))
         .map(|s| {
-            let whose = desk
-                .panes
-                .iter()
-                .find(|p| p.id == s.pane)
-                .map_or("a panel since closed".to_string(), |p| {
-                    format!("panel {}", p.slot)
-                });
+            // snyvi's own proposal (Out there, 1.48) is on no panel.
+            let whose = desk.panes.iter().find(|p| p.id == s.pane).map_or_else(
+                || {
+                    if s.pane.is_empty() && s.by == "snyvi" {
+                        "snyvi".to_string()
+                    } else {
+                        "a panel since closed".to_string()
+                    }
+                },
+                |p| format!("panel {}", p.slot),
+            );
             format!("the {} {} (proposed by {whose})", s.kind, cut(&s.name, 40))
         })
         .collect();
