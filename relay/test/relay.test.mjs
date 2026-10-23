@@ -217,6 +217,21 @@ test("two sides meet in a room, through both stages, and the room is spent", asy
   assert.equal(r.status, 410);
 });
 
+test("two sides whose first messages land together are both kept", async () => {
+  // Joined within a moment of the code being made (snyvi audit 6f451571c6,
+  // F22): each side's first message must find itself in the room after.
+  for (let i = 0; i < 5; i++) {
+    const id = hex(32), a = hex(16), b = hex(16);
+    const [ra, rb] = await Promise.all([room(id, "spake", a, "PUT", "A"), room(id, "spake", b, "PUT", "B")]);
+    assert.deepEqual([ra.status, rb.status].sort(), [200, 202]);
+    for (const [me, theirs] of [[a, "B"], [b, "A"]]) {
+      const r = await room(id, "spake", me, "GET", null, 0);
+      assert.equal(r.status, 200, "each side is still one of the room's two");
+      assert.equal(Buffer.from(r.bytes).toString(), theirs);
+    }
+  }
+});
+
 test("a third side is turned away, and a stranger reads nothing", async () => {
   const id = hex(32);
   assert.equal((await room(id, "spake", hex(16), "PUT", "a")).status, 202);

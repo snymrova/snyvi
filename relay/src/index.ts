@@ -491,18 +491,26 @@ export class Room extends DurableObject<Env> {
       const bytes = await readCapped(request, ROOM_MSG_MAX);
       if (!bytes) return text(413, "a room message is at most 8 KB");
       if (bytes.length === 0) return text(400, "an empty message");
-      const sides = (await storage.get<string[]>("sides")) ?? [];
-      if (!sides.includes(side)) {
-        if (sides.length >= 2) return text(409, "the room is full");
-        // A room's first message is the one an IP limit counts: once per pairing.
-        if (sides.length === 0 && !(await under(this.env.LIMIT_FIRST, request.headers.get(CLIENT) ?? ""))) return busy();
-        sides.push(side);
-        await storage.put("sides", sides);
-        if (sides.length === 1) await storage.setAlarm(Date.now() + ROOM_TTL_MS);
-      }
-      await storage.put(`msg:${stage}:${side}`, bytes);
+      // Read, add, write -- with nothing else let in between. Two sides
+      // whose first messages land in the same moment otherwise each read
+      // an empty room and the second write drops the first side, which then
+      // reads "not a side of this room" (snyvi audit 6f451571c6, F22).
+      const said = await this.ctx.blockConcurrencyWhile(async (): Promise<string[] | Response> => {
+        const sides = (await storage.get<string[]>("sides")) ?? [];
+        if (!sides.includes(side)) {
+          if (sides.length >= 2) return text(409, "the room is full");
+          // A room's first message is the one an IP limit counts: once per pairing.
+          if (sides.length === 0 && !(await under(this.env.LIMIT_FIRST, request.headers.get(CLIENT) ?? ""))) return busy();
+          sides.push(side);
+          await storage.put("sides", sides);
+          if (sides.length === 1) await storage.setAlarm(Date.now() + ROOM_TTL_MS);
+        }
+        await storage.put(`msg:${stage}:${side}`, bytes);
+        return sides;
+      });
+      if (said instanceof Response) return said;
       this.wake();
-      this.ring(sides, side, stage);
+      this.ring(said, side, stage);
     } else {
       const sides = (await storage.get<string[]>("sides")) ?? [];
       if (!sides.includes(side)) return text(404, "not a side of this room");
