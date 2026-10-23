@@ -1416,6 +1416,12 @@ async function designRows(p, url, arrive) {
   for (const n of [1, 2, 3]) last = await arrive({ name, body: `# Lineage\n\nVersion ${n}.\n` });
   await p.goto(`${new URL(url).origin}/d/${last.id}`);
   await p.pointerAway();
+  // B4 of the audit of 1.46.2: the rail's versions say which is which, sent
+  // in one minute as these are; they read one date three times.
+  await until(`document.querySelectorAll("#history a").length === 3`, 30);
+  const vs = await p.ev(`[...document.querySelectorAll("#history a")].map(a => a.textContent.trim())`);
+  rows.push(["a lineage's versions say which is which", vs.length === 3 && vs.every((t, i) => t.startsWith(`v${3 - i} · `)) && new Set(vs).size === 3,
+    vs.length !== 3 ? `${vs.length} versions in the rail` : `they read ${vs.map(t => `"${t}"`).join(", ")}`]);
   await p.press("Delete");
   const three = await until(`/3 versions/.test(document.querySelector("#trees .t-ghost")?.textContent || document.querySelector("#toasts .toast")?.textContent || "")`, 30);
   rows.push(["lineage ghost says 3 versions", three, three ? "removed · 3 versions" : `it says "${await p.ev(`document.querySelector("#trees .t-ghost")?.textContent || ""`)}"`]);
