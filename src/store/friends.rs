@@ -238,4 +238,42 @@ impl Store {
             _ => vec![id.to_string()],
         })
     }
+
+    /// The copy here of a document a friend sent, by their id for it
+    /// (`docs.peer_ref`, set as it arrived): the newest, if any. What an
+    /// answer about their own document (`Reply::own`) is kept under.
+    pub fn peer_copy_of(&self, key: &str, their_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT id FROM docs WHERE origin = 'peer' AND peer_key = ?1 AND peer_ref = ?2 AND deleted_at = 0
+                 ORDER BY received_at DESC LIMIT 1",
+                params![key, their_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// A friend's other copies of the file `source_path`, outside the
+    /// project `but`, newest first, each with the desk it is kept on:
+    /// where a new version of it is to join them (`api_friend::follow_versions`).
+    pub fn peer_other_versions(
+        &self,
+        key: &str,
+        source_path: &str,
+        but: i64,
+    ) -> Result<Vec<(String, Option<i64>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut st = conn.prepare(
+            "SELECT id, NULLIF(desk_id, 0) FROM docs
+             WHERE origin = 'peer' AND peer_key = ?1 AND source_path = ?2 AND project_id != ?3 AND deleted_at = 0
+             ORDER BY received_at DESC",
+        )?;
+        let rows = st
+            .query_map(params![key, source_path, but], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
 }

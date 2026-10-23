@@ -792,6 +792,12 @@ fn exchange(
     // message is read at once. Where the bell will not open (an older relay,
     // a proxy that drops WebSockets) the wait is a long poll instead.
     let mut bell = true;
+    // A room that forgot this side: two sides that put their first message
+    // in the same moment can each be written over by the other at a relay
+    // before its fix (relay/src/index.ts `sides`), and this side then reads
+    // "not a side of this room" -- the 404 the audit hit joining within a
+    // second (6f451571c6, F22). Its message goes in again, once.
+    let mut again = true;
     loop {
         go_on(stop)?;
         let left = until - crate::store::now();
@@ -799,7 +805,7 @@ fn exchange(
             bail!(late);
         }
         let wait = if bell {
-            match ring_wait(base, room, stage, side, left.min(25)) {
+            match ring_wait(base, room, stage, side, left.min(25), stop) {
                 Bell::Rang | Bell::Quiet => 0,
                 Bell::Absent => {
                     bell = false;
@@ -823,6 +829,18 @@ fn exchange(
                 std::thread::sleep(Duration::from_secs(1))
             }
             204 => {}
+            404 if std::mem::take(&mut again) => {
+                let mut resp = agent
+                    .put(&url)
+                    .header("x-snyvi-side", side)
+                    .send(mine)
+                    .context("reaching the relay")?;
+                match resp.status().as_u16() {
+                    200 => return read_all(&mut resp),
+                    202 => bell = true,
+                    s => return Err(pair_refused(s)),
+                }
+            }
             s => return Err(pair_refused(s)),
         }
     }
@@ -852,7 +870,11 @@ enum Bell {
 /// Wait up to `secs` on the room's doorbell for the other side's `stage`.
 /// Blocking, like the rest of the pairing: it borrows the daemon's runtime
 /// for the socket, from the `spawn_blocking` thread the pairing runs on.
-fn ring_wait(base: &str, room: &str, stage: &str, side: &str, secs: i64) -> Bell {
+/// It looks at `stop` four times a second, so a Cancel -- or the daemon
+/// going, which stops every pairing before its runtime does -- ends the
+/// wait at once: a timer still waiting on a runtime being torn down is a
+/// panic (audit 6f451571c6, F23).
+fn ring_wait(base: &str, room: &str, stage: &str, side: &str, secs: i64, stop: &AtomicBool) -> Bell {
     let Ok(rt) = tokio::runtime::Handle::try_current() else {
         return Bell::Absent;
     };
@@ -875,9 +897,15 @@ fn ring_wait(base: &str, room: &str, stage: &str, side: &str, secs: i64) -> Bell
             }
             Bell::Quiet
         };
-        let bell = tokio::time::timeout(Duration::from_secs(secs.max(1) as u64), ring)
-            .await
-            .unwrap_or(Bell::Quiet);
+        let stopped = async {
+            while !stop.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        };
+        let bell = tokio::select! {
+            b = tokio::time::timeout(Duration::from_secs(secs.max(1) as u64), ring) => b.unwrap_or(Bell::Quiet),
+            _ = stopped => return Bell::Quiet,
+        };
         let _ = socket.close(None).await;
         bell
     })

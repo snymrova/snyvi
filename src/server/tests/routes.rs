@@ -454,6 +454,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Reader,
         true,
     ),
+    ("GET", "/api/peers/1/talk", None, Gate::Open, true),
     ("POST", "/api/peers/notes/1", Some("{}"), Gate::Reader, true),
     (
         "POST",
@@ -727,6 +728,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("POST", "/api/widgets", Some("{}"), Gate::Token, true),
     ("GET", "/api/widgets", None, Gate::DeskOrToken, true),
     ("GET", "/sidebars", None, Gate::Open, true),
+    ("GET", "/friend/1", None, Gate::Open, true),
     (
         "POST",
         "/api/widgets/nope/allow",

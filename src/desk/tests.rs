@@ -1044,6 +1044,34 @@ fn a_friends_line_keeps_its_sender() {
     assert_eq!(mine.sent_by, "");
 }
 
+/// A friend's dated line keeps their words, the date read from them and
+/// not cut out (audit 6f451571c6, F7); the reader's own is cut as ever.
+#[test]
+fn a_friends_dated_line_keeps_its_words() {
+    let mut conn = db();
+    let d = create(&conn, "/w", None, 0).unwrap().id;
+    let now = 1_792_771_000;
+    let Suggested::Note(s) = suggest_note_from(
+        &mut conn,
+        d,
+        "order the compost before Thursday",
+        "Trapti",
+        "Trapti",
+        now,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert_eq!(s.text, "order the compost before Thursday");
+    assert!(s.due_at > now);
+    let home = add_note_from(&mut conn, d, "seed list by Friday", "Trapti", now)
+        .unwrap()
+        .unwrap();
+    assert_eq!((home.text.as_str(), home.due_at > now), ("seed list by Friday", true));
+    let mine = add_note(&mut conn, d, "seed list by Friday", now).unwrap().unwrap();
+    assert_eq!((mine.text.as_str(), mine.due_at > now), ("seed list", true));
+}
+
 /// An agent's suggestion is a ghost row until the reader keeps it: it
 /// sits after what is open, cannot be ticked by an agent, a desk holds
 /// only a few waiting, and keeping one makes it an ordinary line.

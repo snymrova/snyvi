@@ -1415,7 +1415,7 @@ pub fn add_note_from(
     now: i64,
 ) -> Result<Option<DeskNote>> {
     let sent_by: String = sent_by.trim().chars().take(60).collect();
-    let (text, due_at) = dated(clip(text), now);
+    let (text, due_at) = dated_as(clip(text), &sent_by, now);
     if text.is_empty() {
         return Ok(None);
     }
@@ -1754,7 +1754,7 @@ pub fn suggest_note_from(
     now: i64,
 ) -> Result<Suggested> {
     let sent_by: String = sent_by.trim().chars().take(60).collect();
-    let (text, due_at) = dated(clip(text), now);
+    let (text, due_at) = dated_as(clip(text), &sent_by, now);
     if text.is_empty() {
         return Ok(Suggested::Empty);
     }
@@ -1942,6 +1942,18 @@ fn dated(text: String, now: i64) -> (String, i64) {
         Some((t, at)) => (t, at),
         None => (text, 0),
     }
+}
+
+/// A line and its date, as `dated`; but a friend's line (`sent_by`) keeps
+/// its words as they wrote them, the date read from them and not cut out:
+/// "order the compost before Thursday" stays that, with its chip (audit
+/// 6f451571c6, F7). The reader's own lines are cut as ever.
+fn dated_as(text: String, sent_by: &str, now: i64) -> (String, i64) {
+    if sent_by.is_empty() {
+        return dated(text, now);
+    }
+    let due_at = crate::due::split(&text, now).map_or(0, |(_, at)| at);
+    (text, due_at)
 }
 
 /// One line of at most `chars` characters: runs of whitespace, newlines

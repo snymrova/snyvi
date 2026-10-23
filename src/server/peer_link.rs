@@ -415,10 +415,14 @@ async fn on_line(
 fn line_said(app: &Arc<App>, p: &Peer, said: LineSaid) {
     let now = crate::store::now();
     match said {
-        // In the relay's keeping for them: Sent, as a mailbox deposit is.
+        // In the relay's keeping for them: Sent, as a mailbox deposit is,
+        // and held -- they are away, and the reader is told so, not
+        // "arrived" (F3). Their ack makes it arrived later.
         LineSaid::Held(id) => {
             let _ = app.store.peer_sent(&id);
+            let _ = app.store.peer_held_mark(&id);
             let _ = app.store.touch_peer(p.id, false);
+            app.peers.away.lock().unwrap().entry(p.id).or_insert(now);
             peers_moved(app);
         }
         // They have it: Sent, and the arrived mark, in one word.
@@ -441,13 +445,20 @@ fn line_said(app: &Arc<App>, p: &Peer, said: LineSaid) {
         // Their socket is on the line: they speak on one, and whatever
         // waits for them goes now.
         LineSaid::Friend { on: true } => {
+            if app.peers.away.lock().unwrap().remove(&p.id).is_some() {
+                peers_moved(app);
+            }
             if p.v < peer::LINE_V {
                 let _ = app.store.peer_set_v(p.id, peer::LINE_V);
             }
             let _ = app.store.peer_due_now(p.id);
             flush_all(app);
         }
-        LineSaid::Friend { on: false } => {}
+        // Away: said where the reader looks, until their socket is back.
+        LineSaid::Friend { on: false } => {
+            app.peers.away.lock().unwrap().entry(p.id).or_insert(now);
+            peers_moved(app);
+        }
         LineSaid::Quiet { until } => app.peers.quiet_until.store(until / 1000, Relaxed),
     }
 }
