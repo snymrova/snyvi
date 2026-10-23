@@ -387,6 +387,7 @@ fn pane_routes() -> Router<Arc<App>> {
     Router::new()
         .route("/api/panes/{id}/delete", post(close_pane))
         .route("/api/panes/{id}/restore", post(restore_pane))
+        .route("/api/panes/{id}/back", post(back_pane))
         .route("/api/panes/{id}/rename", post(rename_pane))
         .route("/api/panes/{id}/start", post(start_pane))
         .route("/api/panes/{id}/stop", post(stop_pane))

@@ -398,6 +398,39 @@ struct Inner {
     /// When the reader last typed, until its echo is framed: one fast frame
     /// per key, so a paste or a key that starts a flood is paced as before.
     typed: Option<Instant>,
+    /// 1.49: the pane is in the back (`desk::BACK`), as its caller says --
+    /// this file never reads the store. A pane in the back that dies is
+    /// `blocked`, so the chip, the sidebar, the rail and Home all say needs
+    /// you without one of them changing (`died`).
+    back: bool,
+    /// When the reader last sent a key, kept (unlike `typed`, which the echo
+    /// spends): an end within `YOURS` of it is the reader's own doing.
+    keyed: Option<Instant>,
+    /// Stop was pressed: the exit that follows is the reader's.
+    stopping: bool,
+}
+
+/// How soon after the reader's own keys an end is theirs -- the ctrl-C, the
+/// `exit` -- and not a panel in the back dying on its own.
+const YOURS: Duration = Duration::from_secs(2);
+
+impl Inner {
+    /// What a start sets before the process is spawned: where it runs, and
+    /// whether it is in the back, with no Stop pressed on it yet.
+    fn begin(&mut self, s: &Start) {
+        self.cwd = s.cwd.to_string();
+        self.started = Instant::now();
+        self.arrived = false;
+        self.root = s.root.to_string();
+        self.back = s.back;
+        self.stopping = false;
+    }
+
+    /// A panel in the back ended, or a command in its shell failed, and not
+    /// by the reader's hand (Stop, or their keys in the last `YOURS`).
+    fn died(&self) -> bool {
+        self.back && !self.stopping && !self.keyed.is_some_and(|t| t.elapsed() < YOURS)
+    }
 }
 
 impl Inner {
@@ -573,6 +606,8 @@ pub struct Start<'a> {
     pub env: &'a [(String, String)],
     /// The Claude account whose token is in `env`, or 0: for the status.
     pub account: i64,
+    /// In the back (`desk::BACK`): see `Inner.back`.
+    pub back: bool,
 }
 
 /// Told a panel's id and the folder its shell is now in.
@@ -680,6 +715,9 @@ impl Panes {
                 wrote: Instant::now(),
                 printing_since: Instant::now(),
                 typed: None,
+                back: false,
+                keyed: None,
+                stopping: false,
             }),
             tx,
             wake: Notify::new(),
@@ -1600,6 +1638,7 @@ impl Live {
         let Some(p) = i.proc.as_ref() else { return };
         let _ = p.input.send(bytes.to_vec());
         i.typed = Some(Instant::now());
+        i.keyed = i.typed;
         if bytes.contains(&b'\r') {
             i.status.entered_at = crate::store::now();
         }
@@ -1671,10 +1710,7 @@ impl Live {
         // cmd.exe takes a stored `\\?\D:\…` for UNC and starts in C:\Windows:
         // the process gets the plain spelling; what is stored stays as it is.
         cmd.cwd(dunce::simplified(std::path::Path::new(s.cwd)));
-        i.cwd = s.cwd.to_string();
-        i.started = Instant::now();
-        i.arrived = false;
-        i.root = s.root.to_string();
+        i.begin(&s);
         fresh_env(&mut cmd, std::env::var_os("CLAUDECODE").is_some());
         cmd.env("SNYVI_SESSION", &self.id);
         cmd.env("SNYVI_DESK", s.desk);
@@ -1786,8 +1822,9 @@ impl Live {
             i.status.running = false;
             i.status.pid = None;
             i.status.exit = Some(code);
-            i.status.blocked = false;
-            i.status.blocked_since = None;
+            // Stopped, it waits on nobody; died in the back, on the reader.
+            i.status.blocked = i.died();
+            i.status.blocked_since = i.status.blocked.then(crate::store::now);
             i.status.agent = "";
             i.status.agent_since = None;
             i.status.stopped = "";
@@ -1814,10 +1851,28 @@ impl Live {
     /// that did not hear the first.
     pub fn stop(&self) {
         let mut i = self.inner.lock().unwrap();
+        i.stopping = true;
         if let Some(mut p) = i.proc.take() {
             let _ = p.killer.kill();
             drop(p);
         }
+    }
+
+    /// 1.49: the pane went to the back or came forward (`desk::send_back`).
+    /// Forward, it is in front of the reader, so a death it was blocked on
+    /// is seen.
+    pub fn set_back(&self, back: bool, panes: &Panes) {
+        let mut i = self.inner.lock().unwrap();
+        i.back = back;
+        if back || !i.status.blocked || i.status.running {
+            return;
+        }
+        i.status.blocked = false;
+        i.status.blocked_since = None;
+        let s = i.status.clone();
+        let _ = self.tx.send(status_frame(&self.id, &s).into());
+        drop(i);
+        panes.changed(&self.id, &s);
     }
 }
 
@@ -1947,6 +2002,7 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
             Some(f) if f.len() > HEAVY_FRAME => SLOW_FRAME,
             _ => FRAME,
         };
+        let died = i.died();
         let Inner { screen, status, .. } = &mut *i;
         if let Some(f) = frame {
             let _ = l.tx.send(f.into());
@@ -1960,6 +2016,15 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
         let mut said = None;
         let mut rang = false;
         if std::mem::take(&mut screen.bell) && status.running && !status.blocked {
+            status.blocked = true;
+            status.blocked_since = Some(crate::store::now());
+            rang = true;
+        }
+        // 1.49: a command in a panel in the back failed, as the prompt snyvi
+        // dresses says (`OSC 133;D`). Read like the bell, never typed: it
+        // lights a dot. 130 is a ctrl-C, the reader's own.
+        let failed = screen.cmd_exit.take().is_some_and(|c| c != 0 && c != 130);
+        if failed && died && status.running && !status.blocked {
             status.blocked = true;
             status.blocked_since = Some(crate::store::now());
             rang = true;

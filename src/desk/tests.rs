@@ -7,6 +7,7 @@ fn db() -> Connection {
     conn.execute_batch(POS_COLUMN).unwrap();
     conn.execute_batch(HELD_COLUMN).unwrap();
     conn.execute_batch(NAME_BY_COLUMNS_1_46).unwrap();
+    conn.execute_batch(BACK_COLUMN_1_49).unwrap();
     conn.execute_batch(SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::thread::THREAD_COLUMN).unwrap();
     conn.execute_batch(LOOP_COLUMNS_1_37).unwrap();
@@ -511,7 +512,7 @@ fn closing_a_desk_keeps_its_list_and_reopening_brings_it_back() {
 }
 
 fn pane(conn: &mut Connection, desk: i64) -> Opened {
-    open_pane(conn, desk, "/p", "", false, 0).unwrap()
+    open_pane(conn, desk, "/p", "", false, false, 0).unwrap()
 }
 
 fn slots(conn: &Connection, desk: i64) -> Vec<i64> {
@@ -620,7 +621,8 @@ fn a_new_conversation_drops_the_agents_name_and_keeps_the_readers() {
 fn a_held_panel_waits_until_its_first_start() {
     let mut conn = db();
     let d = create(&conn, "/p", None, 0).unwrap();
-    let Opened::Pane(p) = open_pane(&mut conn, d.id, "/p", "claude", true, 0).unwrap() else {
+    let Opened::Pane(p) = open_pane(&mut conn, d.id, "/p", "claude", true, false, 0).unwrap()
+    else {
         panic!("no pane")
     };
     assert!(p.held);
@@ -742,7 +744,7 @@ fn a_desk_is_named_after_its_folder_and_the_second_one_is_numbered() {
 fn panes_fill_the_lowest_free_slot_and_the_fifth_is_refused() {
     let mut conn = db();
     let d = create(&conn, "/p", None, 0).unwrap().id;
-    for _ in 0..PER_DESK {
+    for _ in 0..GRID {
         assert!(matches!(pane(&mut conn, d), Opened::Pane(_)));
     }
     assert_eq!(slots(&conn, d), vec![1, 2, 3, 4]);
@@ -820,21 +822,21 @@ fn twelve_panes_on_three_desks_all_open() {
         .map(|_| create(&conn, "/p", None, 0).unwrap().id)
         .collect();
     for d in &desks {
-        for _ in 0..PER_DESK {
+        for _ in 0..GRID {
             assert!(matches!(pane(&mut conn, *d), Opened::Pane(_)));
         }
         assert!(matches!(pane(&mut conn, *d), Opened::DeskFull));
     }
-    assert_eq!(panes_open(&conn).unwrap(), 3 * PER_DESK);
+    assert_eq!(panes_open(&conn).unwrap(), 3 * GRID);
 
     // Closing a whole desk closes its panes with it.
     assert_eq!(
         close(&mut conn, desks[0], 1).unwrap().unwrap().len(),
-        PER_DESK as usize
+        GRID as usize
     );
     assert_eq!(
         panes_open(&conn).unwrap(),
-        2 * PER_DESK,
+        2 * GRID,
         "its panes closed with it"
     );
 }
@@ -970,7 +972,7 @@ fn a_closed_pane_does_not_come_back_to_a_full_desk() {
     let tx = conn.transaction().unwrap();
     close_pane(&tx, &first.id, 1).unwrap();
     tx.commit().unwrap();
-    for _ in 0..PER_DESK {
+    for _ in 0..GRID {
         pane(&mut conn, d);
     }
     assert!(matches!(
@@ -1459,4 +1461,169 @@ fn a_landed_line_waits_for_the_readers_check_and_can_be_reopened() {
         "a done line is not checked again"
     );
     let _ = untouched;
+}
+
+fn back(conn: &mut Connection, desk: i64) -> Opened {
+    open_pane(conn, desk, "/p", "npm run dev", false, true, 0).unwrap()
+}
+
+fn sent(conn: &mut Connection, id: &str, to_back: bool) -> Sent {
+    let tx = conn.transaction().unwrap();
+    let s = send_back(&tx, id, to_back).unwrap();
+    tx.commit().unwrap();
+    s
+}
+
+fn id_at(conn: &Connection, desk: i64, slot: i64) -> String {
+    get(conn, desk)
+        .unwrap()
+        .unwrap()
+        .panes
+        .into_iter()
+        .find(|p| p.slot == slot)
+        .unwrap()
+        .id
+}
+
+/// 1.49: four in the grid and four in the back, each side filling from its
+/// own first slot, and a full side refused on its own.
+#[test]
+fn a_desk_holds_four_in_the_grid_and_four_in_the_back() {
+    let mut conn = db();
+    let d = create(&conn, "/p", None, 0).unwrap().id;
+    assert!(matches!(back(&mut conn, d), Opened::Pane(p) if p.slot == GRID + 1));
+    for _ in 0..GRID {
+        assert!(matches!(pane(&mut conn, d), Opened::Pane(_)));
+    }
+    assert!(matches!(pane(&mut conn, d), Opened::DeskFull));
+    for _ in 1..BACK {
+        assert!(matches!(back(&mut conn, d), Opened::Pane(_)));
+    }
+    assert!(matches!(back(&mut conn, d), Opened::DeskFull));
+    assert_eq!(slots(&conn, d), (1..=SLOTS).collect::<Vec<_>>());
+    assert_eq!(panes_open(&conn).unwrap(), SLOTS);
+    // Full view is the grid's: a slot in the back is the grid.
+    assert!(layout(&conn, d, 0.5, 0.5, Some(GRID + 1)).unwrap());
+    assert_eq!(get(&conn, d).unwrap().unwrap().full_slot, 0);
+}
+
+/// Sending a pane back closes the grid up and puts it at the back's lowest
+/// free slot; bringing it forward does the same the other way. Full view
+/// on it goes back to the grid, and moves down with a pane after it.
+#[test]
+fn a_pane_goes_to_the_back_and_comes_forward_and_each_side_closes_up() {
+    let mut conn = db();
+    let d = create(&conn, "/p", None, 0).unwrap().id;
+    for _ in 0..3 {
+        pane(&mut conn, d);
+    }
+    let dev = id_at(&conn, d, 1);
+    let third = id_at(&conn, d, 3);
+    assert!(layout(&conn, d, 0.5, 0.5, Some(3)).unwrap());
+    assert_eq!(
+        sent(&mut conn, &dev, true),
+        Sent::Moved {
+            desk_id: d,
+            from: 1,
+            to: GRID + 1
+        }
+    );
+    assert_eq!(slots(&conn, d), vec![1, 2, GRID + 1]);
+    assert_eq!(id_at(&conn, d, 2), third, "the grid closed up");
+    assert_eq!(
+        get(&conn, d).unwrap().unwrap().full_slot,
+        2,
+        "full view followed"
+    );
+    assert_eq!(sent(&mut conn, &dev, true), Sent::Stays);
+
+    // Full view on the one that goes: the desk goes back to the grid.
+    let second = id_at(&conn, d, 2);
+    assert!(matches!(
+        sent(&mut conn, &second, true),
+        Sent::Moved { to: 6, .. }
+    ));
+    assert_eq!(get(&conn, d).unwrap().unwrap().full_slot, 0);
+
+    // Forward from slot 5: 6 closes up to 5, and dev takes the grid's 2.
+    assert_eq!(
+        sent(&mut conn, &dev, false),
+        Sent::Moved {
+            desk_id: d,
+            from: GRID + 1,
+            to: 2
+        }
+    );
+    assert_eq!(slots(&conn, d), vec![1, 2, GRID + 1]);
+    assert_eq!(id_at(&conn, d, GRID + 1), second);
+    assert_eq!(sent(&mut conn, "0123", true), Sent::Gone);
+
+    // A full side refuses, and nothing moves.
+    for _ in 0..2 {
+        pane(&mut conn, d);
+    }
+    assert_eq!(sent(&mut conn, &second, false), Sent::Full);
+    assert_eq!(slots(&conn, d), vec![1, 2, 3, 4, GRID + 1]);
+}
+
+/// A move stays on its side: Move to position N is the grid's.
+#[test]
+fn a_move_never_crosses_into_the_back() {
+    let mut conn = db();
+    let d = create(&conn, "/p", None, 0).unwrap().id;
+    pane(&mut conn, d);
+    back(&mut conn, d);
+    back(&mut conn, d);
+    let tx = conn.transaction().unwrap();
+    assert!(!move_pane(&tx, d, 1, GRID + 1).unwrap());
+    assert!(!move_pane(&tx, d, GRID + 1, 1).unwrap());
+    assert!(move_pane(&tx, d, GRID + 1, GRID + 2).unwrap());
+    tx.commit().unwrap();
+    assert_eq!(slots(&conn, d), vec![1, GRID + 1, GRID + 2]);
+}
+
+/// Closing a grid pane leaves the back where it is, and the other way
+/// round: the back never slides into the grid.
+#[test]
+fn a_close_only_closes_up_its_own_side() {
+    let mut conn = db();
+    let d = create(&conn, "/p", None, 0).unwrap().id;
+    pane(&mut conn, d);
+    pane(&mut conn, d);
+    back(&mut conn, d);
+    back(&mut conn, d);
+    let (grid_one, back_one) = (id_at(&conn, d, 1), id_at(&conn, d, GRID + 1));
+    let tx = conn.transaction().unwrap();
+    assert_eq!(close_pane(&tx, &grid_one, 1).unwrap(), Some((d, 1)));
+    tx.commit().unwrap();
+    assert_eq!(slots(&conn, d), vec![1, GRID + 1, GRID + 2]);
+    let tx = conn.transaction().unwrap();
+    assert_eq!(close_pane(&tx, &back_one, 2).unwrap(), Some((d, GRID + 1)));
+    tx.commit().unwrap();
+    assert_eq!(slots(&conn, d), vec![1, GRID + 1]);
+
+    // Undo keeps the side each was on.
+    let Restored::Pane(p) = restore_pane(&mut conn, &back_one).unwrap() else {
+        panic!("the back has room")
+    };
+    assert_eq!(p.slot, GRID + 2);
+    let Restored::Pane(p) = restore_pane(&mut conn, &grid_one).unwrap() else {
+        panic!("the grid has room")
+    };
+    assert_eq!(p.slot, 2);
+}
+
+/// A closed desk reopens with its back panes in the back.
+#[test]
+fn a_reopened_desk_keeps_its_back() {
+    let mut conn = db();
+    let d = create(&conn, "/p", None, 0).unwrap().id;
+    pane(&mut conn, d);
+    back(&mut conn, d);
+    pane(&mut conn, d);
+    let dev = id_at(&conn, d, GRID + 1);
+    assert_eq!(close(&mut conn, d, 5).unwrap().unwrap().len(), 3);
+    assert!(reopen(&mut conn, d).unwrap());
+    assert_eq!(slots(&conn, d), vec![1, 2, GRID + 1]);
+    assert_eq!(id_at(&conn, d, GRID + 1), dev);
 }

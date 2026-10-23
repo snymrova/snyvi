@@ -361,7 +361,8 @@ pub struct Suggestion {
     /// `opened` or `dismissed`, once settled.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub outcome: String,
-    /// A widget's or a box's: how long the agent suggests it lasts.
+    /// A widget's or a box's: how long the agent suggests it lasts. A
+    /// panel's: `back`, to open it in the back (1.49).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub lasts: String,
     /// A widget's: where it runs, how often, its script (`SUGGEST_COLUMNS_1_30`).
@@ -1930,7 +1931,8 @@ pub struct Suggest {
     pub why: String,
     pub by: String,
     pub pane: String,
-    /// A widget's or a box's: `today`, `week`, `panel`, or nothing.
+    /// A widget's or a box's: `today`, `week`, `panel`, or nothing. A
+    /// panel's: `back` to open it in the back (1.49), or nothing.
     pub lasts: String,
     /// A widget's: what its card shows, as JSON.
     pub detail: String,
@@ -2022,12 +2024,21 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
     tx.execute(
         "INSERT INTO desk_suggestions(desk_id, kind, name, cmd, folder, why, by, pane, created_at, lasts, detail)
          VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        params![desk_id, kind, name, cmd, folder, why, by, s.pane, now, lasts(&s.lasts), s.detail],
+        params![desk_id, kind, name, cmd, folder, why, by, s.pane, now, lasts_of(kind, &s.lasts), s.detail],
     )?;
     let id = tx.last_insert_rowid();
     let card = suggestion(&tx, desk_id, id)?.expect("the row just written");
     tx.commit()?;
     Ok(Suggested::Card(Box::new(card)))
+}
+
+/// What a card keeps in `lasts`: a panel's side, or how long a widget lasts.
+fn lasts_of(kind: &str, s: &str) -> &'static str {
+    match kind {
+        "panel" if s.trim() == "back" => "back",
+        "panel" | "desk" => "",
+        _ => lasts(s),
+    }
 }
 
 /// How long an agent may suggest a widget lasts; anything else is until

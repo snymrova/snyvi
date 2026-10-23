@@ -8,6 +8,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::desk::HELD_COLUMN).unwrap();
     conn.execute_batch(crate::desk::NAME_BY_COLUMNS_1_46)
         .unwrap();
+    conn.execute_batch(crate::desk::BACK_COLUMN_1_49).unwrap();
     conn.execute_batch(crate::links::COLUMN_1_43).unwrap();
     conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
@@ -18,7 +19,7 @@ fn db() -> Connection {
 }
 
 fn pane_on(conn: &mut Connection, desk: i64) -> String {
-    match crate::desk::open_pane(conn, desk, "/w", "", false, 0).unwrap() {
+    match crate::desk::open_pane(conn, desk, "/w", "", false, false, 0).unwrap() {
         crate::desk::Opened::Pane(p) => p.id,
         o => panic!("no pane: {o:?}"),
     }

@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || await dueAct(a, b, d))) return;
+    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -407,6 +407,8 @@ function focusPane(id) {
   // While a document is the page, a pane's row is the way back to the desk,
   // with that pane focused.
   if (reading != null) { ctx.go(deskId, true, v.pane.slot); return; }
+  // One in the back is the drawer's: opened on it, it has the keys.
+  if (isBack(v.pane)) { drawer(id); return; }
   focused = id;
   if (full) saveFull();
   layout();
@@ -429,6 +431,7 @@ function click(e) {
   if (wb) { ctx.seatOpen(wb); return; }
   const m = e.target.closest("[data-desk-menu]");
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
+  if (backClick(e)) return;
   const f = e.target.closest("[data-focus]");
   if (f) { focusPane(f.dataset.focus); return; }
   const r = e.target.closest("a[data-read]");
@@ -475,11 +478,20 @@ function keys(e) {
     if (v) { e.preventDefault(); e.stopPropagation(); renamePanel(v); }
     return;
   }
+  if (backEsc(e)) return;
   if (!(e.ctrlKey && e.altKey) || e.metaKey || altGr(e)) return;
+  // ⌃⌥B the drawer; ⌃⌥⇧B the focused panel to the back, or forward.
+  if (e.code === "KeyB") {
+    if (reading != null) return;
+    e.preventDefault(); e.stopPropagation();
+    const v = views.get(focused);
+    if (e.shiftKey) { if (v) sendBack(v, !isBack(v.pane)); } else backKey();
+    return;
+  }
   if (e.shiftKey && NEXT[e.key]) {
     const d = current(), v = views.get(focused);
     if (reading != null || !d || !v) return;
-    const to = NEXT[e.key][v.pane.slot - 1];
+    const to = !isBack(v.pane) && NEXT[e.key][v.pane.slot - 1];
     e.preventDefault(); e.stopPropagation();
     if (to && d.panes.some(p => p.slot === to)) moveTo(v, to);
     return;
@@ -556,7 +568,7 @@ export function open(c) {
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
     docList = []; docsAt = null; docsAll = false; claudeAsk = null; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
-    focused = null; full = false; keysClose();
+    focused = null; full = false; keysClose(); drawerOn = null; backField = false;
   }
   deskId = c.id; reading = null;
   // Home's "last touched" and the desk it offers to pick up start here.
@@ -728,9 +740,12 @@ export function actions(el) {
       body && { label: "Text size −", key: ctx.keyHint("ctrl+-"), run: () => { textSize(-1); if (ctx.sized) ctx.sized(); } },
       body && { label: "Reset text size", key: ctx.keyHint("ctrl+0"), run: () => { textSize(0); if (ctx.sized) ctx.sized(); } },
       body && R,
-      v.id !== focused && { label: "Focus", key: ctx.keyHint(`ctrl+alt+${v.pane.slot}`), run: () => focusPane(v.id) },
-      { label: full && v.id === focused ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => { if (!(full && v.id === focused)) { focused = v.id; if (full) { saveFull(); layout(); v.body.focus(); return; } } zoom(); } },
-      ...[1, 2, 3, 4].filter(n => n !== v.pane.slot).map(n => ({ label: `Move to position ${n}`, run: () => moveTo(v, n) })),
+      isBack(v.pane) ? drawerOn !== v.id && { label: "Open the drawer", key: ctx.keyHint("ctrl+alt+b"), run: () => drawer(v.id) }
+        : v.id !== focused && { label: "Focus", key: ctx.keyHint(`ctrl+alt+${v.pane.slot}`), run: () => focusPane(v.id) },
+      !isBack(v.pane) && { label: full && v.id === focused ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => { if (!(full && v.id === focused)) { focused = v.id; if (full) { saveFull(); layout(); v.body.focus(); return; } } zoom(); } },
+      ...(isBack(v.pane) ? [] : [1, 2, 3, 4].filter(n => n !== v.pane.slot).map(n => ({ label: `Move to position ${n}`, run: () => moveTo(v, n) }))),
+      isBack(v.pane) ? { label: "Bring forward", key: ctx.keyHint("ctrl+alt+shift+b"), run: () => sendBack(v, false) }
+        : { label: "Move to the back", key: ctx.keyHint("ctrl+alt+shift+b"), run: () => sendBack(v, true) },
       R,
       s.running ? { label: "Stop", run: does("stop") } : { label: "Start", run: () => run(v, v.start.querySelector("input").value) },
       !s.running && talked(v) && { label: "Resume conversation", run: () => run(v, "", false, true) },

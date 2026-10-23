@@ -204,7 +204,7 @@ pub(crate) async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
                             .into_iter()
                             .filter(|id| crate::pane::valid_id(id))
                             .filter(|id| matches!(app.store.pane(id), Ok(Some(_))))
-                            .take(crate::desk::PER_DESK as usize)
+                            .take(crate::desk::SLOTS as usize)
                             .collect();
                         watching.retain(|id, (live, task)| {
                             let keep = wanted.contains(id);

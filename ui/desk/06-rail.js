@@ -170,7 +170,9 @@ function rail() {
   const { esc } = ctx, j = ctx.desks;
   const dot = v => v.status.blocked ? "!" : v.status.agent === "done" ? "✓" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean), blocked = vs.filter(v => v.status.blocked).length;
-  const here = `${d.panes.length} of ${j.per_desk} on this desk`, total = `${j.panes} open on every desk`;
+  // The grid's count against its cap; the back's beside it (18-back.js).
+  const nGrid = gridPanes(d).length, nBack = d.panes.length - nGrid;
+  const here = `${nGrid} of ${j.per_desk} on this desk${nBack ? `, ${nBack} in the back` : ""}`, total = `${j.panes} open on every desk`;
   const why = noNew(d);
   const dl0 = docsAt === d.id ? docList : [];
   // A row just removed keeps its place through a read that no longer has it.
@@ -222,12 +224,14 @@ function rail() {
     // and a panel just closed opens it, so its Undo is never out of reach.
     panels: () => sec("panels", "rail.panels", "Panels", {
       open: closedRow && closedRow.desk === d.id, tip: "Panels", sub: `${here} · ${total}`,
-      count: `${blocked ? `!${blocked} · ` : ""}${d.panes.length}/${j.per_desk}`, tone: blocked ? "warn" : "",
+      count: `${blocked ? `!${blocked} · ` : ""}${nGrid}/${j.per_desk}${nBack ? ` · ${nBack} back` : ""}`, tone: blocked ? "warn" : "",
       countTip: blocked ? `${ctx.plural(blocked, "panel")} ${blocked === 1 ? "needs" : "need"} you` : "",
-    }, `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
+    }, `<ul class="dk-panes">` + vs.filter(v => !isBack(v.pane)).map(paneRow).join("") +
+      (nBack ? `<li class="dk-backline" role="presentation">In the back</li>` + vs.filter(v => isBack(v.pane)).map(paneRow).join("") : "") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>`),
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>` +
+    `<div class="dk-foot">${backRow(d, esc)}</div>`),
     points: () => pointSec(vs),
     // The documents. The count is how many, in the accent while some wait
     // to be read; the row's [n] says which panel sent it.
@@ -255,19 +259,22 @@ function rail() {
   };
   const lay = ctx.layout ? ctx.layout() : null, off = new Set(lay ? lay.hidden : []);
   const order = (lay && lay.right.length ? lay.right : Object.keys(secs)).filter(id => secs[id] && !off.has(id) && !(id === "widgets" && off.has("right:widgets")));
+  const backHad = backHeld();
   const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + order.map(id => secs[id]()).join("") + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); fillSeats(d); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
   pageChips(vs, live);
   onYou(d);
   meta();
   // The head's Left off slot carries a launch's count, which ticks change.
   leftOffSlot(d);
+  // And the back's chips their panel's mark, and the drawer its word.
+  backHead(d);
 }
 
 /** A page lands far from where the reader is looking: they are on the panel
@@ -330,7 +337,7 @@ function stripHtml(d, vs, waiting) {
   const left = notesAt === d.id ? noteList.filter(x => !x.done && !x.gone && !x.suggested_by).length : 0;
   const mark = (sec, label, n, sub, cls = "", tone = " q") => `<button type="button" class="ds-${sec}${n ? "" : " none"}${cls}" data-sec="${sec}" data-tip="${label}" data-tip-sub="${sub}" aria-label="${label}: ${sub}">${stripIco(sec)}<b class="badge${tone}">${n || ""}</b></button>`;
   return `<button type="button" class="ds-open" data-sec="" data-tip="Show the rail" aria-label="Show the rail">${stripIco("rail")}</button>` +
-    mark("panels", "Panels", d.panes.length, blocked ? "one needs you" : `${d.panes.length} of ${ctx.desks.per_desk}`, blocked ? " blk" : "", blocked ? " blk" : " q") +
+    mark("panels", "Panels", d.panes.length, blocked ? "one needs you" : `${gridPanes(d).length} of ${ctx.desks.per_desk}`, blocked ? " blk" : "", blocked ? " blk" : " q") +
     mark("docs", "Documents", waiting, waiting ? `${waiting} waiting` : "none waiting", "", "") +
     mark("notes", "Notes", left, left ? `${left} open` : "none open");
 }

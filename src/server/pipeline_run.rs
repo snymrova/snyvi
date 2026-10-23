@@ -493,6 +493,7 @@ async fn start_stage_now(
             offer: false,
             env: &env,
             account: placed.account(),
+            back: crate::desk::in_back(placed.pane.slot),
         },
         &app.panes,
     )?;

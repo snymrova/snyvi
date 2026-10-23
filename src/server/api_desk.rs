@@ -404,6 +404,29 @@ pub(crate) struct NewPaneBody {
     /// project desk's first panel, made by the window behind `refuse_desk`.
     #[serde(default)]
     pub(crate) held: bool,
+    /// 1.49: open it in the back (`desk::BACK`): "New panel in the back…",
+    /// a dev server that is its own command.
+    #[serde(default)]
+    pub(crate) back: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BackBody {
+    pub(crate) back: bool,
+}
+
+/// The 409 for a side with no free slot, saying which side.
+fn side_full(back: bool) -> Response {
+    let error = if back {
+        format!("the back holds {}", crate::desk::BACK)
+    } else {
+        format!("this desk holds {}", crate::desk::GRID)
+    };
+    (
+        StatusCode::CONFLICT,
+        Json(json!({ "error": error, "full": if back { "back" } else { "desk" } })),
+    )
+        .into_response()
 }
 
 /// Every desk, with its panes, and how many panes are open across them.
@@ -421,7 +444,9 @@ pub(crate) async fn desks(
             // So a pane's header can say `~/snyvi` rather than the whole path.
             "home": dirs::home_dir(),
             "panes": panes,
-            "per_desk": crate::desk::PER_DESK,
+            // The grid's cap; the back's is beside it, its slots after.
+            "per_desk": crate::desk::GRID,
+            "in_back": crate::desk::BACK,
             // The Claude accounts, for the keys sheet, a panel's head and
             // its limit strip: names and dates, no token, which no answer
             // carries. What each has left and whether its sign-in still
@@ -1545,17 +1570,17 @@ pub(crate) async fn open_pane(
         return StatusCode::NOT_FOUND.into_response();
     };
     let cmd = b.cmd.unwrap_or_default();
-    match app.store.open_pane(desk.id, &desk.root, cmd.trim(), b.held && !cmd.trim().is_empty()) {
+    let held = b.held && !cmd.trim().is_empty();
+    match app
+        .store
+        .open_pane_on(desk.id, &desk.root, cmd.trim(), held, b.back)
+    {
         Ok(crate::desk::Opened::Pane(pane)) => {
             desks_moved(&app);
             (StatusCode::CREATED, Json(json!({ "pane": pane }))).into_response()
         }
         // Full: another desk takes the next pane. There is no cap across desks.
-        Ok(crate::desk::Opened::DeskFull) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": format!("this desk holds {}", crate::desk::PER_DESK), "full": "desk" })),
-        )
-            .into_response(),
+        Ok(crate::desk::Opened::DeskFull) => side_full(b.back),
         Ok(crate::desk::Opened::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
@@ -1599,15 +1624,41 @@ pub(crate) async fn restore_pane(
     }
     match app.store.restore_pane(&id) {
         Ok(crate::desk::Restored::Pane(pane)) => {
+            app.panes
+                .get(&id)
+                .set_back(crate::desk::in_back(pane.slot), &app.panes);
             desks_moved(&app);
             Json(json!({ "pane": pane })).into_response()
         }
-        Ok(crate::desk::Restored::DeskFull) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": format!("this desk holds {}", crate::desk::PER_DESK), "full": "desk" })),
-        )
-            .into_response(),
+        // Which side it was on is the closed row's; the grid's cap names both.
+        Ok(crate::desk::Restored::DeskFull) => side_full(false),
         Ok(crate::desk::Restored::Gone) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// 1.49: a pane to the back, or forward into the grid (`desk::send_back`),
+/// from the menu, a drag onto the chips or `⌃⌥B`. Running or not, its
+/// process is untouched: only its place, and what its death means, change.
+pub(crate) async fn back_pane(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<BackBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.send_back(&id, b.back) {
+        Ok(crate::desk::Sent::Moved { to, .. }) => {
+            app.panes.get(&id).set_back(b.back, &app.panes);
+            desks_moved(&app);
+            Json(json!({ "slot": to })).into_response()
+        }
+        Ok(crate::desk::Sent::Stays) => Json(json!({ "ok": true })).into_response(),
+        Ok(crate::desk::Sent::Full) => side_full(b.back),
+        Ok(crate::desk::Sent::Gone) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
 }
@@ -1771,6 +1822,7 @@ pub(crate) async fn start_pane(
         offer,
         env: &env,
         account,
+        back: crate::desk::in_back(placed.pane.slot),
     };
     match live.start(start, &app.panes) {
         Ok(status) => {

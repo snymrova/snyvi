@@ -540,6 +540,13 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("POST", "/api/panes/nope/restore", None, Gate::Desk, true),
     (
         "POST",
+        "/api/panes/nope/back",
+        Some(r#"{"back":true}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
         "/api/panes/nope/rename",
         Some(r#"{"name":"x"}"#),
         Gate::Desk,

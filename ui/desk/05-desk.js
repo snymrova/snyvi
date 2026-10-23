@@ -22,13 +22,14 @@ let gridWatch = null;
  *  in the head and the row in the rail -- ask this, so they never disagree. */
 function noNew(d) {
   const j = ctx.desks;
-  return d.panes.length >= j.per_desk ? `A desk holds ${j.per_desk}` : "";
+  return gridPanes(d).length >= j.per_desk ? `A desk holds ${j.per_desk}` : "";
 }
 
 function layout() {
   const d = current(), grid = ctx.docEl.querySelector(".dk-grid");
   if (!d || !grid) return;
-  const all = d.panes.map(p => views.get(p.id)).filter(Boolean);
+  // The grid's panes; the back's are the drawer's (18-back.js).
+  const all = gridPanes(d).map(p => views.get(p.id)).filter(Boolean);
   // The focused pane is always shown; the rest in slot order, while there is room.
   const n = full ? 1 : room(), f = all.find(v => v.id === focused);
   const shown = all.length <= n ? all : [f, ...all.filter(v => v !== f)].filter(Boolean).slice(0, n).sort((a, b) => a.pane.slot - b.pane.slot);
@@ -63,7 +64,8 @@ function layout() {
   }
   for (const v of shown) catchUp(v);
   pace();
-  if (!all.length) grid.innerHTML = `<p class="dk-none">No panels on this desk. <button type="button" data-a="new">New panel</button></p>`;
+  backLayout(d);
+  if (!all.length) grid.innerHTML = `<p class="dk-none">${d.panes.length ? "Every panel on this desk is in the back." : "No panels on this desk."} <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
   leftOffSlot(d);
   keysSlot(d);
@@ -488,7 +490,7 @@ function tabs(d, all, shown) {
   // it is a tab: full view, or a window with no room for it.
   const tip = v => shown.includes(v) ? `data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}"`
     : `data-tip="${need(v) ? "Needs you" : `Panel ${v.pane.slot}`}" data-tip-sub="${full ? "full view shows one" : "not enough room"}" data-key="ctrl+alt+${v.pane.slot}"`;
-  t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}" ${tip(v)}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "";
+  t.innerHTML = (all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}" ${tip(v)}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "") + backChips(d);
   // The + goes quiet when there is no pane to add, and says why under the
   // cursor: "A desk holds 4". The rail's Panels head says the count, 4 of 4,
   // so the head does not say it again (the audit of 1.46.2 found it twice).
@@ -519,7 +521,7 @@ function draw() {
   docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
     `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
-    `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div><div class="dk-live vh" aria-live="polite"></div></div>`;
+    `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div>${DRAWER}<div class="dk-live vh" aria-live="polite"></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
   docEl.querySelector(".dk-root").textContent = tilde(d.root);
   gridWatch?.disconnect();
@@ -708,9 +710,10 @@ async function moveTo(v, slot) {
 }
 
 /** A pane's head dragged onto another pane, or onto its tab, trades their
- *  places. Pointer events, as the dividers are: the window's own drop
- *  handler takes HTML drag and drop. A press that does not travel is a
- *  click, and focuses the pane as before. */
+ *  places; onto the chips of the back, or the space the head keeps for
+ *  them, it goes to the back. Pointer events, as the dividers are: the
+ *  window's own drop handler takes HTML drag and drop. A press that does
+ *  not travel is a click, and focuses the pane as before. */
 function drag(v, e) {
   if (e.button !== 0 || e.target.closest("button, a")) return;
   const x0 = e.clientX, y0 = e.clientY;
@@ -719,7 +722,10 @@ function drag(v, e) {
     const at = document.elementFromPoint(ev.clientX, ev.clientY);
     const t = at && (at.closest(".dk-grid > .pn") || at.closest(".dk-tabs [data-focus]"));
     const w = t && views.get(t.dataset.id || t.dataset.focus);
-    return w && w !== v ? { w, el: t } : null;
+    if (w && w !== v && !isBack(w.pane) && !isBack(v.pane)) return { w, el: t };
+    // The back: its chips, or the head's room for them when there are none.
+    const b = !isBack(v.pane) && at && (at.closest(".dk-back") || at.closest(".dk-tabs"));
+    return b ? { back: true, el: b } : null;
   };
   const move = ev => {
     if (!on && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return;
@@ -739,7 +745,8 @@ function drag(v, e) {
     delete ctx.root.dataset.resizing;
     v.dragged = true;
     const t = ev.type === "pointerup" && target(ev);
-    if (t) moveTo(v, t.w.pane.slot);
+    if (t && t.back) sendBack(v, true);
+    else if (t) moveTo(v, t.w.pane.slot);
   };
   // Followed on the window, not captured by the head: a captured pointer
   // makes the head the target of the click that follows a press, and the ⤢

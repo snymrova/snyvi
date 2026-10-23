@@ -48,7 +48,8 @@ the user sees it and can bring it back.";
 
 const SUGGEST_PANEL: &str = "Suggest a panel on this desk: a name, the exact command it would run, and why. \
 The user sees a card with the command and opens it or not; nothing runs until they click. Three wait at \
-most.";
+most. back: true for something that runs and is not read, a dev server or a watcher: it opens in the back, \
+out of the grid, and the user is told if it dies.";
 
 const SUGGEST_DESK: &str = "Suggest a desk for another folder: the folder's path and why it deserves its \
 own desk. The user sees a card and opens it or not. A folder that already has a desk is not suggested; you \
@@ -127,7 +128,8 @@ pub(super) fn specs() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {
                 "name": { "type": "string" },
                 "cmd": { "type": "string", "description": "One command line, exactly as it should run." },
-                "why": { "type": "string", "description": "One sentence." }
+                "why": { "type": "string", "description": "One sentence." },
+                "back": { "type": "boolean", "description": "Open it in the back, out of the grid." }
             }, "required": ["name", "cmd", "why"], "additionalProperties": false },
             "annotations": ann(false)
         }),
@@ -347,7 +349,7 @@ impl Session {
     pub(super) fn suggest_panel(&self, args: &Value) -> Value {
         let body = json!({
             "kind": "panel", "name": arg(args, "name"), "cmd": arg(args, "cmd"), "why": arg(args, "why"),
-            "by": self.by(),
+            "back": args.get("back").and_then(Value::as_bool).unwrap_or(false), "by": self.by(),
         });
         match self.thread_call("suggest-panel", body) {
             Ok(_) => said(

@@ -447,7 +447,7 @@ function sugRows(f, d) {
         : tried.error ? `<p class="wg-err sg-tried" role="status">${esc(tried.error)}</p>`
         : printed : "");
   };
-  const act = s => s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : s.kind === "box" ? "Allow" : "Open panel";
+  const act = s => s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : s.kind === "box" ? "Allow" : s.lasts === "back" ? "Open in the back" : "Open panel";
   const rows = f.suggestions.map(s => `<li class="dk-sugcard"><p class="sg-what">${what(s)}</p>` +
     (s.kind === "widget" ? widgetBits(s)
       : s.kind === "box" ? (s.cmd ? `<p class="sg-box">${esc(s.cmd)}</p>` : "")
@@ -742,7 +742,10 @@ async function filedAct(a, b, d) {
  *  command the card showed and named as the card named it; or the desk the
  *  daemon makes for a suggested folder. */
 async function openSuggested(d, s) {
-  if (s.kind === "panel") {
+  // A panel for the back (1.49): the back's cap, not the grid's.
+  const back = s.kind === "panel" && s.lasts === "back";
+  if (back && backViews(d).length >= ctx.desks.in_back) return ctx.toast("Open panel", `The back holds ${ctx.desks.in_back}`);
+  if (s.kind === "panel" && !back) {
     const why = noNew(d);
     if (why) return ctx.toast("Open panel", why);
   }
@@ -760,12 +763,12 @@ async function openSuggested(d, s) {
     if (j.desk && j.desk.id) { await ctx.refresh(); ctx.go(j.desk.id); }
     return;
   }
-  const p = await ctx.api(`/api/desks/${d.id}/panes`, { cmd: s.cmd });
-  focused = p.pane.id;
+  const p = await ctx.api(`/api/desks/${d.id}/panes`, { cmd: s.cmd, back });
+  if (!back) focused = p.pane.id;
   if (s.name) { try { await ctx.api(`/api/panes/${p.pane.id}/rename`, { name: s.name }); } catch {} }
   await ctx.refresh();
   const nv = views.get(p.pane.id);
-  if (nv) { await run(nv, s.cmd); nv.body.focus(); }
+  if (nv) { await run(nv, s.cmd, back); if (!back) nv.body.focus(); }
 }
 
 /** After a redraw of `root` -- the rail, or the corner's tray: the open

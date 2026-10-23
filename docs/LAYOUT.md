@@ -49,6 +49,13 @@ The Documents list is a box of its own height (`min(360px, 45vh)`) and
 scrolls inside the rail, so a long day of sends never pushes Notes out of
 reach.
 
+## The desk
+
+| Name | What it is | Where |
+|---|---|---|
+| `desk.back` | the chips of the panels in the back, after the grid's tabs in the desk's head (1.49) | `.dk-back` · `backChips()` in `desk.js` |
+| `desk.drawer` | the drawer over the bottom of the grid, open on one panel in the back; laid out always, seen only open | `.dk-drawer` · `backLayout()` |
+
 ## Home
 
 | Name | What it is | Where |
