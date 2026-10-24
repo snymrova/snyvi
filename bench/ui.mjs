@@ -2139,17 +2139,21 @@ async function downloadRows(p, cdp, url, arrive, tmp) {
   const rows = [];
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   const box = sel => `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r && r.width ? [Math.round(r.left), Math.round(r.top), Math.round(r.width)] : null; })()`;
+  // In the bar, as far from the way back as: a long page's scrollbar moves
+  // the whole bar, and that is not the box moving.
+  const inBar = sel => `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(), x = document.querySelector("#chrome .over-x").getBoundingClientRect();
+    return r && r.width ? [Math.round(x.left - r.left), Math.round(r.top), Math.round(r.width)] : null; })()`;
   const pic = await arrive({ name: "pic.svg", body: `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#4a7"/></svg>\n` });
   const takes = await arrive({ name: "takes.md", body: "# Takes\n\nThe picture, to keep.\n\n![a picture](pic.svg)\n\nAnd a line after it.\n" });
   const origin = new URL(url).origin;
 
   await p.goto(url);
   const ready = await until(`window.__ui.vis("#btn-copy-top") && !!document.querySelector("#btn-dl-top")`, 80);
-  const copyAt = await p.ev(box("#btn-copy-top"));
+  const copyAt = await p.ev(inBar("#btn-copy-top"));
   const textOff = ready && await p.ev(`getComputedStyle(document.querySelector("#btn-dl-top")).display === "none"`);
   await p.goto(`${origin}/d/${pic.id}`);
   const dlOn = await until(`!!document.querySelector("#chrome .over.dl") && window.__ui.vis("#btn-dl-top")`, 80);
-  const dlAt = await p.ev(box("#btn-dl-top"));
+  const dlAt = await p.ev(inBar("#btn-dl-top"));
   const link = await p.ev(`(() => { const a = document.querySelector("#btn-dl-top"); return a && { href: a.getAttribute("href"), name: a.download, copy: getComputedStyle(document.querySelector("#btn-copy-top")).display }; })()`);
   rows.push(["a picture's page has Download in Copy all's box, a page of text does not",
     !!ready && textOff && dlOn && JSON.stringify(copyAt) === JSON.stringify(dlAt) && link?.copy === "none" && link.href === `/api/docs/${pic.id}/blob` && link.name === "pic.svg",
