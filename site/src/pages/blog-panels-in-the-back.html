@@ -1,0 +1,31 @@
+<!--{
+  "path": "/blog/panels-in-the-back",
+  "title": "Panels in the back · snyvi",
+  "description": "A desk in snyvi holds four panels. Now up to four more can run behind the grid: a dev server, a watcher, out of the way, and one that dies there tells you.",
+  "nav": "blog",
+  "head": "Blog",
+  "og": "/blog/panels-in-the-back.png",
+  "article": true,
+  "rail": "toc"
+}-->
+<h1>Panels in the back</h1>
+<p class="byline"><time datetime="2026-10-24">24 Oct 2026</time> · snyvi 1.49</p>
+<p class="lede">A desk in snyvi holds four panels. Four turned out to be the right number for agents: enough to keep a few things moving, few enough that you can still see what each one is doing.</p>
+
+<figure class="shot"><video controls playsinline preload="none" width="1280" height="720" poster="/blog/panels-in-the-back.webp" src="/blog/panels-in-the-back.mp4" aria-label="A desk with four agents, and a dev server in the back opened as a drawer"></video><figcaption>Four agents on one desk, and a dev server in the back, one chip away.</figcaption></figure>
+
+<p>Then the dev server moved in. It needs a terminal, it needs to stay running, and it took a slot. So did the test watcher on another desk. Four agents became three, and the grid filled up with things I didn't need to look at.</p>
+
+<h2 id="whats-new">What's new</h2>
+<p>Any panel can now go to the back. Four stay in the grid and up to four more wait behind it. A panel in the back keeps running, and the desk's head shows a small chip for it. Click the chip and the panel slides in as a drawer over the grid. Close the drawer and nothing on the desk has moved.</p>
+<p>You can move a panel back from its menu or with <kbd>⌃⌥⇧B</kbd>, and <kbd>⌃⌥B</kbd> opens the drawer. Or start one there with <b>+ In the back…</b> and the command it should run. An agent can suggest one too: when it wants a dev server, it proposes a panel in the back and you approve it.</p>
+
+<h2 id="when-something-dies">When something dies back there</h2>
+<p>A server that crashed in a panel you can't see is the worst kind of failure, because you find out ten minutes later from a blank page in your browser. So a panel in the back that exits with an error turns its chip amber and counts as <i>needs you</i>, the same as an agent waiting on a question. The desk's dot in the sidebar says so too.</p>
+
+<h2 id="what-i-left-out">What I left out</h2>
+<p>I thought about tabs: a tab view, a tab per thread, documents in tabs. What I actually needed was room for things that run without being watched, not another way to switch. Tabs might still come, but this didn't need them.</p>
+
+<h2 id="try-it">Try it</h2>
+<p>snyvi is free, runs on your machine, and has no account. It's <a href="/install">here for Linux, macOS and Windows</a>, and the source is <a href="https://github.com/snymrova/snyvi">on GitHub</a>.</p>
+<p class="byline"><i>Agents make it easy to start. snyvi helps you finish.</i></p>
