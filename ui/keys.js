@@ -158,6 +158,9 @@ export function letter(e, c) {
     case "w": c.wide(); break;
     case "z": c.wrap(); break;
     case "y": c.copyAll(); break;
+    // Download (#183): the bar's own button, which copy.js shows only on a
+    // page that is a file to keep, and points at its bytes.
+    case "d": { const b = document.querySelector("#chrome .over.dl:not([hidden]) .over-d"); if (!b) return false; b.click(); break; }
     case "t": c.rail(); break;
     // The diagram under the cursor, or the last one used: fit it, or fill the
     // screen with it. Both are no-ops on a page with no diagram on it.

@@ -282,6 +282,7 @@ async function main() {
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
+    await section("#183: a picture, to keep", () => downloadRows(p, cdp, url, arrive, tmp));
     await section("a folder, opened in snyvi", () => folderRows(cdp, base, browsed));
     await section("a link out of a document", () => docLinkRows(p, base, token, first.doc.id));
     await section("the socket a page holds", () => socketRows(p, url, base, browsed));
@@ -2124,6 +2125,61 @@ async function browseRows(p, browsed) {
   const right = /line_300\b/.test(line.text || "");
   rows.push(["and at a line", line.n === 1 && right && line.inView,
     !line.n ? "no line was marked" : line.n !== 1 ? `${line.n} lines marked` : !right ? `the marked line reads "${line.text}"` : !line.inView ? "line 300 is marked but off the screen" : "line 300 marked and on the screen"]);
+  return rows;
+}
+
+/** #183: a picture, a film, a song -- the file itself, to keep. A media
+ *  page's Download is in Copy all's box, which such a page keeps empty, so
+ *  the bar holds still between a page of text and a picture; pressed, the
+ *  browser downloads the file under its own name. A picture inside a
+ *  document has a ↓ over its corner while the pointer is on it, laid over
+ *  the page: the picture does not move. What the window does with the
+ *  download is src/bin/app.rs's (`downloads`), which no browser here runs. */
+async function downloadRows(p, cdp, url, arrive, tmp) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const box = sel => `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r && r.width ? [Math.round(r.left), Math.round(r.top), Math.round(r.width)] : null; })()`;
+  const pic = await arrive({ name: "pic.svg", body: `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#4a7"/></svg>\n` });
+  const takes = await arrive({ name: "takes.md", body: "# Takes\n\nThe picture, to keep.\n\n![a picture](pic.svg)\n\nAnd a line after it.\n" });
+  const origin = new URL(url).origin;
+
+  await p.goto(url);
+  const ready = await until(`window.__ui.vis("#btn-copy-top") && !!document.querySelector("#btn-dl-top")`, 80);
+  const copyAt = await p.ev(box("#btn-copy-top"));
+  const textOff = ready && await p.ev(`getComputedStyle(document.querySelector("#btn-dl-top")).display === "none"`);
+  await p.goto(`${origin}/d/${pic.id}`);
+  const dlOn = await until(`!!document.querySelector("#chrome .over.dl") && window.__ui.vis("#btn-dl-top")`, 80);
+  const dlAt = await p.ev(box("#btn-dl-top"));
+  const link = await p.ev(`(() => { const a = document.querySelector("#btn-dl-top"); return a && { href: a.getAttribute("href"), name: a.download, copy: getComputedStyle(document.querySelector("#btn-copy-top")).display }; })()`);
+  rows.push(["a picture's page has Download in Copy all's box, a page of text does not",
+    !!ready && textOff && dlOn && JSON.stringify(copyAt) === JSON.stringify(dlAt) && link?.copy === "none" && link.href === `/api/docs/${pic.id}/blob` && link.name === "pic.svg",
+    !ready ? "copy.js never made the button" : !textOff ? "Download shows on a page of text" : !dlOn ? "no Download on the picture's page" :
+      JSON.stringify(copyAt) !== JSON.stringify(dlAt) ? `Copy all at ${JSON.stringify(copyAt)}, Download at ${JSON.stringify(dlAt)}` : `${JSON.stringify(link)}`]);
+
+  // Pressed, the browser keeps it, named as it was sent.
+  const dir = join(tmp, "downloads");
+  mkdirSync(dir, { recursive: true });
+  await cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: dir });
+  if (dlOn) await p.clickOn("#btn-dl-top");
+  let kept = false;
+  for (let i = 0; i < 50 && !kept; i++) { kept = existsSync(join(dir, "pic.svg")); if (!kept) await sleep(100); }
+  rows.push(["Download keeps the file under its own name", kept, kept ? "pic.svg in the download folder" : `the folder has ${JSON.stringify(readdirSync(dir))}`]);
+
+  // In a document: a ↓ over the picture's corner, and nothing moves.
+  await p.goto(`${origin}/d/${takes.id}`);
+  const img = await until(`(() => { const i = document.querySelector("#doc article img"); return i && i.complete && i.getBoundingClientRect().width > 64; })()`, 80)
+    && await until(`!!document.querySelector(".dl-fl")`, 80);
+  const before = await p.ev(box("#doc article img"));
+  if (img) await p.hoverOn("#doc article img");
+  const over = img && await until(`document.querySelector(".dl-fl")?.classList.contains("on")`, 20);
+  const fl = over ? await p.ev(`(() => { const f = document.querySelector(".dl-fl"), r = f.getBoundingClientRect(), i = document.querySelector("#doc article img").getBoundingClientRect();
+    return { inside: r.left >= i.left && r.right <= i.right && r.top >= i.top && r.bottom <= i.bottom, href: new URL(f.href).pathname, name: f.download }; })()`) : null;
+  const after = await p.ev(box("#doc article img"));
+  rows.push(["a picture in a document has a ↓ over its corner, and does not move",
+    !!fl && fl.inside && fl.href === `/files/${takes.id}/pic.svg` && fl.name === "pic.svg" && JSON.stringify(before) === JSON.stringify(after),
+    !img ? "the picture did not load" : !over ? "no ↓ while the pointer is on it" : !fl.inside ? "the ↓ is outside the picture" :
+      JSON.stringify(before) !== JSON.stringify(after) ? `the picture moved: ${JSON.stringify(before)} → ${JSON.stringify(after)}` : JSON.stringify(fl)]);
+  await p.pointerAway();
   return rows;
 }
 
