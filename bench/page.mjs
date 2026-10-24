@@ -338,6 +338,64 @@ export async function readable(id) {
   };
 }
 
+/** #185: every diagram opens with its labels at 11 px or more. The long
+ *  left-to-right flow opens turned top-down and Turn puts it back; the wide
+ *  sequence opens at the floor, at its start, with a fade where more lies; a
+ *  sideways swipe pans it and a scroll down the page is still the page's. The
+ *  label size is the drawing's own font times the scale it is drawn at. */
+export async function floor() {
+  const byId = id => [...document.querySelectorAll(".mmd")].find(f => new RegExp("%%\\s*id:" + id + "(\\s|$)").test(f.dataset.src || ""));
+  const wait = async (ok, n = 60) => { for (let i = 0; i < n && !ok(); i++) await new Promise(r => setTimeout(r, 100)); return ok(); };
+  const figs = ["floor-small", "floor-newsroom", "floor-sequence"].map(byId);
+  if (figs.some(f => !f)) return { ok: false, why: "a floor diagram is missing from the page" };
+  for (const f of figs) { f.scrollIntoView({ behavior: "instant", block: "center" }); await wait(() => f.dataset.state === "done", 100); }
+  if (figs.some(f => f.dataset.state !== "done")) return { ok: false, why: `not drawn: ${figs.filter(f => f.dataset.state !== "done").map(f => f.dataset.state).join(", ")}` };
+  const px = f => {
+    const svg = f.querySelector("svg"), r = svg.getBoundingClientRect(), [, , w, h] = svg.getAttribute("viewBox").split(/\s+/).map(Number);
+    return Math.round(Number(svg.dataset.mmdFont || 16) * Math.min(r.width / w, r.height / h) * 10) / 10;
+  };
+  const [small, news, seq] = figs;
+  // Painted once each: a flow drawn left to right and then swapped for its
+  // turned drawing would have painted twice, and been seen doing it.
+  const paints = performance.getEntriesByName("snyvi:diagram").length;
+  const sizes = figs.map(px), floorOk = sizes.every(n => n >= 11 - 0.05);
+  const smallOk = !small.dataset.turned && small.dataset.zoom === "fit";
+  const turned = news.dataset.turned === "1";
+  const vb = () => seq.querySelector("svg").getAttribute("viewBox");
+  const base = seq.querySelector("svg").dataset.mmdBase.split(" ").map(Number);
+  const startX = Number(vb().split(" ")[0]);
+  const seqOk = seq.dataset.zoom === "in" && Math.abs(startX - base[0]) < 0.5 && (seq.dataset.more || "").includes("r");
+  seq.scrollIntoView({ behavior: "instant", block: "center" });
+  const r = seq.querySelector(".mmd-frame").getBoundingClientRect();
+  const at = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+  const before = vb(), side = new WheelEvent("wheel", { ...at, deltaX: 240 });
+  seq.querySelector(".mmd-frame").dispatchEvent(side);
+  const swiped = vb() !== before && side.defaultPrevented && (seq.dataset.more || "").includes("l");
+  const down = new WheelEvent("wheel", { ...at, deltaY: 240 }), mid = vb();
+  seq.querySelector(".mmd-frame").dispatchEvent(down);
+  const pageOwns = !down.defaultPrevented && vb() === mid;
+  news.querySelector("[data-mmd=turn]").click();
+  const sent = await wait(() => news.dataset.state === "done" && !news.dataset.turned && news.dataset.zoom === "in");
+  const sentPx = px(news);
+  news.querySelector("[data-mmd=turn]").click();
+  const again = await wait(() => news.dataset.state === "done" && news.dataset.turned === "1");
+  const ok = floorOk && paints === 3 && smallOk && turned && seqOk && swiped && pageOwns && sent && sentPx >= 11 - 0.05 && again;
+  return {
+    ok, sizes,
+    why: !floorOk ? `labels at ${sizes.join(", ")} px`
+      : paints !== 3 ? `${paints} paints for three diagrams: one was shown and then swapped`
+        : !smallOk ? "the flow that fits did not stay as it was sent"
+          : !turned ? "the long left-to-right flow was not turned"
+            : !seqOk ? `the sequence opened ${seq.dataset.zoom} at x ${startX} of ${base[0]}, fades "${seq.dataset.more || ""}"`
+              : !swiped ? "a sideways swipe did not pan it"
+                : !pageOwns ? "a scroll down the page was taken by the diagram"
+                  : !sent ? "Turn did not put it back as it was sent"
+                    : sentPx < 11 - 0.05 ? `as sent, it opened at ${sentPx} px`
+                      : !again ? "Turn did not turn it again"
+                        : `labels at ${sizes.join(", ")} px; the flow turned and back (${sentPx} px as sent), the sequence swiped`,
+  };
+}
+
 /** The sidebar, on a library that has been used.
  *
  *  Every other number in this harness was taken against a two-document

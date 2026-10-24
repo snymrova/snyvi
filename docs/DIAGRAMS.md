@@ -166,6 +166,56 @@ everything needed is a viewport around it.
 
 About 150 lines of vanilla JavaScript and no new dependency.
 
+### Phase 3b — the floor: no diagram opens too small to read (#185) — **done**
+
+Phase 3 fitted anything drawn at 15% of its size or more, and only past
+that opened at full size to pan. The line measured how far a drawing
+shrank, not how big its text came out: a fit at 15% puts 16 px labels at
+2.4 px, and everything from 15% to 69% opened under 11 px. The newsroom
+flow in the note (a `flowchart LR` of fifteen steps, 3,799 × 174 units)
+fitted an 866 px frame at 23%, its labels at 5.5 px, in a 220 px box
+around a 40 px strip.
+
+Measured across a real library, 779 distinct diagrams rendered at an
+866 px frame: **331 opened with labels under 11 px**, 197 of them flows
+drawn left to right.
+
+The rule now is the label size: **no diagram opens with labels under
+11 px.** The size is read off the drawing (`mmdFont`), not assumed.
+Under the floor, the first of these that works:
+
+```mermaid
+flowchart TD
+  D[Mermaid has drawn it] --> F{Fitted, labels at 11 px or more?}
+  F -->|yes| A[Fitted, as before]
+  F -->|no| L{A flowchart LR or RL?}
+  L -->|yes| T[Draw it again top-down, before painting]
+  T --> TF{Fits the width at 11 px, no taller than two screens?}
+  TF -->|yes| TURN[Shown turned, read by scrolling the page]
+  TF -->|no| PAN
+  L -->|no| PAN[Opened at 12 px, at its start]
+```
+
+- **Turned** (`mmdChoose`). The choice is made from the string Mermaid
+  returns, its viewBox and font size, so the page never paints one
+  drawing and swaps in the other. 170 of the 197 unreadable LR flows fit
+  the column at 16 px once drawn TD: 811 px tall at the median, 1,284 px
+  at p90. Both drawings are cached under their own source. A **Turn**
+  button, on LR and RL flows only, shows it as sent and back.
+- **Readable** (`mmdViewport`, `mmdStart`). Everything else opens with
+  labels at 12 px at the corner it starts in (the right for RL, the
+  bottom for BT), in a frame as tall as that drawing and no taller than
+  the cap. A fade at each side where more lies (`data-more`, two
+  overlays rather than a mask, which over an SVG repaints the drawing on
+  every pan). A **sideways** swipe pans; a scroll down the page stays the
+  page's. Filling the screen there is no page, so every way pans.
+- **Fill the screen** follows the same rule.
+
+`bench/browser.mjs` reads it on a document of its own ("the floor"): the
+newsroom flow and a nine-participant sequence, every label at 11 px or
+more, one paint per diagram, Turn both ways, the swipe and the page's
+scroll.
+
 ### Phase 4 — the 523 ms, and the small faults
 
 - ~~**Prefetch Mermaid when idle**~~ **Done.** Asked for as soon as a
