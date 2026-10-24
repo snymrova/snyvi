@@ -525,3 +525,111 @@ pub(crate) async fn browse_find(
         Err(e) => err(anyhow::anyhow!(e)),
     }
 }
+
+/// ⌘K's file names (#188): every desk's folder and every folder open for
+/// reading, searched by name (`crate::find`). An empty `q` is the palette
+/// opening: the index is brought up to date in the background, and nothing
+/// is searched. `ready` is false until the first walk is in, so the page
+/// knows to ask again rather than say nothing matched.
+///
+/// Behind the desk's gate, as `/api/resolve` is: the answer lists names off
+/// the reader's disk, which a tab is not shown.
+pub(crate) async fn find_files(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let query = q.get("q").map(|s| s.trim().to_string()).unwrap_or_default();
+    let here = q.get("desk").and_then(|d| d.parse::<i64>().ok());
+    let limit = q
+        .get("limit")
+        .and_then(|l| l.parse::<usize>().ok())
+        .unwrap_or(6)
+        .min(40);
+    if query.is_empty() || !app.find.ready() {
+        let warm = app.clone();
+        tokio::task::spawn_blocking(move || warm.find.refresh_if_due(|| find_wants(&warm)));
+    }
+    if query.is_empty() {
+        return Json(json!({ "ready": app.find.ready(), "files": [] })).into_response();
+    }
+    let app2 = app.clone();
+    match tokio::task::spawn_blocking(move || app2.find.search(&query, here, limit)).await {
+        Ok(Some(files)) => Json(json!({ "ready": true, "files": files })).into_response(),
+        Ok(None) => Json(json!({ "ready": false, "files": [] })).into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
+/// The folders ⌘K searches, and where each desk sits for "this desk first".
+fn find_wants(app: &App) -> (Vec<crate::find::Want>, Vec<(i64, std::path::PathBuf)>) {
+    use crate::find::{Key, Want};
+    let mut wants: Vec<Want> = app
+        .browse
+        .list()
+        .into_iter()
+        .map(|r| Want { path: r.path.into(), label: r.name, key: Key::Root(r.id) })
+        .collect();
+    let mut desks = vec![];
+    for d in app.store.desks().unwrap_or_default() {
+        if d.root.is_empty() {
+            continue;
+        }
+        desks.push((d.id, std::path::PathBuf::from(&d.root)));
+        wants.push(Want { path: d.root.into(), label: d.name, key: Key::Desk(d.id) });
+    }
+    (wants, desks)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FindOpenBody {
+    pub(crate) desk: i64,
+    pub(crate) rel: String,
+}
+
+/// A file ⌘K found in a desk's folder, opened in the folder reader: under a
+/// folder already open for reading when it is in one, or else the desk's
+/// folder opens as a row under Folders, the way a Ctrl-click opens one. The
+/// page names the desk and the path inside its folder, never a folder, and a
+/// path that leaves the folder is refused. A file in an open folder needs no
+/// call: the page shows it.
+pub(crate) async fn find_open(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<FindOpenBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(d)) = app.store.desk(b.desk) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some((base, file)) = crate::find::inside(std::path::Path::new(&d.root), &b.rel) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let roots: Vec<(String, std::path::PathBuf)> = app
+        .browse
+        .list()
+        .into_iter()
+        .map(|r| (r.id, r.path.into()))
+        .collect();
+    let (id, rel) = match crate::resolve::under(&file, &roots) {
+        Some((id, rel)) => (id.to_string(), rel),
+        None => {
+            let Ok(root) = app.browse.open(&base) else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            emit(&app, "browse", json!({ "roots": app.browse.list() }));
+            let rel = file
+                .strip_prefix(&root.path)
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            (root.id, rel)
+        }
+    };
+    Json(json!({ "root": id, "rel": rel })).into_response()
+}

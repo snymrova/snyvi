@@ -175,6 +175,14 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    ("GET", "/api/find?q=x", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/find/open",
+        Some(r#"{"desk":999,"rel":"x"}"#),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/browse", None, Gate::Open, true),
     (
         "POST",

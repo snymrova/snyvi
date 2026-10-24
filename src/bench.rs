@@ -60,6 +60,7 @@ pub fn run(check: bool) -> Result<()> {
     let mut failed = hook_rows(factor, shared)?;
     let fixtures = Fixtures::new();
     failed |= render_rows(&fixtures, factor);
+    failed |= find_rows(factor);
     failed |= process_rows(&fixtures, factor, shared)?;
     if check && failed {
         bail!("bench: at least one case exceeded its budget");
@@ -206,6 +207,70 @@ fn render_rows(f: &Fixtures, factor: f64) -> bool {
             out_len / 1024,
             if ok { " ok" } else { " OVER" }
         );
+    }
+    failed
+}
+
+// ---------- ⌘K's file names ----------
+
+/// ⌘K's file search over thirty thousand paths shaped like a dozen
+/// repositories (`crate::find`): a whole search, and a keystroke that
+/// narrows the last one's matches. The palette waits 60 ms after a key
+/// before it asks, and the page has its own work after the answer; the
+/// search is held to a quarter of that, and a narrowed keystroke to a few
+/// ms. Returns whether any row was over budget.
+fn find_rows(factor: f64) -> bool {
+    const WORDS: [&str; 16] = [
+        "src", "docs", "ui", "app", "lib", "test", "main", "plan", "index", "rail", "desk", "store",
+        "render", "config", "server", "page",
+    ];
+    const EXT: [&str; 6] = ["rs", "md", "js", "css", "json", "html"];
+    let mut paths = Vec::with_capacity(30_000);
+    for i in 0..30_000usize {
+        let w = |n: usize| WORDS[(i / n + n) % WORDS.len()];
+        let depth = 1 + i % 5;
+        let mut p = if i % 10 == 0 { format!("repo{}/node_modules/pkg{}", i % 12, i % 300) } else { format!("repo{}", i % 12) };
+        for d in 0..depth {
+            p.push('/');
+            p.push_str(w(d * 7 + 3));
+        }
+        p.push_str(&format!("/{}-{}{}.{}", w(11), w(5), i % 97, EXT[i % EXT.len()]));
+        paths.push(p);
+    }
+    let f = crate::find::Finder::from_paths("bench", paths.iter().map(String::as_str));
+    let best = |q: &str| {
+        (0..3)
+            .map(|_| {
+                let t = Instant::now();
+                let _ = f.search(q, Some(0), 6);
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .fold(f64::MAX, f64::min)
+    };
+    // Each a whole search: none extends the one before it.
+    let (q, whole) = ["readme", "app css", "src main", "dskrail", "mmd", "zzqx", "plan"]
+        .iter()
+        .map(|q| (*q, best(q)))
+        .fold(("", 0.0), |a, b| if b.1 > a.1 { b } else { a });
+    let word = "diagrams";
+    let mut keyed = 0.0f64;
+    for i in 1..=word.len() {
+        let t = Instant::now();
+        let _ = f.search(&word[..i], Some(0), 6);
+        if i > 1 {
+            keyed = keyed.max(t.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    println!("\n{:<60} {:>9}   {:>9}", "file names, 30,000 paths", "ms", "budget");
+    let mut failed = false;
+    for (name, ms, budget) in [
+        (format!("a whole search (slowest: {q:?})"), whole, 15.0),
+        ("a keystroke, narrowed (typing \"diagrams\")".to_string(), keyed, 3.0),
+    ] {
+        let budget = budget * factor;
+        let ok = ms <= budget;
+        failed |= !ok;
+        println!("{name:<60} {ms:>9.1}   {budget:>7.0}{}", if ok { " ok" } else { " OVER" });
     }
     failed
 }

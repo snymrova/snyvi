@@ -92,6 +92,8 @@ pub struct App {
     pub store: Store,
     pub renderer: Renderer,
     pub browse: Browser,
+    /// ⌘K's file names across the desks' folders (`crate::find`).
+    pub find: crate::find::Finder,
     /// Where the store and the token live; a reset needs to know.
     pub paths: Paths,
     /// The desks' key values: the keychain, or the 0600 file beside the
@@ -318,6 +320,7 @@ fn new_app(
         store,
         renderer,
         browse: Browser::load(paths.config_dir.join("folders.json")),
+        find: Default::default(),
         paths: paths.clone(),
         secrets: crate::secrets::Secrets::new(paths.config_dir.join("keys.json")),
         signins: Default::default(),
@@ -608,6 +611,8 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/reveal", post(reveal))
         .route("/api/resolve", post(resolve_path))
+        .route("/api/find", get(find_files))
+        .route("/api/find/open", post(find_open))
         .merge(browse_routes())
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/docs/{id}/blob", get(doc_blob))

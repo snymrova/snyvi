@@ -299,6 +299,7 @@ async function main() {
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
     await section("panels in the back: a chip, a drawer, one that dies", () => backPanelRows(cdp, base));
     await section("#187: back from a page is back to the panel that sent it", () => senderRows(cdp, base, token));
+    await section("#188: files by name in ⌘K", () => findRows(cdp, base, token, env, tmp));
     await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -4058,6 +4059,73 @@ async function backPanelRows(cdp, base) {
  *  back to its sender -- the ✕ says so, the rail marks it, full view
  *  follows, one in the back opens its drawer -- and history's way back
  *  lands where the reader was. */
+/** #188: ⌘K finds files by name in the desks' folders, under the documents,
+ *  and a file picked opens in the folder reader, its desk's folder opened
+ *  under Folders on the way. The folder is a desk's and nothing more: it is
+ *  opened for reading only to make the desk on it, and closed again. */
+async function findRows(cdp, base, token, env, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const TK = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const dir = join(tmp, "find-188");
+  mkdirSync(join(dir, "docs"), { recursive: true }); mkdirSync(join(dir, "build"), { recursive: true });
+  writeFileSync(join(dir, "docs", "planxy188.md"), "# Plan\n\nA file on disk.\n");
+  writeFileSync(join(dir, "build", "planxy188.md"), "built\n");
+  writeFileSync(join(dir, ".gitignore"), "build/\n");
+  const rid = execFileSync(BIN, ["browse", dir, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop().match(/\/b\/([^/?#]+)/)[1];
+  const made = await post("/api/desks", { root: rid, path: "" }), desk = made.desk ? made.desk.id : made.id;
+  await post(`/api/browse/${rid}/close`, {}, TK);
+  await post("/api/docs", { content: "# Notes on planxy188\n\nWhere the plan stands.", title: "Notes on planxy188", origin: "mcp" }, TK);
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const listed = () => p.ev(`[...document.querySelectorAll("#palette-list li[data-i]")].map(li => [li.querySelector(".t")?.textContent || "", li.querySelector(".s")?.textContent || ""])`);
+  const ask = async q => {
+    await p.ev(`(() => { const i = document.querySelector("#palette-input"); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return 1; })()`);
+    await until(`[...document.querySelectorAll("#palette-list li[data-i] .t")].some(t => t.textContent === "planxy188.md")`, 80);
+    return listed();
+  };
+  try {
+    await p.goto(`${base}/#cap=${cap}`);
+    await until(`!!document.querySelector('a[data-desk="${desk}"]')`);
+    await p.press("k", { ctrl: true });
+    await until(`!document.querySelector("#palette").hidden && !!document.querySelector("#palette-list li")`);
+    const got = await ask("planxy188");
+    // Under the desk's name, or under a wider desk's folder that holds this
+    // one, which is then searched as part of it.
+    const where = s => s === "docs · find-188" || /^find-188\/docs · /.test(s);
+    const files = got.filter(([t]) => t === "planxy188.md"), fileAt = got.findIndex(([t]) => t === "planxy188.md"), docAt = got.findIndex(([t]) => t === "Notes on planxy188");
+    rows.push(["a file in a desk's folder, by its name", files.length === 1 && where(files[0][1]),
+      !files.length ? `no file row: ${got.map(r => r[0]).join(" · ") || "nothing"}` : files.length > 1 ? "the ignored build/ copy is listed too" : !where(files[0][1]) ? `it reads "${files[0][1]}"` : `planxy188.md · ${files[0][1]}, the ignored copy left out`]);
+    rows.push(["documents first, files below them", docAt >= 0 && fileAt > docAt,
+      docAt < 0 ? "the document that mentions it is not listed" : fileAt < docAt ? "the file is above the document" : "the document, then the file"]);
+
+    const only = await ask("f:planxy188");
+    rows.push(["f: asks for files alone", only.length === 1 && only[0][0] === "planxy188.md",
+      `${only.map(r => r[0]).join(" · ") || "nothing"}`]);
+
+    await p.clickOn(`#palette-list li[data-i="0"]`);
+    const opened = await until(`location.pathname.endsWith("/docs/planxy188.md")`);
+    const roots = await (await fetch(`${base}/api/browse`)).json().catch(() => []);
+    const folder = roots.find(r => r.path && r.path.endsWith("find-188"));
+    rows.push(["picked, it opens in the folder reader", opened && !!folder,
+      !opened ? `the page is on ${await p.ev("location.pathname")}` : !folder ? "its desk's folder is not under Folders" : "the file, under its desk's folder, now a row under Folders"]);
+
+    const tabAsks = (await fetch(`${base}/api/find?q=planxy188`)).status;
+    rows.push(["a tab without the window's key lists no files", tabAsks === 403, `the route answered ${tabAsks}`]);
+  } finally {
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    const roots = await (await fetch(`${base}/api/browse`)).json().catch(() => []);
+    for (const r of roots.filter(r => r.path && r.path.endsWith("find-188"))) await post(`/api/browse/${r.id}/close`, {}, TK).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 async function senderRows(cdp, base, token) {
   const rows = [];
   const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
