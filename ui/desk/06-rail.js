@@ -197,10 +197,13 @@ function rail() {
   // can be done to that pane: stopped or started, and closed. On the row
   // itself, so a control acts on the pane it sits beside and never on
   // whichever pane happens to have the focus.
+  // While a page is read over the desk, the panel that sent it is marked:
+  // the ✕ goes there, and the reader sees where before pressing it.
+  const sent = sentFrom();
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
-    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
-      `<button type="button" class="dk-focus" data-focus="${v.id}"><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
+    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v === sent ? " sent" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}"${v === sent ? ' data-tip="Sent the page you are reading" data-tip-sub="the ✕ comes back here"' : ""}><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" data-tip="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
@@ -276,6 +279,7 @@ function rail() {
   leftOffSlot(d);
   // And the back's chips their panel's mark, and the drawer its word.
   backHead(d);
+  fromBar();
 }
 
 /** A page lands far from where the reader is looking: they are on the panel
@@ -362,14 +366,16 @@ function stripClick(e) {
  *  removed: the title, struck through, and its Undo where the ✕ was. */
 function docRow(x, gone, vs, esc) {
   if (gone) return `<li class="dk-note gone" role="status"><span class="nm">${esc(x.title)}</span><button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}">Undo</button></li>` + errLine(`d${x.id}`, esc);
-  const on = x.id === reading;
-  return `<li class="dk-doc${on ? " on" : ""}${ctx.corner?.()?.rising(x.id) ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? "Back to the panels" : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(sentBy(vs, x.slot))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
+  // The slot and not the name: a name changes with the panel's title, and
+  // the rail compares what it draws.
+  const on = x.id === reading, v = on && sentFrom(), to = v ? `Back to panel ${v.pane.slot}` : "Back to the panels";
+  return `<li class="dk-doc${on ? " on" : ""}${ctx.corner?.()?.rising(x.id) ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? to : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(sentBy(vs, x.slot))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
     // Its tools: the path to copy, where there is one; on the row of the
     // document on the page, the way back to the panes, in view at rest; and
     // the ✕ that takes it off this list -- this list only.
     `<span class="dk-tools">` +
     (x.local_path ? `<button type="button" data-a="copy" data-path="${esc(x.local_path)}" data-tip="Copy path" data-tip-sub="${esc(x.local_path)}" aria-label="Copy the path of ${esc(x.title)}">${ico("copy")}</button>` : "") +
-    (on ? `<button type="button" data-a="desk" data-tip="Back to the panels" data-key="ctrl+\`" aria-label="Back to the panels">${ico("back")}</button>` : "") +
+    (on ? `<button type="button" data-a="desk" data-tip="${to}" data-key="ctrl+\`" aria-label="${to}">${ico("back")}</button>` : "") +
     `<button type="button" data-a="doc-x" data-d="${esc(x.id)}" data-tip="Remove from this list" data-tip-sub="the Inbox keeps it" aria-label="Remove ${esc(x.title)} from this desk's list">${ico("x")}</button>` +
     `</span></li>` + errLine(`d${x.id}`, esc);
 }
@@ -1359,14 +1365,46 @@ export function docSaved(d) {
  * panel, so it never lands in the middle of either.
  */
 
-/** The panel a document read over the desk came from: the one in the slot it
- *  was sent from, or the focused one when that slot has been closed since. */
+/** The panel in the slot a document read over the desk was sent from, while
+ *  that panel is open; null when no panel sent it or the one that did has
+ *  closed. The page is about its sender -- a plan to approve, a review to
+ *  act on -- so the way back from it goes there (#187), and the rail and
+ *  the page's bar name it while it is read. */
+function sentFrom() {
+  if (reading == null) return null;
+  const d = current();
+  const x = d && docList.find(y => String(y.id) === String(reading));
+  const p = x && x.slot && d.panes.find(q => q.slot === x.slot);
+  return (p && views.get(p.id)) || null;
+}
+
+/** The ✕'s name for the way back from the page (app.js `backTo`), the row's
+ *  ← and its second click too: the sender, or null for the panels as they
+ *  were left. */
+export function back() {
+  const v = sentFrom();
+  return v ? `panel ${v.pane.slot} · ${short(v)}` : null;
+}
+
+/** The page's bar says which panel the page came from while it is read over
+ *  the desk, beside the ✕ that goes there. Its own span after the title,
+ *  which gives up room to it: the page below never moves. */
+function fromBar() {
+  const over = document.querySelector("#chrome .over");
+  if (!over) return;
+  let el = over.querySelector(".over-from");
+  const v = sentFrom();
+  if (!v) { el?.remove(); return; }
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "over-from" }); over.firstChild.after(el); }
+  el.textContent = `from Panel ${v.pane.slot} · ${short(v)}`;
+}
+
+/** The panel a document read over the desk came from, or the focused one
+ *  when that slot has been closed since: where a kept point goes. */
 function sender() {
   const d = current();
   if (!d || reading == null) return null;
-  const x = docList.find(y => String(y.id) === String(reading));
-  const p = x && d.panes.find(q => q.slot === x.slot);
-  return views.get(p ? p.id : focused) || (d.panes[0] && views.get(d.panes[0].id)) || null;
+  return sentFrom() || views.get(focused) || (d.panes[0] && views.get(d.panes[0].id)) || null;
 }
 
 function hidePick() { if (pickEl) { pickEl.remove(); pickEl = null; } }

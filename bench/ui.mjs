@@ -298,6 +298,7 @@ async function main() {
     await section("the keys sheet: Claude as, then keys", () => keysSheetRows(cdp, base));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
     await section("panels in the back: a chip, a drawer, one that dies", () => backPanelRows(cdp, base));
+    await section("#187: back from a page is back to the panel that sent it", () => senderRows(cdp, base, token));
     await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -4047,6 +4048,95 @@ async function backPanelRows(cdp, base) {
       !forward ? "it is still a chip, or not in the grid" : `in the grid at slot ${slot}`]);
   } finally {
     for (const pane of [front, server.id, dies]) if (pane) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** #187: a page one panel sent, opened while another had the focus, goes
+ *  back to its sender -- the ✕ says so, the rail marks it, full view
+ *  follows, one in the back opens its drawer -- and history's way back
+ *  lands where the reader was. */
+async function senderRows(cdp, base, token) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const TK = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "senders" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  const pc = (await post(`/api/desks/${desk}/panes`, { back: true })).pane.id;
+  for (const pane of [pa, pb, pc]) await post(`/api/panes/${pane}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  const send = async (pane, title) => (await post("/api/docs", { content: `# ${title}\n\nFor the reader.`, title, origin: "mcp", ...(pane ? { pane } : {}) }, TK)).doc.id;
+  const fullSlot = async () => (await (await fetch(`${base}/api/desks`, { headers: H })).json()).desks.find(x => x.id === desk)?.full_slot;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const P = id => `.pn[data-id="${id}"]`;
+  const onRow = `document.querySelector("#toc .dk-pane.on .dk-focus")?.dataset.focus`;
+  const focusOn = async id => { await q.clickOn(`${P(id)} .pn-body`); return until(`${onRow} === "${id}"`); };
+  const read = async id => { await until(`!!document.querySelector('#toc a[data-read="${id}"]')`); await q.ev(`document.querySelector('#toc a[data-read="${id}"]').click(); 1`); return until(`!document.querySelector("#chrome .over").hidden && document.querySelector("#toc .dk-doc.on a")?.dataset.read === "${id}"`); };
+  const ex = `document.querySelector("#chrome .over-x")`;
+  const docTop = `Math.round(document.querySelector("#doc").getBoundingClientRect().top * 10) / 10`;
+  try {
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    const noPanel = await send(null, "From no panel");
+    const fromA = await send(pa, "Plan from panel 1");
+    const fromC = await send(pc, "From the back");
+    await focusOn(pb);
+
+    // A page no panel sent, for the rule's other side and the page's box.
+    // The docs list has it once the desk is asked again (app.js `deskDocs`).
+    const plain = await read(noPanel);
+    const plainTip = await q.ev(`${ex}.getAttribute("aria-label")`), plainTop = await q.ev(docTop);
+    const plainFrom = await q.ev(`!!document.querySelector("#chrome .over-from")`);
+    rows.push(["a page no panel sent goes back to the panels, unmarked", plain && plainTip === "Back to the panels" && !plainFrom,
+      !plain ? "it did not open over the desk" : plainFrom ? "the bar named a panel" : `the ✕ says "${plainTip}"`]);
+    await q.ev(`${ex}.click(); 1`);
+    await until(`${onRow} === "${pb}"`);
+
+    const opened = await read(fromA);
+    const tip = await q.ev(`${ex}.getAttribute("aria-label")`), from = await q.ev(`document.querySelector("#chrome .over-from")?.textContent || ""`);
+    const marked = await q.ev(`[...document.querySelectorAll("#toc .dk-pane.sent .dk-focus")].map(b => b.dataset.focus).join(",")`);
+    const top = await q.ev(docTop);
+    rows.push(["while it is read, the ✕, the bar and the rail name panel 1", opened && /^Back to panel 1 · /.test(tip) && /^from Panel 1 · /.test(from) && marked === pa,
+      !opened ? "it did not open over the desk" : `✕ "${tip}", bar "${from}", marked [${marked}] for panel 1's ${pa}`]);
+    rows.push(["and the page does not move for it", top === plainTop, `the page's top at ${top}, ${plainTop} for a page with no mark`]);
+
+    await q.ev(`${ex}.click(); 1`);
+    const toA = await until(`${onRow} === "${pa}" && !!document.querySelector(".dk-grid")`);
+    rows.push(["its ✕ focuses panel 1, not panel 2 where the reader was", toA, toA ? "panel 1 has the focus" : `the focus is on ${await q.ev(onRow)}`]);
+
+    await focusOn(pb);
+    await read(fromA);
+    await q.ev(`history.back(); 1`);
+    const stayed = await until(`${onRow} === "${pb}" && !!document.querySelector(".dk-grid")`);
+    rows.push(["history's way back lands on panel 2, where the reader was", stayed, stayed ? "panel 2 has the focus" : `the focus is on ${await q.ev(onRow)}`]);
+
+    await q.ev(`document.querySelector('${P(pb)} .pn-full').click(); 1`);
+    const zoomed = await until(`document.documentElement.dataset.full === "1"`);
+    await read(fromA);
+    await q.ev(`${ex}.click(); 1`);
+    const followed = await until(`${onRow} === "${pa}"`) && await fullSlot() === 1;
+    rows.push(["in full view of panel 2, the ✕ shows panel 1 in full view", zoomed && followed,
+      !zoomed ? "panel 2's Full view did not take" : `full view on slot ${await fullSlot()}, the focus on ${await q.ev(onRow)}`]);
+    await q.ev(`document.querySelector('${P(pa)} .pn-full').click(); 1`);
+    await until(`document.documentElement.dataset.full !== "1"`);
+
+    await read(fromC);
+    const backTip = await q.ev(`${ex}.getAttribute("aria-label")`);
+    await q.ev(`${ex}.click(); 1`);
+    const drawer = await until(`document.querySelector(".dk-drawer")?.classList.contains("open") && !!document.querySelector('.dk-drawer ${P(pc)}')`);
+    rows.push(["one in the back opens its drawer", drawer && /^Back to panel [5-8] · /.test(backTip),
+      !drawer ? `no drawer on it; the ✕ said "${backTip}"` : `the drawer is open on it; the ✕ said "${backTip}"`]);
+  } finally {
+    for (const pane of [pa, pb, pc]) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
