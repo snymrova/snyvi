@@ -84,6 +84,7 @@ const ICONS = {
   guide: '<path d="M4 1.8h5l3 3v9.4H4zM9 1.8v3h3M6.2 8.2h3.6M6.2 10.8h3.6"/>',
   changelog: '<circle cx="8" cy="8" r="5.6"/><path d="M8 5v3.2l2.1 1.3"/>',
   privacy: '<path d="M8 1.8 13 3.8v4c0 3-2.2 5.2-5 6.4-2.8-1.2-5-3.4-5-6.4v-4z"/>',
+  blog: '<path d="M10.8 2.6 13.4 5.2 6 12.6 2.6 13.4 3.4 10z"/><path d="M9.2 4.2l2.6 2.6"/>',
   code: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   maker: '<circle cx="8" cy="5.6" r="2.6"/><path d="M3 13.6c.6-2.4 2.6-4 5-4s4.4 1.6 5 4"/>',
   ext: '<path d="M6 3.5h6.5V10M12.5 3.5 4 12"/>',
@@ -260,6 +261,7 @@ const NAV = [
   ["install", "/install", "Install", "install"],
   ["guide", "/guide", "Guide", "guide", [["widgets", "/guide/widgets", "Widgets"], ["friends", "/guide/friends", "A friend's snyvi"]]],
   ["changelog", "/changelog", "Changelog", "changelog"],
+  ["blog", "/blog", "Blog", "blog"],
   ["privacy", "/privacy", "Privacy", "privacy"],
 ];
 const headings = (html, max = 3) => [...html.matchAll(/<h([23]) id="([^"]+)"[^>]*>([\s\S]*?)<\/h\1>/g)]
@@ -343,12 +345,12 @@ function frame(page) {
 <title>${esc(page.title)}</title>
 <meta name="description" content="${esc(page.description)}">
 ${page.noindex ? '<meta name="robots" content="noindex">' : `<link rel="canonical" href="${url}">`}
-<meta property="og:type" content="website">
+<meta property="og:type" content="${page.article ? "article" : "website"}">
 <meta property="og:site_name" content="snyvi">
 <meta property="og:title" content="${esc(page.h1 || page.title)}">
 <meta property="og:description" content="${esc(page.description)}">
 <meta property="og:url" content="${url}">
-<meta property="og:image" content="${ORIGIN}/og.png">
+<meta property="og:image" content="${ORIGIN}${page.og || "/og.png"}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="light dark">${page.path === "/" ? `\n<script type="application/ld+json">${LD}</script>` : ""}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -421,6 +423,8 @@ copy(join(HERE, "fonts", "archivo.woff2"), "fonts/archivo.woff2");
 copy(join(HERE, "fonts", "OFL.txt"), "fonts/OFL-archivo.txt");
 copy(join(ROOT, "icons", "icon.svg"), "favicon.svg");
 if (existsSync(join(SRC, "og.png"))) copy(join(SRC, "og.png"), "og.png");
+// A post's film, its poster and its share picture, served beside it.
+for (const f of readdirSync(join(SRC, "blog"))) copy(join(SRC, "blog", f), `blog/${f}`);
 write("assets/mermaid.js", gunzipSync(readFileSync(join(ROOT, "ui", "mermaid.min.js.gz"))));
 for (const f of ["_headers", "_redirects"]) copy(join(SRC, f), f);
 write("robots.txt", `User-agent: *\nAllow: /\nSitemap: ${ORIGIN}/sitemap.xml\n`);

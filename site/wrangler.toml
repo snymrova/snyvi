@@ -1,7 +1,7 @@
 # snyvi.com: static assets, built by build.mjs into out/, and one small worker.
 # Deployed by .github/workflows/site.yml; by hand: node site/build.mjs && npx wrangler deploy -c site/wrangler.toml
 name = "snyvi-site"
-# worker.js answers byte ranges for the tour clips (/tour/*) and nothing else.
+# worker.js answers byte ranges for the tour clips (/tour/*) and a post's film (/blog/*), and nothing else.
 main = "worker.js"
 compatibility_date = "2026-09-01"
 # www.snyvi.com is site/www, a redirect to here.
@@ -10,6 +10,6 @@ routes = [{ pattern = "snyvi.com", custom_domain = true }]
 [assets]
 directory = "./out"
 binding = "ASSETS"
-run_worker_first = ["/tour/*"]
+run_worker_first = ["/tour/*", "/blog/*"]
 html_handling = "drop-trailing-slash"
 not_found_handling = "404-page"

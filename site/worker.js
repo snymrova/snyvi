@@ -1,7 +1,8 @@
-// snyvi.com's one piece of code: byte ranges for the window's tour clips.
+// snyvi.com's one piece of code: byte ranges for the window's tour clips,
+// and a blog post's film.
 // Static assets answer a Range request with the whole file, and Safari's
 // WebKit (the Mac window) will not play a video that comes back that way.
-// Only /tour/* runs this (run_worker_first in wrangler.toml); everything
+// Only /tour/* and /blog/* run this (run_worker_first in wrangler.toml); everything
 // else is served as assets, untouched. A clip is a few hundred KB, so the
 // slice is taken from the whole body.
 export default {
