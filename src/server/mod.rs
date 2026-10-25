@@ -92,6 +92,8 @@ pub struct App {
     pub store: Store,
     pub renderer: Renderer,
     pub browse: Browser,
+    /// ⌘K's file names across the desks' folders (`crate::find`).
+    pub find: crate::find::Finder,
     /// Where the store and the token live; a reset needs to know.
     pub paths: Paths,
     /// The desks' key values: the keychain, or the 0600 file beside the
@@ -318,6 +320,7 @@ fn new_app(
         store,
         renderer,
         browse: Browser::load(paths.config_dir.join("folders.json")),
+        find: Default::default(),
         paths: paths.clone(),
         secrets: crate::secrets::Secrets::new(paths.config_dir.join("keys.json")),
         signins: Default::default(),
@@ -431,6 +434,29 @@ fn browse_routes() -> Router<Arc<App>> {
         .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
         .route("/api/browse/{id}/find", get(browse_find))
         .route("/api/browse/{id}/outline", get(browse_outline))
+}
+
+/// A desk's notes, and the pictures pasted into them (`api_desk`).
+fn note_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))
+        .route("/api/desks/{id}/notes/{note}", post(set_desk_note))
+        .route(
+            "/api/desks/{id}/notes/{note}/remove",
+            post(remove_desk_note),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/restore",
+            post(restore_desk_note),
+        )
+        .route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))
+        .route("/api/desks/{id}/notes/{note}/check", post(check_desk_note))
+        .route(
+            "/api/desks/{id}/notes/{note}/image",
+            post(add_note_image).layer(axum::extract::DefaultBodyLimit::max(NOTE_IMAGE_BYTES)),
+        )
+        .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
+        .route("/api/desks/{id}/note-images/{name}", get(note_image))
 }
 
 /// The sidebars' layout and their widgets (`api_widget`).
@@ -608,6 +634,8 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/reveal", post(reveal))
         .route("/api/resolve", post(resolve_path))
+        .route("/api/find", get(find_files))
+        .route("/api/find/open", post(find_open))
         .merge(browse_routes())
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/docs/{id}/blob", get(doc_blob))
@@ -626,18 +654,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/docs", get(desk_docs))
         .route("/api/desks/{id}/docs/{doc}/remove", post(remove_desk_doc))
         .route("/api/desks/{id}/docs/{doc}/restore", post(restore_desk_doc))
-        .route("/api/desks/{id}/notes", get(desk_notes).post(add_desk_note))
-        .route("/api/desks/{id}/notes/{note}", post(set_desk_note))
-        .route(
-            "/api/desks/{id}/notes/{note}/remove",
-            post(remove_desk_note),
-        )
-        .route(
-            "/api/desks/{id}/notes/{note}/restore",
-            post(restore_desk_note),
-        )
-        .route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))
-        .route("/api/desks/{id}/notes/{note}/check", post(check_desk_note))
+        .merge(note_routes())
         .route("/api/desks/{id}/leftoff", post(desk_left_off))
         .route("/api/desks/{id}/keys", get(desk_keys).post(add_desk_key))
         .route("/api/desks/{id}/keys/{name}/remove", post(remove_desk_key))
@@ -645,12 +662,6 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/git", get(desk_git))
         .route("/api/desks/{id}/park", post(park_desk))
         .route("/api/desks/{id}/week", post(desk_week))
-        .route(
-            "/api/desks/{id}/notes/{note}/image",
-            post(add_note_image).layer(axum::extract::DefaultBodyLimit::max(NOTE_IMAGE_BYTES)),
-        )
-        .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
-        .route("/api/desks/{id}/note-images/{name}", get(note_image))
         .route("/api/brief", get(brief_setting).post(set_brief_setting))
         .route("/api/asides", get(asides_setting).post(set_asides_setting))
         .merge(pane_routes())

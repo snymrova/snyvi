@@ -406,6 +406,16 @@ async function removeWidget(ctx, name, desk, owner) {
   try { const j = await ctx.api(`/api/widgets/${name}/remove`, { desk, owner }); ctx.desk.widgetKept(name, j.from); }
   catch (e) { ctx.desk.widgetBack(name); ctx.toast(`Could not remove ${name}`, { sub: e }); }
 }
+/** The chime's switch (#190), as ui/corner.js reads it: `snyvi.chime`, or
+ *  off for a reader whose mascot was quiet before it had a switch of its own.
+ *  Turned on, the corner plays it once, so the reader knows the sound. */
+const chimeOn = () => { try { const v = localStorage.getItem("snyvi.chime"); return v ? v === "1" : document.documentElement.dataset.mascot !== "quiet"; } catch { return true; } };
+function chimeFlip(toast) {
+  const on = !chimeOn();
+  try { localStorage.setItem("snyvi.chime", on ? "1" : "0"); } catch {}
+  dispatchEvent(new CustomEvent("snyvi:chime", { detail: on }));
+  toast(on ? "Chime on" : "Chime off", { sub: on ? "two soft notes when something waits on you" : "what waits on you still rises, without a sound" });
+}
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
   const files = body => ({ label: "Open in file manager", run: () => reveal(ctx, body) });
@@ -421,6 +431,7 @@ function entries(ctx, el, byKey = false) {
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
     { label: "Check for updates", run: at => ctx.checkUpdates(at) },
     { label: document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot", run: () => ctx.toggleQuiet() },
+    { label: chimeOn() ? "Silence the chime" : "Chime when something waits on you", run: () => chimeFlip(ctx.toast) },
   ] };
   if (el.matches(".b-root > summary, .b-dir > details > summary")) {
     const f = ctx.folderOf(el);

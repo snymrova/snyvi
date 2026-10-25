@@ -401,6 +401,12 @@ fn window(app: &tauri::App, parsed: tauri::Url, home: &str) -> tauri::Result<Web
             hand_to_desktop(url.as_str());
             tauri::webview::NewWindowResponse::Deny
         })
+        // Download (#183): the page's button, its `d` and the ↓ on a
+        // picture, a film or a song are links with `download` on them. A
+        // browser has its own downloads; this window had none of its own:
+        // macOS's engine drops a download no handler is there to take, and
+        // WebKitGTK saved it wherever its default said and told nobody.
+        .on_download(downloads(home.to_string()))
         // Every page, not only the first: the window navigates, and
         // each page it lands on is asked the same question. Not on
         // macOS, where the frame is never taken away.
@@ -626,6 +632,50 @@ fn claim_scheme(app: &tauri::AppHandle) {
 /// not handed to a browser either.
 fn stays_home(url: &tauri::Url, home: &str) -> bool {
     url.scheme() == "about" || url.origin().ascii_serialization() == home
+}
+
+/// What the window does with a download (#183): one of the daemon's own
+/// files goes into the reader's Downloads, under its own name -- the engine
+/// layer has already chosen `~/Downloads/<name>`, and `<name> (1)` when that
+/// is taken -- and the page is told where it went, or that it did not, to
+/// say so beside the press. macOS never says where a finished one went, so
+/// the place is kept from when it was asked for.
+///
+/// Anything else is refused: a page an agent sent runs in a frame on this
+/// origin, and a `data:` or `blob:` link it clicks for itself is not the
+/// reader asking for a file.
+fn downloads(
+    home: String,
+) -> impl Fn(tauri::Webview<tauri::Wry>, tauri::webview::DownloadEvent<'_>) -> bool + Send + Sync + 'static
+{
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use tauri::webview::DownloadEvent;
+    let going: Mutex<HashMap<String, PathBuf>> = Mutex::default();
+    move |w, event| match event {
+        DownloadEvent::Requested { url, destination } => {
+            if url.origin().ascii_serialization() != home {
+                return false;
+            }
+            if let Ok(mut g) = going.lock() {
+                g.insert(url.to_string(), destination.clone());
+            }
+            true
+        }
+        DownloadEvent::Finished { url, path, success } => {
+            let kept = going.lock().ok().and_then(|mut g| g.remove(url.as_str()));
+            let path = path.filter(|p| !p.as_os_str().is_empty()).or(kept);
+            let detail = serde_json::json!({
+                "ok": success,
+                "path": path.map(|p| p.to_string_lossy().into_owned()),
+            });
+            let _ = w.eval(format!(
+                "dispatchEvent(new CustomEvent('snyvi-downloaded',{{detail:{detail}}}))"
+            ));
+            true
+        }
+        _ => true,
+    }
 }
 
 /// Hand a URL to whatever the desktop opens links with.

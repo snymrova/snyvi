@@ -559,6 +559,12 @@ const ICONS = {
 };
 
 export function open(c) {
+  // Back from a page read over this desk goes to the panel that sent it
+  // (#187): a push that names no slot -- the ✕, ⌃`, the row's ← or its
+  // second click. History's way back (alt+←) pushes nothing, and lands on
+  // the panels as the reader left them.
+  const from = !c.slot && c.push && c.id === deskId && sentFrom();
+  const slot = from ? from.pane.slot : c.slot;
   const first = !ctx;
   detach();
   ctx = c;
@@ -571,11 +577,12 @@ export function open(c) {
     focused = null; full = false; keysClose(); drawerOn = null; backField = false;
   }
   deskId = c.id; reading = null;
+  fromBar();
   // Home's "last touched" and the desk it offers to pick up start here.
   if (c.id != null) c.api(`/api/desks/${c.id}/visit`, {}).catch(() => {});
   keepPoints(c.desks);
   const d = current();
-  if (d && c.slot) { const p = d.panes.find(x => x.slot === c.slot); if (p) focused = p.id; }
+  if (d && slot) toSlot(d, d.panes.find(x => x.slot === slot));
   draw();
   ctx.docEl.addEventListener("click", click);
   ctx.tocEl.addEventListener("click", click);
@@ -594,8 +601,20 @@ export function open(c) {
   addEventListener("resize", onResize);
   clock = setInterval(() => { if (current() && !document.hidden) rail(); }, 30000);
   if (d && docsAt !== d.id) docs();
-  const v = views.get(focused);
+  const v = views.get(drawerOn || focused);
   if (v) setTimeout(() => v.body.focus(), 0);
+}
+
+/** The desk opened on a panel by its slot: one in the grid takes the focus,
+ *  and full view, if it was on, moves to it with the daemon told; one in the
+ *  back opens its drawer over the grid as it is. */
+function toSlot(d, p) {
+  if (!p) return;
+  if (isBack(p)) { drawerOn = p.id; return; }
+  focused = p.id;
+  if (!d.full_slot || d.full_slot === p.slot) return;
+  d.full_slot = p.slot;
+  ctx.api(`/api/desks/${d.id}/layout`, { col: d.col, row: d.row, full: p.slot }).catch(() => {});
 }
 
 /** The cell, measured in the font and size a pane is drawn in, and the
@@ -870,6 +889,7 @@ export function close() {
   say({ t: "watch", panes: [] });
   delete ctx.root.dataset.full;
   deskId = null; reading = null;
+  fromBar();
   for (const v of [...views.values()]) dropView(v);
   focused = null;
   docList = []; docsAt = null; docsAll = false;

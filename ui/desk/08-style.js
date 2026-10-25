@@ -389,6 +389,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-pane:hover { background: var(--rule); }
 /* The current one as the sidebar's is: a tint and a 2 px bar, the text ink. */
 .dk-pane.on { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
+.dk-pane.sent { box-shadow: inset 2px 0 0 var(--accent); }
+#chrome .over-from { flex: none; max-width: 40%; font-size: var(--fs-ui); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-focus { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; align-self: stretch; text-align: left; padding: 0 8px; font: inherit; color: inherit; white-space: nowrap; overflow: hidden; }
 .dk-tools { display: flex; align-items: center; gap: 1px; flex: none; margin-left: auto; }
 :is(.dk-pane, .dk-doc:not(.on), .dk-row) { position: relative; }

@@ -13,6 +13,7 @@ mod config;
 mod desk;
 mod desktop;
 mod due;
+mod find;
 mod frontmatter;
 mod gh;
 mod git;

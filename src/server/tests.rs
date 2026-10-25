@@ -336,6 +336,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     let n = routes_in("\nfn router(")
         + routes_in("\nfn pane_routes(")
         + routes_in("\nfn browse_routes(")
+        + routes_in("\nfn note_routes(")
         + routes_in("\nfn account_routes(")
         + routes_in("\nfn peer_routes(")
         + routes_in("\nfn thread_routes(")

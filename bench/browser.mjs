@@ -19,7 +19,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fixture, families, DIAGRAMS } from "./fixture.mjs";
+import { fixture, families, floor, DIAGRAMS } from "./fixture.mjs";
 import * as page from "./page.mjs";
 import { launch, killTree, pageLoad, evaluate, call, sleep } from "./chrome.mjs";
 
@@ -213,9 +213,18 @@ async function main() {
      * documents every number above was taken against. Last, and in a page of
      * its own, because seeding a library is a couple of hundred arrivals and
      * every one of them lands in whatever tab is open. */
+    /* #185, the floor: a document of its own again, so nothing above moves. */
+    const floorMd = join(tmp, "diagram-floor.md");
+    writeFileSync(floorMd, floor());
+    const floorUrl = execFileSync(BIN, ["send", floorMd], { env, encoding: "utf8" }).trim().split("\n").pop();
+    const floorLoaded = pageLoad(cdp, sessionId, "the floor document");
+    await cdp.send("Page.navigate", { url: floorUrl }, sessionId);
+    await floorLoaded;
+    const floored = await evaluate(cdp, sessionId, call(page.floor));
+
     const seeded = await sidebar(cdp, env);
 
-    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, status: status.filter(Boolean), toggled, chosen, throttle, seeded, readable, full });
+    failed = report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, status: status.filter(Boolean), toggled, chosen, throttle, seeded, readable, full, floored });
   } finally {
     if (!KEEP) {
       killTree(chromeProc);
@@ -352,7 +361,7 @@ function judge(expect, got) {
   }
 }
 
-function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, status, toggled, chosen, throttle, seeded, readable, full }) {
+function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit, cached, legible, status, toggled, chosen, throttle, seeded, readable, full, floored }) {
   const mark = n => perf.marks.find(m => m.name === n)?.start ?? null;
   const fcp = perf.paints.find(p => p.name === "first-contentful-paint")?.start ?? null;
   const libStart = mark("snyvi:mermaid-load");
@@ -489,7 +498,7 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
   /* Phase 3: a diagram of a few hundred nodes is only worth drawing if it can
    * be read, and every one of these is a gesture the reader makes. */
   console.log("\nthe big diagram, read");
-  for (const [name, r] of [["viewport", readable], ["fullscreen", full]]) {
+  for (const [name, r] of [["viewport", readable], ["fullscreen", full], ["the floor (#185)", floored]]) {
     failed ||= !r.ok;
     console.log(`  ${name.padEnd(20)}${r.ok ? " ok  " : " FAIL"} ${r.why}`);
   }

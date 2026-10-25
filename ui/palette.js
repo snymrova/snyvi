@@ -1,5 +1,5 @@
-/* ⌘K: the palette -- search the library, jump to a line, open a desk or a
- * folder, try a theme.
+/* ⌘K: the palette -- search the library and the files in the desks'
+ * folders, jump to a line, open a desk or a folder, try a theme.
  *
  * A chunk, like find, the desk view and the panels. It is the one box a
  * reader summons rather than meets: nothing in it is on the way to showing a
@@ -27,7 +27,11 @@ export function open(deps) {
   friendList = null;
   const { input, browsing, codePre, state } = d;
   input.placeholder = browsing() ? `Find a file in ${state.browseRoot.name} · :120 for a line`
-    : codePre() ? "Search documents · :120 for a line" : "Search documents · p:project · kind:md · > commands";
+    : codePre() ? "Search documents · :120 for a line"
+      : d.capability ? "Search documents and files · p:project · f:files · > commands" : "Search documents · p:project · kind:md · > commands";
+  // Opening is the index's cue to catch up with the disk, in the
+  // background, so it is fresh by the time a word is typed (src/find.rs).
+  if (d.capability && !browsing()) findApi("").catch(() => {});
   search(input.value);
 }
 
@@ -124,6 +128,16 @@ function deskItems(q) {
 /** `>` and a word: what snyvi can do, rather than what it holds. A static
  *  list; the menus' registry (CONTEXT-MENU.md, phase 5) is per element and
  *  has no list of its own to read yet. */
+/** The chime's switch (#190), as ui/corner.js reads it: `snyvi.chime`, or
+ *  off for a reader whose mascot was quiet before it had a switch of its own.
+ *  Turned on, the corner plays it once, so the reader knows the sound. */
+const chimeOn = () => { try { const v = localStorage.getItem("snyvi.chime"); return v ? v === "1" : document.documentElement.dataset.mascot !== "quiet"; } catch { return true; } };
+function chimeFlip(toast) {
+  const on = !chimeOn();
+  try { localStorage.setItem("snyvi.chime", on ? "1" : "0"); } catch {}
+  dispatchEvent(new CustomEvent("snyvi:chime", { detail: on }));
+  toast(on ? "Chime on" : "Chime off", { sub: on ? "two soft notes when something waits on you" : "what waits on you still rises, without a sound" });
+}
 const COMMANDS = [
   { cmd: "home", t: "Home", key: "h", s: "What needs you, the desks, and what is waiting" },
   { cmd: "inbox", t: "Inbox", key: "i", s: "Every document, newest first" },
@@ -137,6 +151,7 @@ const COMMANDS = [
   { cmd: "join", t: "Join a friend's code…", s: "They made one and told you", k: "pair friends" },
   { cmd: "sidebars", t: "Arrange sidebars", s: "Which sections each side has, in what order, and the widgets" },
   { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
+  { cmd: "chime", get t() { return chimeOn() ? "Silence the chime" : "Chime when something waits on you"; }, get s() { return chimeOn() ? "Two soft notes when an agent asks or hands you something, a note comes due, or an offer waits" : "Off: what waits on you rises without a sound"; }, k: "sound mute notification" },
   { cmd: "quiet", get t() { return document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot"; }, s: "snyvi's face at rest, nothing of it moving" },
   { cmd: "keys", t: "Keys", key: "?", s: `Every key, and ${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for the letters` },
   { cmd: "updates", t: "Check for updates", s: "Ask now, rather than at the next check" },
@@ -169,6 +184,25 @@ async function friendItems(q) {
     .map(f => ({ friend: f.id, t: `${f.name}'s page`, s: "Everything between you, both ways" }));
 }
 
+/** File names in every desk's folder and every open folder (#188), this
+ *  desk's first. A desk route: the window's key rides a header, as the
+ *  page's own desk calls carry it, and a tab is shown none. `ready` is false
+ *  until the first walk of the folders is in; until then the palette asks
+ *  again, a few times, while the query is still the one typed. */
+const findApi = (q, limit = 6) => {
+  const { state } = d, here = state.view === "desk" ? state.deskId : state.deskBehind;
+  return fetch(`/api/find?q=${encodeURIComponent(q)}&limit=${limit}${here != null ? `&desk=${here}` : ""}`, { headers: { "x-snyvi-capability": d.capability } })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)));
+};
+async function fileItems(q, limit, mine) {
+  for (let n = 0; n < 12 && mine === seq; n++) {
+    let j; try { j = await findApi(q, limit); } catch { return []; }
+    if (j.ready) return (j.files || []).map(f => ({ found: f }));
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return [];
+}
+
 /** The keyboard's way to the `+` beside Folders. */
 function folderItems(q) {
   const l = q.trim().toLowerCase();
@@ -178,6 +212,7 @@ function folderItems(q) {
 const row = (it, i) => { const { esc, rel } = d; return `<li role="option" id="pal-${i}" aria-selected="${i === 0}" class="${i === 0 ? "sel" : ""}${it.theme ? " theme" : ""}" data-i="${i}"${it.theme ? ` data-theme="${it.theme}"` : ""}>` + (
   it.t ? `<span class="t">${esc(it.t)}${it.key ? `<kbd>${esc(it.key)}</kbd>` : ""}</span><span class="s">${esc(it.s)}</span>`
     : it.file ? `<span class="t">${esc(it.file.split("/").pop())}</span><span class="s">${esc(it.file)}</span>`
+      : it.found ? `<span class="t">${esc(it.found.name)}</span><span class="s">${esc([it.found.dir, it.found.under].filter(Boolean).join(" · "))}</span>`
       : `<span class="t">${esc(it.title)}</span><span class="s">${esc(it.project)} · ${esc(it.workflow_title)} · ${rel(it.received_at)}</span>${it.snippet ? `<span class="snip">${it.snippet}</span>` : ""}`) + `</li>`; };
 /** Nothing matched: said, so an empty list is not a search still running.
  *  Not a row -- there is nothing to pick -- so the arrows and Enter pass it
@@ -207,24 +242,42 @@ async function search(q) {
     previewSel();
     return;
   }
+  // Files beside the documents, asked for at once and drawn after them:
+  // `f:` before the words asks for files alone, and more of them.
+  const fm = /^\s*f:\s*(.*)$/i.exec(q), fq = fm ? fm[1] : q;
+  const files = d.capability && !browsing() && fq.trim().length >= 2 ? fileItems(fq, fm ? 20 : 6, mine) : null;
   // A search the daemon did not answer is not a search that found nothing:
   // the list says which, with a Retry.
   let found = null;
   try {
-    const r = await fetch(browsing() ? `/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}` : q.trim() ? `/api/search?q=${encodeURIComponent(q)}` : "/api/inbox?limit=12");
-    found = r.ok ? await r.json() : null;
+    const r = fm ? null : await fetch(browsing() ? `/api/browse/${state.browseRoot.id}/find?q=${encodeURIComponent(q)}` : q.trim() ? `/api/search?q=${encodeURIComponent(q)}` : "/api/inbox?limit=12");
+    found = fm ? [] : r.ok ? await r.json() : null;
   } catch {}
   const off = !Array.isArray(found);
   found = off ? [] : browsing() ? found.map(p => ({ file: p })) : q.trim() ? found : found.map(x => ({ ...x, snippet: "" }));
   // Theme rows are each drawn in their theme, so the sheet has to be in.
   if (themeItems(q).length) await d.loadThemes();
-  const friends = await friendItems(q);
+  const friends = fm ? [] : await friendItems(q);
   if (mine !== seq || pal.hidden) return;
-  items = themeItems(q).concat(deskItems(q), folderItems(q), friends, pairItems(q), found); sel = 0;
-  list.innerHTML = items.map(row).join("") + (off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : items.length ? "" : none(q));
+  items = fm ? [] : themeItems(q).concat(deskItems(q), folderItems(q), friends, pairItems(q), found); sel = 0;
+  const reach = off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : "";
+  // While files are still coming, an empty list says nothing yet: "Nothing
+  // for" and then a file in its place would be a line that came and went.
+  list.innerHTML = items.map(row).join("") + (reach || items.length || files ? reach : none(q));
   pal.classList.toggle("themes", items.some(it => it.theme));
   lit();
   previewSel();
+  if (!files) return;
+  const more = await files;
+  if (mine !== seq || pal.hidden) return;
+  // Below everything already drawn, so no row the reader is looking at moves.
+  const at = items.length;
+  items = items.concat(more);
+  if (more.length) list.querySelector(".no-reach")
+    ? list.querySelector(".no-reach").insertAdjacentHTML("beforebegin", more.map((it, j) => row(it, at + j)).join(""))
+    : list.insertAdjacentHTML("beforeend", more.map((it, j) => row(it, at + j)).join(""));
+  else if (!items.length && !off) list.innerHTML = none(fq);
+  lit();
 }
 
 // Kept: the preview already drew it, so closing must not put it back first.
@@ -236,6 +289,7 @@ function pick(it) {
   if (it.theme) previewing = false;
   close();
   if (it.cmd === "parts") { parts(); return; }
+  if (it.cmd === "chime") { chimeFlip(d.peerCtx.toast); return; }
   if (it.friend) { d.peerCtx.friend(it.friend); return; }
   if (it.cmd === "pair" || it.cmd === "join") { const p = d.peerCtx, m = it.cmd === "join" ? "join" : ""; p.peer().then(x => x.pair(p, "", m), () => p.toast("Could not open the pairing sheet")); return; }
   if (it.cmd) {
@@ -247,7 +301,19 @@ function pick(it) {
   const { state } = d;
   it.theme ? d.setTheme(it.theme) : it.pick ? d.act("pick") : it.line ? d.gotoLine(it.line)
     : it.newdesk ? d.act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? d.showDesk(it.desk, true)
-      : it.file ? d.showBrowse(state.browseRoot.id, it.file, true) : d.showDoc(it.id, true);
+      : it.file ? d.showBrowse(state.browseRoot.id, it.file, true) : it.found ? openFound(it.found) : d.showDoc(it.id, true);
+}
+
+/** A file in an open folder shows at once. One in a desk's folder opens
+ *  that folder under Folders first, as a Ctrl-click on its path would. */
+async function openFound(f) {
+  if (f.root) return d.showBrowse(f.root, f.rel, true);
+  try {
+    const r = await fetch("/api/find/open", { method: "POST", headers: { "content-type": "application/json", "x-snyvi-capability": d.capability }, body: JSON.stringify({ desk: f.desk, rel: f.rel }) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    d.showBrowse(j.root, j.rel, true);
+  } catch { d.peerCtx?.toast?.(`Could not open ${f.name}`); }
 }
 
 /** Every part of the window that has a name wears it, until asked again:

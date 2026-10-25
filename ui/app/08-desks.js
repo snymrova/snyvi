@@ -231,7 +231,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod, peer: peerCtx });
+    desk.open({ id, slot, push, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod, peer: peerCtx });
     cornerMod?.draw();
   }
   /** Out of the desk view, to wherever the page is going next. */
@@ -273,14 +273,14 @@
     return null;
   }
   /** Where the ✕ leads, and its name for it. A document over a desk goes
-   *  back to the panels, with the focus they had, as a second click on the
-   *  row does. Otherwise the screen it was opened from, past every document
+   *  back to the panel that sent it, which the desk names and opens on
+   *  (desk.js `back`, `open`), or to the panels as they were left. Otherwise the screen it was opened from, past every document
    *  read in between -- a step to that screen, not a walk back through
    *  history. With none, a file goes to its folder and anything else to the
    *  Inbox: a deep link, a first load and a new window have no screen
    *  behind them. */
   function backTo() {
-    if (state.deskBehind != null) return { name: "the panels", go: () => showDesk(state.deskBehind, true) };
+    if (state.deskBehind != null) return { name: desk.back() || "the panels", go: () => showDesk(state.deskBehind, true) };
     let b = history.state && history.state.back;
     if (!b && state.view === "browse" && state.browseRoot) b = { browse: state.browseRoot.id, path: "" };
     if (b && b.browse) {

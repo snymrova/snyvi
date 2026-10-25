@@ -178,10 +178,18 @@ function say(title, o, acted) {
   const life = o.life || (action ? c.UNDO_MS : o.go ? 8000 : 3500);
   // It fades where it stands, and only if it is still the one being said.
   const mine = { el, anchor, timer: 0, keep: err || !!action };
-  if (!err) mine.timer = setTimeout(() => {
+  const fade = ms => { mine.timer = setTimeout(() => {
     el.classList.add("out");
     mine.timer = setTimeout(() => { if (said === mine) unsay(); }, 180);
-  }, life);
+  }, ms); };
+  if (!err) {
+    fade(life);
+    // Held while the pointer is on it, mid-fade too, as the corner's card
+    // is (#189): it went from under a reader reaching for it. Its time
+    // starts again once the pointer leaves.
+    el.addEventListener("pointerenter", () => { clearTimeout(mine.timer); el.classList.remove("out"); });
+    el.addEventListener("pointerleave", () => { if (said === mine) { clearTimeout(mine.timer); fade(1500); } });
+  }
   said = mine;
   return el;
 }

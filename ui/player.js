@@ -30,6 +30,8 @@ const STYLE = `
 .doc-song .ds-seek { flex: 1 1 60px; }
 .doc-song .ds-vol { flex: none; width: 64px; }
 .doc-song .ds-time { flex: none; font-size: var(--fs-small); color: var(--fg-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.doc-song .ds-dl { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: var(--fg-2); }
+.doc-song .ds-dl:hover { color: var(--fg); }
 @container (max-width: 420px) { .doc-song .ds-t, .doc-song .ds-vol { display: none; } }
 `;
 
@@ -38,6 +40,7 @@ const ICON = {
   pause: '<path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z"/>',
   sound: '<path d="M2 6h3l4-3.5v11L5 10H2z"/><path d="M11 5.2a4 4 0 0 1 0 5.6l-.9-.9a2.7 2.7 0 0 0 0-3.8zM12.8 3.4a6.5 6.5 0 0 1 0 9.2l-.9-.9a5.2 5.2 0 0 0 0-7.4z"/>',
   muted: '<path d="M2 6h3l4-3.5v11L5 10H2z"/><path d="M10.6 5.6l1.6 1.6 1.6-1.6.9.9-1.6 1.6 1.6 1.6-.9.9-1.6-1.6-1.6 1.6-.9-.9 1.6-1.6-1.6-1.6z"/>',
+  down: '<path d="M7.25 2h1.5v7.2l2.7-2.7 1.06 1.06L8 12.06 3.49 7.56 4.55 6.5l2.7 2.7zM3 13h10v1.5H3z"/>',
 };
 const svg = k => `<svg viewBox="0 0 16 16" aria-hidden="true">${ICON[k]}</svg>`;
 
@@ -107,6 +110,17 @@ function song(b, a) {
     `<input type="range" class="ds-vol" min="0" max="1" step="0.05" aria-label="Volume">`;
   const [pp, seek, time, mute, vol] = ["ds-pp", "ds-seek", "ds-time", "ds-mute", "ds-vol"].map(c => el.querySelector("." + c));
   el.querySelector(".ds-t").textContent = name;
+  // Download (#183): the song's own file, last in the pill, where copy.js's
+  // ↓ sat over the pill before Play. Only a file this daemon serves: the
+  // web's is the web's to keep.
+  const src = new URL(a.getAttribute("src") || "", location.href);
+  if (src.origin === location.origin) {
+    const dl = document.createElement("a");
+    dl.className = "ds-dl"; dl.href = src.href; dl.download = decodeURIComponent(src.pathname.split("/").pop());
+    dl.setAttribute("aria-label", `Download ${name}`); dl.dataset.tip = "Download";
+    dl.innerHTML = svg("down");
+    el.append(dl);
+  }
   // While the seek is held, the clock follows the thumb rather than the song.
   let held = false;
   const at = () => {

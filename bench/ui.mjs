@@ -282,6 +282,7 @@ async function main() {
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
+    await section("#183: a picture, to keep", () => downloadRows(p, cdp, url, arrive, tmp));
     await section("a folder, opened in snyvi", () => folderRows(cdp, base, browsed));
     await section("a link out of a document", () => docLinkRows(p, base, token, first.doc.id));
     await section("the socket a page holds", () => socketRows(p, url, base, browsed));
@@ -297,6 +298,8 @@ async function main() {
     await section("the keys sheet: Claude as, then keys", () => keysSheetRows(cdp, base));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
     await section("panels in the back: a chip, a drawer, one that dies", () => backPanelRows(cdp, base));
+    await section("#187: back from a page is back to the panel that sent it", () => senderRows(cdp, base, token));
+    await section("#188: files by name in ⌘K", () => findRows(cdp, base, token, env, tmp));
     await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -2124,6 +2127,65 @@ async function browseRows(p, browsed) {
   const right = /line_300\b/.test(line.text || "");
   rows.push(["and at a line", line.n === 1 && right && line.inView,
     !line.n ? "no line was marked" : line.n !== 1 ? `${line.n} lines marked` : !right ? `the marked line reads "${line.text}"` : !line.inView ? "line 300 is marked but off the screen" : "line 300 marked and on the screen"]);
+  return rows;
+}
+
+/** #183: a picture, a film, a song -- the file itself, to keep. A media
+ *  page's Download is in Copy all's box, which such a page keeps empty, so
+ *  the bar holds still between a page of text and a picture; pressed, the
+ *  browser downloads the file under its own name. A picture inside a
+ *  document has a ↓ over its corner while the pointer is on it, laid over
+ *  the page: the picture does not move. What the window does with the
+ *  download is src/bin/app.rs's (`downloads`), which no browser here runs. */
+async function downloadRows(p, cdp, url, arrive, tmp) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const box = sel => `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r && r.width ? [Math.round(r.left), Math.round(r.top), Math.round(r.width)] : null; })()`;
+  // In the bar, as far from the way back as: a long page's scrollbar moves
+  // the whole bar, and that is not the box moving.
+  const inBar = sel => `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(), x = document.querySelector("#chrome .over-x").getBoundingClientRect();
+    return r && r.width ? [Math.round(x.left - r.left), Math.round(r.top), Math.round(r.width)] : null; })()`;
+  const pic = await arrive({ name: "pic.svg", body: `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#4a7"/></svg>\n` });
+  const takes = await arrive({ name: "takes.md", body: "# Takes\n\nThe picture, to keep.\n\n![a picture](pic.svg)\n\nAnd a line after it.\n" });
+  const origin = new URL(url).origin;
+
+  await p.goto(url);
+  const ready = await until(`window.__ui.vis("#btn-copy-top") && !!document.querySelector("#btn-dl-top")`, 80);
+  const copyAt = await p.ev(inBar("#btn-copy-top"));
+  const textOff = ready && await p.ev(`getComputedStyle(document.querySelector("#btn-dl-top")).display === "none"`);
+  await p.goto(`${origin}/d/${pic.id}`);
+  const dlOn = await until(`!!document.querySelector("#chrome .over.dl") && window.__ui.vis("#btn-dl-top")`, 80);
+  const dlAt = await p.ev(inBar("#btn-dl-top"));
+  const link = await p.ev(`(() => { const a = document.querySelector("#btn-dl-top"); return a && { href: a.getAttribute("href"), name: a.download, copy: getComputedStyle(document.querySelector("#btn-copy-top")).display }; })()`);
+  rows.push(["a picture's page has Download in Copy all's box, a page of text does not",
+    !!ready && textOff && dlOn && JSON.stringify(copyAt) === JSON.stringify(dlAt) && link?.copy === "none" && link.href === `/api/docs/${pic.id}/blob` && link.name === "pic.svg",
+    !ready ? "copy.js never made the button" : !textOff ? "Download shows on a page of text" : !dlOn ? "no Download on the picture's page" :
+      JSON.stringify(copyAt) !== JSON.stringify(dlAt) ? `Copy all at ${JSON.stringify(copyAt)}, Download at ${JSON.stringify(dlAt)}` : `${JSON.stringify(link)}`]);
+
+  // Pressed, the browser keeps it, named as it was sent.
+  const dir = join(tmp, "downloads");
+  mkdirSync(dir, { recursive: true });
+  await cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: dir });
+  if (dlOn) await p.clickOn("#btn-dl-top");
+  let kept = false;
+  for (let i = 0; i < 50 && !kept; i++) { kept = existsSync(join(dir, "pic.svg")); if (!kept) await sleep(100); }
+  rows.push(["Download keeps the file under its own name", kept, kept ? "pic.svg in the download folder" : `the folder has ${JSON.stringify(readdirSync(dir))}`]);
+
+  // In a document: a ↓ over the picture's corner, and nothing moves.
+  await p.goto(`${origin}/d/${takes.id}`);
+  const img = await until(`(() => { const i = document.querySelector("#doc article img"); return i && i.complete && i.getBoundingClientRect().width > 64; })()`, 80)
+    && await until(`!!document.querySelector(".dl-fl")`, 80);
+  const before = await p.ev(box("#doc article img"));
+  if (img) await p.hoverOn("#doc article img");
+  const over = img && await until(`document.querySelector(".dl-fl")?.classList.contains("on")`, 20);
+  const fl = over ? await p.ev(`(() => { const f = document.querySelector(".dl-fl"), r = f.getBoundingClientRect(), i = document.querySelector("#doc article img").getBoundingClientRect();
+    return { inside: r.left >= i.left && r.right <= i.right && r.top >= i.top && r.bottom <= i.bottom, href: new URL(f.href).pathname, name: f.download }; })()`) : null;
+  const after = await p.ev(box("#doc article img"));
+  rows.push(["a picture in a document has a ↓ over its corner, and does not move",
+    !!fl && fl.inside && fl.href === `/files/${takes.id}/pic.svg` && fl.name === "pic.svg" && JSON.stringify(before) === JSON.stringify(after),
+    !img ? "the picture did not load" : !over ? "no ↓ while the pointer is on it" : !fl.inside ? "the ↓ is outside the picture" :
+      JSON.stringify(before) !== JSON.stringify(after) ? `the picture moved: ${JSON.stringify(before)} → ${JSON.stringify(after)}` : JSON.stringify(fl)]);
+  await p.pointerAway();
   return rows;
 }
 
@@ -3993,6 +4055,168 @@ async function backPanelRows(cdp, base) {
   return rows;
 }
 
+/** #187: a page one panel sent, opened while another had the focus, goes
+ *  back to its sender -- the ✕ says so, the rail marks it, full view
+ *  follows, one in the back opens its drawer -- and history's way back
+ *  lands where the reader was. */
+/** #188: ⌘K finds files by name in the desks' folders, under the documents,
+ *  and a file picked opens in the folder reader, its desk's folder opened
+ *  under Folders on the way. The folder is a desk's and nothing more: it is
+ *  opened for reading only to make the desk on it, and closed again. */
+async function findRows(cdp, base, token, env, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const TK = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const dir = join(tmp, "find-188");
+  mkdirSync(join(dir, "docs"), { recursive: true }); mkdirSync(join(dir, "build"), { recursive: true });
+  writeFileSync(join(dir, "docs", "planxy188.md"), "# Plan\n\nA file on disk.\n");
+  writeFileSync(join(dir, "build", "planxy188.md"), "built\n");
+  writeFileSync(join(dir, ".gitignore"), "build/\n");
+  const rid = execFileSync(BIN, ["browse", dir, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop().match(/\/b\/([^/?#]+)/)[1];
+  const made = await post("/api/desks", { root: rid, path: "" }), desk = made.desk ? made.desk.id : made.id;
+  await post(`/api/browse/${rid}/close`, {}, TK);
+  await post("/api/docs", { content: "# Notes on planxy188\n\nWhere the plan stands.", title: "Notes on planxy188", origin: "mcp" }, TK);
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const listed = () => p.ev(`[...document.querySelectorAll("#palette-list li[data-i]")].map(li => [li.querySelector(".t")?.textContent || "", li.querySelector(".s")?.textContent || ""])`);
+  // The last search's rows are marked first: they have the file too, and a
+  // wait that found it there read the old list before the new one was drawn.
+  const ask = async q => {
+    await p.ev(`(() => { document.querySelectorAll("#palette-list li").forEach(li => li.dataset.stale = "1"); const i = document.querySelector("#palette-input"); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return 1; })()`);
+    await until(`[...document.querySelectorAll("#palette-list li[data-i]:not([data-stale]) .t")].some(t => t.textContent === "planxy188.md")`, 80);
+    return listed();
+  };
+  try {
+    await p.goto(`${base}/#cap=${cap}`);
+    await until(`!!document.querySelector('a[data-desk="${desk}"]')`);
+    await p.press("k", { ctrl: true });
+    await until(`!document.querySelector("#palette").hidden && !!document.querySelector("#palette-list li")`);
+    const got = await ask("planxy188");
+    // Under the desk's name, or under a wider desk's folder that holds this
+    // one, which is then searched as part of it.
+    const where = s => s === "docs · find-188" || /^find-188\/docs · /.test(s);
+    const files = got.filter(([t]) => t === "planxy188.md"), fileAt = got.findIndex(([t]) => t === "planxy188.md"), docAt = got.findIndex(([t]) => t === "Notes on planxy188");
+    rows.push(["a file in a desk's folder, by its name", files.length === 1 && where(files[0][1]),
+      !files.length ? `no file row: ${got.map(r => r[0]).join(" · ") || "nothing"}` : files.length > 1 ? "the ignored build/ copy is listed too" : !where(files[0][1]) ? `it reads "${files[0][1]}"` : `planxy188.md · ${files[0][1]}, the ignored copy left out`]);
+    rows.push(["documents first, files below them", docAt >= 0 && fileAt > docAt,
+      docAt < 0 ? "the document that mentions it is not listed" : fileAt < docAt ? "the file is above the document" : "the document, then the file"]);
+
+    const only = await ask("f:planxy188");
+    rows.push(["f: asks for files alone", only.length === 1 && only[0][0] === "planxy188.md",
+      `${only.map(r => r[0]).join(" · ") || "nothing"}`]);
+
+    await p.clickOn(`#palette-list li[data-i="0"]`);
+    const opened = await until(`location.pathname.endsWith("/docs/planxy188.md")`);
+    const roots = await (await fetch(`${base}/api/browse`)).json().catch(() => []);
+    const folder = roots.find(r => r.path && r.path.endsWith("find-188"));
+    rows.push(["picked, it opens in the folder reader", opened && !!folder,
+      !opened ? `the page is on ${await p.ev("location.pathname")}` : !folder ? "its desk's folder is not under Folders" : "the file, under its desk's folder, now a row under Folders"]);
+
+    const tabAsks = (await fetch(`${base}/api/find?q=planxy188`)).status;
+    rows.push(["a tab without the window's key lists no files", tabAsks === 403, `the route answered ${tabAsks}`]);
+  } finally {
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    const roots = await (await fetch(`${base}/api/browse`)).json().catch(() => []);
+    for (const r of roots.filter(r => r.path && r.path.endsWith("find-188"))) await post(`/api/browse/${r.id}/close`, {}, TK).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+async function senderRows(cdp, base, token) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const TK = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "senders" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  const pc = (await post(`/api/desks/${desk}/panes`, { back: true })).pane.id;
+  for (const pane of [pa, pb, pc]) await post(`/api/panes/${pane}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  const send = async (pane, title) => (await post("/api/docs", { content: `# ${title}\n\nFor the reader.`, title, origin: "mcp", ...(pane ? { pane } : {}) }, TK)).doc.id;
+  const fullSlot = async () => (await (await fetch(`${base}/api/desks`, { headers: H })).json()).desks.find(x => x.id === desk)?.full_slot;
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const P = id => `.pn[data-id="${id}"]`;
+  const onRow = `document.querySelector("#toc .dk-pane.on .dk-focus")?.dataset.focus`;
+  const focusOn = async id => { await q.clickOn(`${P(id)} .pn-body`); return until(`${onRow} === "${id}"`); };
+  const read = async id => { await until(`!!document.querySelector('#toc a[data-read="${id}"]')`); await q.ev(`document.querySelector('#toc a[data-read="${id}"]').click(); 1`); return until(`!document.querySelector("#chrome .over").hidden && document.querySelector("#toc .dk-doc.on a")?.dataset.read === "${id}"`); };
+  const ex = `document.querySelector("#chrome .over-x")`;
+  const docTop = `Math.round(document.querySelector("#doc").getBoundingClientRect().top * 10) / 10`;
+  try {
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    // A page sent with no panel is on no desk's list at all, so the one with
+    // no sender here came from a panel that has since closed: the desk keeps
+    // it, and no panel is there to go back to.
+    const pd = (await post(`/api/desks/${desk}/panes`, { back: true })).pane.id;
+    const noPanel = await send(pd, "From no panel");
+    await post(`/api/panes/${pd}/delete`);
+    const fromA = await send(pa, "Plan from panel 1");
+    const fromC = await send(pc, "From the back");
+    await focusOn(pb);
+
+    // A page no panel sent, for the rule's other side and the page's box.
+    const plain = await read(noPanel);
+    const plainTip = await q.ev(`${ex}.getAttribute("aria-label")`), plainTop = await q.ev(docTop);
+    const plainFrom = await q.ev(`!!document.querySelector("#chrome .over-from")`);
+    rows.push(["a page no panel sent goes back to the panels, unmarked", plain && plainTip === "Back to the panels" && !plainFrom,
+      !plain ? "it did not open over the desk" : plainFrom ? "the bar named a panel" : `the ✕ says "${plainTip}"`]);
+    await q.ev(`${ex}.click(); 1`);
+    await until(`${onRow} === "${pb}"`);
+
+    const opened = await read(fromA);
+    const tip = await q.ev(`${ex}.getAttribute("aria-label")`), from = await q.ev(`document.querySelector("#chrome .over-from")?.textContent || ""`);
+    const marked = await q.ev(`[...document.querySelectorAll("#toc .dk-pane.sent .dk-focus")].map(b => b.dataset.focus).join(",")`);
+    const top = await q.ev(docTop);
+    rows.push(["while it is read, the ✕, the bar and the rail name panel 1", opened && /^Back to panel 1 · /.test(tip) && /^from Panel 1 · /.test(from) && marked === pa,
+      !opened ? "it did not open over the desk" : `✕ "${tip}", bar "${from}", marked [${marked}] for panel 1's ${pa}`]);
+    rows.push(["and the page does not move for it", top === plainTop, `the page's top at ${top}, ${plainTop} for a page with no mark`]);
+
+    await q.ev(`${ex}.click(); 1`);
+    const toA = await until(`${onRow} === "${pa}" && !!document.querySelector(".dk-grid")`);
+    rows.push(["its ✕ focuses panel 1, not panel 2 where the reader was", toA, toA ? "panel 1 has the focus" : `the focus is on ${await q.ev(onRow)}`]);
+
+    await focusOn(pb);
+    await read(fromA);
+    await q.ev(`history.back(); 1`);
+    const stayed = await until(`${onRow} === "${pb}" && !!document.querySelector(".dk-grid")`);
+    rows.push(["history's way back lands on panel 2, where the reader was", stayed, stayed ? "panel 2 has the focus" : `the focus is on ${await q.ev(onRow)}`]);
+
+    await q.ev(`document.querySelector('${P(pb)} .pn-full').click(); 1`);
+    const zoomed = await until(`document.documentElement.dataset.full === "1"`);
+    await read(fromA);
+    await q.ev(`${ex}.click(); 1`);
+    const followed = await until(`${onRow} === "${pa}"`) && await fullSlot() === 1;
+    rows.push(["in full view of panel 2, the ✕ shows panel 1 in full view", zoomed && followed,
+      !zoomed ? "panel 2's Full view did not take" : `full view on slot ${await fullSlot()}, the focus on ${await q.ev(onRow)}`]);
+    await q.ev(`document.querySelector('${P(pa)} .pn-full').click(); 1`);
+    await until(`document.documentElement.dataset.full !== "1"`);
+
+    await read(fromC);
+    const backTip = await q.ev(`${ex}.getAttribute("aria-label")`);
+    await q.ev(`${ex}.click(); 1`);
+    const drawer = await until(`document.querySelector(".dk-drawer")?.classList.contains("open") && !!document.querySelector('.dk-drawer ${P(pc)}')`);
+    rows.push(["one in the back opens its drawer", drawer && /^Back to panel [5-8] · /.test(backTip),
+      !drawer ? `no drawer on it; the ✕ said "${backTip}"` : `the drawer is open on it; the ✕ said "${backTip}"`]);
+  } finally {
+    for (const pane of [pa, pb, pc]) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 async function footRows(cdp, base, token) {
   const rows = [];
   const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
@@ -4105,7 +4329,61 @@ async function footRows(cdp, base, token) {
     await sleep(400);
     const typing = await on();
     rows.push(["a key just typed holds the focus", typing === pa, typing === pa ? "panel 1 kept it" : "the pointer took it mid-typing"]);
+
+    // #189: reaching for panel 1's card across panel 2 gives panel 2 the
+    // focus on the way; the card stays where it stands for the pointer,
+    // and follows the focus once the pointer is back in the panels.
+    await q.clickOn(`${P(pa)} .pn-body`);
+    await sleep(900);
+    const cardAt = () => q.ev(`(() => { const c = document.querySelector("#dk-cards .dk-card"), b = c?.getBoundingClientRect(); return b ? { n: document.querySelectorAll("#dk-cards .dk-card").length, x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), top: Math.round(b.top) } : null; })()`);
+    const before = await cardAt();
+    for (let i = 1; i <= 6; i++) { await mouse("mouseMoved", A.x + (B.x - A.x) * i / 6, A.y + (B.y - A.y) * i / 6); await sleep(16); }
+    await sleep(400);
+    const crossed = await on();
+    for (let i = 1; i <= 6 && before; i++) { await mouse("mouseMoved", B.x + (before.x - B.x) * i / 6, B.y + (before.y - B.y) * i / 6); await sleep(16); }
+    await sleep(600);
+    const reached = await cardAt();
+    for (let i = 1; i <= 6; i++) { await mouse("mouseMoved", B.x + (before?.x - B.x || 0) * (6 - i) / 6, B.y + (before?.y - B.y || 0) * (6 - i) / 6); await sleep(16); }
+    await sleep(400);
+    const followed = await until(`!document.querySelector("#dk-cards .dk-card")`, 30);
+    rows.push(["a card reached for across another panel stays put, then follows the focus", !!before && before.n === 3 && crossed === pb && !!reached && reached.n === 3 && reached.top === before.top && followed,
+      !before ? "panel 1 had no cards" : crossed !== pb ? `crossing panel 2 left the focus on ${crossed || "nothing"}` : !reached || reached.n !== 3 || reached.top !== before.top ? `under the pointer: ${JSON.stringify({ before, reached })}` : !followed ? "back in panel 2, panel 1's cards stayed" : "held under the pointer, gone once it was back in panel 2"]);
+
+    // #189: a toast over the corner keeps its place while the pointer is on
+    // it, the risen card under it held past its 8 s; both go once it leaves.
+    // A real toast first, off and on again, so toast.js and its look are in.
+    await q.clickOn("#btn-hover");
+    await q.clickOn("#btn-hover");
+    await until(`!!document.querySelector("#toasts .toast")`, 20);
+    await until(`!document.querySelector("#toasts .toast")`, 60);
+    await q.clickOn(`${P(pa)} .pn-body`);
+    await agent(pa, "handover", { kind: "do", text: "bench: the corner holds", by: "bench-agent" });
+    const risen = await until(`!!document.querySelector("#onyou .oy-card")`, 60);
+    const tAt = () => q.ev(`(() => { const b = document.querySelector("#toasts .bench-toast")?.getBoundingClientRect(); return b ? { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), top: Math.round(b.top) } : null; })()`);
+    await q.ev(`(() => { const t = document.createElement("div"); t.className = "toast bench-toast"; t.textContent = "bench: a toast"; document.querySelector("#toasts").append(t); })(), 1`);
+    await sleep(500);   // its way in, 8 px, done
+    const t0 = await tAt();
+    if (t0) await mouse("mouseMoved", t0.x, t0.y);
+    await sleep(9000);
+    const t1 = await tAt(), stillUp = await q.ev(`!!document.querySelector("#onyou .oy-card")`);
+    await q.pointerAway();
+    const settledOut = await until(`!document.querySelector("#onyou .oy-card")`, 40);
+    await sleep(300);
+    const t2 = await tAt();
+    await q.ev(`document.querySelector("#toasts .bench-toast")?.remove(), 1`);
+    rows.push(["a toast over the corner holds still under the pointer, the card under it held", risen && !!t0 && !!t1 && t1.top === t0.top && stillUp && settledOut && !!t2 && t2.top > t0.top,
+      !risen ? "the hand-over never rose" : !t0 ? "no toast to point at" : t1?.top !== t0.top ? `the toast moved ${t1 ? t1.top - t0.top : "?"} px under the pointer` : !stillUp ? "the card settled under the pointer" : !settledOut ? "the card stayed once the pointer left" : !t2 || t2.top <= t0.top ? "the toast never came down: the hold was not what kept it" : `held at ${t0.top}, down to ${t2.top} once the pointer left`]);
     await q.ev(`localStorage.removeItem("snyvi.hover-focus"); 1`);
+
+    // #190: no chime without a card. With no rail in view the turn rises in
+    // the window's corner, and the pill's tip says what rang.
+    await q.width(900);
+    await agent(pa, "handover", { kind: "do", text: "bench: rung with the rail away", by: "bench-agent" });
+    const cornered = await until(`!!document.querySelector("#onyou:not(.in-rail) .oy-card")`, 60);
+    const tipSaid = await q.ev(`document.querySelector("#onyou .oy-pill")?.dataset.tipSub || ""`);
+    rows.push(["with no rail in view, a turn rises in the window's corner, and On you says what rang", cornered && /Last chime: .*rung with the rail away/.test(tipSaid),
+      !cornered ? "nothing rose: the chime rang for a card no one could see" : `the pill's tip says ${JSON.stringify(tipSaid)}`]);
+    await q.wide();
 
     // #164: a run in steps is one card, run in order.
     const steps = await agent(pa, "handover", { kind: "run", text: "bench: a walk-through", by: "bench-agent",

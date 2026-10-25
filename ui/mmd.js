@@ -475,9 +475,12 @@ async function mmdRender(fig, token) {
   if (hit !== null) {
     // Nothing to wait for, so no spinner and no slow class -- which the
     // on-demand button sets on the way in, before it can know this one is
-    // free.
+    // free. A turned drawing kept beside it is a microtask away, painted
+    // before the browser draws a frame.
     fig.classList.remove("mmd-slow");
-    hit.svg ? mmdPaint(fig, hit.svg, performance.now()) : mmdFail(fig, hit.err);
+    if (!hit.svg) { mmdFail(fig, hit.err); return; }
+    const t0 = performance.now(), shown = await mmdChoose(fig, hit.svg);
+    if (token === mmdToken && fig.isConnected) mmdPaint(fig, shown, t0);
     return;
   }
   // A spinner only once the wait is long enough to be worth explaining.
@@ -492,7 +495,9 @@ async function mmdRender(fig, token) {
     // the reader most likely to come straight back to it.
     mmdKeep(key, { svg: kept });
     if (token !== mmdToken || !fig.isConnected) return;
-    mmdPaint(fig, kept, t0);
+    const shown = await mmdChoose(fig, kept);
+    if (token !== mmdToken || !fig.isConnected) return;
+    mmdPaint(fig, shown, t0);
   } catch (e) {
     mmdKeep(key, { err: e && e.message ? e.message : String(e) });
     if (token === mmdToken && fig.isConnected) mmdFail(fig, e);
@@ -500,6 +505,80 @@ async function mmdRender(fig, token) {
     clearTimeout(slow);
     fig.classList.remove("mmd-slow");
   }
+}
+
+// ---------- turned: a long left-to-right flow, drawn top-down ----------
+/* #185. A fifteen-step `flowchart LR` is drawn 3,799 units wide and 174 tall;
+ * fitted into an 866 px frame its 16 px labels came out at 5.5 px. Of the 779
+ * diagrams in a real library, 331 opened with labels under 11 px, most of them
+ * flows drawn left to right. Drawn top-down instead, 170 of the 197 unreadable
+ * LR flows fit the column at full size, at 811 px tall at the median: read by
+ * scrolling the page, which every reader already does, where dragging inside a
+ * frame is something nobody is told. So the choice is made from the string
+ * Mermaid hands back, before anything is painted -- the page never shows one
+ * drawing and then swaps it for another -- and the reader's Turn takes it back.
+ * What is left over (sequences, wide TD flows, LR flows too big either way)
+ * opens readable instead (mmdViewport). */
+const MMD_FLOOR = 11;     // no diagram opens with its labels smaller than this, in px
+const MMD_READ = 12;      // the size one too big to fit opens at
+const MMD_LR = /^(\s*(?:flowchart|graph)\s+)(LR|RL)\b/m;
+
+/** The same flow top-down, or null for one that is not left to right. */
+const mmdTurnSrc = src => MMD_LR.test(src) ? src.replace(MMD_LR, "$1TD") : null;
+
+/** A drawing's bounds and its labels' size, read from the string Mermaid
+ *  made: the root's viewBox comes first, and the diagram's own style block
+ *  says the size it set its text in. */
+function mmdMeasure(svg) {
+  const vb = /viewBox="([^"]+)"/.exec(svg), f = /font-size:\s*([\d.]+)px/.exec(svg);
+  const [, , w = 0, h = 0] = vb ? vb[1].trim().split(/[\s,]+/).map(Number) : [];
+  return { w, h, font: f ? +f[1] : 16 };
+}
+
+/** The widest a figure can be drawn: the room it may come out of the column
+ *  into at the top level of a document (mmdBleed), its frame anywhere else,
+ *  the window when it fills it. */
+function mmdRoom(fig) {
+  const main = docEl.closest("#main"), frame = fig.querySelector(".mmd-frame");
+  if (fig.dataset.full === "1") return innerWidth;
+  return main && fig.parentElement?.matches("article") ? main.clientWidth - 2 * MMD_GUTTER : frame.clientWidth;
+}
+
+/** Which drawing a figure shows: the one sent, unless it is a left-to-right
+ *  flow whose labels would fit under the floor and which, drawn top-down,
+ *  fits the width at the floor or over and is no taller than two screens.
+ *  The reader's Turn (`data-as`) decides it either way. Both drawings are
+ *  kept in the tab's cache under their own source, so coming back is free. */
+async function mmdChoose(fig, svg) {
+  const turned = mmdTurnSrc(fig.dataset.src), pick = fig.dataset.as;
+  delete fig.dataset.turned;
+  if (!turned || pick === "sent") return svg;
+  const room = mmdRoom(fig), m0 = mmdMeasure(svg);
+  if (!pick && m0.font * Math.min(1, room / m0.w) >= MMD_FLOOR) return svg;
+  const key = mmdKey(turned);
+  let hit = mmdTake(key);
+  if (hit === null) {
+    const id = mmdRenderId(fig);
+    try { hit = { svg: (await mmdDraw(id, turned)).svg.split(id).join(MMD_ID) }; }
+    catch (e) { hit = { err: e && e.message ? e.message : String(e) }; }
+    mmdKeep(key, hit);
+  }
+  if (!hit.svg) return svg;
+  const m = mmdMeasure(hit.svg), k = Math.min(1, room / m.w);
+  if (!pick && (m.font * k < MMD_FLOOR || m.h * k > 2 * innerHeight)) return svg;
+  fig.dataset.turned = "1";
+  return hit.svg;
+}
+
+/** The labels' size in the drawing's own units, read off the drawing: 16
+ *  for most, but a theme or an `init` can say otherwise. */
+function mmdFont(svg) {
+  if (svg.dataset.mmdFont) return +svg.dataset.mmdFont;
+  const px = [...svg.querySelectorAll(".nodeLabel, .edgeLabel, .messageText, .actor, text")].slice(0, 24)
+    .map(el => parseFloat(getComputedStyle(el).fontSize)).filter(n => n > 0).sort((a, b) => a - b);
+  const f = px.length ? px[px.length >> 1] : 16;
+  svg.dataset.mmdFont = f;
+  return f;
 }
 
 /** The cached string carries a token where its id belongs, and the figure it
@@ -565,7 +644,6 @@ function mmdInk(frame) {
  * screen. */
 const mmdViews = new WeakMap();
 const MMD_MAX_ZOOM = 40;          // 4738 px of flowchart, read at 120 px of it
-const MMD_MIN_FIT = 0.15;         // a fit smaller than this is a smudge, not a diagram
 let mmdTouched = null;            // the last diagram the reader used, for the keys
 
 /** The tallest a fitted diagram may be: most of a screen and never more than
@@ -607,22 +685,25 @@ function mmdViewport(fig) {
   svg.removeAttribute("height");
   svg.style.maxWidth = "none";
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-  /* A graph far wider than the column has a fit nobody can read: the 220-node
-   * flowchart measures 20023 units across and fits at 4% of itself, which is
-   * a smudge rather than a shape. Past that point the diagram opens where a
-   * label can be read instead -- at its own size, at the corner it starts in
-   * -- and "Fit" is the button that offers the bird's-eye. Under it, fitted
-   * is what a reader wants and what they get. */
+  /* A fit nobody can read is no fit (#185). The rule is the size the labels
+   * come out at, not how far the drawing shrank: a fit at 15% of a drawing
+   * made in 16 px puts its labels at 2.4 px, and the old line, which looked
+   * at the shrink, let everything from 15% to 69% open under 11 px. Under the
+   * floor the diagram opens readable instead -- its labels at 12 px, at the
+   * corner it starts in, in a frame as tall as that drawing and no taller --
+   * and "Fit" is the button that offers the bird's-eye. Over it, fitted is
+   * what a reader wants and what they get. */
   const fitScale = width / base.w;
-  const smudge = fitScale < MMD_MIN_FIT;
-  const height = full ? Math.round(innerHeight)
-    : smudge ? mmdCap()
-      : base.w > width ? Math.max(220, Math.min(mmdCap(), Math.round(base.h * fitScale)))
-        : Math.round(base.h);
+  const fitted = full ? Math.round(innerHeight)
+    : base.w > width ? Math.max(220, Math.min(mmdCap(), Math.round(base.h * fitScale)))
+      : Math.round(base.h);
+  const font = mmdFont(svg), read = Math.min(1, MMD_READ / font);
+  const small = font * Math.min(1, fitScale, fitted / base.h) < Math.min(MMD_FLOOR, font) - 0.01;
+  const height = small && !full ? Math.max(120, Math.min(mmdCap(), Math.round(base.h * read))) : fitted;
   frame.style.height = `${height}px`;
   mmdViews.set(fig, { base, svg, frame, view: { ...base }, fit: null });
   mmdFit(fig);
-  if (smudge && !full) mmdStart(fig);
+  if (small) mmdStart(fig, read);
   mmdTools(fig);
 }
 
@@ -674,16 +755,19 @@ function mmdFit(fig) {
   mmdApply(fig);
 }
 
-/** Where a diagram too wide to fit opens: its own size, at the corner it
- *  starts in, which for every graph Mermaid lays out is where the beginning
- *  of it is. */
-function mmdStart(fig) {
+/** Where a diagram too big to fit readably opens: at `k` of its own size,
+ *  at the corner it starts in -- the left and the top for every graph Mermaid
+ *  lays out, but for a flow drawn right to left or bottom to top. */
+function mmdStart(fig, k = 1) {
   const v = mmdViews.get(fig);
   if (!v) return;
   const r = v.frame.getBoundingClientRect();
-  const w = Math.min(v.fit.w, r.width || v.fit.w);
+  const w = Math.min(v.fit.w, (r.width || v.fit.w) / k);
   const h = w * v.fit.h / v.fit.w;
-  v.view = { x: v.base.x, y: v.base.y, w, h };
+  const dir = !fig.dataset.turned && /^\s*(?:flowchart|graph)\s+(RL|BT)\b/m.exec(fig.dataset.src || "")?.[1];
+  // A side the drawing is narrower than the view on is centred, as fitted.
+  const at = (lo, span, len, end) => len >= span ? lo + (span - len) / 2 : end ? lo + span - len : lo;
+  v.view = { x: at(v.base.x, v.base.w, w, dir === "RL"), y: at(v.base.y, v.base.h, h, dir === "BT"), w, h };
   mmdClamp(fig);
   mmdApply(fig);
 }
@@ -725,6 +809,17 @@ function mmdApply(fig) {
   v.svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
   const zoomed = !!fit && view.w < fit.w - 0.5;
   fig.dataset.zoom = zoomed ? "in" : "fit";
+  // A fade at each side where more of the diagram lies, so a reader can
+  // see there is more to pan to.
+  const { base } = v, more = zoomed ? [view.x > base.x + 1 && "l", view.x + view.w < base.x + base.w - 1 && "r"].filter(Boolean).join(" ") : "";
+  if (more) fig.dataset.more = more; else delete fig.dataset.more;
+  const turn = fig.querySelector("[data-mmd=turn]");
+  if (turn) {
+    const on = !!fig.dataset.turned;
+    turn.setAttribute("aria-pressed", String(on));
+    turn.dataset.tip = on ? "Show it as it was sent" : "Turn it top-down";
+    turn.dataset.tipSub = on ? "left to right, as the agent drew it" : "read by scrolling the page";
+  }
   const toggle = fig.querySelector("[data-mmd=zoom]");
   if (toggle) {
     toggle.hidden = !v.shrunk && !zoomed;
@@ -843,6 +938,7 @@ function mmdTools(fig) {
     `<button type="button" data-mmd="out" data-tip="Zoom out" aria-label="Zoom out"><svg class="g-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.57" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/></svg></button>` +
     `<button type="button" data-mmd="in" data-tip="Zoom in" data-tip-sub="or double-click, or ${/Mac/.test(navigator.platform) ? "⌘" : "Ctrl"} + scroll" aria-label="Zoom in"><svg class="g-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.57" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>` +
     `<button type="button" data-mmd="zoom" data-tip="Show at full size">100%</button>` +
+    (mmdTurnSrc(fig.dataset.src || "") ? `<button type="button" data-mmd="turn" aria-label="Turn" aria-pressed="false">Turn</button>` : "") +
     `<button type="button" data-mmd="full" data-tip="Fill the screen" data-key="f" aria-label="Fill the screen" aria-pressed="false"><svg class="g-ico" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.57" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>`;
   fig.appendChild(bar);
   mmdApply(fig);
@@ -881,17 +977,35 @@ docEl.addEventListener("click", e => {
   else if (what === "out") mmdZoom(fig, 1 / 1.6, null, null);
   else if (what === "full") mmdFull(fig);
   else if (what === "zoom") fig.dataset.zoom === "in" ? mmdFit(fig) : mmdActual(fig);
+  else if (what === "turn") { fig.dataset.as = fig.dataset.turned ? "sent" : "turned"; mmdRender(fig, mmdToken); }
 });
 
 /* Zoom on ⌘/ctrl + scroll, which is the web's own convention and the reason a
  * cursor crossing a diagram never traps the page. A trackpad pinch arrives
- * here as exactly this event, so pinching works without a second path. */
+ * here as exactly this event, so pinching works without a second path.
+ *
+ * A sideways swipe pans one there is more of (#185): only sideways, so a
+ * scroll down the page goes down the page and the cursor is never caught.
+ * Filling the screen there is no page to scroll, and every way pans. */
 docEl.addEventListener("wheel", e => {
-  if (!(e.ctrlKey || e.metaKey)) return;
   const fig = e.target.closest('.mmd[data-state="done"]');
   if (!fig || !mmdViews.has(fig)) return;
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    mmdZoom(fig, Math.exp(-e.deltaY * 0.0025), e.clientX, e.clientY);
+    return;
+  }
+  const full = fig.dataset.full === "1", side = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+  if (fig.dataset.zoom !== "in" || !(side || full)) return;
   e.preventDefault();
-  mmdZoom(fig, Math.exp(-e.deltaY * 0.0025), e.clientX, e.clientY);
+  const v = mmdViews.get(fig), { base, view } = v, s = mmdScale(fig), k = e.deltaMode === 1 ? 16 : 1;
+  // Held to the drawing's edges, where a drag is forgiving: a swipe's
+  // momentum would otherwise carry the view off into nothing.
+  const hold = (at, len, lo, span) => len >= span ? at : Math.min(Math.max(at, lo), lo + span - len);
+  view.x = hold(view.x + e.deltaX * k / s, view.w, base.x, base.w);
+  if (full) view.y = hold(view.y + e.deltaY * k / s, view.h, base.y, base.h);
+  mmdApply(fig);
+  mmdTouched = fig;
 }, { passive: false });
 
 /* Drag to pan, but only once there is something to pan to: a fitted diagram
@@ -1031,6 +1145,15 @@ const CSS_MOVED = `
 .mmd[data-zoom] .mmd-frame { overflow: hidden; border-radius: var(--r-sm); }
 .mmd[data-zoom] .mmd-frame svg { width: 100%; height: 100%; max-width: none; display: block; }
 .mmd[data-zoom="in"] .mmd-frame { cursor: grab; }
+/* A fade at a side where more of the diagram lies (mmdApply, data-more): two
+   overlays in the page's colour rather than a mask, which over an SVG is a
+   repaint of the whole drawing on every pan. */
+.mmd[data-zoom] .mmd-frame { position: relative; }
+.mmd[data-zoom] .mmd-frame::before, .mmd[data-zoom] .mmd-frame::after { content: ""; position: absolute; top: 0; bottom: 0; width: 32px; pointer-events: none; opacity: 0; transition: opacity var(--dur-quick) ease; }
+.mmd[data-zoom] .mmd-frame::before { left: 0; background: linear-gradient(to right, var(--bg), transparent); }
+.mmd[data-zoom] .mmd-frame::after { right: 0; background: linear-gradient(to left, var(--bg), transparent); }
+.mmd[data-more~="l"] .mmd-frame::before, .mmd[data-more~="r"] .mmd-frame::after { opacity: 1; }
+.mmd-tools [data-mmd=turn][aria-pressed="true"] { color: var(--accent); }
 .mmd[data-grab] .mmd-frame { cursor: grabbing; }
 /* The controls: present when the diagram is under the cursor or holds the
    focus, absent from a page being read -- the bargain the rename pencils in the
