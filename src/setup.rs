@@ -251,6 +251,27 @@ pub fn refresh_claude() -> Result<()> {
     init_claude_as(false, false, true)
 }
 
+/// The skill, kept in step with this binary, at the first start of a new
+/// version (#191). An update in the window never ran `init-claude`, so a
+/// reader who had the skill kept the old one, and a reader from before 1.36
+/// had none at all. Where Claude Code has snyvi's MCP entry -- the reader
+/// connected it, which is what the skill is for -- our files are written or
+/// brought up to date; a `snyvi` skill of the reader's own is left as it is;
+/// and with no entry nothing is written: an update signs nobody up.
+pub fn sync_skill() -> Result<Option<PathBuf>> {
+    sync_skill_in(&claude_dir()?.join("skills"), registered().is_some())
+}
+
+fn sync_skill_in(skills: &Path, connected: bool) -> Result<Option<PathBuf>> {
+    if !connected {
+        return Ok(None);
+    }
+    Ok(match skill_install(skills, false)? {
+        Skill::Written(dir) => Some(dir),
+        Skill::Current | Skill::Absent | Skill::Theirs(_) => None,
+    })
+}
+
 /// Undo `init-claude`: the MCP entry, every hook of ours, the CLAUDE.md line.
 /// The library is not touched, and says where it is.
 pub fn uninstall_claude() -> Result<()> {
@@ -1014,6 +1035,25 @@ mod skill_tests {
         let d = std::env::temp_dir().join(format!("snyvi-skill-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn a_new_version_brings_the_skill_to_a_connected_reader_only() {
+        let skills = tmp("sync");
+        assert_eq!(sync_skill_in(&skills, false).unwrap(), None);
+        assert!(!skills.exists(), "not connected: nothing written");
+        // Connected and never given one (before 1.36): it is written.
+        assert!(sync_skill_in(&skills, true).unwrap().is_some());
+        assert!(skills.join("snyvi/SKILL.md").exists());
+        assert_eq!(sync_skill_in(&skills, true).unwrap(), None, "current");
+        // The reader's own skill by that name is theirs.
+        std::fs::write(skills.join("snyvi/SKILL.md"), "mine").unwrap();
+        assert_eq!(sync_skill_in(&skills, true).unwrap(), None);
+        assert_eq!(
+            std::fs::read_to_string(skills.join("snyvi/SKILL.md")).unwrap(),
+            "mine"
+        );
+        let _ = std::fs::remove_dir_all(&skills);
     }
 
     #[test]

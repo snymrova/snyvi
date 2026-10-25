@@ -603,6 +603,7 @@ export function open(c) {
   if (d && docsAt !== d.id) docs();
   const v = views.get(drawerOn || focused);
   if (v) setTimeout(() => v.body.focus(), 0);
+  firstSteps();
 }
 
 /** The desk opened on a panel by its slot: one in the grid takes the focus,
@@ -886,6 +887,7 @@ export function aside(docId) {
 
 export function close() {
   if (!ctx) return;
+  firstStop();
   say({ t: "watch", panes: [] });
   delete ctx.root.dataset.full;
   deskId = null; reading = null;

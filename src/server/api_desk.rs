@@ -1395,6 +1395,56 @@ pub(crate) async fn set_asides_setting(
     switch(&app, &headers, &q, "asides", asides_on, Some(b.on))
 }
 
+/// Whether a first desk still shows its three steps (#191): until they are
+/// done or skipped, in any window -- a flag here, like About's switches, so
+/// the window and a browser agree.
+pub(crate) fn steps_on(app: &App) -> bool {
+    !off_flag(app, "first-steps").exists()
+}
+
+/// What ui/guide.js needs (#191): the features it can point at (Show me →
+/// and the dots), the last update's page while it is fresh, and the three
+/// steps' flag. Nothing in it is the reader's, so any page on this host
+/// reads it; only the window's page ends the steps.
+pub(crate) async fn guide(State(app): S) -> Response {
+    let now = crate::store::now();
+    let page = app
+        .whats_new
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|s| crate::whats_new::fresh_json(s, now));
+    Json(json!({
+        "features": crate::features::shown_json(),
+        "whats_new": page,
+        "dots_secs": crate::whats_new::DOTS_SECS,
+        "steps": steps_on(&app),
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GuideBody {
+    pub(crate) steps: bool,
+}
+
+/// The three steps done, or Skip pressed: `{steps: false}`. `true` brings
+/// them back, which nothing in the page asks for yet.
+pub(crate) async fn set_guide(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<GuideBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match set_switch(&app, "first-steps", b.steps) {
+        Ok(()) => Json(json!({ "steps": steps_on(&app) })).into_response(),
+        Err(e) => err(e.into()),
+    }
+}
+
 pub(crate) async fn rename_desk(
     State(app): S,
     headers: HeaderMap,

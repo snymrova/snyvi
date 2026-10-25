@@ -13,6 +13,7 @@ mod config;
 mod desk;
 mod desktop;
 mod due;
+mod features;
 mod find;
 mod frontmatter;
 mod gh;
@@ -54,6 +55,7 @@ mod version;
 mod waiting;
 mod watch;
 mod week;
+mod whats_new;
 mod widget;
 
 /// "1 panel", "3 panels": a count in words, never "panel(s)"

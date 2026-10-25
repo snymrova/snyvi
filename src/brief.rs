@@ -76,6 +76,10 @@ pub struct Work<'a> {
     pub ship: Option<(String, i64)>,
     /// The desk's routines (1.50, `crate::routine`): never among its notes.
     pub routines: &'a [crate::routine::Routine],
+    /// What a recent update brought, in a line (`whats_new::brief_line`):
+    /// for a week after it, so a panel's Claude knows what the reader can
+    /// now do (#191).
+    pub updated: Option<String>,
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -132,6 +136,9 @@ pub fn brief_of(
             left_needs(l, now),
             l.text
         ));
+    }
+    if let Some(u) = &work.updated {
+        lines.push(u.clone());
     }
     // By name only. A value reaches a command through `snyvi key`, which the
     // shell expands, and the environment of a panel started after it was
@@ -960,6 +967,30 @@ mod tests {
         assert!(loose_ends(&[&note(3, "plain", false)]).is_empty());
     }
 
+    /// After an update, the line `whats_new` wrote, early: under where the
+    /// work was left, before the lists that may be cut.
+    #[test]
+    fn the_brief_says_what_an_update_brought() {
+        let left = LeftOff {
+            text: "ship it".into(),
+            at: 1000,
+            ..LeftOff::default()
+        };
+        let work = Work {
+            updated: Some("snyvi was updated (1.49 → 1.50). New for the user: Routines.".into()),
+            ..Work::default()
+        };
+        let b = brief_of(&desk(1, Some(left)), 1, &work, &[], &[], None, 2000);
+        let lines: Vec<&str> = b.lines().collect();
+        assert!(lines[1].starts_with("Left off"), "{b}");
+        assert!(
+            lines[2].starts_with("snyvi was updated (1.49 → 1.50)"),
+            "{b}"
+        );
+        let quiet = brief_of(&desk(1, None), 1, &Work::default(), &[], &[], None, 2000);
+        assert!(!quiet.contains("updated"));
+    }
+
     fn note(id: i64, text: &str, done: bool) -> DeskNote {
         DeskNote {
             id,
@@ -1381,6 +1412,7 @@ mod tests {
             untold: &[("1.47 dates".into(), -3 * 86_400)],
             ship: None,
             routines: &[],
+            updated: None,
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
         assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");

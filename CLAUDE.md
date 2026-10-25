@@ -29,6 +29,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | MCP tools | `src/mcp.rs`, `src/agents.rs` (which agent has what) | reach the store directly; they go through `client.rs` |
 | CLI → daemon | `src/client.rs`, `src/main.rs` | be the only path a test knows |
 | self-update, restart | `src/update.rs`, `src/platform.rs`, `src/desktop.rs` | — |
+| what's new: the feature list, the page an update files, Show me, the dots, a first desk's steps | `features.toml` → `src/features.rs`, `src/whats_new.rs`, `ui/guide.js`, `ui/desk/20-first.js`; release notes by `scripts/notes.mjs`, pictures by `bench/stills.mjs` | grow `update.rs` (over its ceiling); name a selector a document can set |
 | the window | `src/bin/app.rs` | hold daemon logic |
 | every message from outside: the corner's card, pill and tray (On you, Lately) | `ui/corner.js`, `src/lately.rs` (kept, `lately_log` beside each event), `ui/desk/10-onyou.js` (the desk's corner) | put a message anywhere else, or let one go on a timer (`docs/DESIGN.md` §4.5) |
 | first paint | `ui/index.html`, `ui/boot.js`, `ui/app/*.js` (joined into `app.js`), `ui/app.css`, `ui/themes.css` | grow past the budget (`bench/bytes.mjs`) |
