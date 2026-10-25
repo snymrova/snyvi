@@ -14,7 +14,11 @@ fn settle() {
 }
 
 fn want(p: &Path, label: &str, key: Key) -> Want {
-    Want { path: p.to_path_buf(), label: label.into(), key }
+    Want {
+        path: p.to_path_buf(),
+        label: label.into(),
+        key,
+    }
 }
 
 fn rels(h: &[Hit]) -> Vec<&str> {
@@ -50,12 +54,19 @@ fn ranks_names_before_paths_and_junk_last() {
     assert_eq!(css[0].rel, "ui/app.css");
     assert_eq!(
         rels(&css),
-        ["ui/app.css", "app/globals.css", "node_modules/caniuse-lite/data/features/css-appearance.js"],
+        [
+            "ui/app.css",
+            "app/globals.css",
+            "node_modules/caniuse-lite/data/features/css-appearance.js"
+        ],
         "a committed node_modules ranks under the rest"
     );
     assert!(f.search("zzqx", None, 6).unwrap().is_empty());
     let h = &f.search("06-rail", None, 6).unwrap()[0];
-    assert_eq!((h.name.as_str(), h.dir.as_str(), h.under.as_str()), ("06-rail.js", "ui/desk", "snyvi"));
+    assert_eq!(
+        (h.name.as_str(), h.dir.as_str(), h.under.as_str()),
+        ("06-rail.js", "ui/desk", "snyvi")
+    );
     assert_eq!(h.root.as_deref(), Some("snyvi"));
 }
 
@@ -76,7 +87,9 @@ fn typing_narrows_to_the_same_list_a_whole_search_gives() {
         for i in 1..=word.len() {
             let q = &word[..i];
             let narrowed = typed.search(q, None, 6).unwrap();
-            let whole = Finder::from_paths("x", paths.iter().map(String::as_str)).search(q, None, 6).unwrap();
+            let whole = Finder::from_paths("x", paths.iter().map(String::as_str))
+                .search(q, None, 6)
+                .unwrap();
             assert_eq!(narrowed, whole, "{q:?}");
         }
     }
@@ -94,9 +107,19 @@ fn a_refresh_lists_again_only_what_changed() {
     settle();
     let f = Finder::new();
     let wants = || vec![want(&root, "proj", Key::Desk(1))];
-    assert_eq!(f.refresh(wants(), vec![]), Refreshed { walked: 1, relisted: 0 });
+    assert_eq!(
+        f.refresh(wants(), vec![]),
+        Refreshed {
+            walked: 1,
+            relisted: 0
+        }
+    );
     let hits = f.search("plan-x", None, 6).unwrap();
-    assert_eq!(rels(&hits), ["docs/plan-x.md"], "ignored and hidden files stay out");
+    assert_eq!(
+        rels(&hits),
+        ["docs/plan-x.md"],
+        "ignored and hidden files stay out"
+    );
     assert_eq!((hits[0].desk, hits[0].under.as_str()), (Some(1), "proj"));
 
     // Nothing moved: nothing listed.
@@ -104,7 +127,10 @@ fn a_refresh_lists_again_only_what_changed() {
 
     touch(&root, "docs/new-file.md");
     assert_eq!(f.refresh(wants(), vec![]).relisted, 1);
-    assert_eq!(rels(&f.search("new-file", None, 6).unwrap()), ["docs/new-file.md"]);
+    assert_eq!(
+        rels(&f.search("new-file", None, 6).unwrap()),
+        ["docs/new-file.md"]
+    );
 
     fs::remove_file(root.join("docs/plan-x.md")).unwrap();
     f.refresh(wants(), vec![]);
@@ -115,7 +141,10 @@ fn a_refresh_lists_again_only_what_changed() {
     fs::remove_dir_all(root.join("src")).unwrap();
     let r = f.refresh(wants(), vec![]);
     assert_eq!(r.walked, 0);
-    assert_eq!(rels(&f.search("plan-y", None, 6).unwrap()), ["notes/deep/plan-y.md"]);
+    assert_eq!(
+        rels(&f.search("plan-y", None, 6).unwrap()),
+        ["notes/deep/plan-y.md"]
+    );
     assert!(f.search("a.rs", None, 6).unwrap().is_empty());
 
     // An ignore file that changed walks the folder again.
@@ -143,17 +172,31 @@ fn each_folder_once_this_desk_first_and_never_home() {
         want(&root, "open too", Key::Root("r2".into())),
         want(&home, "home", Key::Desk(9)),
     ]);
-    assert_eq!(got.len(), 1, "a folder inside another, and the home folder, are not searched apart");
-    assert_eq!(got[0].key, Key::Root("r2".into()), "an open folder wins over a desk on the same one");
+    assert_eq!(
+        got.len(),
+        1,
+        "a folder inside another, and the home folder, are not searched apart"
+    );
+    assert_eq!(
+        got[0].key,
+        Key::Root("r2".into()),
+        "an open folder wins over a desk on the same one"
+    );
 
     let f = Finder::new();
     f.refresh(
-        vec![want(&root, "desk", Key::Desk(1)), want(&sub, "open", Key::Root("r1".into()))],
+        vec![
+            want(&root, "desk", Key::Desk(1)),
+            want(&sub, "open", Key::Root("r1".into())),
+        ],
         vec![(1, root.clone()), (3, sub.clone())],
     );
     let all = f.search("notes", None, 6).unwrap();
     assert_eq!(rels(&all), ["a/notes.md", "sub/notes.md"], "each file once");
-    assert_eq!(f.search("notes", Some(3), 6).unwrap()[0].rel, "sub/notes.md");
+    assert_eq!(
+        f.search("notes", Some(3), 6).unwrap()[0].rel,
+        "sub/notes.md"
+    );
 }
 
 #[test]
@@ -164,7 +207,14 @@ fn opening_stays_inside_the_desks_folder() {
     touch(&root, "../snyvi-find-outside.md");
     let (base, file) = inside(&root, "docs/plan.md").unwrap();
     assert_eq!((base, file), (root.clone(), root.join("docs/plan.md")));
-    for bad in ["../snyvi-find-outside.md", "/etc/passwd", "docs/../../x", "", "docs", "docs/nope.md"] {
+    for bad in [
+        "../snyvi-find-outside.md",
+        "/etc/passwd",
+        "docs/../../x",
+        "",
+        "docs",
+        "docs/nope.md",
+    ] {
         assert!(inside(&root, bad).is_none(), "{bad:?}");
     }
     #[cfg(unix)]
@@ -172,6 +222,9 @@ fn opening_stays_inside_the_desks_folder() {
         std::os::unix::fs::symlink("/etc/hostname", root.join("out")).unwrap();
         assert!(inside(&root, "out").is_none(), "a link that points out");
     }
-    assert!(inside(&dirs::home_dir().unwrap(), "x").is_none(), "never the home folder");
+    assert!(
+        inside(&dirs::home_dir().unwrap(), "x").is_none(),
+        "never the home folder"
+    );
     let _ = fs::remove_file(root.parent().unwrap().join("snyvi-find-outside.md"));
 }

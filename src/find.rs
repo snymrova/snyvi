@@ -36,7 +36,15 @@ const TOTAL_CAP: usize = 200_000;
 /// An open of ⌘K within this of the last refresh does not stat again.
 const FRESH: Duration = Duration::from_secs(2);
 /// Folders almost never meant, even when committed: ranked last, not hidden.
-const JUNK: [&str; 7] = ["node_modules", "vendor", "dist", "build", "target", ".next", "__pycache__"];
+const JUNK: [&str; 7] = [
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    "__pycache__",
+];
 const IGNORE_FILES: [&str; 2] = [".gitignore", ".ignore"];
 /// A directory changed this recently may change again within the same tick
 /// of the file system's clock, and its time would not move: it is listed
@@ -80,14 +88,17 @@ pub struct Refreshed {
     pub relisted: usize,
 }
 
+/// A path under a folder, by path from it, and the time it was listed at.
+type Times = HashMap<String, SystemTime>;
+
 struct Folder {
     id: u16,
     path: PathBuf,
     label: String,
     key: Key,
     /// Each directory under it, by path from it, at the time it was listed.
-    dirs: HashMap<String, SystemTime>,
-    ignores: HashMap<String, SystemTime>,
+    dirs: Times,
+    ignores: Times,
 }
 
 /// One file: its path and the same lowercased, side by side in `Index::text`.
@@ -277,7 +288,7 @@ impl Finder {
     /// moved. The disk is read without the lock; the lock is held to apply.
     pub fn refresh(&self, wants: Vec<Want>, desks: Vec<(i64, PathBuf)>) -> Refreshed {
         let wants = folders(wants);
-        let snapshot: Vec<(u16, PathBuf, HashMap<String, SystemTime>, HashMap<String, SystemTime>)> = {
+        let snapshot: Vec<(u16, PathBuf, Times, Times)> = {
             let ix = self.index.lock().unwrap();
             ix.folders
                 .iter()
@@ -300,7 +311,10 @@ impl Finder {
                 continue;
             };
             relabel.push((*id, w.label, w.key));
-            if ignores.iter().any(|(rel, t)| mtime(&path.join(rel)) != Some(*t)) {
+            if ignores
+                .iter()
+                .any(|(rel, t)| mtime(&path.join(rel)) != Some(*t))
+            {
                 done.walked += 1;
                 changes.push(Change::Replace(*id, walk(path, path, false)));
                 continue;
@@ -329,7 +343,11 @@ impl Finder {
                     .iter()
                     .filter(|f| root.starts_with(&f.path))
                     .max_by_key(|f| f.path.components().count())?;
-                let rel = root.strip_prefix(&f.path).ok()?.to_string_lossy().replace('\\', "/");
+                let rel = root
+                    .strip_prefix(&f.path)
+                    .ok()?
+                    .to_string_lossy()
+                    .replace('\\', "/");
                 Some((desk, (f.id, if rel.is_empty() { rel } else { rel + "/" })))
             })
             .collect();
@@ -358,7 +376,9 @@ impl Finder {
         let fuzzy = ql.trim().len() >= 3;
         let here = here.and_then(|d| ix.here.get(&d).cloned());
         let narrow = match &ix.last {
-            Some((g, lq, kept)) if *g == ix.gen && ql.starts_with(lq.as_str()) => Some(kept.clone()),
+            Some((g, lq, kept)) if *g == ix.gen && ql.starts_with(lq.as_str()) => {
+                Some(kept.clone())
+            }
             _ => None,
         };
         let r: &Index = &ix;
@@ -392,7 +412,10 @@ impl Finder {
             if e.junk {
                 s -= 400;
             }
-            if here.as_ref().is_some_and(|(f, pre)| e.folder == *f && path.starts_with(pre.as_str())) {
+            if here
+                .as_ref()
+                .is_some_and(|(f, pre)| e.folder == *f && path.starts_with(pre.as_str()))
+            {
                 s += 60;
             }
             (if loose { &mut fuzz } else { &mut subs }).offer(s, i, path, r);
@@ -408,7 +431,10 @@ impl Finder {
             top.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| at(a.1).cmp(at(b.1))));
             top.truncate(k);
         }
-        let hits = top.iter().filter_map(|&(_, i)| hit(r, &r.entries[i as usize])).collect();
+        let hits = top
+            .iter()
+            .filter_map(|&(_, i)| hit(r, &r.entries[i as usize]))
+            .collect();
         let gen = ix.gen;
         ix.last = Some((gen, ql, kept));
         Some(hits)
@@ -424,7 +450,11 @@ struct Top {
 
 impl Top {
     fn new(k: usize) -> Top {
-        Top { k, seen: 0, list: Vec::with_capacity(k + 1) }
+        Top {
+            k,
+            seen: 0,
+            list: Vec::with_capacity(k + 1),
+        }
     }
     fn offer(&mut self, s: i32, i: u32, path: &str, ix: &Index) {
         self.seen += 1;
@@ -433,7 +463,9 @@ impl Top {
         }
         // Equal scores in path order, so a list does not depend on the order
         // the disk handed the files over in.
-        let at = self.list.partition_point(|&(t, j)| t > s || (t == s && ix.orig(&ix.entries[j as usize]) <= path));
+        let at = self.list.partition_point(|&(t, j)| {
+            t > s || (t == s && ix.orig(&ix.entries[j as usize]) <= path)
+        });
         self.list.insert(at, (s, i));
         self.list.truncate(self.k);
     }
@@ -470,12 +502,18 @@ pub fn inside(root: &Path, rel: &str) -> Option<(PathBuf, PathBuf)> {
     }
     let relp = Path::new(rel.trim_matches('/'));
     if rel.trim_matches('/').is_empty()
-        || relp.components().any(|c| !matches!(c, std::path::Component::Normal(_)))
+        || relp
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
     {
         return None;
     }
     // A link inside could still point out, so the canonical paths decide.
-    let file = root.join(relp).canonicalize().ok().filter(|p| p.is_file())?;
+    let file = root
+        .join(relp)
+        .canonicalize()
+        .ok()
+        .filter(|p| p.is_file())?;
     file.starts_with(&root).then_some((root, file))
 }
 
@@ -494,7 +532,11 @@ fn folders(wants: Vec<Want>) -> Vec<Want> {
             Some(Want { path, ..w })
         })
         .collect();
-    v.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| matches!(a.key, Key::Desk(_)).cmp(&matches!(b.key, Key::Desk(_)))));
+    v.sort_by(|a, b| {
+        a.path
+            .cmp(&b.path)
+            .then_with(|| matches!(a.key, Key::Desk(_)).cmp(&matches!(b.key, Key::Desk(_))))
+    });
     let mut out: Vec<Want> = vec![];
     for w in v {
         if !out.iter().any(|k| w.path.starts_with(&k.path)) {
@@ -511,8 +553,8 @@ fn folders(wants: Vec<Want>) -> Vec<Want> {
 fn patch(
     id: u16,
     path: &Path,
-    dirs: &HashMap<String, SystemTime>,
-    ignores: &HashMap<String, SystemTime>,
+    dirs: &Times,
+    ignores: &Times,
     done: &mut Refreshed,
 ) -> Option<Change> {
     let (mut relisted, mut gone, mut add) = (vec![], vec![], Walked::default());
@@ -554,7 +596,12 @@ fn patch(
     if relisted.is_empty() && gone.is_empty() {
         return None;
     }
-    Some(Change::Patch { id, relisted, gone, add })
+    Some(Change::Patch {
+        id,
+        relisted,
+        gone,
+        add,
+    })
 }
 
 fn apply(ix: &mut Index, c: Change) {
@@ -567,7 +614,14 @@ fn apply(ix: &mut Index, c: Change) {
             let Some(id) = (0..=u16::MAX).find(|i| !ix.folders.iter().any(|f| f.id == *i)) else {
                 return;
             };
-            ix.folders.push(Folder { id, path: w.path, label: w.label, key: w.key, dirs: HashMap::new(), ignores: HashMap::new() });
+            ix.folders.push(Folder {
+                id,
+                path: w.path,
+                label: w.label,
+                key: w.key,
+                dirs: HashMap::new(),
+                ignores: HashMap::new(),
+            });
             apply(ix, Change::Replace(id, walked));
         }
         Change::Replace(id, walked) => {
@@ -580,10 +634,23 @@ fn apply(ix: &mut Index, c: Change) {
                 ix.push(id, p);
             }
         }
-        Change::Patch { id, relisted, gone, add } => {
+        Change::Patch {
+            id,
+            relisted,
+            gone,
+            add,
+        } => {
             let relisted: HashSet<String> = relisted.into_iter().collect();
-            let under = |p: &str| gone.iter().any(|g| p == g || p.strip_prefix(g.as_str()).is_some_and(|r| r.starts_with('/')));
-            ix.drop_where(|p, e| e.folder == id && (relisted.contains(parent(p).unwrap_or("")) || under(p)));
+            let under = |p: &str| {
+                gone.iter().any(|g| {
+                    p == g
+                        || p.strip_prefix(g.as_str())
+                            .is_some_and(|r| r.starts_with('/'))
+                })
+            };
+            ix.drop_where(|p, e| {
+                e.folder == id && (relisted.contains(parent(p).unwrap_or("")) || under(p))
+            });
             if let Some(f) = ix.folders.iter_mut().find(|f| f.id == id) {
                 f.dirs.retain(|d, _| !under(d.as_str()));
                 f.ignores.retain(|d, _| {
@@ -616,7 +683,9 @@ fn walk(root: &Path, dir: &Path, one: bool) -> Walked {
         b.max_depth(Some(1));
     }
     for entry in b.build().flatten() {
-        let Ok(rel) = entry.path().strip_prefix(root) else { continue };
+        let Ok(rel) = entry.path().strip_prefix(root) else {
+            continue;
+        };
         let rel = rel.to_string_lossy().replace('\\', "/");
         if !entry.file_type().is_some_and(|t| t.is_dir()) {
             if entry.depth() > 0 {
@@ -634,7 +703,10 @@ fn walk(root: &Path, dir: &Path, one: bool) -> Walked {
         // Stat before the walker reads the directory: a file added between
         // the two is listed now and listed again next time, never missed.
         if let Some(mut t) = mtime(entry.path()) {
-            if SystemTime::now().duration_since(t).map_or(true, |d| d < RACY) {
+            if SystemTime::now()
+                .duration_since(t)
+                .map_or(true, |d| d < RACY)
+            {
                 t = SystemTime::UNIX_EPOCH;
             }
             for n in IGNORE_FILES {
@@ -653,7 +725,11 @@ fn mtime(p: &Path) -> Option<SystemTime> {
 }
 
 fn join(dir: &str, name: &str) -> String {
-    if dir.is_empty() { name.to_string() } else { format!("{dir}/{name}") }
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{dir}/{name}")
+    }
 }
 
 /// The directory a path is in, "" at the top, None for the top itself.

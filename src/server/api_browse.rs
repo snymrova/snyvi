@@ -571,7 +571,11 @@ fn find_wants(app: &App) -> (Vec<crate::find::Want>, Vec<(i64, std::path::PathBu
         .browse
         .list()
         .into_iter()
-        .map(|r| Want { path: r.path.into(), label: r.name, key: Key::Root(r.id) })
+        .map(|r| Want {
+            path: r.path.into(),
+            label: r.name,
+            key: Key::Root(r.id),
+        })
         .collect();
     let mut desks = vec![];
     for d in app.store.desks().unwrap_or_default() {
@@ -579,7 +583,11 @@ fn find_wants(app: &App) -> (Vec<crate::find::Want>, Vec<(i64, std::path::PathBu
             continue;
         }
         desks.push((d.id, std::path::PathBuf::from(&d.root)));
-        wants.push(Want { path: d.root.into(), label: d.name, key: Key::Desk(d.id) });
+        wants.push(Want {
+            path: d.root.into(),
+            label: d.name,
+            key: Key::Desk(d.id),
+        });
     }
     (wants, desks)
 }
