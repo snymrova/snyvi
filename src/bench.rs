@@ -264,15 +264,20 @@ fn find_rows(factor: f64) -> bool {
     .iter()
     .map(|q| (*q, best(q)))
     .fold(("", 0.0), |a, b| if b.1 > a.1 { b } else { a });
+    // The word typed three times, each keystroke's best of the three, as
+    // every row here is: one keystroke timed once was a scheduler's pause
+    // on a loaded box (26 ms once at load 12). "d" starts each over, since
+    // it does not extend "diagrams".
     let word = "diagrams";
-    let mut keyed = 0.0f64;
-    for i in 1..=word.len() {
-        let t = Instant::now();
-        let _ = f.search(&word[..i], Some(0), 6);
-        if i > 1 {
-            keyed = keyed.max(t.elapsed().as_secs_f64() * 1000.0);
+    let mut each = vec![f64::MAX; word.len()];
+    for _ in 0..3 {
+        for (i, best) in each.iter_mut().enumerate() {
+            let t = Instant::now();
+            let _ = f.search(&word[..=i], Some(0), 6);
+            *best = best.min(t.elapsed().as_secs_f64() * 1000.0);
         }
     }
+    let keyed = each[1..].iter().copied().fold(0.0f64, f64::max);
     println!(
         "\n{:<60} {:>9}   {:>9}",
         "file names, 30,000 paths", "ms", "budget"
