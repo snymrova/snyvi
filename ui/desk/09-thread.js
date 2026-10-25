@@ -21,6 +21,10 @@ let filed = { threads: [], turns: [], suggestions: [] }, filedAt = null, filedGe
  *  text, pane, ids }, a thread's pane when it was that panel's, so its Undo
  *  stays there; for "g", a card's open questions put away as one, by `ids`. */
 let filedGone = null, filedTimer = 0;
+/* The write a ✕ here is making. Its Undo waits for it: a restore that
+ * reached the daemon before its remove would be undone by the remove. */
+let filedWrite = Promise.resolve();
+const filedAway = call => () => (filedWrite = call());
 /** The field open on a thread or a turn: { kind: "rename" | "other" | "change", id }. */
 let thField = null, thDraft = "";
 /** Answers given here, kept for Send now until sent or the panel moves on. */
@@ -700,7 +704,7 @@ async function filedAct(a, b, d) {
     filed.threads = filed.threads.filter(x => x !== t);
     putAway("t", t.id, t.name, restOf(d, t) ? "" : t.pane); rail();
     await told({ ...b.dataset }, `t${t.id}`, "Could not remove it", () => { filed.threads.push(t); filedGone = null; },
-      () => ctx.api(`/api/desks/${d.id}/threads/${t.id}/remove`, {}));
+      filedAway(() => ctx.api(`/api/desks/${d.id}/threads/${t.id}/remove`, {})));
   } else if (a === "tn-pick" && w) await answer(d, w, b.dataset.v, undefined, w.kind !== "tell");
   else if ((a === "tn-due-done" || a === "tn-later") && w) { dueMore.delete(w.id); await dueAnswer(d, w, a === "tn-later" ? b.dataset.v : ""); }
   else if (a === "tn-due-more" && w) { dueMore.add(w.id); rail(); ctx.tocEl.querySelector(`.tn-due-in[data-w="${w.id}"]`)?.focus(); }
@@ -720,7 +724,7 @@ async function filedAct(a, b, d) {
     stepsForget(w.id);
     putAway("w", w.id, w.text); rail();
     await told({ ...b.dataset }, `w${w.id}`, "Could not put it away", () => { filed.turns.push(w); filedGone = null; },
-      () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, {}));
+      filedAway(() => ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, {})));
   } else if (a === "tn-gx") {
     // A card's open questions, put away as one, with one Undo (B1).
     const g = +b.dataset.g, ws = filed.turns.filter(x => x.ask_group === g && !x.answered_at);
@@ -728,12 +732,12 @@ async function filedAct(a, b, d) {
     filed.turns = filed.turns.filter(x => !ws.includes(x));
     putAway("g", g, `${ws.length} question${ws.length === 1 ? "" : "s"}: ${ws[0].text}`, "", ws.map(x => x.id)); rail();
     await told({ ...b.dataset }, `g${g}`, "Could not put them away", () => { filed.turns.push(...ws); filedGone = null; },
-      () => Promise.all(ws.map(x => ctx.api(`/api/desks/${d.id}/turns/${x.id}/remove`, {}))));
+      filedAway(() => Promise.all(ws.map(x => ctx.api(`/api/desks/${d.id}/turns/${x.id}/remove`, {})))));
   } else if (a === "sg-x" && s) {
     filed.suggestions = filed.suggestions.filter(x => x !== s);
     putAway("s", s.id, s.kind === "desk" ? s.folder : s.name || s.cmd); rail();
     await told({ ...b.dataset }, `s${s.id}`, "Could not put it away", () => { filed.suggestions.push(s); filedGone = null; },
-      () => ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/dismiss`, {}));
+      filedAway(() => ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/dismiss`, {})));
   } else if (a === "sg-open" && s) await openSuggested(d, s);
   else if (a === "sg-try" && s) await trySuggested(d, s);
   else if (a === "sg-for" && s) { sgFor.set(s.id, b.dataset.v); rail(); }
@@ -744,7 +748,7 @@ async function filedAct(a, b, d) {
     const ids = k === "g" && filedGone?.ids || [id];
     clearTimeout(filedTimer); filedGone = null; rail();
     if (await told({ ...b.dataset }, `${k}${id}`, "Could not put it back", () => {},
-      () => Promise.all(ids.map(x => ctx.api(`/api/desks/${d.id}/${PATH[k]}/${x}/restore`, {}))))) await getFiled(d.id, true);
+      () => filedWrite.catch(() => {}).then(() => Promise.all(ids.map(x => ctx.api(`/api/desks/${d.id}/${PATH[k]}/${x}/restore`, {})))))) await getFiled(d.id, true);
   }
   return true;
 }
