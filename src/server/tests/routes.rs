@@ -544,6 +544,14 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    ("GET", "/api/guide", None, Gate::Open, true),
+    (
+        "POST",
+        "/api/guide",
+        Some(r#"{"steps":true}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/panes/nope/delete", None, Gate::Desk, true),
     ("POST", "/api/panes/nope/restore", None, Gate::Desk, true),
     (

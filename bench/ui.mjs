@@ -307,6 +307,7 @@ async function main() {
     await section("every control, in every view", () => controlRows(cdp, p, url, browsed, base, token));
     await section("the first frame, in the reader's theme", () => firstFrameRows(p, url));
     await section("the about box", () => aboutRows(p, url));
+    await section("#191: Show me → and ▶ Watch it", () => guideRows(p, url, arrive));
     await section("the first ten minutes", () => startRows(p, url, arrive, base));
     await section("connecting an agent", () => connectRows(p, url, home, env));
     await section("an agent that is here", () => presenceRows(p, url, base, env, tmp));
@@ -4923,6 +4924,44 @@ async function aboutRows(p, url) {
   await p.press("Escape");
   const closed = await until(`document.querySelector("#about").hidden && !document.querySelector("#app").inert`);
   rows.push(["Escape closes it", closed, closed ? "and the page is live again" : "still open, or the page still inert"]);
+  return rows;
+}
+
+/** #191. Show me → on a page rings the control snyvi's own list names: the
+ *  link carries an id, never a selector, and an id the list lacks does
+ *  nothing at all. And Welcome's ▶ Watch it plays the loop in place: three
+ *  of the tour's frames in turn under their captions, which Escape closes. */
+async function guideRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const d = await arrive({ name: "show-me.md", body: "# Show me\n\n[Show me →](/show?f=pdf) · [Not one](/show?f=nope)\n" });
+  const origin = await p.ev("location.origin");
+  await p.goto(`${origin}/d/${d.id}`);
+  await p.pointerAway();
+  await until(`!!document.querySelector('#doc a[href="/show?f=pdf"]')`);
+  await p.clickOn('#doc a[href="/show?f=pdf"]');
+  const rung = await until(`(() => { const r = document.querySelector(".gd-ring.on"), b = document.querySelector("#btn-pdf-top"); if (!r || !b) return false;
+    const x = r.getBoundingClientRect(), y = b.getBoundingClientRect(); return y.width > 0 && x.left <= y.left && x.right >= y.right && x.top <= y.top && x.bottom >= y.bottom; })()`);
+  rows.push(["Show me → rings the control it names", rung, rung ? "a ring round Save as PDF, in the page's head" : "no ring round Save as PDF"]);
+  await until(`!document.querySelector(".gd-ring.on")`, 40);
+  await p.clickOn('#doc a[href="/show?f=nope"]');
+  await sleep(700);
+  const quiet = await p.ev(`!document.querySelector(".gd-ring.on") && !/Not a page/.test(document.querySelector("#toasts")?.textContent || "") && location.pathname === ${JSON.stringify(`/d/${d.id}`)}`);
+  rows.push(["and an id snyvi does not list does nothing", quiet, quiet ? "no ring, no toast, still on the page" : "a ring, a toast, or a move"]);
+
+  await p.goto(`${origin}/welcome`);
+  await p.pointerAway();
+  await until(`!!document.querySelector('[data-w="w-watch"]')`);
+  await p.clickOn('[data-w="w-watch"]');
+  const cap = `document.querySelector(".w-wcap li.on")?.textContent || ""`;
+  const playing = await until(`document.querySelectorAll(".w-wpic img").length === 3 && (${cap}).startsWith("1")`);
+  // A frame is 6.7 s; the second comes on its own.
+  const moved = playing && await until(`(${cap}).startsWith("2") && document.querySelectorAll(".w-wpic img.on").length === 1`, 90);
+  rows.push(["▶ Watch it plays the loop in place", playing && moved,
+    !playing ? "no three frames under their captions" : !moved ? `still on "${await p.ev(cap)}" after 9 s` : "frame 1, then frame 2 on its own, one picture showing at a time"]);
+  await p.press("Escape");
+  const closed = await until(`document.querySelector(".w-wbox")?.hidden && document.querySelector('[data-w="w-watch"]').getAttribute("aria-expanded") === "false" && location.pathname === "/welcome"`);
+  rows.push(["Escape closes it, and stays on Welcome", closed, closed ? "the box is closed and its button says so" : `the box is ${await p.ev(`document.querySelector(".w-wbox")?.hidden ? "closed" : "open"`)}, on ${await p.ev("location.pathname")}`]);
   return rows;
 }
 

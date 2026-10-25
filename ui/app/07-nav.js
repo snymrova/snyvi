@@ -47,15 +47,20 @@
       window.open(a.href, "_blank", "noopener");
       return;
     }
-    const d = u.pathname.match(/^\/d\/([a-z0-9]+)$/);
-    if (d) { e.preventDefault(); showDoc(d[1], true); return; }
-    const b = u.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
-    if (b) { e.preventDefault(); showBrowse(b[1], decodeURIComponent(b[2] || ""), true); return; }
-    if (u.pathname === "/") { e.preventDefault(); showHome(true); return; }
-    if (u.pathname === "/inbox") { e.preventDefault(); showInbox(true, u.search === "?recent"); return; }
-    if (u.pathname === "/connect") { e.preventDefault(); showConnect(true); return; }
-    if (u.pathname === "/sidebars") { e.preventDefault(); showSidebars(true); return; }
+    // Every way on from here stays in the viewer, so the browser's own
+    // navigation is stopped once, for all of them.
     e.preventDefault();
+    const d = u.pathname.match(/^\/d\/([a-z0-9]+)$/);
+    if (d) return showDoc(d[1], true);
+    const b = u.pathname.match(/^\/b\/([a-z0-9]+)(?:\/(.*))?$/);
+    if (b) return showBrowse(b[1], decodeURIComponent(b[2] || ""), true);
+    if (u.pathname === "/") return showHome(true);
+    if (u.pathname === "/inbox") return showInbox(true, u.search === "?recent");
+    if (u.pathname === "/connect") return showConnect(true);
+    if (u.pathname === "/sidebars") return showSidebars(true);
+    // Show me → on the What's new page (#191): an id, never a selector; the
+    // chunk looks it up in the binary's own list.
+    if (u.pathname === "/show") return chunk("guide").then(m => m.show(u, swapDesk, toast));
     toast("Not a page in snyvi", { sub: href, action: {
       label: "Open anyway",
       run: () => window.open(a.href, "_blank", "noopener"),

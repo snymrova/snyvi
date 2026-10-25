@@ -679,6 +679,12 @@ pub(crate) async fn pane_brief(
         untold: &untold,
         ship,
         routines: &routines,
+        updated: app
+            .whats_new
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|s| crate::whats_new::brief_line(s, now)),
     };
     let context = crate::brief::brief_of(
         &desk,

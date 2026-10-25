@@ -1,0 +1,140 @@
+# What a reader can do now that they couldn't before, one entry each, in the
+# PR that ships it (#191). The one source for four places:
+#
+#   - the What's new page snyvi files after an update (src/whats_new.rs),
+#     every entry newer than the version the reader had;
+#   - the dot on a new control, for its first fourteen days (ui/guide.js);
+#   - the line a panel's Claude is told after an update (src/brief.rs);
+#   - the release's notes on GitHub, and so snyvi.com's changelog
+#     (scripts/notes.mjs, run by .github/workflows/release.yml).
+#
+# Keys, every one a "string" on its own line -- scripts/notes.mjs reads this
+# file with no TOML library, so nothing fancier:
+#
+#   id     a few letters, unique
+#   since  the version it shipped in
+#   title  what it is called, as the window names it
+#   line   one or two sentences in the reader's words: what it does for them
+#   still  optional: a picture in docs/features/, at the reading column's
+#          width; src/features.rs lists every one, and a test holds the two
+#          in step
+#   show   optional: where it is, for Show me → and the dot: "desk", "doc"
+#          or "home", a space, then a selector in that view
+#   small  optional, "yes": one line under "Smaller things", no heading
+#
+# A fix needs no entry. Newest first.
+
+[[feature]]
+id = "whats-new"
+since = "1.52.0"
+title = "What's new"
+line = "After an update, snyvi files a What's new page: what changed since the version you had, each with Show me →. A dot marks each new control until you've used it."
+
+[[feature]]
+id = "first-steps"
+since = "1.52.0"
+title = "The first three steps"
+line = "A new desk shows you the three moments that matter: connect Claude, ask it something, read its page and answer. Welcome's ▶ Watch it plays the whole loop in twenty seconds."
+
+[[feature]]
+id = "brief-news"
+since = "1.52.0"
+title = "Claude hears what's new"
+line = "After an update, the Claude in a panel is told what changed, and the instructions snyvi gives it are brought up to date."
+small = "yes"
+
+[[feature]]
+id = "download"
+since = "1.51.0"
+title = "Save a picture, a film or a song"
+line = "Download sits in the media bar, and over any picture or film in a page. The file lands where your downloads go."
+
+[[feature]]
+id = "back-to-sender"
+since = "1.51.0"
+title = "Back to the panel that sent it"
+line = "A page's ✕ names the panel that sent it, and takes you there, even a panel in the back."
+
+[[feature]]
+id = "diagrams"
+since = "1.51.0"
+title = "Diagrams you can read"
+line = "No diagram opens too small to read. A long flow is drawn top-down, and Turn puts it back."
+
+[[feature]]
+id = "find-files"
+since = "1.51.0"
+title = "⌘K finds files"
+line = "Ctrl K (⌘K on a Mac) finds files by name in your desks' folders, under the documents. Start with f: for files alone."
+
+[[feature]]
+id = "corner-still"
+since = "1.51.0"
+title = "A card or a toast holds still while you reach for it"
+line = "A card or a toast holds still while you reach for it."
+small = "yes"
+
+[[feature]]
+id = "chime"
+since = "1.51.0"
+title = "The chime always comes with a card that says what it was, and has its own switch"
+line = "The chime always comes with a card that says what it was, and has its own switch."
+small = "yes"
+
+[[feature]]
+id = "routines"
+since = "1.50.0"
+title = "Routines"
+line = "A line that comes back. Type check-seedlings · every day 07:30 in a desk's notes, and snyvi runs that command at that hour, in a panel in the back. What it did waits for you on Home."
+still = "routines.png"
+show = "desk .dk-note.new"
+
+[[feature]]
+id = "undo-waits"
+since = "1.50.0"
+title = "An Undo waits until the ✕ it undoes is done"
+line = "An Undo waits until the ✕ it undoes is done."
+small = "yes"
+
+[[feature]]
+id = "in-back"
+since = "1.49.0"
+title = "Panels in the back"
+line = "Run something without giving it a panel. A dev server or a watcher runs in the back, and the desk says when it needs you."
+still = "inback.png"
+show = "desk [data-a=back-new]"
+
+[[feature]]
+id = "friends-sturdier"
+since = "1.49.0"
+title = "Sending to a friend got sturdier"
+line = "Sending to a friend got sturdier."
+small = "yes"
+
+[[feature]]
+id = "pdf"
+since = "1.48.0"
+title = "Any page as a PDF"
+line = "Save as PDF sits at the top of every page, next to Copy all. Ctrl P (⌘P on a Mac) does the same."
+show = "doc #btn-pdf-top"
+
+[[feature]]
+id = "back-to-panels"
+since = "1.48.0"
+title = "A ✕ on a page takes you back to the panel you came from"
+line = "A ✕ on a page opened from a desk takes you back to the panel you came from."
+small = "yes"
+
+[[feature]]
+id = "dates"
+since = "1.47.0"
+title = "Dates on notes"
+line = "Put · fri after a note and it's due Friday. Home lists what's due, so nothing slips."
+still = "dates.png"
+show = "desk .dk-note.new"
+
+[[feature]]
+id = "approve"
+since = "1.47.0"
+title = "Approve a plan on its page"
+line = "A plan Claude sends for your go-ahead has Approve at its head, and the panel that wrote it hears your answer."

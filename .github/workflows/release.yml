@@ -102,7 +102,13 @@ jobs:
             echo "the draft $v was opened on $target, not $GITHUB_SHA; deleting it"
             gh release delete "$v" --yes
           fi
-          gh release create "$v" --draft --generate-notes --title "$v" --target "$GITHUB_SHA"
+          # What the version lets a reader do, from features.toml (#191), the
+          # same words the app's What's new page uses; GitHub's list of pull
+          # requests follows it. Every version since the last release
+          # published, so one never cut on its own is still told.
+          prev=$(gh release view --json tagName -q .tagName 2>/dev/null || true)
+          node scripts/notes.mjs "${v#v}" "${prev#v}" > "$RUNNER_TEMP/notes.md"
+          gh release create "$v" --draft --notes-file "$RUNNER_TEMP/notes.md" --generate-notes --title "$v" --target "$GITHUB_SHA"
 
   build:
     needs: create

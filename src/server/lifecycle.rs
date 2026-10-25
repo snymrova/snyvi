@@ -399,6 +399,15 @@ pub(crate) fn update_json(app: &App) -> serde_json::Value {
     };
     j["restart"] = pending_json(app);
     j["restarting"] = json!(app.restarting.load(Ordering::Relaxed));
+    // The last update's page, for two weeks (#191): the toast opens it and
+    // says how many things are new, and the page starts its dots from it.
+    let said = app.whats_new.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(w) = said
+        .as_ref()
+        .and_then(|s| crate::whats_new::fresh_json(s, crate::store::now()))
+    {
+        j["whats_new"] = w;
+    }
     j
 }
 

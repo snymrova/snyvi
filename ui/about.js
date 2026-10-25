@@ -77,16 +77,32 @@ function renderUpd() {
   drawCard(s);
   strip(s && s.card === "restarting" ? s.line : "");
   // Updated: once per landing, kept for the page it was first shown on, as a
-  // toast whose action is the release notes.
-  const at = u && u.last_applied;
-  if (!s && at && Date.now() / 1000 - at < 86400 && updFresh !== at) {
+  // toast. With the What's new page the daemon filed (#191) it says how many
+  // things are new and opens that page; without one -- an update with no
+  // entries -- it opens About, whose row has the release notes. An install
+  // over an older snyvi files the page too, but has no in-app apply for the
+  // page to fetch this chunk by: its page waits in the Inbox, counted.
+  const at = u && u.last_applied, wn = u && u.whats_new;
+  const when = Math.max(at || 0, (wn && wn.at) || 0), now = Date.now() / 1000;
+  if (!s && when && now - when < 86400 && updFresh !== when) {
     let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
-    updFresh = at;
-    if (seen !== String(at)) {
-      try { localStorage.setItem("snyvi.updated", String(at)); } catch {}
-      toast(`Updated to ${version}`, { sub: "your panels came back as they were", action: { label: "What's new", run: () => panel("about") } });
+    updFresh = when;
+    if (seen !== String(when)) {
+      try { localStorage.setItem("snyvi.updated", String(when)); } catch {}
+      const back = at && now - at < 86400 ? "your panels came back as they were" : `now snyvi ${version}`;
+      if (wn && wn.count) toast(`${wn.count} new thing${wn.count === 1 ? "" : "s"} ${wn.from ? `since ${wn.from}` : "in snyvi"}`, { sub: back, action: { label: "What's new", run: () => openDoc(wn.doc) } });
+      else toast(`Updated to ${version}`, { sub: back, action: { label: "What's new", run: () => panel("about") } });
     }
   }
+}
+
+/** A document, opened the way a row in the sidebar opens it: through the
+ *  page's own router for `a[data-id]`, so first paint carries no hook for
+ *  it (#191's toast). */
+function openDoc(id) {
+  const a = Object.assign(document.createElement("a"), { href: `/d/${id}`, hidden: true });
+  a.dataset.id = id;
+  document.body.append(a); a.click(); a.remove();
 }
 
 /** The card's words and buttons for state `s`, into `el`. Home's snyvi widget
@@ -440,6 +456,23 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 :root:not([data-side="0"]) #app:has(.w-first) { grid-template-columns: 0 minmax(0, 1fr) 0 !important; }
 :root:not([data-side="0"]) #app:has(.w-first) #side { display: none; }
 .w-tour { margin-top: 28px; }
+.w-trow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.w-watch { font: inherit; font-size: var(--fs-ui); color: var(--fg-2); background: none; border: 1px solid var(--rule-2); border-radius: var(--r-pill); padding: 2px 10px; cursor: pointer; transition: color var(--t), border-color var(--t); }
+.w-watch span { font-size: var(--fs-micro); margin-right: 2px; }
+.w-watch:hover { color: var(--fg); border-color: var(--fg-3); }
+.w-watch[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.w-wbox { margin-top: 14px; }
+.w-wpic { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise); cursor: pointer; }
+.w-wpic img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; opacity: 0; transition: opacity var(--dur-moment) var(--ease-out); }
+.w-wpic img.on { opacity: 1; }
+.w-wcap { display: flex; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; font-size: var(--fs-small); color: var(--fg-3); }
+.w-wcap li { flex: 1; padding-top: 6px; border-top: 2px solid var(--rule-2); transition: color var(--t), border-color var(--t); }
+.w-wcap li.on { color: var(--fg); border-color: var(--accent); }
+@media (prefers-reduced-motion: reduce) {
+  .w-wpic { aspect-ratio: auto; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; border: 0; background: none; cursor: default; }
+  .w-wpic img { position: static; height: auto; opacity: 1; border: 1px solid var(--rule-2); border-radius: var(--r-sm); }
+  .w-wcap li { color: var(--fg); border-color: var(--accent); }
+}
 .w-more { font: inherit; font-size: var(--fs-ui); color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
 .w-more span { display: inline-block; margin-left: 4px; transition: transform var(--t); }
 .w-more[aria-expanded="true"] span { transform: rotate(90deg); }
@@ -967,8 +1000,9 @@ export function welcome({ cap, places, tilde, mascot, esc, first }) {
     `<h1 class="doc-title">All your passion projects, in one calm place.</h1>` +
     `<p class="w-lede">Agents make it easy to start. <b>snyvi helps you finish.</b> Give each project a desk: its folder, its agents side by side, and everything they write kept.</p>` +
     ask + `<p class="w-priv">No account. Nothing leaves this machine. Nothing is ever deleted.</p>` +
-    `<div class="w-tour"><button type="button" class="w-more" data-w="w-tour" aria-expanded="false" aria-controls="w-tbox">How snyvi works <span aria-hidden="true">▸</span></button>` +
-    `<div id="w-tbox" class="w-tbox" hidden></div></div></div>`;
+    `<div class="w-tour"><div class="w-trow"><button type="button" class="w-more" data-w="w-tour" aria-expanded="false" aria-controls="w-tbox">How snyvi works <span aria-hidden="true">▸</span></button>` +
+    `<button type="button" class="w-watch" data-w="w-watch" aria-expanded="false" aria-controls="w-wbox"><span aria-hidden="true">▶</span> Watch it · 20 s</button></div>` +
+    `<div id="w-wbox" class="w-wbox" hidden></div><div id="w-tbox" class="w-tbox" hidden></div></div></div>`;
 }
 
 /* How snyvi works, told by the mascot, in place under the question: one
@@ -1061,6 +1095,47 @@ function tourAhead(i) {
   tourNext = document.createElement("video");
   tourNext.muted = true; tourNext.preload = "auto"; tourNext.src = tourClip(i + 1, tourDark());
 }
+/* ▶ Watch it (#191): the whole loop in twenty seconds, in place under the
+ * question -- three of the tour's own frames, one after the other under
+ * their captions: you ask Claude, the plan lands here, you answer. A button,
+ * never a picture on the page (12 Oct: a picture there confused a reader
+ * before they knew what snyvi was), and the frames are the binary's, so it
+ * plays offline. The press on the picture plays it again; Esc or the button
+ * closes it. With reduced motion the three frames sit side by side. */
+const WATCH = [["ready", "1 · You ask Claude"], ["plan", "2 · The plan lands here"], ["turn", "3 · You answer"]];
+const WATCH_MS = 6700;
+let watchClock = 0;
+function watchGo(box) {
+  const t = box && box.querySelector(".w-tour"), wb = t && t.querySelector(".w-wbox"), btn = t && t.querySelector(".w-watch");
+  if (!wb) return;
+  clearTimeout(watchClock);
+  const open = wb.hidden;
+  wb.hidden = !open; btn.setAttribute("aria-expanded", open);
+  if (!open) { wb.replaceChildren(); return; }
+  const dark = tourDark();
+  wb.innerHTML = `<div class="w-wpic" role="img" aria-label="You ask Claude in a panel, its plan lands here as a page, and you answer it">` +
+    WATCH.map(([p], i) => `<img src="${tourPic(p, dark)}" width="800" height="450" alt="" decoding="async"${i ? "" : ' class="on"'}>`).join("") +
+    `</div><ol class="w-wcap">${WATCH.map(([, cap], i) => `<li${i ? "" : ' class="on"'}>${cap}</li>`).join("")}</ol>`;
+  // Esc from the button or the picture: on the tour's row, once.
+  if (!t.dataset.wkeys) {
+    t.dataset.wkeys = "1";
+    t.addEventListener("keydown", e => {
+      if (e.key !== "Escape" || wb.hidden || !(e.target === btn || wb.contains(e.target))) return;
+      e.stopPropagation(); watchGo(box); btn.focus();
+    });
+  }
+  if (tourCalm()) return;
+  const imgs = wb.querySelectorAll("img"), caps = wb.querySelectorAll("li");
+  const step = i => {
+    imgs.forEach((x, k) => x.classList.toggle("on", k === i));
+    caps.forEach((x, k) => x.classList.toggle("on", k === i));
+    if (i < WATCH.length - 1) watchClock = setTimeout(() => step(i + 1), WATCH_MS);
+  };
+  step(0);
+  wb.querySelector(".w-wpic").addEventListener("click", () => { clearTimeout(watchClock); step(0); });
+  btn.focus();
+}
+
 /** The two ways in: a folder the reader has, or one snyvi makes. */
 const askBtns = quiet => quiet
   // Got another project?'s: text buttons, under the card's one accent Open.
@@ -1128,6 +1203,7 @@ export async function welcomeAct(c, b, made) {
     f.addEventListener("submit", e => { e.preventDefault(); makeNew(c, f, inp.value); });
     inp.focus();
   } else if (w === "w-tour" || w === "w-tnext" || w === "w-tback") tourGo(box, w, c.mascotHead);
+  else if (w === "w-watch") watchGo(box);
   else if (w === "w-back" && ask) askAgain(ask);
   else if (w === "w-under") {
     // The desktop's own dialog, as Choose its folder… opens; what it answers

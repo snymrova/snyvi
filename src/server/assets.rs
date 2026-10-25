@@ -104,6 +104,10 @@ pub(crate) const PLAN_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/plan.js
 /// A friend's page (`/friend/{id}`, 1.49), fetched when it opens.
 pub(crate) const FRIEND_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/friend.js"));
 
+/// What's new and the first three steps (#191): Show me →, the dots on new
+/// controls, and a first desk's rings. Fetched when one of them is wanted.
+pub(crate) const GUIDE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/guide.js"));
+
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
 
@@ -1030,6 +1034,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("player.js", PLAYER_JS, JS),
     ("plan.js", PLAN_JS, JS),
     ("friend.js", FRIEND_JS, JS),
+    ("guide.js", GUIDE_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.

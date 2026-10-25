@@ -201,6 +201,9 @@ pub struct App {
     /// Friends: the daemon's own keys once read, the pairings under way, and
     /// the link's wake-up. See `api_peer`, `peer_link` and `crate::peer`.
     pub peers: api_peer::Peers,
+    /// What the last update's page told (`crate::whats_new`), for the update
+    /// block, `/api/guide` and a panel's brief.
+    pub whats_new: std::sync::Mutex<Option<crate::whats_new::Said>>,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -351,7 +354,18 @@ fn new_app(
         update_sent: Default::default(),
         usage: Default::default(),
         peers: Default::default(),
+        whats_new: std::sync::Mutex::new(crate::whats_new::read(&paths.data_dir)),
     })
+}
+
+/// About's switches, and the first desk's steps with What's new's table
+/// (`/api/guide`, #191): small reads and their one write each. Their own
+/// function so `router` stays one screen; the route table counts these too.
+fn setting_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/brief", get(brief_setting).post(set_brief_setting))
+        .route("/api/asides", get(asides_setting).post(set_asides_setting))
+        .route("/api/guide", get(guide).post(set_guide))
 }
 
 /// A friend's snyvi, `/api/peers/*` and Send to… (`api_peer`, docs/PEER.md):
@@ -662,8 +676,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/git", get(desk_git))
         .route("/api/desks/{id}/park", post(park_desk))
         .route("/api/desks/{id}/week", post(desk_week))
-        .route("/api/brief", get(brief_setting).post(set_brief_setting))
-        .route("/api/asides", get(asides_setting).post(set_asides_setting))
+        .merge(setting_routes())
         .merge(pane_routes())
         .merge(account_routes())
         .merge(thread_routes())
@@ -801,6 +814,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // and `update::first_start` is still counting it -- and before it
     // answers anything, so health never shows a version as ready that is
     // now running.
+    // The version the last in-app update landed, read before this start's
+    // apply writes over it: where a library older than What's new's count
+    // was told from (`whats_new::due`).
+    let applied_before = leaving.update.as_ref().and_then(|u| u.state().applied);
     if let Some(u) = &leaving.update {
         match u.note_started(planned.unwrap_or(false), crate::store::now()) {
             Some(crate::update::Started::Applied(v)) => {
@@ -823,6 +840,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     spawn_peer_link(leaving.clone());
     // Only once this daemon holds the port: one about to exit does neither.
     spawn_chores(&paths);
+    whats_new_at_start(&leaving, applied_before).await;
     eprintln!("snyvi {VERSION} listening on http://{addr}");
     axum::serve(nodelay(listener), router)
         .with_graceful_shutdown(asked_to_stop(stop_rx, told))
@@ -916,6 +934,60 @@ fn spawn_chores(paths: &Paths) {
             eprintln!("snyvi: cleared {gone} pasted picture(s) older than a week");
         }
     });
+}
+
+/// What's new (#191), at the first start of a newer version than this
+/// library was told about: the page filed, the skill brought up to date, and
+/// the count kept (`crate::whats_new`). Before the daemon answers anything,
+/// so the first update block a page reads already names the page and its
+/// toast says what is new rather than only the version. Nothing here may
+/// keep a daemon from starting: a step that fails says so and is left.
+async fn whats_new_at_start(app: &Arc<App>, applied_before: Option<String>) {
+    use crate::whats_new::{self, Due};
+    let Ok(running) = semver::Version::parse(VERSION) else {
+        return;
+    };
+    let data = app.paths.data_dir.clone();
+    let said = whats_new::read(&data);
+    let empty = app.store.count().unwrap_or(0) == 0
+        && app.store.desks().map(|d| d.is_empty()).unwrap_or(false);
+    let now = crate::store::now();
+    let told = match whats_new::due(said.as_ref(), &running, empty, applied_before.as_deref()) {
+        Due::Nothing => return,
+        Due::Note => whats_new::told(&running, None, &[], None, now),
+        Due::Page { from, entries } => {
+            let doc = match whats_new::write_page(&data, from.as_ref(), &entries) {
+                Ok(path) => {
+                    let payload = Payload {
+                        path: Some(path.to_string_lossy().into_owned()),
+                        cwd: Some(whats_new::page_dir(&data).to_string_lossy().into_owned()),
+                        title: Some("What's new in snyvi".into()),
+                        workflow: Some("What's new".into()),
+                        origin: Some("home".into()),
+                        sender: Some("snyvi".into()),
+                        ..Default::default()
+                    };
+                    receive_and_emit(app, payload).await.ok().map(|r| r.doc.id)
+                }
+                Err(e) => {
+                    eprintln!("snyvi: could not write the What's new page: {e:#}");
+                    None
+                }
+            };
+            whats_new::told(&running, from.as_ref(), &entries, doc, now)
+        }
+    };
+    let skill = tokio::task::spawn_blocking(crate::setup::sync_skill).await;
+    if let Ok(Ok(Some(dir))) = skill {
+        eprintln!(
+            "snyvi: brought the snyvi skill in {} up to date",
+            dir.display()
+        );
+    }
+    if let Err(e) = whats_new::write(&data, &told) {
+        eprintln!("snyvi: could not note what's new: {e:#}");
+    }
+    *app.whats_new.lock().unwrap_or_else(|e| e.into_inner()) = Some(told);
 }
 
 /// A document in, the plain way: rendered and stored off the executor, then
