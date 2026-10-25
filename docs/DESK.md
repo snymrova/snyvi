@@ -23,6 +23,13 @@ the questions the design left open.
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
 | A desk's links in the rail's foot, the hidden ones too | `desks.links`, JSON, `src/links.rs` | yes |
+| A routine: its line, cadence, Waits list, limits, its panel, the command file's hash, and its runs | `routines`, `routine_runs`, `src/routine.rs` | yes; a run under way when the daemon stops is ended, said so |
+
+**A routine (1.50) is the one process the daemon starts on its own** --
+at the hour the reader set, their own allowed slash command, in a panel in
+the back (`docs/TERMINAL.md` §9b). It never restarts a pane the reader
+had running, and a run that was under way when the daemon stopped is not
+started again: it is ended, and the next hour runs.
 
 **The daemon never respawns a process; the window does.** A daemon that starts
 finds every pane stopped and leaves them so. A daemon that respawned eight

@@ -1085,6 +1085,8 @@ function yourWeek(j) {
     n.ticked ? `${n.without_you} of ${plural(n.ticked, "line")} ticked with nothing asked of you` : "",
     n.median_s ? `a line to its tick: ${n.median_s < 86400 ? `${Math.max(1, Math.round(n.median_s / 3600))} h` : `${Math.round(n.median_s / 86400)} d`}, the median` : "",
     n.shipped ? `told ${n.told} of ${n.shipped} shipped in thirty days` : "",
+    // A desk's routines (1.50): what ran by itself, and what it asked of you.
+    n.routine_runs ? `routines ran ${plural(n.routine_runs, "time")}${n.routine_waits ? `, ${n.routine_waits} waited on you` : ""}` : "",
     w.waited ? `${plural(w.waited, "thing")} waiting on you` : "",
   ].filter(Boolean);
   const field = (k, label, ph, p, sub) => p ? `<label class="hm-wk-f"><span class="hm-wk-k">${label}</span><input data-hm="wkf" data-k="${k}" maxlength="200" placeholder="${ph}" value="${esc(d[k])}" aria-label="${label}"><span class="fact" data-tip="${esc(sub)}">${name(p.desk)}</span></label>` : "";

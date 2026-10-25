@@ -123,6 +123,11 @@ The agents at that desk read them, say how far they've got, and tick one off
 with the commit it went into. Home shows every desk's list and where each was
 left.
 
+A line can come back on its own, too. Write `newsroom · every day 07:30`, and
+at that hour snyvi starts the project's own `/newsroom` in a panel in the
+back. What you said waits for you (a publish, a deploy) comes back as a card
+to answer, and your answer starts the next run.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/home-dark.webp">

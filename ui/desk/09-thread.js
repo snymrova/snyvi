@@ -21,6 +21,10 @@ let filed = { threads: [], turns: [], suggestions: [] }, filedAt = null, filedGe
  *  text, pane, ids }, a thread's pane when it was that panel's, so its Undo
  *  stays there; for "g", a card's open questions put away as one, by `ids`. */
 let filedGone = null, filedTimer = 0;
+/* The write a ✕ here is making. Its Undo waits for it: a restore that
+ * reached the daemon before its remove would be undone by the remove. */
+let filedWrite = Promise.resolve();
+const filedAway = call => () => (filedWrite = call());
 /** The field open on a thread or a turn: { kind: "rename" | "other" | "change", id }. */
 let thField = null, thDraft = "";
 /** Answers given here, kept for Send now until sent or the panel moves on. */
@@ -343,6 +347,16 @@ const runsHere = v => !!(v && v.status.running && v.status.agent_in && /^[0-9a-f
 function runRow(d, w, n, from, esc) {
   // A walk-through of several (#164) is a card of its own (16-steps.js).
   if (w.options && w.options.length) return stepsRow(d, w, n, from, esc);
+  // A routine's card (1.50): Run starts the command as its panel's process.
+  const rt = rtPane(w.pane);
+  if (rt) {
+    return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` +
+      `<code class="sg-cmd tn-cmd">${esc(w.cmd)}</code>` + byHtml(w, d, esc, ` · ${rt.name}`) +
+      `<div class="tn-acts"><button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="Run" data-tip="Run it in ${esc(rt.name)}'s panel" data-tip-sub="As that panel's process, in the desk's folder with its keys">Run</button>` +
+      `<button type="button" class="tn-opt quiet" data-a="tn-copy" data-w="${w.id}" data-c="${esc(w.cmd)}">Copy</button>` +
+      `<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
+      `</li>` + errLine(`w${w.id}`, esc);
+  }
   const here = runsHere(views.get(w.pane));
   const run = here
     ? `<button type="button" class="tn-opt" data-a="tn-run" data-w="${w.id}" data-tip="Run it in panel ${n}" data-tip-sub="Typed into its prompt as a ! command, after anything typed there. Its output goes to the agent">Run in panel ${n}</button>`
@@ -367,8 +381,8 @@ const sendsHere = v => idle(v) && runsHere(v);
 /** An answer given here: what was said, and Send now while the panel that
  *  asked is idle; otherwise it says where the answer will go. */
 function saidRow(d, w, esc) {
-  const n = slotOf(d, w.pane), v = views.get(w.pane);
-  const now = sendsHere(v)
+  const n = slotOf(d, w.pane), v = views.get(w.pane), rt = rtPane(w.pane);
+  const now = rt ? `<span class="tn-wait">starts ${ctx.esc(rt.name)}'s next run</span>` : sendsHere(v)
     ? `<button type="button" class="tn-opt" data-a="tn-send" data-w="${w.id}" data-tip="Send now" data-tip-sub="Types it into panel ${n} and presses Enter">Send now</button>`
     : `<span class="tn-wait">${n ? `goes with your next message to panel ${n}` : "goes to the next panel that asks"}</span>`;
   return `<li class="dk-turn said">${qHtml(w, esc)}<p class="tn-by">You said <b>${esc(w.answer)}</b></p>` +
@@ -561,7 +575,8 @@ async function answer(d, w, text, again = { a: "tn-pick", w: String(w.id), v: te
   w.answered_at = Date.now() / 1000; w.answer = text.trim();
   // A dialog the mod holds is answered by this; nothing is left to send. Nor
   // is a command Run typed: its output is the answer, already on its way.
-  if (w.via !== "dialog" && send) sendable.set(w.id, true);
+  // A routine's answers start its next run (routine_run), so are not typed.
+  if (w.via !== "dialog" && send && !rtPane(w.pane)) sendable.set(w.id, true);
   rail();
   if (await told(again, `w${w.id}`, "Could not answer", () => { Object.assign(w, was); sendable.delete(w.id); },
     () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.answer }))) await getFiled(d.id, true);
@@ -689,7 +704,7 @@ async function filedAct(a, b, d) {
     filed.threads = filed.threads.filter(x => x !== t);
     putAway("t", t.id, t.name, restOf(d, t) ? "" : t.pane); rail();
     await told({ ...b.dataset }, `t${t.id}`, "Could not remove it", () => { filed.threads.push(t); filedGone = null; },
-      () => ctx.api(`/api/desks/${d.id}/threads/${t.id}/remove`, {}));
+      filedAway(() => ctx.api(`/api/desks/${d.id}/threads/${t.id}/remove`, {})));
   } else if (a === "tn-pick" && w) await answer(d, w, b.dataset.v, undefined, w.kind !== "tell");
   else if ((a === "tn-due-done" || a === "tn-later") && w) { dueMore.delete(w.id); await dueAnswer(d, w, a === "tn-later" ? b.dataset.v : ""); }
   else if (a === "tn-due-more" && w) { dueMore.add(w.id); rail(); ctx.tocEl.querySelector(`.tn-due-in[data-w="${w.id}"]`)?.focus(); }
@@ -709,7 +724,7 @@ async function filedAct(a, b, d) {
     stepsForget(w.id);
     putAway("w", w.id, w.text); rail();
     await told({ ...b.dataset }, `w${w.id}`, "Could not put it away", () => { filed.turns.push(w); filedGone = null; },
-      () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, {}));
+      filedAway(() => ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, {})));
   } else if (a === "tn-gx") {
     // A card's open questions, put away as one, with one Undo (B1).
     const g = +b.dataset.g, ws = filed.turns.filter(x => x.ask_group === g && !x.answered_at);
@@ -717,12 +732,12 @@ async function filedAct(a, b, d) {
     filed.turns = filed.turns.filter(x => !ws.includes(x));
     putAway("g", g, `${ws.length} question${ws.length === 1 ? "" : "s"}: ${ws[0].text}`, "", ws.map(x => x.id)); rail();
     await told({ ...b.dataset }, `g${g}`, "Could not put them away", () => { filed.turns.push(...ws); filedGone = null; },
-      () => Promise.all(ws.map(x => ctx.api(`/api/desks/${d.id}/turns/${x.id}/remove`, {}))));
+      filedAway(() => Promise.all(ws.map(x => ctx.api(`/api/desks/${d.id}/turns/${x.id}/remove`, {})))));
   } else if (a === "sg-x" && s) {
     filed.suggestions = filed.suggestions.filter(x => x !== s);
     putAway("s", s.id, s.kind === "desk" ? s.folder : s.name || s.cmd); rail();
     await told({ ...b.dataset }, `s${s.id}`, "Could not put it away", () => { filed.suggestions.push(s); filedGone = null; },
-      () => ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/dismiss`, {}));
+      filedAway(() => ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/dismiss`, {})));
   } else if (a === "sg-open" && s) await openSuggested(d, s);
   else if (a === "sg-try" && s) await trySuggested(d, s);
   else if (a === "sg-for" && s) { sgFor.set(s.id, b.dataset.v); rail(); }
@@ -733,7 +748,7 @@ async function filedAct(a, b, d) {
     const ids = k === "g" && filedGone?.ids || [id];
     clearTimeout(filedTimer); filedGone = null; rail();
     if (await told({ ...b.dataset }, `${k}${id}`, "Could not put it back", () => {},
-      () => Promise.all(ids.map(x => ctx.api(`/api/desks/${d.id}/${PATH[k]}/${x}/restore`, {}))))) await getFiled(d.id, true);
+      () => filedWrite.catch(() => {}).then(() => Promise.all(ids.map(x => ctx.api(`/api/desks/${d.id}/${PATH[k]}/${x}/restore`, {})))))) await getFiled(d.id, true);
   }
   return true;
 }

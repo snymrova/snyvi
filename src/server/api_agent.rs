@@ -225,6 +225,7 @@ pub(crate) async fn pane_agent(
         }
     }
     let (session, stopped) = (b.session.as_deref(), b.stopped.as_deref());
+    super::routine_run::heard(&app, &id, stopped, b.stop.as_ref());
     if let Some(handoff) = super::pipeline_run::heard(&app, &id, session, stopped, b.stop.as_ref())
     {
         return Json(handoff).into_response();
@@ -654,7 +655,7 @@ pub(crate) async fn pane_brief(
         .filter(|p| p.removed_at == 0)
         .map(|p| p.name)
         .collect();
-    let (threads, waiting, cards, untold, ship) = app
+    let (threads, waiting, cards, untold, ship, routines) = app
         .store
         .clocked(|c, now| {
             Ok((
@@ -666,6 +667,7 @@ pub(crate) async fn pane_brief(
                 crate::thread::suggestions(c, desk.id)?,
                 crate::told::untold(c, desk.id, now)?,
                 crate::week::ship_line(c, desk.id, now)?,
+                crate::routine::for_desk(c, desk.id)?,
             ))
         })
         .unwrap_or_default();
@@ -676,6 +678,7 @@ pub(crate) async fn pane_brief(
         cards: &cards,
         untold: &untold,
         ship,
+        routines: &routines,
     };
     let context = crate::brief::brief_of(
         &desk,
@@ -811,7 +814,11 @@ pub(crate) async fn pane_changes(
     let answers = app
         .store
         .clocked(|c, now| {
-            let mut a = crate::thread::take_untold(c, desk.id, &id, &live, now)?;
+            // A routine's answers are its own, even with its panel gone: the
+            // next session it starts carries them (`routine_run`).
+            let mut held = live.clone();
+            held.extend(crate::routine::panes(c, desk.id)?);
+            let mut a = crate::thread::take_untold(c, desk.id, &id, &held, now)?;
             a.extend(crate::thread::quiet_asks(c, desk.id, &id, now)?);
             Ok(a)
         })
@@ -950,6 +957,68 @@ pub(crate) struct SuggestBody {
     /// Several dated lines as one set, a launch's (`crate::launch`).
     #[serde(default)]
     pub(crate) lines: Vec<crate::launch::Line>,
+    /// A routine's cadence (`crate::routine`): the line is offered as one.
+    #[serde(default)]
+    pub(crate) every: Option<String>,
+    #[serde(default)]
+    pub(crate) waits: Option<Vec<String>>,
+}
+
+/// An agent offers a routine (1.50): a row under Routines with Accept…, and
+/// nothing more. It is not allowed, does not ring and has no panel until the
+/// reader saves its sheet; the command must be on disk already.
+fn suggest_routine(
+    app: &App,
+    placed: &crate::desk::Placed,
+    pane: &str,
+    b: &SuggestBody,
+    every: &str,
+) -> Response {
+    let no = |code: StatusCode, why: String| (code, Json(json!({ "error": why }))).into_response();
+    let Some(line) = crate::routine::from_line(&format!("{} · {every}", b.text.trim())) else {
+        return no(StatusCode::BAD_REQUEST, format!("\"{}\" with \"{every}\" is not a routine: `text` starts with a slash command's name and `every` says when, like `every day 07:30`", b.text.trim()));
+    };
+    if crate::routine::hash_of(std::path::Path::new(&placed.root), &line.cmd).is_none() {
+        return no(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "there is no .claude/commands/{}.md in this desk's folder",
+                line.cmd
+            ),
+        );
+    }
+    let waits = b.waits.clone().unwrap_or_default().join("\n");
+    let Some(waits) = crate::routine::waits_ok(&waits) else {
+        return no(
+            StatusCode::BAD_REQUEST,
+            "`waits` takes up to 12 patterns of 200 characters".into(),
+        );
+    };
+    let by = if b.by.is_empty() {
+        "an agent"
+    } else {
+        b.by.as_str()
+    };
+    let offer = crate::routine::Offer { by, pane };
+    match app
+        .store
+        .clocked(|c, now| crate::routine::add(c, placed.desk_id, &line, &waits, "", &offer, now))
+    {
+        Ok(crate::routine::Added::Routine(r)) => {
+            super::routine_run::changed(app, placed.desk_id);
+            (
+                StatusCode::CREATED,
+                Json(json!({ "routine": r, "desk": placed.desk_name })),
+            )
+                .into_response()
+        }
+        Ok(crate::routine::Added::Full) => no(
+            StatusCode::CONFLICT,
+            format!("this desk keeps {} routines", crate::routine::PER_DESK),
+        ),
+        Ok(crate::routine::Added::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
 }
 
 /// An agent suggests a line for its own desk's list: `suggest_desk_note`. It
@@ -985,6 +1054,9 @@ pub(crate) async fn pane_suggest_note(
     };
     if !b.lines.is_empty() {
         return suggest_set(&app, placed.desk_id, &placed.desk_name, &id, &b);
+    }
+    if let Some(every) = b.every.as_deref().filter(|e| !e.trim().is_empty()) {
+        return suggest_routine(&app, &placed, &id, &b, every);
     }
     match app.store.suggest_desk_note(placed.desk_id, &b.text, &b.by) {
         Ok(crate::desk::Suggested::Note(mut note)) => {

@@ -1155,12 +1155,14 @@ pub fn suggest_desk_note(
     text: &str,
     due: &str,
     lines: &Value,
+    routine: &Value,
     by: &str,
 ) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/suggest"),
-        serde_json::json!({ "text": text, "due": due, "lines": lines, "by": by }),
+        serde_json::json!({ "text": text, "due": due, "lines": lines, "by": by,
+            "every": routine.get("every").unwrap_or(&Value::Null), "waits": routine.get("waits").unwrap_or(&Value::Null) }),
     )?;
     match resp.status().as_u16() {
         201 => Ok(resp.body_mut().read_json()?),

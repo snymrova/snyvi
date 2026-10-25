@@ -32,6 +32,7 @@ mod receive;
 mod render;
 mod reset;
 mod resolve;
+mod routine;
 mod screen;
 mod secrets;
 mod server;

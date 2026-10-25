@@ -94,6 +94,10 @@ pub fn split_at(text: &str, now: i64, off: UtcOffset) -> Option<(String, i64)> {
             before.as_str(),
             "at" | "by" | "on" | "due" | "until" | "before"
         );
+        // `every mon 9` is a routine's (`every`), never a date on Monday.
+        if before == "every" {
+            return None;
+        }
         let separator = matches!(before.as_str(), "·" | "," | "-" | "—" | "|");
         let ok = match needs {
             Needs::Nothing => true,
@@ -562,6 +566,8 @@ pub fn end_of_day(now: i64) -> i64 {
         })
         .unwrap_or(now)
 }
+
+pub mod every;
 
 #[cfg(test)]
 mod tests;

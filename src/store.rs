@@ -668,6 +668,8 @@ impl Store {
         conn.execute_batch(widget::SCHEMA)?;
         conn.execute_batch(crate::lately::SCHEMA)?;
         conn.execute_batch(crate::pipeline::SCHEMA)?;
+        // A desk's routines (1.50): their own tables, as threads have (`crate::routine`).
+        conn.execute_batch(crate::routine::SCHEMA)?;
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //

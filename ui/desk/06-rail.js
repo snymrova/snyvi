@@ -254,7 +254,8 @@ function rail() {
     (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
       (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
         `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "")),
-    notes: () => noteSec(d),
+    // A desk's routines under its notes, as one section (19-routine.js).
+    notes: () => noteSec(d) + routineSec(d),
     widgets: () => widgetSec(d),
   };
   const lay = ctx.layout ? ctx.layout() : null, off = new Set(lay ? lay.hidden : []);
@@ -590,11 +591,12 @@ function dueGuess(t) {
 function dueGuessDraw(inp) {
   const el = inp.parentElement?.querySelector(".dk-due-guess");
   if (!el) return;
-  const g = dueGuess(inp.value);
-  el.textContent = g ? `due ${g}` : "";
-  el.hidden = !g;
+  // A cadence is a routine's (19-routine.js), and wins over a date.
+  const r = everyChip(inp.value), g = r ? "" : dueGuess(inp.value);
+  el.textContent = r || (g ? `due ${g}` : "");
+  el.hidden = !(r || g);
   // The words scroll short of the chip rather than under it.
-  inp.style.paddingRight = g ? `${el.offsetWidth + 12}px` : "";
+  inp.style.paddingRight = r || g ? `${el.offsetWidth + 12}px` : "";
 }
 
 /** One line. A line being rewritten is a field in the row's own place, so the
@@ -1114,8 +1116,10 @@ async function getNotes(id, again) {
   getFriends();
   if (!again && (notesAt === id || notesGet === id)) return;
   notesGet = id;
-  // The panels' pipelines move with the same event (13-pipeline.js).
+  // The panels' pipelines move with the same event (13-pipeline.js), and
+  // the desk's routines (19-routine.js).
   pipesGet(id);
+  routinesGet(id);
   let j;
   try { j = await ctx.api(`/api/desks/${id}/notes`); }
   catch { notesGet = null; if (id === deskId) { notesOff = id; if (current()) rail(); } return; }
@@ -1291,6 +1295,8 @@ async function saveNote(again) {
   // Undo brings back the text it had.
   if (!text) return act({ dataset: { a: "note-x", n: String(f.id) } });
   try {
+    // A line the chip read as a routine is one, under Routines (19-routine.js).
+    if (f.kind === "new" && !pics.length && await routineAdd(d, text)) return;
     if (f.kind === "new") {
       const j = await ctx.api(`/api/desks/${d.id}/notes`, { text });
       if (j.note) notesKept.add(j.note.id);
