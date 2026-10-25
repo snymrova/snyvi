@@ -30,12 +30,16 @@ async function routinesGet(id) {
   let j;
   try { j = await ctx.api(`/api/desks/${id}/routines`); } catch { return; }
   if (id !== deskId) return;
-  rts = j.routines || []; rtsAt = id;
+  // Every notes event asks; the rail is drawn again only when what it shows
+  // moved, or a redraw would race a click on a card the event came for.
+  const next = j.routines || [], shown = rtsAt === id && rts.length > 0;
+  const moved = rtsAt !== id || JSON.stringify(next) !== JSON.stringify(rts);
+  rts = next; rtsAt = id;
   if (rtCmds.at !== id) {
     try { rtCmds = { at: id, list: (await ctx.api(`/api/desks/${id}/commands`)).commands || [] }; } catch {}
   }
   if (rtOpen) rtSheetGet(rtOpen.id, rtOpen.at);
-  if (current()) rail();
+  if (moved && (rts.length || shown || rtGone) && current()) rail();
 }
 
 /** The routine a panel runs for, on this desk. */
@@ -64,7 +68,7 @@ async function routineAdd(d, text) {
   const g = everyGuess(text);
   if (!g || !g.ok) return false;
   const j = await ctx.api(`/api/desks/${d.id}/routines`, { text });
-  if (j.routine) { rts = [...rts.filter(r => r.id !== j.routine.id), j.routine]; rtsAt = d.id; }
+  if (j.routine) { rts = [...rts.filter(r => r.id !== j.routine.id), j.routine]; rtsAt = d.id; if (current()) rail(); }
   routinesGet(d.id);
   return true;
 }

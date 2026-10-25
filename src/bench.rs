@@ -525,8 +525,11 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// always answer (a seat goes with its folder, the card's hash is what is
 /// allowed, the keys a widget names and the one command builder the runner,
 /// Try once and `widget check` share) took the musl build from 20.0 to just
-/// over it, with no crate added.
-const BINARY_MB: f64 = 20.5;
+/// over it, with no crate added. 20.5 until 1.50.0: routines (src/routine.rs,
+/// the cadence in src/due/every.rs, the runner in src/server/routine_run.rs
+/// and their six routes) took the builds from 20.3 and 20.5 MB to 20.5 and
+/// 20.7, with no crate added.
+const BINARY_MB: f64 = 21.0;
 
 /// Returns whether any row was over budget.
 ///
