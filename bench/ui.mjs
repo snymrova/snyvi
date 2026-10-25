@@ -4084,9 +4084,11 @@ async function findRows(cdp, base, token, env, tmp) {
   const p = new Driver(cdp, sessionId);
   const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   const listed = () => p.ev(`[...document.querySelectorAll("#palette-list li[data-i]")].map(li => [li.querySelector(".t")?.textContent || "", li.querySelector(".s")?.textContent || ""])`);
+  // The last search's rows are marked first: they have the file too, and a
+  // wait that found it there read the old list before the new one was drawn.
   const ask = async q => {
-    await p.ev(`(() => { const i = document.querySelector("#palette-input"); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return 1; })()`);
-    await until(`[...document.querySelectorAll("#palette-list li[data-i] .t")].some(t => t.textContent === "planxy188.md")`, 80);
+    await p.ev(`(() => { document.querySelectorAll("#palette-list li").forEach(li => li.dataset.stale = "1"); const i = document.querySelector("#palette-input"); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event("input", { bubbles: true })); return 1; })()`);
+    await until(`[...document.querySelectorAll("#palette-list li[data-i]:not([data-stale]) .t")].some(t => t.textContent === "planxy188.md")`, 80);
     return listed();
   };
   try {
@@ -4154,13 +4156,17 @@ async function senderRows(cdp, base, token) {
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
     await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
-    const noPanel = await send(null, "From no panel");
+    // A page sent with no panel is on no desk's list at all, so the one with
+    // no sender here came from a panel that has since closed: the desk keeps
+    // it, and no panel is there to go back to.
+    const pd = (await post(`/api/desks/${desk}/panes`, { back: true })).pane.id;
+    const noPanel = await send(pd, "From no panel");
+    await post(`/api/panes/${pd}/delete`);
     const fromA = await send(pa, "Plan from panel 1");
     const fromC = await send(pc, "From the back");
     await focusOn(pb);
 
     // A page no panel sent, for the rule's other side and the page's box.
-    // The docs list has it once the desk is asked again (app.js `deskDocs`).
     const plain = await read(noPanel);
     const plainTip = await q.ev(`${ex}.getAttribute("aria-label")`), plainTop = await q.ev(docTop);
     const plainFrom = await q.ev(`!!document.querySelector("#chrome .over-from")`);
