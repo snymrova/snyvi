@@ -18,6 +18,7 @@ mod api_friend;
 mod api_gallery;
 mod api_peer;
 mod api_pipeline;
+mod api_routine;
 mod api_thread;
 mod api_week;
 mod api_widget;
@@ -27,6 +28,7 @@ mod events;
 mod lifecycle;
 mod peer_link;
 mod pipeline_run;
+mod routine_run;
 #[cfg(test)]
 mod tests;
 mod widget_run;
@@ -41,6 +43,7 @@ use api_friend::*;
 use api_gallery::*;
 use api_peer::*;
 use api_pipeline::*;
+use api_routine::*;
 use api_thread::*;
 use api_week::*;
 use api_widget::*;
@@ -452,7 +455,8 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/api/gallery/pick", post(pick_gallery))
 }
 
-/// Pipelines (`api_pipeline`): the window's alone, on the desk gate.
+/// Pipelines (`api_pipeline`) and routines (`api_routine`): the window's
+/// alone, on the desk gate.
 fn pipeline_routes() -> Router<Arc<App>> {
     Router::new()
         .route(
@@ -461,6 +465,17 @@ fn pipeline_routes() -> Router<Arc<App>> {
         )
         .route("/api/desks/{id}/pipelines/{row}/edit", post(edit_pipeline))
         .route("/api/desks/{id}/pipelines/{row}/{act}", post(pipeline_act))
+        // Routines (1.50, `api_routine`): the same gate, the same promise.
+        .route(
+            "/api/desks/{id}/routines",
+            get(desk_routines).post(new_routine),
+        )
+        .route("/api/desks/{id}/commands", get(desk_commands))
+        .route(
+            "/api/desks/{id}/routines/{row}",
+            get(routine_sheet).post(save_routine),
+        )
+        .route("/api/desks/{id}/routines/{row}/{act}", post(routine_act))
 }
 
 /// Claude accounts (`api_accounts`): the list, adding one with its token,
@@ -708,6 +723,7 @@ fn spawn_runners(app: &Arc<App>) {
     crate::watch::spawn_ui_watcher(app.clone());
     widget_run::spawn(app.clone());
     pipeline_run::spawn(app.clone());
+    routine_run::spawn(app.clone());
 }
 
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {

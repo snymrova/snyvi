@@ -3,6 +3,7 @@ use crate::desk::{self, LeftOff, Mark};
 
 fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(crate::routine::SCHEMA).unwrap();
     conn.execute_batch(desk::SCHEMA).unwrap();
     conn.execute_batch(desk::POS_COLUMN).unwrap();
     conn.execute_batch(desk::HELD_COLUMN).unwrap();

@@ -118,6 +118,19 @@ impl Usage {
         all.remove(&account).is_some()
     }
 
+    /// Whether an account's sign-in no longer works, as last heard: a
+    /// routine does not start into a login screen.
+    pub(crate) fn is_broken(&self, account: i64) -> bool {
+        let all = self.broken.lock().unwrap_or_else(|e| e.into_inner());
+        all.contains_key(&account)
+    }
+
+    /// An account's five-hour window, as last heard.
+    pub(crate) fn five_hour(&self, account: i64) -> Option<crate::statusline::Limit> {
+        let all = self.quotas.lock().unwrap_or_else(|e| e.into_inner());
+        all.get(&account).and_then(|q| q.five_hour)
+    }
+
     pub(crate) fn broken(&self) -> serde_json::Value {
         let all = self.broken.lock().unwrap_or_else(|e| e.into_inner());
         all.iter()

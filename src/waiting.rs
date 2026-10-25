@@ -158,7 +158,10 @@ pub struct Waiting {
 pub fn rows(conn: &Connection, now: i64) -> Result<Vec<Waiting>> {
     let mut out: Vec<Waiting> = conn
         .prepare(
-            "SELECT id, left_off, left_off_at, left_off_about, left_off_by FROM desks
+            // A routine's left-off is said by the routine's name (1.50).
+            "SELECT id, left_off, left_off_at, left_off_about,
+                    COALESCE((SELECT r.name FROM routines r WHERE r.pane != '' AND r.pane = desks.left_off_pane
+                              AND r.removed_at = 0 LIMIT 1), left_off_by) FROM desks
              WHERE closed_at = 0 AND parked_at = 0 AND left_off != '' AND left_off_needs = 'you'
                AND left_off_at <= ?1 AND left_off_ok_at < left_off_at",
         )?

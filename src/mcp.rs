@@ -106,7 +106,11 @@ keep it. Suggest rarely and only what the user would want to track themselves; n
 or a to-do for this session. A desk holds only a few suggestions waiting at once. One short line, at most \
 200 characters. When the line has a natural day -- a launch step, a follow-up -- pass `due` in the user's words \
 (`fri 10`); at that hour snyvi raises one card on their On you list. A launch is `lines`: several dated lines as one \
-set.";
+set. A routine is `every`: a line that starts with one of this project's slash commands (`.claude/commands/<name>.md`) \
+and says when it comes back (`every day 07:30`, `every weekday 9`, `every mon 09:00`, `every 1st`), with `waits` the \
+Bash patterns that must wait for the user, such as a publish script. snyvi offers it under Routines; it runs, in a \
+panel in the back, only after the user saves it in its sheet. Offer one only when the user asked for something to \
+happen on its own.";
 
 const OFFER_DESCRIPTION: &str = "Offer to send one of the user's snyvi documents to one of their friends on \
 snyvi, by the friend's name (the desk brief lists them) and the document's id from send_document. Nothing is \
@@ -582,7 +586,8 @@ impl Session {
         let text = arg(args, "text");
         match self.pane.as_deref() {
             None => said("This session is not running in a snyvi desk, so there is no desk to write to.", true),
-            Some(p) => match client::suggest_desk_note(&self.paths, p, &text, &arg(args, "due"), args.get("lines").unwrap_or(&json!([])), self.by()) {
+            Some(p) => match client::suggest_desk_note(&self.paths, p, &text, &arg(args, "due"), args.get("lines").unwrap_or(&json!([])), args, self.by()) {
+                Ok(v) if v.get("routine").is_some() => said("Offered as a routine. The user sees it under Routines with Accept…, which opens its sheet: it runs only once they save it there. Mention it in your reply.", false),
                 Ok(v) if v.get("notes").is_some() => {
                     let n = v["notes"].as_array().map_or(0, Vec::len);
                     let undated: Vec<&str> = v["undated"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
@@ -781,7 +786,9 @@ fn suggest_spec() -> Value {
                         "text": { "type": "string" },
                         "due": { "type": "string", "description": "In the user's words: `28 oct 10`." }
                     }, "required": ["text"], "additionalProperties": false } },
-                "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." }
+                "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." },
+                "every": { "type": "string", "description": "Optional, for a routine: when the line's slash command comes back -- `every day 07:30`, `every weekday 9`, `every mon 09:00`, `every 1st`. `text` is then the command and its words, `newsroom`." },
+                "waits": { "type": "array", "maxItems": 12, "items": { "type": "string" }, "description": "With `every`: Bash patterns the routine must hand the user instead of running, as permission rules write them -- `python3 -I newsroom/publish.py *`." }
             },
             "additionalProperties": false
         },

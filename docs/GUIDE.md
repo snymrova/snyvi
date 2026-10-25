@@ -1180,6 +1180,29 @@ Suggested in the rail's corner, where nothing they do moves the page.
   due and what you did; nothing is typed into a panel. A Claude can
   suggest a line with a date (`suggest_desk_note`'s `due`) when the line
   has a natural day, a launch step or a follow-up.
+- **A routine comes back.** End a line with when it comes back -- `newsroom
+  · every day 07:30`, `bench main, every weekday 9`, `every mon 09:00`,
+  `every 1st` -- and when its first word is one of the project's slash
+  commands (`.claude/commands/newsroom.md`), it is not a note but a
+  routine: the chip reads **↻ every day 07:30** while you type, and Enter
+  puts it under **Routines**, a head of its own below Notes that shows only
+  once a desk has one. At its hour snyvi starts `/newsroom` in a panel in
+  the back, named by the line, as a fresh Claude in auto mode, under a
+  settings file snyvi writes from the routine's **Waits for you** list:
+  what is on it -- a publish script, a deploy -- the agent cannot run, and
+  hands you as a card instead. **Run** on that card starts the command as
+  the panel's process. Your answers on its questions start its next
+  session, `/newsroom continue: approve 1, 3`. The row's one line is its
+  state (**every day 07:30 · next tomorrow 7:30 · ran 12 min ago**), or why
+  it did not run: the desk is parked, the command file changed since you
+  allowed it (**Allow** in the row), the five-hour window is past its
+  limit. A daemon that was off at the hour runs it once when it starts, and
+  says how late. Its ⋯ has **Run now**, **Pause**, **Change…**, **History**
+  and **Remove from view**; its sheet has When, Waits for you and Limits
+  (25 minutes, then it stops; it waits past 80% of the five-hour window).
+  A Claude can offer one (`suggest_desk_note`'s `every` and `waits`), and
+  it runs only once you save its sheet. A line whose first word is no
+  command stays a note, and the chip says **every needs a /command**.
 - **A launch is a list.** When you say *launch*, Claude suggests its steps
   as one set of dated lines (`suggest_desk_note`'s `lines`, from the skill's
   `launch.md`): pictures and copy a week out, the site, the post, Show HN,

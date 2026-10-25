@@ -215,6 +215,8 @@ fn ring_due(app: &Arc<App>) {
         }
         Err(e) => eprintln!("snyvi: the clock for dates on notes: {e:#}"),
     }
+    // A routine whose hour has come starts in its panel in the back (1.50).
+    super::routine_run::ring(app);
     // And a thread shipped by a merge asks who should know, once (`crate::told`).
     match app.store.clocked(|c, now| crate::told::ask(c, now)) {
         Ok(desks) => {

@@ -85,6 +85,10 @@ pub struct Numbers {
     /// Threads told and threads shipped in the last thirty days.
     pub told: i64,
     pub shipped: i64,
+    /// The sessions the desks' routines ran this week, and the cards they
+    /// raised (1.50, `crate::routine::week`).
+    pub routine_runs: i64,
+    pub routine_waits: i64,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -221,12 +225,16 @@ pub fn numbers(conn: &Connection, from: i64, now: i64) -> Result<Numbers> {
         params![now - 30 * 86_400],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
+    // A database from before 1.50's tables has no routines to count.
+    let (routine_runs, routine_waits) = crate::routine::week(conn, from).unwrap_or((0, 0));
     Ok(Numbers {
         without_you,
         ticked,
         median_s,
         told,
         shipped,
+        routine_runs,
+        routine_waits,
     })
 }
 

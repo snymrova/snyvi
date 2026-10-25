@@ -419,6 +419,30 @@ and nothing here is bent by the hiding. One still going keeps its chip and
 its sheet (Pause, Stop, Go) until it ends: the window never hides a process
 it started.
 
+## 9b. Routines (1.50)
+
+The user decided, on 2026-10-24, that a desk may run its own slash command
+at an hour they set (plan 4f1379f4a4, `src/routine.rs`,
+`src/server/routine_run.rs`). A routine's prompt is the reader's line or the
+reader's card answer, at the reader's hour, under a settings file written
+from what the reader said waits for them. The window alone makes it, widens
+it or runs it now; an agent may only suggest it.
+
+- the prompt is `/<the line's head>`, and its first word must be a command
+  file under the desk's folder, hashed when the reader allowed it; a file
+  changed since does not run until they allow it again
+- a run is a new session with the prompt as one argument (`pane::Start::args`),
+  in a panel in the back, `--permission-mode auto` and a settings file that
+  denies the pipelines' `DENY` and every line of the routine's Waits list
+- the next session's prompt is the reader's answers on its `decide` cards,
+  numbered as asked, never the questions the agent wrote
+- Run on a routine's `run` card starts that command as the routine panel's
+  process, on the reader's click: what Run already did, without typing
+
+What it does not change: no token route makes, saves or runs a routine,
+nothing received is ever a routine's prompt, and bytes reach a PTY's input
+from the reader's keys alone.
+
 ## 10. Retired: Open terminal here (1.16)
 
 Desk note #81, "remove open terminal feature". Once desks shipped, the

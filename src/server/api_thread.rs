@@ -1281,6 +1281,8 @@ pub(crate) async fn desk_answer_turn(
         Ok(Some(turn)) => {
             log_answered(&app, &turn);
             threads_moved(&app, id);
+            // A routine's Run card starts its command in the routine's panel.
+            super::routine_run::answered(&app, &turn).await;
             Json(json!({ "turn": turn })).into_response()
         }
         Ok(None) => refused(StatusCode::CONFLICT, "it was answered already, or put away"),

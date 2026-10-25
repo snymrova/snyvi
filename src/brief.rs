@@ -74,6 +74,8 @@ pub struct Work<'a> {
     /// What the user said on Sunday they'd ship this week, on this desk,
     /// and when it is due (`week::ship_line`).
     pub ship: Option<(String, i64)>,
+    /// The desk's routines (1.50, `crate::routine`): never among its notes.
+    pub routines: &'a [crate::routine::Routine],
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -186,6 +188,7 @@ pub fn brief_of(
             }
         ));
     }
+    lines.extend(routine_lines(desk, slot, work.routines, now));
     lines.extend(thread_lines(desk, slot, work.threads, work.waiting));
     if let Some((text, due)) = &work.ship {
         lines.push(format!(
@@ -269,6 +272,78 @@ pub fn brief_of(
         ));
     }
     capped(lines)
+}
+
+/// The desk's routines: for the panel one runs in, what this run is and
+/// what waits for the user; for every other panel, that they are snyvi's
+/// to start and never theirs. Offers the user has not saved are not named.
+fn routine_lines(
+    desk: &Desk,
+    slot: i64,
+    routines: &[crate::routine::Routine],
+    now: i64,
+) -> Vec<String> {
+    let real: Vec<&crate::routine::Routine> = routines
+        .iter()
+        .filter(|r| r.suggested_by.is_empty() && r.removed_at == 0)
+        .collect();
+    let here = pane_in(&desk.panes, slot);
+    if let Some(r) = real.iter().find(|r| !here.is_empty() && r.pane == here) {
+        let mut s = format!(
+            "This panel is the routine \"{}\" ({}), run {} by snyvi in a panel in the back: its first words are the user's line or their answers on its cards. Ask each decision with ask; end with leave_off.",
+            cut(&r.name, 60),
+            r.every,
+            r.runs + 1
+        );
+        if !r.waits.is_empty() {
+            let w: Vec<String> = r
+                .waits
+                .iter()
+                .take(6)
+                .map(|w| format!("`{}`", cut(w, 60)))
+                .collect();
+            s.push_str(&format!(
+                " These wait for the user and are denied here: hand each over with hand_over run, never run them another way: {}.",
+                w.join(", ")
+            ));
+        }
+        if r.late_s > 0 {
+            s.push_str(&format!(" It started late by {}", ago_words(r.late_s)));
+            if r.last_at > 0 {
+                s.push_str(&format!(": the last run was {}", ago(now - r.last_at)));
+            }
+            s.push('.');
+        }
+        return vec![s];
+    }
+    if real.is_empty() {
+        return Vec::new();
+    }
+    let named: Vec<String> = real
+        .iter()
+        .take(4)
+        .map(|r| {
+            let last = if r.last_at > 0 {
+                format!(", ran {}, {}", ago(now - r.last_at), cut(&r.last_state, 30))
+            } else {
+                String::new()
+            };
+            format!("{} ({}{last})", cut(&r.name, 40), r.every)
+        })
+        .collect();
+    vec![format!(
+        "Routines on this desk, snyvi's to start at their hour, never yours: {}.",
+        named.join("; ")
+    )]
+}
+
+/// `13 h`, `2 d`: a span on its own.
+fn ago_words(s: i64) -> String {
+    match s {
+        ..=5399 => format!("{} min", (s / 60).max(1)),
+        5400..=172_799 => format!("{} h", (s + 1800) / 3600),
+        _ => format!("{} d", s / 86_400),
+    }
 }
 
 /// What the loop left open, ahead of the list: lines whose work landed on
@@ -1305,6 +1380,7 @@ mod tests {
             cards: &[],
             untold: &[("1.47 dates".into(), -3 * 86_400)],
             ship: None,
+            routines: &[],
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
         assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");
@@ -1313,6 +1389,56 @@ mod tests {
         ));
         assert!(b.contains("On the user (their On you list in snyvi): #0 try: Try it on 7871."));
         assert!(!b.contains("Old"));
+    }
+
+    /// 1.50: the routine's own panel is told what this run is and what
+    /// waits for the user; every other panel that routines are snyvi's; an
+    /// offer not yet saved is named to no one.
+    #[test]
+    fn the_brief_tells_a_routines_panel_what_waits_and_others_to_leave_it() {
+        let d = desk(5, None);
+        let now = 1_000_000;
+        let r = crate::routine::Routine {
+            name: "newsroom".into(),
+            cmd: "newsroom".into(),
+            every: "every day 07:30".into(),
+            pane: d.panes[4].id.clone(),
+            runs: 12,
+            waits: vec!["python3 -I newsroom/publish.py *".into()],
+            late_s: 13 * 3600,
+            last_at: now - 37 * 3600,
+            last_state: "done".into(),
+            ..Default::default()
+        };
+        let offer = crate::routine::Routine {
+            name: "bench".into(),
+            every: "every weekday 09:00".into(),
+            suggested_by: "panel 2".into(),
+            ..Default::default()
+        };
+        let all = [r, offer];
+        let work = Work {
+            routines: &all,
+            ..Work::default()
+        };
+        let mine = brief_of(&d, 5, &work, &[], &[], None, now);
+        assert!(
+            mine.contains(
+                "This panel is the routine \"newsroom\" (every day 07:30), run 13 by snyvi"
+            ),
+            "{mine}"
+        );
+        assert!(mine.contains("hand each over with hand_over run, never run them another way: `python3 -I newsroom/publish.py *`."), "{mine}");
+        assert!(
+            mine.contains("It started late by 13 h: the last run was 1 day ago."),
+            "{mine}"
+        );
+        let other = brief_of(&d, 1, &work, &[], &[], None, now);
+        assert!(other.contains("Routines on this desk, snyvi's to start at their hour, never yours: newsroom (every day 07:30, ran 1 day ago, done)."), "{other}");
+        assert!(
+            !other.contains("bench") && !mine.contains("bench"),
+            "an offer is named to no one"
+        );
     }
 
     /// 1.47: what is due today, a plan approved, whose a left-off is; and
