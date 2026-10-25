@@ -128,6 +128,16 @@ function deskItems(q) {
 /** `>` and a word: what snyvi can do, rather than what it holds. A static
  *  list; the menus' registry (CONTEXT-MENU.md, phase 5) is per element and
  *  has no list of its own to read yet. */
+/** The chime's switch (#190), as ui/corner.js reads it: `snyvi.chime`, or
+ *  off for a reader whose mascot was quiet before it had a switch of its own.
+ *  Turned on, the corner plays it once, so the reader knows the sound. */
+const chimeOn = () => { try { const v = localStorage.getItem("snyvi.chime"); return v ? v === "1" : document.documentElement.dataset.mascot !== "quiet"; } catch { return true; } };
+function chimeFlip(toast) {
+  const on = !chimeOn();
+  try { localStorage.setItem("snyvi.chime", on ? "1" : "0"); } catch {}
+  dispatchEvent(new CustomEvent("snyvi:chime", { detail: on }));
+  toast(on ? "Chime on" : "Chime off", { sub: on ? "two soft notes when something waits on you" : "what waits on you still rises, without a sound" });
+}
 const COMMANDS = [
   { cmd: "home", t: "Home", key: "h", s: "What needs you, the desks, and what is waiting" },
   { cmd: "inbox", t: "Inbox", key: "i", s: "Every document, newest first" },
@@ -141,6 +151,7 @@ const COMMANDS = [
   { cmd: "join", t: "Join a friend's code…", s: "They made one and told you", k: "pair friends" },
   { cmd: "sidebars", t: "Arrange sidebars", s: "Which sections each side has, in what order, and the widgets" },
   { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
+  { cmd: "chime", get t() { return chimeOn() ? "Silence the chime" : "Chime when something waits on you"; }, get s() { return chimeOn() ? "Two soft notes when an agent asks or hands you something, a note comes due, or an offer waits" : "Off: what waits on you rises without a sound"; }, k: "sound mute notification" },
   { cmd: "quiet", get t() { return document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot"; }, s: "snyvi's face at rest, nothing of it moving" },
   { cmd: "keys", t: "Keys", key: "?", s: `Every key, and ${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for the letters` },
   { cmd: "updates", t: "Check for updates", s: "Ask now, rather than at the next check" },
@@ -278,6 +289,7 @@ function pick(it) {
   if (it.theme) previewing = false;
   close();
   if (it.cmd === "parts") { parts(); return; }
+  if (it.cmd === "chime") { chimeFlip(d.peerCtx.toast); return; }
   if (it.friend) { d.peerCtx.friend(it.friend); return; }
   if (it.cmd === "pair" || it.cmd === "join") { const p = d.peerCtx, m = it.cmd === "join" ? "join" : ""; p.peer().then(x => x.pair(p, "", m), () => p.toast("Could not open the pairing sheet")); return; }
   if (it.cmd) {

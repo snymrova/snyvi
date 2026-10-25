@@ -24,6 +24,15 @@
  * pane's status), so every window agrees and an agent putting the same card
  * again does not bring it back. Nothing is deleted.
  *
+ * They hold still for a pointer on its way to them (#189). With focus
+ * following the pointer, a reader reaching from a panel across another
+ * for a card ("PR #108 · checks failing") gave the focus to the panel
+ * crossed, and the card was that panel's no more: it sank behind the foot
+ * as the pointer got there. So the stack keeps the panel it shows for a
+ * moment after the pointer takes another, and for as long as the pointer
+ * is in the rail; and a card the pointer is on outlives its time until
+ * the pointer leaves it.
+ *
  * The spring is the one motion here that is not the page's quiet ease: the
  * maker asked for cards that land like something with weight. It is
  * transform and opacity only, on the compositor, so the panels' canvases
@@ -31,6 +40,10 @@
  */
 
 const CARD_H = 30, CARD_GAP = 6, CARD_LIFT = 8, CARDS_SHOWN = 3;
+/** How long the stack keeps the panel it shows after the pointer took
+ *  another: long enough to cross into the rail, short enough that a reader
+ *  who meant the new panel sees its cards as they settle in it. */
+const CARDS_GRACE = 700;
 /** Far enough down that a card is wholly behind the foot. */
 const CARD_HIDE = CARD_H + CARD_LIFT + 4;
 
@@ -52,7 +65,7 @@ const SPRING = (() => {
 })();
 const stillPlease = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-let cardsEl = null, cardsPane = null, cardsTimer = 0, cardsUp = 0;
+let cardsEl = null, cardsPane = null, cardsTimer = 0, cardsUp = 0, cardsHoldTimer = 0;
 /** The cards drawn, by panel, id and kind. */
 const cardEls = new Map();
 
@@ -78,7 +91,7 @@ const cardsShut = new Set(), cardUndo = new Map();
  *  twelve hours, and once said it before the merge it named (#167). The
  *  merge is told where it belongs -- the notes tick, the thread's row says
  *  it -- and a closed PR is not news for the foot. */
-function cardsOf(d, v) {
+function cardsOf(d, v, onCard = false) {
   if (!v) return [];
   const out = [], now = Date.now() / 1000, t = paneThread(d, v.id), url = repoOf(d);
   const open = t && t.pr && (t.pr_state === "open" || (!t.pr_state && !t.merged));
@@ -89,7 +102,8 @@ function cardsOf(d, v) {
       host: repoName(url)?.host || "", at: 0, life: 0, by: "snyvi, from this panel's thread",
       tone: /pass|success/i.test(ci) ? "ok" : /fail|error/i.test(ci) ? "bad" : "" });
   }
-  for (const c of v.status.cards || []) if (!c.for || now < c.at + c.for) out.push({ ...c, life: c.for || 0 });
+  // A card whose time is up stays while the pointer is on the stack.
+  for (const c of v.status.cards || []) if (!c.for || now < c.at + c.for || (onCard && cardEls.has(`${v.id}:${c.id}:${c.kind}`))) out.push({ ...c, life: c.for || 0 });
   const closed = new Set(v.status.closed || []);
   return out.flatMap(c => {
     const k = `${v.id}:${c.id}`;
@@ -211,7 +225,11 @@ function cardMore(el, rest) {
  *  panel and every redraw of the rail; a call that changes nothing touches
  *  nothing. */
 function cards() {
-  const d = current(), v = d ? views.get(focused) : null;
+  const d = current(), held = cardsHeld(), v = d ? views.get(held && views.get(cardsPane) ? cardsPane : focused) : null;
+  // Looked at again while held, so the stack follows the focus once the
+  // pointer has gone back to the panels.
+  clearTimeout(cardsHoldTimer);
+  if (held) cardsHoldTimer = setTimeout(cards, 300);
   if (!cardsEl || !cardsEl.isConnected) {
     cardsEl = Object.assign(document.createElement("div"), { id: "dk-cards" });
     cardsEl.setAttribute("role", "list");
@@ -219,7 +237,8 @@ function cards() {
     cardsEl.addEventListener("click", cardClick);
     ctx.metaEl.before(cardsEl);
   }
-  const list = d ? cardsOf(d, v) : [], shown = list.slice(-CARDS_SHOWN).reverse();
+  const onCard = !!document.querySelector("#dk-cards .dk-card:hover");
+  const list = d ? cardsOf(d, v, onCard) : [], shown = list.slice(-CARDS_SHOWN).reverse();
   const swap = cardsPane !== (v ? v.id : null);
   cardsPane = v ? v.id : null;
   const key = c => `${v.id}:${c.id}:${c.kind}`, want = new Set(shown.map(key));
@@ -244,7 +263,16 @@ function cards() {
   // The next card whose time runs out takes itself off then.
   clearTimeout(cardsTimer);
   const next = Math.min(...list.filter(c => c.life && !c.undo).map(c => c.at + c.life));
-  if (Number.isFinite(next)) cardsTimer = setTimeout(cards, Math.max(0, next * 1000 - Date.now()) + 50);
+  if (Number.isFinite(next)) cardsTimer = setTimeout(cards, Math.max(onCard ? 300 : 0, next * 1000 - Date.now()) + 50);
+}
+
+/** Whether the stack keeps the panel it shows (#189): only when the focus
+ *  went to another panel by the pointer, not a click or a key; then a
+ *  moment after, the pointer crossing that panel on its way here, and for
+ *  as long as the pointer is in the rail, on a card or on On you. */
+function cardsHeld() {
+  if (!cardsPane || cardsPane === focused || focused !== hvFocusId) return false;
+  return performance.now() - hvFocusAt < CARDS_GRACE || !!(ctx.rail?.matches(":hover") || document.querySelector("#dk-cards .dk-card:hover, #onyou:hover"));
 }
 
 /** How far above the foot the cards reach: where the On you corner stands. */
@@ -252,7 +280,7 @@ const cardsLift = () => cardsUp ? cardsUp * (CARD_H + CARD_GAP) - CARD_GAP + CAR
 
 /** Off the desk: no stack, no timer. */
 function cardsDrop() {
-  clearTimeout(cardsTimer);
+  clearTimeout(cardsTimer); clearTimeout(cardsHoldTimer);
   for (const t of cardUndo.values()) clearTimeout(t);
   cardUndo.clear(); cardsShut.clear();
   cardEls.clear();

@@ -21,8 +21,9 @@
  * Claude's own dialog never rises
  * (09-thread.js `shown`), and a turn that has gone quiet -- its panel
  * closed, half an hour old, or its panel prompted since -- never rises or
- * rings. With no rail in view (folded, or a narrow window) nothing rises
- * over a panel: the pill lights, in the window's corner.
+ * rings. With no rail in view (folded, or a narrow window) it rises in the
+ * window's corner, over the pill: it used to only light the pill there, and
+ * the chime rang for a card no one could see (#190).
  *
  * It is the one corner every page has (ui/corner.js, plan b0bca0a11f): the
  * look is corner.js's, and so are the cards that rise from outside -- a page
@@ -49,7 +50,7 @@ const RISE_MS = 8000;
  *  has been drawn; the hover that holds a card; the turns this page has
  *  seen, for this desk, so only a new one rises; the tray pinned open
  *  (#115); and where the focus was when the tray opened, to give it back. */
-const oy = { empty: false, open: false, rise: 0, drawnRise: 0, timer: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, inRail: false, more: 0, rang: 0, quiet: false };
+const oy = { empty: false, open: false, rise: 0, drawnRise: 0, timer: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, inRail: false, more: 0, rang: 0, quiet: false, lit: "" };
 /** Whether the last thing the reader did was a key: the tray opened with
  *  the pointer takes the focus without a ring (app.css .ring-quiet). */
 let viaKey = false;
@@ -119,7 +120,7 @@ function oyFoot(d) {
   const label = !count ? "Nothing on you right now" : `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
   // What On you is, always, then how it stands: with nothing on the reader
   // the tip said only that, and a first hover never learned what it was for.
-  const sub = `What only you can do on this desk · ${n.now ? "new" : count ? "older asks waiting" : "nothing right now"}`;
+  const sub = `What only you can do on this desk · ${n.now ? "new" : count ? "older asks waiting" : "nothing right now"}${ctx.esc(ctx.corner?.()?.chimed(" · ") || "")}`;
   return `<button type="button" class="oy-foot${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span></button>`;
 }
 
@@ -229,7 +230,7 @@ function onYou(d) {
   const count = n.now + n.old;
   const label = `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
   const pill = !tray && count && !oy.inRail
-    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="${n.now ? "What only you can do on this desk" : "Older asks, still waiting on you"}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count}</span></button>` : "";
+    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="${n.now ? "What only you can do on this desk" : "Older asks, still waiting on you"}${esc(K?.chimed(" · ") || "")}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count}</span></button>` : "";
   // A redraw replaces every button: the one the keyboard was on gets the
   // focus back, by what it does and to which row, or a press on a card
   // button dropped the hand to the page's body (W24).
@@ -238,10 +239,13 @@ function onYou(d) {
   const drew = drawIn(el, news + card + tray + pill);
   drawing = false;
   if (drew && was && !el.contains(document.activeElement)) el.querySelector(was)?.focus({ preventScroll: true });
+  // What rang into an open tray is lit there a moment: the chime's line.
+  if (oy.lit) { el.querySelector(`.oy-tray li${oy.lit}`)?.classList.add("oy-lit"); oy.lit = ""; }
   // The corner's toasts sit above it while it shows, not on it (toast.js,
-  // whose own foot is 20 px up from the window's).
-  const top = el.offsetHeight ? el.getBoundingClientRect().top : innerHeight;
-  document.documentElement.style.setProperty("--oy-h", el.offsetHeight ? `${Math.max(0, Math.round(innerHeight - top - 20 + 8))}px` : "0px");
+  // whose own foot is 20 px up from the window's); held while the pointer
+  // is on one (corner.js `lift`).
+  const top = el.offsetHeight ? el.getBoundingClientRect().top : innerHeight, h = el.offsetHeight ? Math.max(0, Math.round(innerHeight - top - 20 + 8)) : 0;
+  K ? K.lift(h) : document.documentElement.style.setProperty("--oy-h", `${h}px`);
   if (drew) threadFocus(el);
 }
 
@@ -257,7 +261,9 @@ function keyOf(b) {
  *  there -- what was waiting before is the pill's to say; after that a turn
  *  asked while the reader was elsewhere rises when they come back. In an
  *  open tray it does not rise -- it is drawn there already -- but it still
- *  rings, since a pinned tray is open while the reader works. */
+ *  rings, and its line is lit there, since a pinned tray is open while the
+ *  reader works. With no rail in view it rises in the window's corner:
+ *  there is never a chime with nothing to see beside it (#190). */
 function arrived(d) {
   const waiting = filed.turns.filter(w => shown(w) && !w.answered_at);
   if (oy.at !== d.id || !oy.seen) {
@@ -271,13 +277,14 @@ function arrived(d) {
   const w = fresh_[fresh_.length - 1];
   // Said, for a reader of the screen, in the desk's own live region (U8).
   const n = slotOf(d, w.pane);
-  announce(w.kind === "due" ? `Due now: ${w.text}` : w.kind === "tell" ? w.text : `${n ? `Panel ${n}` : "An agent"} ${w.kind === "decide" ? "asks" : "hands you"}: ${w.text}`);
+  const said = w.kind === "due" ? `Due now: ${w.text}` : w.kind === "tell" ? w.text : `${n ? `Panel ${n}` : "An agent"} ${w.kind === "decide" ? "asks" : "hands you"}: ${w.text}`;
+  announce(said);
   // One chime for a burst, and the card's "+N more" counts the rest (U7):
   // cards, so a card of four questions is one.
   const burst = Date.now() - oy.rang < BURST_MS;
-  if (!burst) ring();
+  if (!burst) ring(said);
   oy.rang = Date.now();
-  if (oy.open || !oy.inRail) return;
+  if (oy.open) { oy.lit = w.ask_group ? `[data-g="${w.ask_group}"]` : `[data-w="${w.id}"]`; return; }
   const cards = new Set(fresh_.map(x => x.ask_group || x.id)).size;
   oy.more = burst && oy.rise ? oy.more + cards : cards - 1;
   oy.rise = w.ask_group || w.id;
@@ -286,18 +293,22 @@ function arrived(d) {
 }
 
 /** The card settles into the pill after `ms`: held while the cursor is on
- *  it, or a field in it is open, and while the page is out of sight -- a
- *  turn that rose in a minimised window had settled before anyone saw it,
- *  so it waits for the page to show (`visibilitychange` below). */
+ *  it or on a toast above it (#189), or a field in it is open, and while
+ *  the page is out of sight or the reader is in another app -- a turn that
+ *  rose in a minimised window, or behind the editor, had settled before
+ *  anyone saw it, so it waits for them to be back (`visibilitychange` and
+ *  `focus` below, #190). */
 function riseFor(ms) {
   clearTimeout(oy.timer);
   oy.timer = setTimeout(() => {
-    if (document.hidden) return;
-    if (oy.hover || (thField && oyEl?.querySelector(".th-in"))) return riseFor(1500);
+    const K = ctx.corner?.();
+    if (document.hidden || K?.away()) return;
+    if (oy.hover || K?.cornerHeld() || (thField && oyEl?.querySelector(".th-in"))) return riseFor(1500);
     settle();
   }, ms);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && oy.rise) riseFor(RISE_MS); });
+addEventListener("focus", () => { if (oy.rise) riseFor(RISE_MS); });
 function settle() {
   clearTimeout(oy.timer);
   if (!oy.rise) return;
@@ -364,12 +375,14 @@ function forgetOnYou() {
   clearTimeout(oy.timer);
   Object.assign(oy, { open: false, rise: 0, drawnRise: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, more: 0 });
   oyEl?.remove(); oyEl = null;
-  document.documentElement.style.setProperty("--oy-h", "0px");
+  const K = ctx.corner?.();
+  K ? K.lift(0) : document.documentElement.style.setProperty("--oy-h", "0px");
 }
 
 /** A new turn's sound, and the taskbar's nudge in a window not in front:
- *  the corner's, one chime for every page (ui/corner.js `ring`). */
-function ring() { ctx.corner?.()?.ring(); }
+ *  the corner's, one chime for every page (ui/corner.js `ring`), told what
+ *  rang for On you's tip. */
+function ring(what) { ctx.corner?.()?.ring(what); }
 
 const ONYOU_CSS = `
 /* In the rail's column (oyPlace): its width, its foot above the rail's own
@@ -404,6 +417,9 @@ const ONYOU_CSS = `
 .oy.in-rail .oy-card .tn-q { max-height: 16em; }
 .oy-more { display: block; width: 100%; padding: 3px 8px; border: 1px solid var(--rule); border-top: 0; border-radius: 0 0 var(--r-sm) var(--r-sm); background: var(--bg-raise); font-size: var(--fs-micro); color: var(--fg-2); text-align: left; }
 .oy-more:hover { color: var(--fg); }
+/* What just rang, in an open tray: lit a moment, as a kept key is. */
+.oy-tray li.oy-lit { animation: dk-kept calc(var(--dur-moment) * 2) ease-out; }
+@media (prefers-reduced-motion: reduce) { .oy-tray li.oy-lit { animation: none; } }
 /* The tray's look is corner.js's: its head (On you, and the pin) stays;
    the rest scrolls under it. */
 /* In the tray a turn is a row, ruled off from the next, not a card in the

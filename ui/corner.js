@@ -221,13 +221,20 @@ export function init(ctx) {
   document.addEventListener("pointerdown", pressed, true);
   document.addEventListener("keydown", escape, true);
   document.addEventListener("visibilitychange", () => { if (!document.hidden && L.card) riseFor(RISE_MS); });
+  // Back in front from another app: a card that waited for the reader has
+  // its few seconds from now, as one that waited out a minimised window has.
+  addEventListener("blur", () => setTimeout(() => { away = !document.hasFocus(); }));
+  addEventListener("focus", () => { if (!away) return; away = false; if (L.card) riseFor(RISE_MS); });
+  // A toast the pointer was on keeps its place until the pointer leaves it.
+  c.root.querySelector("#toasts")?.addEventListener("pointerleave", () => { if (liftHeld != null) { const h = liftHeld; liftHeld = null; lift(h); } });
+  addEventListener("snyvi:chime", e => { if (e.detail) chime(); });
   // "3 min ago" stays true in an open tray.
   setInterval(() => { if (!document.hidden && L.open) redraw(); }, 60000);
   load();
   if (c.friends()) offersLoad();
   return { event, refresh, moved, rise, offer, says, sayHeld, toggle, open: openTray, draw, redraw, lately,
     cardHtml, trayHtml: latelyHtml, offersHtml, offerCount: () => liveOffers().length, dot, keep: () => L.kept,
-    act, opened, chime, ring, mark, hand,
+    act, opened, chime, ring, mark, hand, cornerHeld, away: () => away, lift, chimed: chimedLine,
     /** The desk's first page while its card is up: its row in the rail is ringed. */
     rising: id => L.card?.kind === "first" && L.card.key === `d${id}` };
 }
@@ -353,7 +360,7 @@ function sayHeld() {
  *  drawn there already. */
 function rise(card) {
   const burst = L.card && Date.now() - L.card.since < BURST_MS;
-  if (card.ring && Date.now() - L.rang >= BURST_MS) ring();
+  if (card.ring && Date.now() - L.rang >= BURST_MS) ring(card.turn ? `${card.turn.desk_name || "A desk"}: ${card.turn.text}` : `An offer to ${card.offer?.to || "a friend"}: ${card.offer?.title || card.offer?.text || ""}`);
   if (card.ring) L.rang = Date.now();
   if (L.open) return redraw();
   card.since = Date.now();
@@ -365,15 +372,35 @@ function rise(card) {
 }
 
 /** The card settles after `ms`: held while the cursor is on the corner,
- *  and while the page is out of sight -- a card that rose in a minimised
- *  window waits for it to show. */
+ *  and while the page is out of sight or the reader is in another app -- a
+ *  card that rose in a minimised window, or behind the editor, waits for
+ *  them to be back (#190). */
 function riseFor(ms) {
   clearTimeout(L.timer);
   L.timer = setTimeout(() => {
-    if (document.hidden) return;
-    if (document.querySelector("#onyou:hover, #cn:hover")) return riseFor(1500);
+    if (document.hidden || away) return;
+    if (cornerHeld()) return riseFor(1500);
     settle();
   }, ms);
+}
+
+/* ---------- the hold (#189) ----------
+ * Nothing in the corner moves or goes while the pointer is on any of it:
+ * the card, its pill, and the toasts that stand above them on `--oy-h`.
+ * A card that settled under a toast the reader was reaching for dropped the
+ * toast by the card's height, under the pointer. */
+
+/** Whether the reader left this window for another app: not a blur into a
+ *  document's frame, which is still this page. */
+let away = false;
+/** Whether the pointer is on the corner: the desk's, this file's, or a toast. */
+function cornerHeld() { return !!document.querySelector("#onyou:hover, #cn:hover, #toasts .toast:hover"); }
+/** The height the toasts stand on, kept while the pointer is on one. */
+let liftHeld = null;
+function lift(px) {
+  const toasts = c.root.querySelector("#toasts");
+  if (toasts?.querySelector(".toast:hover")) { liftHeld = px; return; }
+  document.documentElement.style.setProperty("--oy-h", `${px}px`);
 }
 /** Into the pill: what it said is in the tray, under Lately or On you. */
 function settle() {
@@ -463,10 +490,10 @@ function draw() {
   const n = onYou + offers;
   // Only what waits on the reader: what came is the sidebar's (Lately).
   const pill = !tray && n
-    ? `<button type="button" class="oy-pill on" data-a="cn-open" aria-expanded="false" data-tip="On you" data-tip-sub="What only you can do, across your desks" data-key="ctrl+alt+y">On you <span class="n">${n}</span></button>` : "";
+    ? `<button type="button" class="oy-pill on" data-a="cn-open" aria-expanded="false" data-tip="On you" data-tip-sub="What only you can do, across your desks${esc(chimedLine(" · "))}" data-key="ctrl+alt+y">On you <span class="n">${n}</span></button>` : "";
   if (!card && !tray && !pill) {
     if (el) { el.hidden = true; el.innerHTML = el.$html = ""; }
-    document.documentElement.style.setProperty("--oy-h", "0px");
+    lift(0);
     return;
   }
   node().hidden = false;
@@ -478,7 +505,7 @@ function draw() {
   }
   // The toasts sit above the corner while it shows (toast.js --oy-h).
   const top = el.getBoundingClientRect().top;
-  document.documentElement.style.setProperty("--oy-h", `${Math.max(0, Math.round(innerHeight - top - 20 + 8))}px`);
+  lift(Math.max(0, Math.round(innerHeight - top - 20 + 8)));
 }
 function node() {
   if (el?.isConnected) return el;
@@ -871,18 +898,39 @@ async function offerUndo(id) {
 
 /** What waits on the reader rings: a soft two-note chime, and in the
  *  desktop window, when it is not the one in front, the taskbar's quiet
- *  nudge, which a click on the window clears. News is silent. */
-function ring() {
+ *  nudge, which a click on the window clears. News is silent. `what` is
+ *  what rang, kept for On you's tip: a sound with nothing to look up after
+ *  it was a mystery (#190). */
+function ring(what) {
+  if (what && chimeOn()) chimedLast = { what, at: Date.now() };
   chime();
   if (!document.hasFocus()) window.__TAURI_INTERNALS__?.invoke("plugin:window|request_user_attention", { label: "main", value: { type: "Informational" } }).catch(() => {});
 }
 
-/** Made here rather than loaded: quiet, short, and never in quiet mode. A
- *  page may sound only after the reader has clicked in it; before that the
+let chimedLast = null;
+/** "Last chime: …, 3 min ago", after `sep`, for a tip; nothing before one. */
+function chimedLine(sep = "") {
+  if (!chimedLast) return "";
+  const s = Math.round((Date.now() - chimedLast.at) / 1000), w = chimedLast.what;
+  const ago = s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
+  return `${sep}Last chime: ${w.length > 80 ? `${w.slice(0, 79)}…` : w}, ${ago}`;
+}
+
+/** The chime's own switch (#190), "Chime when something waits on you", in
+ *  ⌘K and the mark's menu (palette.js, menu.js), which set `snyvi.chime`
+ *  and say `snyvi:chime`. It was the quiet mascot's, which no one read as
+ *  mute; a reader who had the mascot quiet, and so no chime, keeps none. */
+function chimeOn() {
+  const v = c.store.get("snyvi.chime");
+  return v ? v === "1" : document.documentElement.dataset.mascot !== "quiet";
+}
+
+/** Made here rather than loaded: quiet, short, and only with its switch on.
+ *  A page may sound only after the reader has clicked in it; before that the
  *  card still rises, silently. */
 let audio = null;
 function chime() {
-  if (document.documentElement.dataset.mascot === "quiet") return;
+  if (!chimeOn()) return;
   try {
     audio ||= new AudioContext();
     if (audio.state === "suspended") audio.resume().catch(() => {});

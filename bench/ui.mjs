@@ -4323,7 +4323,61 @@ async function footRows(cdp, base, token) {
     await sleep(400);
     const typing = await on();
     rows.push(["a key just typed holds the focus", typing === pa, typing === pa ? "panel 1 kept it" : "the pointer took it mid-typing"]);
+
+    // #189: reaching for panel 1's card across panel 2 gives panel 2 the
+    // focus on the way; the card stays where it stands for the pointer,
+    // and follows the focus once the pointer is back in the panels.
+    await q.clickOn(`${P(pa)} .pn-body`);
+    await sleep(900);
+    const cardAt = () => q.ev(`(() => { const c = document.querySelector("#dk-cards .dk-card"), b = c?.getBoundingClientRect(); return b ? { n: document.querySelectorAll("#dk-cards .dk-card").length, x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), top: Math.round(b.top) } : null; })()`);
+    const before = await cardAt();
+    for (let i = 1; i <= 6; i++) { await mouse("mouseMoved", A.x + (B.x - A.x) * i / 6, A.y + (B.y - A.y) * i / 6); await sleep(16); }
+    await sleep(400);
+    const crossed = await on();
+    for (let i = 1; i <= 6 && before; i++) { await mouse("mouseMoved", B.x + (before.x - B.x) * i / 6, B.y + (before.y - B.y) * i / 6); await sleep(16); }
+    await sleep(600);
+    const reached = await cardAt();
+    for (let i = 1; i <= 6; i++) { await mouse("mouseMoved", B.x + (before?.x - B.x || 0) * (6 - i) / 6, B.y + (before?.y - B.y || 0) * (6 - i) / 6); await sleep(16); }
+    await sleep(400);
+    const followed = await until(`!document.querySelector("#dk-cards .dk-card")`, 30);
+    rows.push(["a card reached for across another panel stays put, then follows the focus", !!before && before.n === 3 && crossed === pb && !!reached && reached.n === 3 && reached.top === before.top && followed,
+      !before ? "panel 1 had no cards" : crossed !== pb ? `crossing panel 2 left the focus on ${crossed || "nothing"}` : !reached || reached.n !== 3 || reached.top !== before.top ? `under the pointer: ${JSON.stringify({ before, reached })}` : !followed ? "back in panel 2, panel 1's cards stayed" : "held under the pointer, gone once it was back in panel 2"]);
+
+    // #189: a toast over the corner keeps its place while the pointer is on
+    // it, the risen card under it held past its 8 s; both go once it leaves.
+    // A real toast first, off and on again, so toast.js and its look are in.
+    await q.clickOn("#btn-hover");
+    await q.clickOn("#btn-hover");
+    await until(`!!document.querySelector("#toasts .toast")`, 20);
+    await until(`!document.querySelector("#toasts .toast")`, 60);
+    await q.clickOn(`${P(pa)} .pn-body`);
+    await agent(pa, "handover", { kind: "do", text: "bench: the corner holds", by: "bench-agent" });
+    const risen = await until(`!!document.querySelector("#onyou .oy-card")`, 60);
+    const tAt = () => q.ev(`(() => { const b = document.querySelector("#toasts .bench-toast")?.getBoundingClientRect(); return b ? { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), top: Math.round(b.top) } : null; })()`);
+    await q.ev(`(() => { const t = document.createElement("div"); t.className = "toast bench-toast"; t.textContent = "bench: a toast"; document.querySelector("#toasts").append(t); })(), 1`);
+    await sleep(500);   // its way in, 8 px, done
+    const t0 = await tAt();
+    if (t0) await mouse("mouseMoved", t0.x, t0.y);
+    await sleep(9000);
+    const t1 = await tAt(), stillUp = await q.ev(`!!document.querySelector("#onyou .oy-card")`);
+    await q.pointerAway();
+    const settledOut = await until(`!document.querySelector("#onyou .oy-card")`, 40);
+    await sleep(300);
+    const t2 = await tAt();
+    await q.ev(`document.querySelector("#toasts .bench-toast")?.remove(), 1`);
+    rows.push(["a toast over the corner holds still under the pointer, the card under it held", risen && !!t0 && !!t1 && t1.top === t0.top && stillUp && settledOut && !!t2 && t2.top > t0.top,
+      !risen ? "the hand-over never rose" : !t0 ? "no toast to point at" : t1?.top !== t0.top ? `the toast moved ${t1 ? t1.top - t0.top : "?"} px under the pointer` : !stillUp ? "the card settled under the pointer" : !settledOut ? "the card stayed once the pointer left" : !t2 || t2.top <= t0.top ? "the toast never came down: the hold was not what kept it" : `held at ${t0.top}, down to ${t2.top} once the pointer left`]);
     await q.ev(`localStorage.removeItem("snyvi.hover-focus"); 1`);
+
+    // #190: no chime without a card. With no rail in view the turn rises in
+    // the window's corner, and the pill's tip says what rang.
+    await q.width(900);
+    await agent(pa, "handover", { kind: "do", text: "bench: rung with the rail away", by: "bench-agent" });
+    const cornered = await until(`!!document.querySelector("#onyou:not(.in-rail) .oy-card")`, 60);
+    const tipSaid = await q.ev(`document.querySelector("#onyou .oy-pill")?.dataset.tipSub || ""`);
+    rows.push(["with no rail in view, a turn rises in the window's corner, and On you says what rang", cornered && /Last chime: .*rung with the rail away/.test(tipSaid),
+      !cornered ? "nothing rose: the chime rang for a card no one could see" : `the pill's tip says ${JSON.stringify(tipSaid)}`]);
+    await q.wide();
 
     // #164: a run in steps is one card, run in order.
     const steps = await agent(pa, "handover", { kind: "run", text: "bench: a walk-through", by: "bench-agent",

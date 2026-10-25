@@ -35,6 +35,9 @@
 const HOVER_KEY = "snyvi.hover-focus";
 let hoverOn = (() => { try { return localStorage.getItem(HOVER_KEY) === "1"; } catch { return false; } })();
 let hvX = -1, hvY = -1, hvPane = null, hvAt = 0, hvTimer = 0, hvKeyAt = 0, hvBlocked = null, hvUnder = null, hvMine = false, sonarEl = null;
+/** The panel the pointer last took, and when: the rail's cards wait a
+ *  moment before they follow it (15-cards.js `cardsHeld`). */
+let hvFocusAt = -1e9, hvFocusId = null;
 const hvSamples = [];
 
 /** Whether focus follows the pointer; with an argument, turns it on or off
@@ -108,6 +111,7 @@ function hoverTick() {
   hoverStop();
   if (!views.get(id) || id === focused) return;
   hvMine = true;
+  hvFocusAt = now; hvFocusId = id;
   focusPane(id);
   hvMine = false;
   ping(hvX, hvY);
