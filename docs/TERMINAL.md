@@ -439,6 +439,32 @@ it or runs it now; an agent may only suggest it.
 - Run on a routine's `run` card starts that command as the routine panel's
   process, on the reader's click: what Run already did, without typing
 
+1.53 (plan f30461f2c1) keeps every line above and adds:
+
+- the line is typed in the Routines field, its own, and its name resolves
+  through `src/routine/places.rs` to one of the project's or the reader's
+  commands or skills, in Claude Code's documented order; a line typed with
+  `/` must resolve, any other whose first word does not is the reader's own
+  words, sent as they are, one argument, never through a shell. An agent's
+  offer must name a file: an agent's words are never a prompt
+- Enter makes a draft (`started_at = 0`); the clock and Run now leave it
+  alone. Try once now runs it once while the reader watches, and the
+  answers to that try go on once; Start it allows the file as it is and
+  gives it its hour. A paused or removed routine starts nothing, answers
+  included
+- the answers start `/<cmd> continue: …` fresh when the command's file
+  reads a `continue:` form; otherwise, and always for words, the run's own
+  session is resumed with them: `claude --resume <id> … -- "<answers>"`,
+  the id the Stop hook gave (spike S4, 26 Oct). With no id, a fresh session
+  is told them, and its history says `resumed: no`
+- a skill's script runs under its folder's whole path, and a deny on the
+  path as the skill wrote it does not catch it (spike S6, 26 Oct): the
+  Waits suggested for a skill put `*` before the script's path, and
+  `${CLAUDE_SKILL_DIR}/` becomes `*`
+- Run on a routine's card is one click for a command on its Waits list
+  (`routine::waits::matches`, Claude Code's prefix rule) and two, Run
+  anyway, for any other
+
 What it does not change: no token route makes, saves or runs a routine,
 nothing received is ever a routine's prompt, and bytes reach a PTY's input
 from the reader's keys alone.

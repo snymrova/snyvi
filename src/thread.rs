@@ -141,6 +141,15 @@ pub const PR_STATE_1_43: &str = "ALTER TABLE threads ADD COLUMN pr_state TEXT NO
 /// (`put_away`). Empty for a ✕, a retire or a repeat. Version 25 of
 /// `store::MIGRATIONS`, never in `SCHEMA`.
 pub const AWAY_COLUMN_1_44: &str = "ALTER TABLE turns ADD COLUMN away TEXT NOT NULL DEFAULT ''";
+/// 1.53: who put a turn away -- `you` (a ✕), `agent` (`put_away`),
+/// `replaced` (a newer turn asking the same), `panel` (its dialog closed
+/// there), `aged` (`retire`), `moved` (a due line's new date), `settled`
+/// (what it asked for happened: its line done, its thread told). Of 98 turns
+/// put away unanswered, 81 said nothing of how (audit 8fbe274f4e). Empty
+/// before 1.53, and again once brought back. Version 33 of
+/// `store::MIGRATIONS`, never in `SCHEMA`.
+pub const REMOVED_BY_1_53: &str =
+    "ALTER TABLE turns ADD COLUMN removed_by TEXT NOT NULL DEFAULT ''";
 /// How long a turn an agent put away is still said in the tray.
 pub const AWAY_SHOWN_S: i64 = 86400;
 
@@ -1011,13 +1020,15 @@ pub fn pr_facts(
         // after it is a tick an agent forgot (#103-#106 stood a day that
         // way). By "merged", with the merge and the PR, so the row says
         // where the work went; the reader unticks one the merge did not
-        // finish. A suggestion is not theirs yet.
+        // finish. A suggestion is not theirs yet, and a line that landed
+        // already waits for their check, which a merge is not (audit
+        // 8fbe274f4e: four were closed so before the reader looked).
         let evidence = Some(f.url.trim())
             .filter(|u| crate::desk::evidence_ok(u))
             .unwrap_or("");
         conn.execute(
             "UPDATE desk_notes SET done_at = ?3, done_by = 'merged', done_commit = ?4, done_doc = '', done_evidence = ?5, done_pane = ?6
-             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
             params![desk_id, id, now, merge, evidence, pane],
         )?;
     } else {
@@ -1281,7 +1292,7 @@ pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()>
 /// where turns are read, so no timer is needed. How many went.
 pub fn retire(conn: &Connection, now: i64) -> Result<usize> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = ?1 WHERE answered_at = 0 AND removed_at = 0 AND created_at < ?2",
+        "UPDATE turns SET removed_at = ?1, removed_by = 'aged' WHERE answered_at = 0 AND removed_at = 0 AND created_at < ?2",
         params![now, now - RETIRE_S],
     )?)
 }
@@ -1367,6 +1378,9 @@ pub struct Ask {
     pub cmd: String,
     /// `key` only: the key's name, when the agent knows it.
     pub key_name: String,
+    /// A card of the desk's this one says again in other words, put away
+    /// as it goes in (`replace`), or 0.
+    pub replaces: i64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1550,6 +1564,9 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
     retire(&tx, now)?;
     if let [c] = checked.as_slice() {
         supersede(&tx, desk_id, c, now)?;
+        // Out first, so a card said again is not refused for the room the
+        // one it replaces still holds.
+        replace(&tx, desk_id, asks[0].replaces, now)?;
     }
     let waiting = waiting_on(&tx, desk_id, false, now)?
         .iter()
@@ -1587,6 +1604,12 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
             ],
         )?;
         let id = tx.last_insert_rowid();
+        if asks.len() == 1 && a.replaces > 0 {
+            tx.execute(
+                "UPDATE turns SET away = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_by = 'replaced' AND removed_at = ?4",
+                params![desk_id, a.replaces, replaced_by(&c.by, id), now],
+            )?;
+        }
         if asks.len() > 1 && group == 0 {
             group = id;
             tx.execute("UPDATE turns SET ask_group = ?1 WHERE id = ?1", params![id])?;
@@ -1647,7 +1670,7 @@ pub fn answer(
 /// for a question no one is asking any more.
 pub fn drop_dialog(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<bool> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = ?3 WHERE desk_id = ?1 AND id = ?2 AND via = 'dialog'
+        "UPDATE turns SET removed_at = ?3, removed_by = 'panel' WHERE desk_id = ?1 AND id = ?2 AND via = 'dialog'
          AND answered_at = 0 AND removed_at = 0",
         params![desk_id, id, now],
     )? > 0)
@@ -1664,16 +1687,18 @@ pub fn sent_turn(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<b
     )? > 0)
 }
 
-pub fn remove_turn(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<bool> {
+/// Put a turn away, by `by` (`REMOVED_BY_1_53`): the reader's ✕, or a
+/// newer turn asking the same.
+pub fn remove_turn(conn: &Connection, desk_id: i64, id: i64, by: &str, now: i64) -> Result<bool> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
-        params![desk_id, id, now],
+        "UPDATE turns SET removed_at = ?3, removed_by = ?4 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        params![desk_id, id, now, by],
     )? > 0)
 }
 
 pub fn restore_turn(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = 0, away = '' WHERE desk_id = ?1 AND id = ?2",
+        "UPDATE turns SET removed_at = 0, away = '', removed_by = '' WHERE desk_id = ?1 AND id = ?2",
         params![desk_id, id],
     )? > 0)
 }
@@ -1710,10 +1735,38 @@ fn supersede(conn: &Connection, desk_id: i64, c: &Checked, now: i64) -> Result<u
     for (id, cmd, options) in open {
         let options: Vec<String> = options.split('\n').map(String::from).collect();
         if commands_of(&cmd, &options).iter().any(|o| new.contains(o)) {
-            n += remove_turn(conn, desk_id, id, now)? as usize;
+            n += remove_turn(conn, desk_id, id, "replaced", now)? as usize;
         }
     }
     Ok(n)
+}
+
+/// A card an agent says again in other words (`Ask::replaces`): the iOS
+/// build's card was written four times in twenty minutes, each with its
+/// command changed, and the reader cleared the three before it by hand
+/// (audit 8fbe274f4e). Said by the agent, not guessed: three steps in one
+/// folder looked alike and were each run. Any waiting card on the desk, as
+/// `put_away` takes; recoverable, said in the tray as replaced by the new
+/// one. How many (0 or 1).
+fn replace(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<usize> {
+    if id <= 0 {
+        return Ok(0);
+    }
+    Ok(conn.execute(
+        "UPDATE turns SET removed_at = ?3, removed_by = 'replaced'
+         WHERE desk_id = ?1 AND id = ?2 AND answered_at = 0 AND removed_at = 0",
+        params![desk_id, id, now],
+    )?)
+}
+
+/// What the tray says under a card a newer one replaced: as `put_away`
+/// says it, who and why.
+fn replaced_by(by: &str, id: i64) -> String {
+    if by.is_empty() {
+        format!("replaced by #{id}")
+    } else {
+        format!("{by}: replaced by #{id}")
+    }
 }
 
 /// An agent on the desk puts a waiting turn away, saying why (#174): the
@@ -1736,7 +1789,7 @@ pub fn put_away(
         return Ok(None);
     }
     let n = conn.execute(
-        "UPDATE turns SET removed_at = ?3, away = ?4
+        "UPDATE turns SET removed_at = ?3, away = ?4, removed_by = 'agent'
          WHERE desk_id = ?1 AND id = ?2 AND answered_at = 0 AND removed_at = 0",
         params![desk_id, id, now, format!("{who}: {why}")],
     )?;
@@ -1780,6 +1833,26 @@ pub fn quiet_asks(conn: &Connection, desk_id: i64, pane: &str, now: i64) -> Resu
         up.execute(params![t.id, now])?;
     }
     Ok(quiet)
+}
+
+/// How many of a panel's own hand-overs it is told are open, at each prompt.
+pub const CHORES_TOLD: usize = 3;
+
+/// The panel's own hand-overs still open as the reader prompts it, newest
+/// first: a do, a key, a try or a run the reader may say in the chat they
+/// did. Of 62 such cards, 13 were pressed Done and 45 were left to be
+/// cleared, most of them by hand (audit 8fbe274f4e); told them by id, the
+/// agent removes one the message settles (`put_away`). Not quieted, and
+/// not told as answers: they stay the reader's until one of them says.
+pub fn open_chores(conn: &Connection, desk_id: i64, pane: &str) -> Result<Vec<Turn>> {
+    let mut st = conn.prepare(&format!(
+        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND pane = ?2 AND kind IN ('do', 'key', 'try', 'run')
+         AND via = 'ask' AND answered_at = 0 AND removed_at = 0 ORDER BY id DESC LIMIT ?3"
+    ))?;
+    let v = st
+        .query_map(params![desk_id, pane, CHORES_TOLD as i64], row_to_turn)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(v)
 }
 
 /// `settle_asks`: the agent says its open questions were answered in the

@@ -624,6 +624,33 @@ pub(crate) async fn about(State(app): S) -> Json<serde_json::Value> {
     }))
 }
 
+/// Start at login, from a routine's Ready (1.53, T12): on Linux the user
+/// unit enabled, which `install-desktop` only advises; elsewhere the words
+/// for doing it by hand. The window's, on the desk gate: a routine runs
+/// only while snyvi does, and this is the reader's click saying it should.
+pub(crate) async fn start_at_login(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match tokio::task::spawn_blocking(crate::setup::start_at_login).await {
+        Ok(Ok(())) => Json(json!({ "ok": true })).into_response(),
+        Ok(Err(e)) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("{e:#}") })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 /// Ask the daemon to exit, so a new binary can take over the port.
 pub(crate) async fn shutdown(State(app): S, headers: HeaderMap) -> Response {
     if !windowed(&app, &headers) {

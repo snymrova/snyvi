@@ -749,6 +749,15 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("GET", "/api/desks/1/commands", None, Gate::Desk, true),
+    (
+        "GET",
+        "/api/desks/1/routines/read?text=x",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    // Enables the user unit: asked only to refuse.
+    ("POST", "/api/start-at-login", Some("{}"), Gate::Desk, false),
     ("GET", "/api/desks/1/routines/1", None, Gate::Desk, true),
     (
         "POST",

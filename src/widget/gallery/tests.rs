@@ -20,6 +20,7 @@ fn db() -> Connection {
         thread::GROUP_COLUMN,
         thread::PR_STATE_1_43,
         thread::AWAY_COLUMN_1_44,
+        thread::REMOVED_BY_1_53,
         crate::due::COLUMNS_1_47,
         crate::due::TURN_COLUMN_1_47,
         crate::waiting::COLUMNS_1_47,

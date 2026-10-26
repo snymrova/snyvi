@@ -106,11 +106,11 @@ keep it. Suggest rarely and only what the user would want to track themselves; n
 or a to-do for this session. A desk holds only a few suggestions waiting at once. One short line, at most \
 200 characters. When the line has a natural day -- a launch step, a follow-up -- pass `due` in the user's words \
 (`fri 10`); at that hour snyvi raises one card on their On you list. A launch is `lines`: several dated lines as one \
-set. A routine is `every`: a line that starts with one of this project's slash commands (`.claude/commands/<name>.md`) \
-and says when it comes back (`every day 07:30`, `every weekday 9`, `every mon 09:00`, `every 1st`), with `waits` the \
-Bash patterns that must wait for the user, such as a publish script. snyvi offers it under Routines; it runs, in a \
-panel in the back, only after the user saves it in its sheet. Offer one only when the user asked for something to \
-happen on its own.";
+set. A routine is `every`: a line that starts with one of this project's or the user's slash commands or skills \
+(write the command first if it is new) and says when it comes back (`every day 07:30`, `every weekday 9`, \
+`every mon 09:00`, `every 1st`), with `waits` the Bash patterns that must wait for the user, such as a publish \
+script (a skill's script runs from its folder: start its path with `*`, `python3 -I *scripts/publish.py *`). snyvi offers it under Routines; the user tries it once and starts it, and only then does it run on its own, \
+in a panel in the back. Offer one only when the user asked for something to happen on its own.";
 
 const OFFER_DESCRIPTION: &str = "Offer to send one of the user's snyvi documents to one of their friends on \
 snyvi, by the friend's name (the desk brief lists them) and the document's id from send_document. Nothing is \
@@ -587,7 +587,10 @@ impl Session {
         match self.pane.as_deref() {
             None => said("This session is not running in a snyvi desk, so there is no desk to write to.", true),
             Some(p) => match client::suggest_desk_note(&self.paths, p, &text, &arg(args, "due"), args.get("lines").unwrap_or(&json!([])), args, self.by()) {
-                Ok(v) if v.get("routine").is_some() => said("Offered as a routine. The user sees it under Routines with Accept…, which opens its sheet: it runs only once they save it there. Mention it in your reply.", false),
+                Ok(v) if v.get("routine").is_some() => {
+                    let name = v["routine"]["name"].as_str().unwrap_or_default();
+                    said(format!("Offered. The user sees it under Routines as `{name} · {} offers`. Accept… opens its sheet, with Try once now and Start it; it runs on its own only after their Start. Tell them in one line, and what the command does when they answer its questions.", self.by()), false)
+                }
                 Ok(v) if v.get("notes").is_some() => {
                     let n = v["notes"].as_array().map_or(0, Vec::len);
                     let undated: Vec<&str> = v["undated"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();

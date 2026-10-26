@@ -895,6 +895,41 @@ pub fn install_desktop() -> Result<()> {
     }
 }
 
+/// Whether snyvi starts with the reader's session (a routine's Ready, 1.53):
+/// on Linux, whether the user unit is enabled; `None` where it can't be read
+/// (macOS's login items, Windows's start-up apps).
+pub fn starts_at_login() -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        platform::find_on_path("systemctl")
+            .map(|_| quietly("systemctl", &["--user", "is-enabled", "--quiet", "snyvi"]))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// Start at login: enable the user unit `install-desktop` wrote, as its
+/// advice says, without `--now` -- this daemon is already the one running.
+pub fn start_at_login() -> Result<()> {
+    #[cfg(not(target_os = "linux"))]
+    anyhow::bail!("Start at login is a button on Linux only: add snyvi to your login items");
+    #[cfg(target_os = "linux")]
+    {
+        let config = dirs::config_dir().context("no config directory (is HOME set?)")?;
+        let data = dirs::data_dir().context("no data directory (is HOME set?)")?;
+        let unit = DesktopFiles::under(&data, &config).unit;
+        if !unit.is_file() {
+            anyhow::bail!("no snyvi user unit here: run snyvi install-desktop first");
+        }
+        if !quietly("systemctl", &["--user", "enable", "snyvi"]) {
+            anyhow::bail!("systemctl --user enable snyvi did not work");
+        }
+        Ok(())
+    }
+}
+
 /// `snyvi uninstall-desktop`: exactly what `install-desktop` wrote. A unit
 /// that was enabled is disabled first, so no link to it is left behind; a
 /// daemon it started keeps running until `snyvi stop`.

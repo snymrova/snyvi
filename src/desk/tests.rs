@@ -1627,3 +1627,42 @@ fn a_reopened_desk_keeps_its_back() {
     assert_eq!(slots(&conn, d), vec![1, 2, GRID + 1]);
     assert_eq!(id_at(&conn, d, GRID + 1), dev);
 }
+
+/// A line that landed is the reader's to check (audit 8fbe274f4e): an
+/// agent's tick is refused, and says why; the reader's plain tick keeps the
+/// commit it landed with, as Works does, and their untick clears it.
+#[test]
+fn a_landed_line_is_the_readers_and_their_tick_keeps_its_commit() {
+    let mut conn = db();
+    let d = create(&conn, "/w", None, 0).unwrap().id;
+    let n = add_note(&mut conn, d, "fold the rail", 10)
+        .unwrap()
+        .unwrap()
+        .id;
+    assert_eq!(landed_open(&conn, d, n).unwrap(), None);
+    assert_eq!(
+        land_notes(&conn, d, &[(n, "6d732b2".to_string(), 30)]).unwrap(),
+        1
+    );
+    assert_eq!(
+        landed_open(&conn, d, n).unwrap().as_deref(),
+        Some("6d732b2")
+    );
+    assert!(!tick_note(&conn, d, n, &by("claude-code"), 40).unwrap());
+    assert!(!notes(&conn, d).unwrap()[0].done);
+    assert!(set_note(&conn, d, n, None, Some(true), 50).unwrap());
+    let got = &notes(&conn, d).unwrap()[0];
+    assert_eq!(
+        (got.done, got.done_by.as_str(), got.done_commit.as_str()),
+        (true, "", "6d732b2")
+    );
+    assert_eq!(landed_open(&conn, d, n).unwrap(), None, "done, not waiting");
+    assert!(set_note(&conn, d, n, None, Some(false), 60).unwrap());
+    assert_eq!(notes(&conn, d).unwrap()[0].done_commit, "");
+    // A line that never landed ticks with no commit, as before.
+    let other = add_note(&mut conn, d, "someday", 70).unwrap().unwrap().id;
+    assert!(set_note(&conn, d, other, None, Some(true), 80).unwrap());
+    let got = notes(&conn, d).unwrap();
+    let got = got.iter().find(|x| x.id == other).unwrap();
+    assert_eq!(got.done_commit, "");
+}

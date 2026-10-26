@@ -41,10 +41,10 @@ const SETTLE_ASKS: &str = "Take your open questions off the user's On you list w
 conversation answered them. Your hand-overs stay. snyvi says, at their next message, which questions of \
 yours are still open.";
 
-const REMOVE_CARD: &str = "Remove a card from the user's On you list in snyvi once it is no longer on them: you can \
-see it is done (a tag, a merge, the key there) or a newer card asks the same. Any card on this desk, by the \
-id the desk brief or ask and hand_over's reply give; never only because it is old. Say why, in a few words: \
-the user sees it and can bring it back.";
+const REMOVE_CARD: &str = "Remove a card from the user's On you list in snyvi once it is no longer on them: you see \
+it is done (a tag, a merge, the key there), they say here they did it, or a newer card asks the same. Any \
+card on this desk, by its id from the brief or a reply; never only because it is old. Say why, in a few \
+words: the user sees it and can bring it back.";
 
 const SUGGEST_PANEL: &str = "Suggest a panel on this desk: a name, the exact command it would run, and why. \
 The user sees a card with the command and opens it or not; nothing runs until they click. Three wait at \
@@ -106,7 +106,8 @@ pub(super) fn specs() -> Vec<Value> {
                     "cmd": { "type": "string", "description": "One command line, exactly as it should run." },
                     "say": { "type": "string", "description": "A thing done by hand, or the line over cmd when both are given." }
                 }, "additionalProperties": false } },
-                "key": { "type": "string", "description": "key only: its name, e.g. CLOUDFLARE_API_TOKEN. Adding it settles this." }
+                "key": { "type": "string", "description": "key only: its name, e.g. CLOUDFLARE_API_TOKEN. Adding it settles this." },
+                "replaces": { "type": "integer", "description": "The id of a card of yours this one says again, changed: it is taken off as this goes on." }
             }, "required": ["text", "kind"], "additionalProperties": false },
             "annotations": ann(false)
         }),
@@ -300,6 +301,7 @@ impl Session {
         let body = json!({
             "kind": arg(args, "kind"), "text": arg(args, "text"), "link": arg(args, "link"),
             "cmd": arg(args, "cmd"), "key": arg(args, "key"), "by": self.by(), "options": steps,
+            "replaces": args.get("replaces").and_then(Value::as_i64).unwrap_or(0),
         });
         let run = arg(args, "kind") == "run";
         let head = if run && !steps.is_empty() {

@@ -571,6 +571,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (29, crate::week::COLUMNS_1_48), // 1.48: Home's week, a desk's reopen rule (`crate::week`)
     (30, peer::COLUMNS_1_49), // 1.49: held for an away friend, a promise's fields, own replies
     (31, desk::BACK_COLUMN_1_49), // 1.49: a closed pane's side
+    (32, crate::routine::DRAFT_COLUMNS_1_53), // 1.53: a routine's draft and its file
+    (33, crate::thread::REMOVED_BY_1_53), // 1.53: who put a turn away
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -1866,6 +1868,11 @@ impl Store {
 
     pub fn tick_desk_note(&self, desk_id: i64, id: i64, tick: &desk::Tick) -> Result<bool> {
         desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, tick, now())
+    }
+
+    /// The commit a line landed with while it waits for the reader's check.
+    pub fn landed_desk_note(&self, desk_id: i64, id: i64) -> Result<Option<String>> {
+        desk::landed_open(&self.conn.lock().unwrap(), desk_id, id)
     }
 
     /// The lines taken off a desk's list since `since`, for the panel's

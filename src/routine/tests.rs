@@ -5,6 +5,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
     conn.execute_batch(crate::thread::SCHEMA).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
+    conn.execute_batch(DRAFT_COLUMNS_1_53).unwrap();
     conn.execute(
         "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'news', '/tmp/news', 1)",
         [],
@@ -24,36 +25,121 @@ fn a_line_with_a_cadence_is_a_routine_and_its_first_word_the_command() {
     let l = line("/bench main, every weekday 9");
     assert_eq!((l.name.as_str(), l.cmd.as_str()), ("bench main", "bench"));
     assert_eq!(l.every.words(), "every weekday 09:00");
-    // Not a command's name, or not a cadence: a plain note.
-    assert_eq!(from_line("$(rm -rf) · every day 07:30"), None);
-    assert_eq!(from_line("../x · every day"), None);
+    assert!(l.slash && !line("bench · every day").slash);
+    // A first word no command could be: the reader's words, as they are,
+    // one argument to Claude and never a shell's.
+    let l = line("open PRs, summarise · every weekday 9");
+    assert_eq!(
+        (l.name.as_str(), l.cmd.as_str()),
+        ("open PRs, summarise", "open")
+    );
+    let l = line("$(rm -rf) · every day 07:30");
+    assert_eq!((l.name.as_str(), l.cmd.as_str()), ("$(rm -rf)", ""));
+    // Typed with `/`, it must be a command's name.
+    assert_eq!(from_line("/../x · every day"), None);
+    // Not a cadence: a plain note.
     assert_eq!(from_line("rerun every time the build fails"), None);
     assert_eq!(from_line("post the note by fri 10"), None);
 }
 
+/// A name no one's `~/.claude` has, so the reader's own never answer.
+const NEWS: &str = "zz-snyvi-test-news";
+
 #[test]
-fn the_desks_own_commands_are_found_and_hashed() {
+fn a_routines_file_is_resolved_hashed_and_watched() {
     let dir = crate::store::tempdir::Dir::new("snyvi-routine-cmds");
     let cmds = dir.path.join(".claude").join("commands");
     std::fs::create_dir_all(&cmds).unwrap();
-    std::fs::write(cmds.join("newsroom.md"), "Fetch the news.").unwrap();
-    std::fs::write(cmds.join("tick.md"), "Say the date.").unwrap();
-    std::fs::write(cmds.join("not a command.md"), "x").unwrap();
-    std::fs::write(cmds.join("notes.txt"), "x").unwrap();
-    assert_eq!(commands(&dir.path), vec!["newsroom", "tick"]);
-    assert!(commands(&dir.path.join("nowhere")).is_empty());
-    let h = hash_of(&dir.path, "newsroom").unwrap();
+    let f = cmds.join(format!("{NEWS}.md"));
+    std::fs::write(&f, "Fetch the news.").unwrap();
+    let Made::File(p, h) = resolve(&dir.path, &line(&format!("{NEWS} · every day"))) else {
+        panic!("a file");
+    };
+    assert_eq!(p.file, format!(".claude/commands/{NEWS}.md"));
     let mut r = Routine {
-        cmd: "newsroom".into(),
+        name: NEWS.into(),
+        cmd: NEWS.into(),
         ..Routine::default()
     };
     assert_eq!(file_state(&dir.path, &r), "new");
     r.cmd_hash = h;
+    r.file = p.file;
     assert_eq!(file_state(&dir.path, &r), "ok");
-    std::fs::write(cmds.join("newsroom.md"), "Fetch the news, then publish it.").unwrap();
+    std::fs::write(&f, "Fetch the news, then publish it.").unwrap();
     assert_eq!(file_state(&dir.path, &r), "changed");
-    std::fs::remove_file(cmds.join("newsroom.md")).unwrap();
+    std::fs::remove_file(&f).unwrap();
     assert_eq!(file_state(&dir.path, &r), "gone");
+    // Typed with `/` and not there: said, never taken as words.
+    assert_eq!(
+        resolve(&dir.path, &line(&format!("/{NEWS} · every day"))),
+        Made::NoFile(NEWS.into())
+    );
+    assert_eq!(
+        resolve(&dir.path, &line(&format!("{NEWS} please · every day"))),
+        Made::Words
+    );
+    let w = Routine::default();
+    assert_eq!(file_state(&dir.path, &w), "words");
+}
+
+#[test]
+fn a_words_routine_is_its_words_and_a_commands_its_slash() {
+    let mut r = Routine {
+        name: "bench main".into(),
+        cmd: "bench".into(),
+        ..Routine::default()
+    };
+    assert_eq!(r.prompt(), "/bench main");
+    r.cmd.clear();
+    r.name = "open PRs, summarise".into();
+    assert_eq!(r.prompt(), "open PRs, summarise");
+    r.name = "/sneaky".into();
+    assert_eq!(r.prompt(), "sneaky", "words never start a command");
+}
+
+#[test]
+fn a_file_that_reads_continue_is_continued_and_any_other_resumed() {
+    assert!(continues(
+        "# News\n\nWith `continue: <answers>`, go on from the first step not done."
+    ));
+    assert!(continues("## Continue\nRead the answers."));
+    assert!(!continues(
+        "# News\n\nContinue reading the feeds until noon."
+    ));
+    let a = [
+        (1, "approve 1, 3".to_string()),
+        (2, "skip\nthe rest".to_string()),
+    ];
+    let r = Routine {
+        name: "newsroom".into(),
+        cmd: "newsroom".into(),
+        ..Routine::default()
+    };
+    assert_eq!(
+        continue_prompt(&r, &a[..1]),
+        "/newsroom continue: approve 1, 3"
+    );
+    assert_eq!(said(&a), "1. approve 1, 3; 2. skip the rest");
+}
+
+#[test]
+fn a_routine_from_before_1_53_stays_live_with_its_file() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(crate::desk::SCHEMA).unwrap();
+    conn.execute_batch(SCHEMA).unwrap();
+    conn.execute_batch(
+        "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'news', '/tmp/news', 1);
+         INSERT INTO routines(desk_id, name, cmd, every, due_at, created_at) VALUES(1, 'newsroom', 'newsroom', 'every day 07:30', 9, 5);
+         INSERT INTO routines(desk_id, name, cmd, every, due_at, suggested_by, created_at) VALUES(1, 'bench', 'bench', 'every day 07:30', 9, 'panel 2', 6);",
+    )
+    .unwrap();
+    conn.execute_batch(DRAFT_COLUMNS_1_53).unwrap();
+    let a = get(&conn, 1).unwrap().unwrap();
+    assert_eq!(
+        (a.state(), a.started_at, a.file.as_str()),
+        ("live", 5, ".claude/commands/newsroom.md")
+    );
+    assert_eq!(get(&conn, 2).unwrap().unwrap().state(), "offer");
 }
 
 #[test]
@@ -94,13 +180,23 @@ fn the_clock_finds_whats_due_and_rearms_it_once() {
         1,
         &line("tick · every day 07:30"),
         &[],
-        "h",
+        ".claude/commands/tick.md",
         &Offer::default(),
         now,
     )
     .unwrap() else {
         panic!("added");
     };
+    // A draft: the clock never takes it, whatever its hour.
+    assert_eq!(r.state(), "draft");
+    assert!(due(&c, now + 3 * 86_400).unwrap().is_empty());
+    assert!(start(&c, r.id, "h", ".claude/commands/tick.md", now).unwrap());
+    assert!(!start(&c, r.id, "h2", "", now).unwrap(), "started once");
+    let r = get(&c, r.id).unwrap().unwrap();
+    assert_eq!(
+        (r.state(), r.started_at, r.allowed_at, r.cmd_hash.as_str()),
+        ("live", now, now, "h")
+    );
     assert!(r.due_at > now && r.due_at <= now + 86_400);
     assert!(due(&c, r.due_at - 1).unwrap().is_empty());
     let found = due(&c, r.due_at + 5).unwrap();
@@ -124,7 +220,7 @@ fn paused_closed_offered_or_removed_never_ring() {
         1,
         &line(text),
         &[],
-        "h",
+        "",
         &Offer { by, pane: "p1" },
         now,
     )
@@ -134,9 +230,13 @@ fn paused_closed_offered_or_removed_never_ring() {
         other => panic!("{other:?}"),
     };
     let a = add1(&mut c, "a · every day 07:30", "");
+    assert!(start(&c, a.id, "h", "", now).unwrap());
     let b = add1(&mut c, "b · every day 07:30", "panel 2");
-    assert_eq!(b.suggested_by, "panel 2");
-    assert!(b.cmd_hash.is_empty(), "an offer is not allowed until saved");
+    assert_eq!((b.suggested_by.as_str(), b.state()), ("panel 2", "offer"));
+    assert!(
+        b.cmd_hash.is_empty(),
+        "an offer is not allowed until started"
+    );
     let later = now + 2 * 86_400;
     let ids = |c: &Connection| {
         due(c, later)
@@ -158,7 +258,8 @@ fn paused_closed_offered_or_removed_never_ring() {
         .unwrap();
     assert!(ids(&c).is_empty());
     // Its hours move on quietly, so reopening never starts a stale run.
-    assert_eq!(pass_closed(&c, later).unwrap(), 2);
+    // A draft or an offer has no hour to pass.
+    assert_eq!(pass_closed(&c, later).unwrap(), 1);
     assert!(get(&c, a.id).unwrap().unwrap().due_at > later);
     c.execute(
         "UPDATE desks SET parked_at = 0, closed_at = 0 WHERE id = 1",
@@ -172,7 +273,7 @@ fn paused_closed_offered_or_removed_never_ring() {
         "removed from view, not deleted"
     );
     assert!(act(&c, a.id, Act::Restore, now).unwrap());
-    // The offer, saved, is the reader's and rings.
+    // The offer, saved, is the reader's draft: still silent until Start.
     let e = crate::due::every::every("every day 07:30").unwrap();
     let s = Save {
         name: "b".into(),
@@ -181,9 +282,26 @@ fn paused_closed_offered_or_removed_never_ring() {
         minutes: 25,
         five_hour: 80,
         hash: "h2".into(),
+        file: "f".into(),
     };
     assert!(save(&c, b.id, &s, now).unwrap());
+    let saved = get(&c, b.id).unwrap().unwrap();
+    assert_eq!((saved.state(), saved.cmd_hash.as_str()), ("draft", ""));
+    assert_eq!(ids(&c), vec![a.id]);
+    assert!(start(&c, b.id, "h2", "f", now).unwrap());
     assert_eq!(ids(&c), vec![a.id, b.id]);
+    // A live routine's Save allows its file as it is.
+    assert!(save(
+        &c,
+        b.id,
+        &Save {
+            hash: "h3".into(),
+            ..s
+        },
+        now
+    )
+    .unwrap());
+    assert_eq!(get(&c, b.id).unwrap().unwrap().cmd_hash, "h3");
 }
 
 #[test]
@@ -192,17 +310,17 @@ fn a_desk_keeps_a_handful() {
     for i in 0..PER_DESK {
         let l = line(&format!("r{i} · every day 07:30"));
         assert!(matches!(
-            add(&mut c, 1, &l, &[], "h", &Offer::default(), 1).unwrap(),
+            add(&mut c, 1, &l, &[], "", &Offer::default(), 1).unwrap(),
             Added::Routine(_)
         ));
     }
     let l = line("one-more · every day 07:30");
     assert_eq!(
-        add(&mut c, 1, &l, &[], "h", &Offer::default(), 1).unwrap(),
+        add(&mut c, 1, &l, &[], "", &Offer::default(), 1).unwrap(),
         Added::Full
     );
     assert_eq!(
-        add(&mut c, 9, &l, &[], "h", &Offer::default(), 1).unwrap(),
+        add(&mut c, 9, &l, &[], "", &Offer::default(), 1).unwrap(),
         Added::NoSuchDesk
     );
 }
@@ -215,7 +333,7 @@ fn a_run_begins_ends_and_is_kept() {
         1,
         &line("tick · every day 07:30"),
         &[],
-        "h",
+        "",
         &Offer::default(),
         1,
     )
@@ -251,6 +369,7 @@ fn a_run_begins_ends_and_is_kept() {
     let runs = runs_of(&c, r.id, 10).unwrap();
     let states: Vec<&str> = runs.iter().map(|x| x.state.as_str()).collect();
     assert_eq!(states, vec!["skipped: desk parked", "ran · exit 0", "done"]);
+    assert_eq!(last_why(&c, r.id).unwrap(), "clock");
     assert_eq!(week(&c, 0).unwrap(), (1, 0));
     began(&c, r.id, "clock", "/tick", SESSION, 1000).unwrap();
     assert_eq!(end_all(&c, 1001).unwrap(), 1);
