@@ -3542,9 +3542,9 @@ async function deskLossRows(cdp, base, token) {
     await toDesk(other);
     await until(`location.pathname === "/desk/${other}"`);
     await sleep(500);
-    const notes = await p.ev(`({ line: document.querySelector("#toc .dk-notes .no-reach")?.textContent || null, prompt: !!document.querySelector("#toc .dk-notes .dk-note.new") })`);
-    if (notes.line) await p.clickOn("#toc .dk-notes .no-reach [data-a=reload]");
-    const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes .dk-note.new")`);
+    const notes = await p.ev(`({ line: document.querySelector("#toc .dk-notes:not(.dk-rts) .no-reach")?.textContent || null, prompt: !!document.querySelector("#toc .dk-notes:not(.dk-rts) .dk-note.new") })`);
+    if (notes.line) await p.clickOn("#toc .dk-notes:not(.dk-rts) .no-reach [data-a=reload]");
+    const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes:not(.dk-rts) .dk-note.new")`);
     rows.push(["notes fetch refused → Retry line, not the empty prompt", await refused(p) && !!notes.line && !notes.prompt && prompt,
       !(await refused(p)) ? "the desk never asked for its notes" : notes.prompt ? "the empty prompt, as if the list were empty" : !notes.line ? "nothing says the notes did not load" : prompt ? `"${notes.line}", and the Retry read the (empty) list` : "the Retry did not read the list"]);
 
