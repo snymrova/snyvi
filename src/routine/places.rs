@@ -131,7 +131,7 @@ impl Roots<'_> {
         };
         let rel = base
             .and_then(|b| path.strip_prefix(b).ok())
-            .map(|p| p.to_string_lossy().into_owned())
+            .map(slashed)
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
         match who {
             Who::You => format!("~/{rel}"),
@@ -381,6 +381,16 @@ pub fn from_file(root: &Path, file: &str) -> Option<Place> {
     })
 }
 
+/// A path under a root with `/` between its parts on every system: what the
+/// row stores and the 1.53 backfill writes (`.claude/commands/<cmd>.md`),
+/// and what `from_file` reads back. Windows' backslashes made one file two.
+fn slashed(p: &Path) -> String {
+    p.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// The files a skill's folder holds, sorted, or `None` when it is past
 /// the bounds and `SKILL.md` alone is hashed (T8).
 fn folder_files(dir: &Path) -> Option<Vec<PathBuf>> {
@@ -422,11 +432,7 @@ pub fn hash(p: &Place) -> Option<String> {
     };
     let mut h = blake3::Hasher::new();
     for f in files {
-        let rel = f
-            .strip_prefix(dir)
-            .unwrap_or(&f)
-            .to_string_lossy()
-            .into_owned();
+        let rel = slashed(f.strip_prefix(dir).unwrap_or(&f));
         h.update(rel.as_bytes());
         h.update(&[0]);
         h.update(&std::fs::read(&f).unwrap_or_default());
