@@ -962,6 +962,15 @@ drawn, for a mail or a document -- and what you paste into takes the one it
 reads. A ✓ in its place says it is done. On a picture, a film or a song it
 is not there.
 
+Part of a Markdown page copies the same two ways. Select across a list, a
+table or a code block and press `⌘C` / `Ctrl+C`: what you paste into an
+agent, a terminal or GitHub is Markdown -- the bullets, the `##`, the table
+in its own case, the code in its fence -- and a mail or a document still
+gets the page as drawn. A few words inside one paragraph copy as words.
+Hover a heading and a copy glyph comes up beside its `#`: it copies that
+heading and everything under it, up to the next heading as high, with the
+footnotes it points at.
+
 A control that means nothing in the view you are in is faded rather
 than hidden, and its tooltip says why -- `Wrap · no code on this page`,
 `Font · code is always monospace`. Clicking it, or pressing its key,

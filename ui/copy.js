@@ -20,7 +20,7 @@ let c = null;
 const $ = s => document.querySelector(s);
 
 export function init(ctx) {
-  if (!c) { c = ctx; downloads(); }
+  if (!c) { c = ctx; downloads(); asMarkdown(); sections(); }
   return { copyAll, printDoc };
 }
 
@@ -51,8 +51,24 @@ const DL_CSS = `
 #chrome .over.dl .over-d { display: inline-grid; }
 .dl-fl { position: fixed; z-index: var(--z-sticky); display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-xs); background: var(--bg-raise); color: var(--fg); box-shadow: var(--shadow-1); opacity: 0; pointer-events: none; transition: opacity var(--dur-move); }
 .dl-fl.on { opacity: .92; pointer-events: auto; }
-.dl-fl:hover { opacity: 1; }
+.dl-fl:hover, .dl-fl[data-said] { opacity: 1; }
+.dl-fl[data-said] { color: var(--accent); }
 `;
+const OK = '<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg>';
+
+/** The press was heard, on the thing pressed: a ✓ in its place for a
+ *  moment, as the heading's `#` says Copied (06-rail.js). */
+function heard(el, glyph) {
+  el.dataset.said = 1; el.innerHTML = OK;
+  clearTimeout(el._said);
+  el._said = setTimeout(() => { delete el.dataset.said; el.innerHTML = glyph; }, 1200);
+}
+
+/** A path under the home folder as `~/…`, as the rest of the page says it. */
+function tilde(p) {
+  const home = (c.state.desks?.home || "").replace(/[\\/]+$/, "");
+  return home && p.startsWith(home) && /^[\\/]/.test(p.slice(home.length)) ? "~" + p.slice(home.length) : p;
+}
 
 /** What the page open now downloads as, or null when it is not a file to
  *  keep: a page of text has Copy all, and a page still coming has nothing. */
@@ -98,6 +114,7 @@ function downloads() {
     const t = target();
     if (!t) return e.preventDefault();
     bar.href = t.url; bar.download = t.name; asked = { name: t.name, at: bar };
+    heard(bar, GLYPH);
   });
 
   const fl = document.createElement("a");
@@ -121,7 +138,18 @@ function downloads() {
   });
   docEl.addEventListener("pointerout", e => { if (on && !on.contains(e.relatedTarget) && !fl.contains(e.relatedTarget)) off(); });
   fl.addEventListener("pointerleave", e => { if (!on?.contains(e.relatedTarget)) off(); });
-  fl.addEventListener("click", () => { asked = { name: fl.download, at: on }; off(); });
+  // #195: the answer is where the press was. It used to hide the ↓ and say
+  // "Downloaded" beside the picture's middle -- for a tall one, the window's
+  // far corner, where nobody was looking. Now the ↓ stays and turns to a ✓,
+  // and the word comes beside the place it stood, kept as a rect: the ↓ may
+  // be gone by the time the file is.
+  fl.addEventListener("click", () => { asked = { name: fl.download, at: fl.getBoundingClientRect() }; heard(fl, GLYPH); });
+  // Any other ↓ -- a song's pill (player.js) -- is answered beside itself
+  // too. Capture, so the ones above, which say more, still have the last word.
+  addEventListener("click", e => {
+    const a = e.target.closest?.("a[download]");
+    if (a && a !== fl && a !== bar) asked = { name: a.download, at: a.getBoundingClientRect() };
+  }, true);
   // A press puts a player where its button was, and a song's pill has its
   // own ↓ from then on.
   docEl.addEventListener("click", e => { if (e.target.closest(".doc-play")) off(); });
@@ -133,9 +161,9 @@ function downloads() {
   // this: the browser shows its own downloads.
   addEventListener("snyvi-downloaded", e => {
     const { ok, path } = e.detail || {}, name = path ? path.split(/[\\/]/).pop() : asked?.name || "";
-    const at = asked?.at?.isConnected ? asked.at : null;
+    const a = asked?.at, at = a instanceof Element ? (a.isConnected ? a : null) : a || null;
     asked = null;
-    if (ok) c.toast("Downloaded", { sub: path || name, at });
+    if (ok) c.toast("Downloaded", { sub: path ? tilde(path) : name, at });
     else c.toast("Could not download", { sub: name, at });
   });
 }
@@ -251,4 +279,244 @@ export async function copyAll(btn) {
   if (!btn?.isConnected || btn.offsetParent === null) return toast("Copied", { sub: said });
   btn.dataset.copied = 1; btn.classList.add("did");
   setTimeout(() => { delete btn.dataset.copied; btn.classList.remove("did"); }, 1200);
+}
+
+/* Copy keeps the Markdown (#194). A selection that crosses blocks in a
+ * Markdown page used to reach the clipboard as the engine reads the page:
+ * no `-` before a list's lines, no `##` before a heading, a table as tabs
+ * in the CSS's capitals, code with its fence gone. Pasted into Claude, a
+ * terminal or GitHub, the shape was lost. Now the plain kind is the
+ * selection written back as Markdown, and the rich kind is still the page as
+ * drawn, for a mail or a document. A phrase inside one block is left to the
+ * engine: it is only words, and the engine's are right.
+ *
+ * Written back from the page, not cut from the source: a selection is a
+ * range of the drawn page, and only the page knows where it starts. */
+const BLOCK = /^(p|h[1-6]|ul|ol|li|table|thead|tbody|tfoot|tr|pre|blockquote|hr|figure|section|div|details|video|audio)$/;
+const NOT_TEXT = "button:not(.doc-play), .copy, .mmd-tools, .mmd-why, .mmd-ask, a.anchor, .footnote-backref, template, svg, input, script, style";
+const isBlock = n => n.nodeType === 1 && BLOCK.test(n.localName);
+
+/** A file this daemon serves for a document by the name it was written
+ *  with: `/files/<doc>/pic.png` is `pic.png` in the Markdown. */
+function local(src) {
+  if (!src) return "";
+  let p = src;
+  try { const u = new URL(src, location.href); if (u.origin === location.origin) p = u.pathname; } catch {}
+  const m = /^\/files\/[^/]+\/(.+)$/.exec(p);
+  return m ? decodeURIComponent(m[1]) : src;
+}
+
+/** `**`, `*`, `~~` round words, outside the spaces at their ends, which
+ *  Markdown will not take inside them. */
+function wrap(mark, s) {
+  const [, a, b, z] = /^(\s*)([\s\S]*?)(\s*)$/.exec(s);
+  return b ? a + mark + b + mark + z : s;
+}
+function tick(s) {
+  const n = Math.max(0, ...(s.match(/`+/g) || []).map(r => r.length)) + 1, f = "`".repeat(n);
+  return /^`|`$/.test(s) ? `${f} ${s} ${f}` : f + s + f;
+}
+
+function inline(nodes) {
+  let s = "";
+  for (const k of nodes) {
+    if (k.nodeType === 3) { s += k.data.replace(/\s+/g, " "); continue; }
+    if (k.nodeType !== 1) continue;
+    if (k.matches(".doc-play, video, audio")) { const src = srcOf(k); if (src) s += `![](${local(src)})`; continue; }
+    if (k.matches(NOT_TEXT)) continue;
+    const t = k.localName, inner = () => inline(k.childNodes);
+    if (t === "strong" || t === "b") s += wrap("**", inner());
+    else if (t === "em" || t === "i") s += wrap("*", inner());
+    else if (t === "del" || t === "s") s += wrap("~~", inner());
+    else if (t === "code") s += tick(k.textContent);
+    else if (t === "br") s += "  \n";
+    else if (t === "img") s += `![${k.getAttribute("alt") || ""}](${local(k.getAttribute("src"))})`;
+    else if (t === "a") {
+      const href = k.getAttribute("href") || "", x = inner();
+      s += k.hasAttribute("data-footnote-ref") ? `[^${x}]` : href && !href.startsWith("#") && x.trim() ? `[${x}](${href})` : x;
+    } else s += inner();
+  }
+  return s;
+}
+
+/** A code block with its fence, and the language the renderer named it by:
+ *  `data-lang` is the highlighter's name for it, "Rust" or "Bourne Again
+ *  Shell (bash)", of which the fence wants the short one. */
+function fence(pre) {
+  if (pre.matches(".mermaid")) return "```mermaid\n" + pre.textContent.replace(/\n$/, "") + "\n```";
+  const lines = [...pre.querySelectorAll(".ln")];
+  const code = (lines.length ? lines.map(l => l.textContent).join("\n") : pre.querySelector("code")?.textContent || "").replace(/\n$/, "");
+  const name = pre.dataset.lang || "", lang = /\(([^)]+)\)/.exec(name)?.[1] || (/^(text|plain text)$/i.test(name) ? "" : name.toLowerCase().replace(/\s+/g, ""));
+  const f = "`".repeat(Math.max(3, ...(code.match(/`{3,}/g) || []).map(r => r.length + 1)));
+  return `${f}${lang}\n${code}\n${f}`;
+}
+
+function table(t) {
+  const rows = t.localName === "tr" ? [t] : [...t.querySelectorAll("tr")];
+  if (!rows.length) return "";
+  const cell = c => inline(c.childNodes).trim().replace(/\s*\n\s*/g, " ").replace(/\|/g, "\\|");
+  const row = r => `| ${[...r.children].map(cell).join(" | ")} |`;
+  const rule = [...rows[0].children].map(c => ({ left: ":--", right: "--:", center: ":-:" })[c.getAttribute("align")] || "---");
+  return [row(rows[0]), `| ${rule.join(" | ")} |`, ...rows.slice(1).map(row)].join("\n");
+}
+
+/** A list's items, each under its mark, what is inside it indented under
+ *  the mark's width so a nested list stays nested. A tight list -- no
+ *  paragraphs in its items -- stays tight. */
+function list(l) {
+  const ol = l.localName === "ol";
+  let i = +(l.getAttribute("start") || 1);
+  return [...l.children].filter(li => li.localName === "li").map(li => item(li, ol ? `${i++}. ` : "- ")).join("\n");
+}
+function item(li, mark) {
+  const box = li.querySelector(":scope > input[type=checkbox]");
+  const head = mark + (box ? (box.hasAttribute("checked") ? "[x] " : "[ ] ") : "");
+  const pad = " ".repeat(head.length);
+  return md(li, li.querySelector(":scope > p") ? "\n\n" : "\n").split("\n").map((l, j) => j ? (l && pad + l) : head + l).join("\n");
+}
+
+function block(k) {
+  const t = k.localName;
+  if (/^h[1-6]$/.test(t)) return `${"#".repeat(+t[1])} ${inline(k.childNodes).trim()}`;
+  if (t === "p") return tidy(inline(k.childNodes));
+  if (t === "hr") return "---";
+  if (t === "pre") return fence(k);
+  if (t === "figure" && k.dataset.src) return "```mermaid\n" + k.dataset.src + "\n```";
+  if (t === "ul" || t === "ol") return list(k);
+  if (t === "li") return item(k, "- ");
+  if (t === "blockquote") return md(k).split("\n").map(l => l ? `> ${l}` : ">").join("\n");
+  if (/^(table|thead|tbody|tfoot|tr)$/.test(t)) return table(k);
+  if (t === "section" && k.matches(".footnotes")) return [...k.querySelectorAll("li[id]")].map(li => `[^${li.id.replace(/^fn-/, "")}]: ${md(li).trim()}`).join("\n");
+  if (t === "video" || t === "audio") return inline([k]);
+  return md(k);
+}
+const tidy = s => s.replace(/[ \t]*\n[ \t]*/g, m => (/^  \n/.test(m) ? "  \n" : "\n")).trim();
+
+/** A node's children as Markdown: its blocks one after another with a
+ *  blank line between, and the words between them as a paragraph of their
+ *  own. */
+function md(n, sep = "\n\n") {
+  const out = [];
+  let run = [];
+  const flush = () => { const s = tidy(inline(run)); if (s) out.push(s); run = []; };
+  for (const k of n.childNodes) {
+    if (!isBlock(k)) { run.push(k); continue; }
+    flush();
+    const b = block(k);
+    if (b) out.push(b);
+  }
+  flush();
+  return out.join(sep);
+}
+
+/** What is selected, inside the ancestors it was cut from: a range across
+ *  two items of a list clones as two bare items, and they are a list's
+ *  only inside one. Cut to the article: a drag from the title down takes
+ *  the article's part, and the title is the document's own. */
+function picked(sel, art) {
+  if (!sel.rangeCount || sel.isCollapsed) return null;
+  const r = sel.getRangeAt(0).cloneRange();
+  if (!r.intersectsNode(art)) return null;
+  if (!art.contains(r.startContainer)) r.setStart(art, 0);
+  if (!art.contains(r.endContainer)) r.setEnd(art, art.childNodes.length);
+  let n = r.commonAncestorContainer;
+  if (n.nodeType !== 1) n = n.parentNode;
+  if (n.closest("pre, code")) return null;
+  const frag = r.cloneContents();
+  if (![...frag.querySelectorAll("*")].some(isBlock)) return null;
+  let top = frag;
+  for (; n && n !== art; n = n.parentNode) { const w = n.cloneNode(false); w.append(top); top = w; }
+  return top;
+}
+
+/** The drawn kind, less what is only the page's: its buttons. */
+function drawn(node) {
+  const box = document.createElement("div");
+  box.append(node.cloneNode(true));
+  box.querySelectorAll("button, .copy, .mmd-tools, template").forEach(x => x.remove());
+  return box.innerHTML;
+}
+
+function asMarkdown() {
+  document.addEventListener("copy", e => {
+    const art = $("#doc article.kind-markdown");
+    if (!art || !e.clipboardData || e.target.closest?.("input, textarea, [contenteditable]")) return;
+    const top = picked(getSelection(), art);
+    if (!top) return;
+    const text = md(top).replace(/\n{3,}/g, "\n\n").trim();
+    if (!text) return;
+    e.preventDefault();
+    e.clipboardData.setData("text/plain", text);
+    e.clipboardData.setData("text/html", drawn(top));
+  });
+}
+
+/* Copy one section (#194): a heading and all under it, to the next heading
+ * as high or higher, in the same two kinds as a selection. The glyph comes
+ * in the gutter just before the `#`, on a hover of the heading, laid over
+ * the page as the ↓ is, so nothing moves; it says ✓ on itself. */
+const SEC_CSS = `
+.sec-fl { position: fixed; z-index: var(--z-sticky); display: grid; place-items: center; width: 24px; height: 24px; border-radius: var(--r-xs); color: var(--fg-3); opacity: 0; pointer-events: none; transition: opacity var(--t), color var(--t), background var(--t); }
+.sec-fl.on { opacity: .7; pointer-events: auto; }
+.sec-fl:hover, .sec-fl:focus-visible { opacity: 1; color: var(--fg); background: var(--rule); }
+.sec-fl[data-said] { opacity: 1; color: var(--accent); background: none; }
+@media print { .sec-fl { display: none; } }
+`;
+const COPY = '<svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M13 4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13"/></svg>';
+
+/** The heading and what follows it, up to the next heading as high. */
+function section(h) {
+  const level = +h.localName[1], box = document.createElement("div");
+  box.append(h.cloneNode(true));
+  for (let n = h.nextElementSibling; n; n = n.nextElementSibling) {
+    if ((/^h[1-6]$/.test(n.localName) && +n.localName[1] <= level) || n.matches("section.footnotes")) break;
+    box.append(n.cloneNode(true));
+  }
+  // The footnotes it points at, which live at the article's end.
+  const ids = [...box.querySelectorAll("a[data-footnote-ref]")].map(a => a.getAttribute("href")?.slice(1)).filter(Boolean);
+  // By id, not a selector: this file's `CSS` is its print sheet, not CSS.escape's.
+  const notes = ids.map(id => document.getElementById(id)).filter(li => li?.closest("section.footnotes"));
+  if (notes.length) {
+    const s = document.createElement("section"), ol = document.createElement("ol");
+    s.className = "footnotes"; ol.append(...notes.map(li => li.cloneNode(true))); s.append(ol); box.append(s);
+  }
+  return box;
+}
+
+function sections() {
+  { const s = document.createElement("style"); s.textContent = SEC_CSS; document.head.append(s); }
+  const docEl = $("#doc"), b = document.createElement("button");
+  b.type = "button"; b.className = "sec-fl"; b.tabIndex = -1; b.innerHTML = COPY;
+  b.dataset.tip = "Copy section"; b.dataset.tipSub = "as Markdown, to paste anywhere";
+  b.setAttribute("aria-label", "Copy section");
+  document.body.append(b);
+  let on = null;
+  const off = () => { on = null; b.classList.remove("on"); };
+  docEl.addEventListener("pointerover", e => {
+    const h = e.target.closest?.("article.kind-markdown > :is(h1, h2, h3, h4)");
+    if (!h || h === on) return;
+    on = h;
+    // Against the `#`, which sits 1.2em into the gutter: the pointer goes
+    // from the words over the `#` onto this without leaving the heading.
+    const a = h.querySelector("a.anchor")?.getBoundingClientRect(), r = h.getBoundingClientRect();
+    const left = a && a.width ? a.left : r.left - 20, mid = a && a.height ? a.top + a.height / 2 : r.top + 16;
+    b.style.left = `${left - 24}px`; b.style.top = `${mid - 12}px`;
+    b.classList.add("on");
+  });
+  docEl.addEventListener("pointerout", e => { if (on && !on.contains(e.relatedTarget) && e.relatedTarget !== b && !b.contains(e.relatedTarget)) off(); });
+  b.addEventListener("pointerleave", e => { if (!on?.contains(e.relatedTarget)) off(); });
+  b.addEventListener("click", async () => {
+    if (!on) return;
+    const box = section(on), text = md(box).replace(/\n{3,}/g, "\n\n").trim(), html = drawn(box);
+    heard(b, COPY);
+    try {
+      if (!window.ClipboardItem) throw 0;
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([text], { type: "text/plain" }), "text/html": new Blob([html], { type: "text/html" }) })]);
+    } catch {
+      try { await navigator.clipboard.writeText(text); }
+      catch { c.toast("Could not copy", { sub: `select and press ${c.keyHint("mod+c")}`, at: b }); }
+    }
+  });
+  $("#main")?.addEventListener("scroll", off, { passive: true });
+  new MutationObserver(off).observe(docEl, { childList: true });
 }

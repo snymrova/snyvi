@@ -32,6 +32,12 @@ line = "Type / to pick a command or a skill, or write your own words, and say wh
 show = "desk .dk-rts .rt-in"
 
 [[feature]]
+id = "copy-markdown"
+since = "1.53.0"
+title = "Copy keeps the Markdown"
+line = "Copy part of a Markdown page and paste it into Claude, a terminal or GitHub with its bullets, headings, tables and code intact. Hover a heading for a glyph that copies its whole section."
+
+[[feature]]
 id = "whats-new"
 since = "1.52.0"
 title = "What's new"
