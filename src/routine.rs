@@ -22,13 +22,24 @@
 //! - **Nothing is deleted.** Remove from view and Pause are stamps; the runs
 //!   stay in `routine_runs`, which is the routine's history.
 //!
+//! 1.53 (plan f30461f2c1): a routine has a field of its own, and a line
+//! there is a **draft** until the reader's Start (`started_at`). Its name
+//! resolves through `places` -- the reader's and the project's commands
+//! and skills, in Claude Code's order -- and the file it came to is kept
+//! (`file`) and hashed; a line whose first word is none of them is the
+//! reader's own words, sent as they are. An agent's offer is a draft with
+//! its name on it, and never words.
+//!
 //! The store's side only, as `crate::desk` is for notes: no HTTP, no panes.
+
+pub mod places;
+pub mod waits;
 
 use crate::due::every::{every, every_tail, Every};
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS routines (
@@ -71,8 +82,19 @@ CREATE TABLE IF NOT EXISTS routine_runs (
 CREATE INDEX IF NOT EXISTS routine_runs_of ON routine_runs(routine_id, started_at);
 "#;
 
+/// 1.53: a draft until Start, and the file its name came to (`places`),
+/// `~/…` or under the desk. Every routine before this was live, and a
+/// `.claude/commands/` file. Version 32 of `store::MIGRATIONS`.
+pub const DRAFT_COLUMNS_1_53: &str =
+    "ALTER TABLE routines ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE routines ADD COLUMN file TEXT NOT NULL DEFAULT '';
+     UPDATE routines SET started_at = created_at WHERE suggested_by = '';
+     UPDATE routines SET file = '.claude/commands/' || cmd || '.md' WHERE cmd != '';";
+
 /// How many routines a desk keeps: a handful is the point.
 pub const PER_DESK: i64 = 6;
+/// The longest line a routine is: the reader's words are its prompt.
+pub const WORDS_CHARS: usize = 200;
 /// The longest line kept from a run's last message.
 pub const LINE_CHARS: usize = 120;
 /// What waits for the reader: this many patterns, this long, at most.
@@ -88,9 +110,10 @@ pub const SESSION: &str = "session";
 pub struct Routine {
     pub id: i64,
     pub desk_id: i64,
-    /// The line's head, as typed, without its `/`: `newsroom`, `bench main`.
+    /// The line's head, as typed, without its `/`: `newsroom`, `bench main`,
+    /// or the reader's own words.
     pub name: String,
-    /// Its first word: the command file's name.
+    /// Its first word, the command or skill it runs; empty for words.
     pub cmd: String,
     /// The cadence, said one way (`Every::words`).
     pub every: String,
@@ -122,6 +145,11 @@ pub struct Routine {
     pub created_at: i64,
     #[serde(skip_serializing_if = "is_zero")]
     pub removed_at: i64,
+    /// The reader's Start; 0 while a draft or an offer.
+    pub started_at: i64,
+    /// The file its name came to when it was allowed (`places::Place::file`).
+    #[serde(rename = "path")]
+    pub file: String,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -130,9 +158,31 @@ fn is_zero(n: &i64) -> bool {
 
 impl Routine {
     /// What the session is started with: the reader's line, as a slash
-    /// command.
+    /// command, or their words as they are. Words never start with `/`.
     pub fn prompt(&self) -> String {
-        format!("/{}", self.name)
+        if self.cmd.is_empty() {
+            self.name.trim_start_matches('/').to_string()
+        } else {
+            format!("/{}", self.name)
+        }
+    }
+
+    /// `offer`, `draft`, `paused` or `live`: the four stamps read as one.
+    pub fn state(&self) -> &'static str {
+        if !self.suggested_by.is_empty() {
+            "offer"
+        } else if self.started_at == 0 {
+            "draft"
+        } else if self.paused_at != 0 {
+            "paused"
+        } else {
+            "live"
+        }
+    }
+
+    /// Whether it is the reader's words rather than a command's.
+    pub fn words(&self) -> bool {
+        self.cmd.is_empty()
     }
 
     pub fn cadence(&self) -> Option<Every> {
@@ -144,8 +194,8 @@ impl Routine {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Run {
     pub id: i64,
-    /// `clock`, `you` (Run now), `answer` (a card's answer) or `card` (a
-    /// run card's command).
+    /// `clock`, `you` (Run now), `try` (Try once now), `answer` (a card's
+    /// answer) or `card` (a run card's command).
     pub why: String,
     pub what: String,
     pub started_at: i64,
@@ -158,22 +208,74 @@ pub struct Run {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
     pub name: String,
+    /// The first word when it could be a command's name, else empty.
     pub cmd: String,
+    /// Typed with its `/`: a command, never words.
+    pub slash: bool,
     pub every: Every,
 }
 
-/// What a line ending in a cadence says, when its first word could be a
-/// command: `newsroom · every day 07:30`, `/bench main, every weekday 9`.
-/// Whether the command is on disk is the caller's to look up.
+impl Line {
+    /// The same line as the reader's words: no command.
+    pub fn into_words(mut self) -> Line {
+        self.cmd.clear();
+        self
+    }
+}
+
+/// What a line ending in a cadence says: `newsroom · every day 07:30`,
+/// `/bench main, every weekday 9`, `open PRs, summarise · every weekday 9`.
+/// Whether its first word is a command is the caller's to look up
+/// (`resolve`): a line typed with `/` must be one, any other may be words.
 pub fn from_line(text: &str) -> Option<Line> {
     let (head, every) = every_tail(text)?;
-    let name = head.trim().trim_start_matches('/').trim().to_string();
-    let cmd = name.split_whitespace().next()?.to_string();
-    (cmd_ok(&cmd) && !name.chars().any(char::is_control)).then_some(Line {
-        name: crate::thread::line(&name, 80),
+    let head = head.trim().trim_end_matches(['·', ',', ';', '-']).trim();
+    let slash = head.starts_with('/');
+    let name = head.trim_start_matches('/').trim().to_string();
+    let first = name.split_whitespace().next()?.to_string();
+    let cmd = if cmd_ok(&first) { first } else { String::new() };
+    if (slash && cmd.is_empty()) || name.chars().any(char::is_control) {
+        return None;
+    }
+    Some(Line {
+        name: crate::thread::line(&name, WORDS_CHARS),
         cmd,
+        slash,
         every,
     })
+}
+
+/// What a line's name comes to in a desk's folder.
+#[derive(Debug, PartialEq)]
+pub enum Made {
+    /// A command or a skill, and its hash as it is now.
+    File(places::Place, String),
+    /// The reader's words.
+    Words,
+    /// Two files the docs leave open (`places::Resolved::Two`).
+    Two(String, String),
+    /// Typed with `/`, and there is no such command or skill.
+    NoFile(String),
+}
+
+/// What a line comes to: its first word resolved, or the reader's words.
+pub fn resolve(root: &Path, line: &Line) -> Made {
+    resolve_name(root, &line.cmd, line.slash)
+}
+
+fn resolve_name(root: &Path, cmd: &str, slash: bool) -> Made {
+    if cmd.is_empty() {
+        return Made::Words;
+    }
+    match places::resolve(root, cmd) {
+        places::Resolved::One(p) => match places::hash(&p) {
+            Some(h) => Made::File(p, h),
+            None => Made::NoFile(cmd.to_string()),
+        },
+        places::Resolved::Two(a, b) => Made::Two(a.file, b.file),
+        places::Resolved::Words if slash => Made::NoFile(cmd.to_string()),
+        places::Resolved::Words => Made::Words,
+    }
 }
 
 /// A command file's name: letters, digits, `-` and `_`.
@@ -185,46 +287,36 @@ pub fn cmd_ok(cmd: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Where a desk's command lives.
-pub fn command_file(root: &Path, cmd: &str) -> PathBuf {
-    root.join(".claude")
-        .join("commands")
-        .join(format!("{cmd}.md"))
+/// Where a routine's name resolves now, and the file's hash: what Claude
+/// Code would run if it started this minute.
+pub fn now_of(root: &Path, r: &Routine) -> Made {
+    resolve_name(root, &r.cmd, true)
 }
 
-/// The commands a desk's folder has, by name, for the chip.
-pub fn commands(root: &Path) -> Vec<String> {
-    let Ok(dir) = std::fs::read_dir(root.join(".claude").join("commands")) else {
-        return Vec::new();
-    };
-    let mut v: Vec<String> = dir
-        .flatten()
-        .filter_map(|e| {
-            let n = e.file_name().to_string_lossy().into_owned();
-            let cmd = n.strip_suffix(".md")?;
-            cmd_ok(cmd).then(|| cmd.to_string())
-        })
-        .take(200)
-        .collect();
-    v.sort();
-    v
-}
-
-/// A command file's hash, or `None` when it is not there.
-pub fn hash_of(root: &Path, cmd: &str) -> Option<String> {
-    let bytes = std::fs::read(command_file(root, cmd)).ok()?;
-    Some(blake3::hash(&bytes).to_hex().to_string())
-}
-
-/// How a routine's file stands: `ok`, `changed` since it was allowed,
-/// `gone`, or `new` -- an offer never allowed.
+/// How a routine's file stands: `ok`, `changed` since it was allowed (its
+/// text, or the file its name now comes to), `gone`, `two`, `new` -- a
+/// draft or an offer never allowed -- or `words`, which has none.
 pub fn file_state(root: &Path, r: &Routine) -> &'static str {
-    match hash_of(root, &r.cmd) {
-        None => "gone",
-        Some(_) if r.cmd_hash.is_empty() => "new",
-        Some(h) if h == r.cmd_hash => "ok",
-        Some(_) => "changed",
+    match now_of(root, r) {
+        Made::Words => "words",
+        Made::NoFile(_) => "gone",
+        Made::Two(..) => "two",
+        Made::File(..) if r.cmd_hash.is_empty() => "new",
+        Made::File(p, h) if h == r.cmd_hash && p.file == r.file => "ok",
+        Made::File(..) => "changed",
     }
+}
+
+/// Whether a command's file reads a `continue:` form: then the reader's
+/// answers start it fresh as `/<cmd> continue: …`; else they go on in the
+/// run's own session (`--resume`). Cheap and honest: it says the author
+/// thought of it, and a try says whether it works.
+pub fn continues(text: &str) -> bool {
+    text.contains("continue:")
+        || text.lines().any(|l| {
+            let l = l.trim();
+            l.starts_with('#') && l.to_ascii_lowercase().contains("continue")
+        })
 }
 
 /// The reader's Waits list, one pattern a line, or `None` when a line is
@@ -263,7 +355,7 @@ pub fn settings(deny: &[&str], waits: &[String]) -> serde_json::Value {
 const COLS: &str =
     "id, desk_id, name, cmd, every, due_at, waits, minutes, five_hour, pane, cmd_hash,
     allowed_at, last_at, last_state, last_line, runs, running_since, running, late_s,
-    suggested_by, suggested_pane, paused_at, created_at, removed_at";
+    suggested_by, suggested_pane, paused_at, created_at, removed_at, started_at, file";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Routine> {
     let waits: String = r.get(6)?;
@@ -292,6 +384,8 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Routine> {
         paused_at: r.get(21)?,
         created_at: r.get(22)?,
         removed_at: r.get(23)?,
+        started_at: r.get(24)?,
+        file: r.get(25)?,
     })
 }
 
@@ -360,15 +454,15 @@ pub struct Offer<'a> {
     pub pane: &'a str,
 }
 
-/// A routine from a line. `hash` is the command file's as it is now: the
-/// reader's own line allows it, an offer (`from.by`) carries none until the
-/// reader saves the sheet.
+/// A routine from a line, as a draft: nothing is allowed and nothing rings
+/// until the reader's Start (`start`). `file` is where its name came to,
+/// empty for words; an offer (`from.by`) is a draft with the agent's name.
 pub fn add(
     conn: &mut Connection,
     desk_id: i64,
     line: &Line,
     waits: &[String],
-    hash: &str,
+    file: &str,
     from: &Offer,
     now: i64,
 ) -> Result<Added> {
@@ -392,12 +486,10 @@ pub fn add(
     if held >= PER_DESK {
         return Ok(Added::Full);
     }
-    let offer = !from.by.is_empty();
-    let hash = if offer { "" } else { hash };
     tx.execute(
-        "INSERT INTO routines(desk_id, name, cmd, every, due_at, waits, cmd_hash, allowed_at,
+        "INSERT INTO routines(desk_id, name, cmd, every, due_at, waits, file,
            suggested_by, suggested_pane, created_at)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             desk_id,
             line.name,
@@ -405,8 +497,7 @@ pub fn add(
             line.every.words(),
             line.every.next_after(now, crate::due::offset()),
             waits.join("\n"),
-            hash,
-            if hash.is_empty() { 0 } else { now },
+            file,
             crate::thread::line(from.by, 60),
             from.pane,
             now
@@ -425,16 +516,21 @@ pub struct Save {
     pub waits: Vec<String>,
     pub minutes: i64,
     pub five_hour: i64,
-    /// The command file's hash as the reader saw it: saving allows it.
+    /// The file's hash as the reader saw it, and where: saving a live
+    /// routine allows it. A draft's waits for Start.
     pub hash: String,
+    pub file: String,
 }
 
-/// Save the sheet: the next hour read again from the cadence, the file
-/// allowed as it is, and an offer made the reader's own.
+/// Save the sheet: the next hour read again from the cadence, a live
+/// routine's file allowed as it is, and an offer made the reader's draft.
 pub fn save(conn: &Connection, id: i64, s: &Save, now: i64) -> Result<bool> {
     let n = conn.execute(
         "UPDATE routines SET name = ?2, every = ?3, due_at = ?4, waits = ?5, minutes = ?6,
-           five_hour = ?7, cmd_hash = ?8, allowed_at = CASE WHEN ?8 = '' THEN allowed_at ELSE ?9 END,
+           five_hour = ?7,
+           cmd_hash = CASE WHEN started_at = 0 OR ?8 = '' THEN cmd_hash ELSE ?8 END,
+           file = CASE WHEN started_at = 0 OR ?8 = '' THEN file ELSE ?10 END,
+           allowed_at = CASE WHEN started_at = 0 OR ?8 = '' THEN allowed_at ELSE ?9 END,
            suggested_by = '', suggested_pane = ''
          WHERE id = ?1 AND removed_at = 0",
         params![
@@ -446,10 +542,28 @@ pub fn save(conn: &Connection, id: i64, s: &Save, now: i64) -> Result<bool> {
             s.minutes.clamp(1, 240),
             s.five_hour.clamp(10, 100),
             s.hash,
-            now
+            now,
+            s.file
         ],
     )?;
     Ok(n > 0)
+}
+
+/// Start it: a draft or an offer made live, its file allowed as it is now
+/// (`hash`, `file`; both empty for words), its first hour the next one.
+pub fn start(conn: &Connection, id: i64, hash: &str, file: &str, now: i64) -> Result<bool> {
+    let Some(r) = get(conn, id)? else {
+        return Ok(false);
+    };
+    let next = r
+        .cadence()
+        .map_or(now + 86_400, |e| e.next_after(now, crate::due::offset()));
+    Ok(conn.execute(
+        "UPDATE routines SET started_at = ?2, due_at = ?3, cmd_hash = ?4, file = ?5,
+           allowed_at = ?2, suggested_by = '', suggested_pane = '', late_s = 0
+         WHERE id = ?1 AND removed_at = 0 AND started_at = 0",
+        params![id, now, next, hash, file],
+    )? > 0)
 }
 
 /// What the row's menu does.
@@ -511,11 +625,13 @@ pub fn act(conn: &Connection, id: i64, act: Act, now: i64) -> Result<bool> {
     Ok(n > 0)
 }
 
-/// Allow the command file as it is now (the row's Allow).
-pub fn allow(conn: &Connection, id: i64, hash: &str, now: i64) -> Result<bool> {
+/// Allow the command file as it is now (the row's Allow), and the file its
+/// name now comes to. A draft is allowed by its Start, not here.
+pub fn allow(conn: &Connection, id: i64, hash: &str, file: &str, now: i64) -> Result<bool> {
     Ok(conn.execute(
-        "UPDATE routines SET cmd_hash = ?2, allowed_at = ?3 WHERE id = ?1 AND removed_at = 0 AND suggested_by = ''",
-        params![id, hash, now],
+        "UPDATE routines SET cmd_hash = ?2, allowed_at = ?3, file = ?4
+         WHERE id = ?1 AND removed_at = 0 AND suggested_by = '' AND started_at != 0",
+        params![id, hash, now, file],
     )? > 0)
 }
 
@@ -532,7 +648,7 @@ pub fn due(conn: &Connection, now: i64) -> Result<Vec<Routine>> {
     let mut st = conn.prepare_cached(&format!(
         "SELECT {cols} FROM routines r JOIN desks d ON d.id = r.desk_id
          WHERE r.due_at <= ?1 AND r.removed_at = 0 AND r.paused_at = 0 AND r.suggested_by = ''
-           AND d.closed_at = 0
+           AND r.started_at != 0 AND d.closed_at = 0
          ORDER BY r.due_at, r.id LIMIT 12"
     ))?;
     let v = st
@@ -546,7 +662,8 @@ pub fn due(conn: &Connection, now: i64) -> Result<Vec<Routine>> {
 pub fn pass_closed(conn: &Connection, now: i64) -> Result<usize> {
     let mut st = conn.prepare_cached(
         "SELECT r.id, r.every FROM routines r JOIN desks d ON d.id = r.desk_id
-         WHERE r.due_at <= ?1 AND r.removed_at = 0 AND d.closed_at != 0 LIMIT 64",
+         WHERE r.due_at <= ?1 AND r.removed_at = 0 AND r.started_at != 0 AND d.closed_at != 0
+         LIMIT 64",
     )?;
     let v: Vec<(i64, String)> = st
         .query_map(params![now], |r| Ok((r.get(0)?, r.get(1)?)))?
@@ -680,6 +797,20 @@ pub fn runs_of(conn: &Connection, id: i64, limit: i64) -> Result<Vec<Run>> {
     Ok(v)
 }
 
+/// Why its last session started: `try`, `clock`, … or empty. A draft's
+/// answers go on only after a try (T4).
+pub fn last_why(conn: &Connection, id: i64) -> Result<String> {
+    Ok(conn
+        .query_row(
+            "SELECT why FROM routine_runs WHERE routine_id = ?1 AND why != 'card' AND state NOT LIKE 'skipped%'
+             ORDER BY started_at DESC, id DESC LIMIT 1",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or_default())
+}
+
 /// The reader's answers to a routine's questions, once all of them are
 /// in: what the next session starts with (`server::routine_run`). Only its
 /// `decide` cards; the others are told at its next prompt, as any panel's.
@@ -713,10 +844,10 @@ pub fn told(conn: &Connection, ids: &[i64], now: i64) -> Result<()> {
     Ok(())
 }
 
-/// What the next session is started with: the reader's words only, never
-/// the questions an agent wrote (TERMINAL.md §9b), numbered as they were
-/// asked when there are several.
-pub fn continue_prompt(r: &Routine, answers: &[(i64, String)]) -> String {
+/// The reader's answers as one line: their words only, never the questions
+/// an agent wrote (TERMINAL.md §9b), numbered as they were asked when
+/// there are several.
+pub fn said(answers: &[(i64, String)]) -> String {
     let one = |a: &str| -> String {
         a.chars()
             .map(|c| if c.is_control() { ' ' } else { c })
@@ -724,7 +855,7 @@ pub fn continue_prompt(r: &Routine, answers: &[(i64, String)]) -> String {
             .trim()
             .to_string()
     };
-    let said = match answers {
+    match answers {
         [(_, a)] => one(a),
         all => all
             .iter()
@@ -732,15 +863,19 @@ pub fn continue_prompt(r: &Routine, answers: &[(i64, String)]) -> String {
             .map(|(i, (_, a))| format!("{}. {}", i + 1, one(a)))
             .collect::<Vec<_>>()
             .join("; "),
-    };
-    format!("{} continue: {said}", r.prompt())
+    }
+}
+
+/// The next session's prompt, for a command whose file reads `continue:`.
+pub fn continue_prompt(r: &Routine, answers: &[(i64, String)]) -> String {
+    format!("{} continue: {}", r.prompt(), said(answers))
 }
 
 /// Since `since`: the sessions routines ran, and the cards they raised.
 /// Home's week.
 pub fn week(conn: &Connection, since: i64) -> Result<(i64, i64)> {
     let ran: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM routine_runs WHERE started_at >= ?1 AND what LIKE '/%' AND state NOT LIKE 'skipped%'",
+        "SELECT COUNT(*) FROM routine_runs WHERE started_at >= ?1 AND why != 'card' AND state NOT LIKE 'skipped%'",
         params![since],
         |r| r.get(0),
     )?;

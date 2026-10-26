@@ -270,7 +270,7 @@ function rail() {
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); rtFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
   pageChips(vs, live);
   onYou(d);
@@ -597,12 +597,13 @@ function dueGuess(t) {
 function dueGuessDraw(inp) {
   const el = inp.parentElement?.querySelector(".dk-due-guess");
   if (!el) return;
-  // A cadence is a routine's (19-routine.js), and wins over a date.
-  const r = everyChip(inp.value), g = r ? "" : dueGuess(inp.value);
-  el.textContent = r || (g ? `due ${g}` : "");
-  el.hidden = !(r || g);
+  // Routines have a field of their own (19-routine.js): here a line with
+  // "every" in it is a note like any other.
+  const g = dueGuess(inp.value);
+  el.textContent = g ? `due ${g}` : "";
+  el.hidden = !g;
   // The words scroll short of the chip rather than under it.
-  inp.style.paddingRight = r || g ? `${el.offsetWidth + 12}px` : "";
+  inp.style.paddingRight = g ? `${el.offsetWidth + 12}px` : "";
 }
 
 /** One line. A line being rewritten is a field in the row's own place, so the
@@ -1112,7 +1113,7 @@ function waitingFirst(d, fresh, asked) {
 function forgetNotes() {
   clearTimeout(backTimer);
   forgetFiled();
-  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesDone = false; notesKept.clear();
+  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesDone = false; notesKept.clear(); rtField = null;
   clearTimeout(imgTimer); pending = []; imgGone = null; closeLightbox();
 }
 
@@ -1301,8 +1302,6 @@ async function saveNote(again) {
   // Undo brings back the text it had.
   if (!text) return act({ dataset: { a: "note-x", n: String(f.id) } });
   try {
-    // A line the chip read as a routine is one, under Routines (19-routine.js).
-    if (f.kind === "new" && !pics.length && await routineAdd(d, text)) return;
     if (f.kind === "new") {
       const j = await ctx.api(`/api/desks/${d.id}/notes`, { text });
       if (j.note) notesKept.add(j.note.id);

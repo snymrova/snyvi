@@ -25,6 +25,19 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "routines-field"
+since = "1.53.0"
+title = "Routines have a field of their own"
+line = "Type / to pick a command or a skill, or write your own words, and say when. Try it once while you watch, then Start it, and it comes back at its hour."
+show = "desk .dk-rts .rt-in"
+
+[[feature]]
+id = "copy-markdown"
+since = "1.53.0"
+title = "Copy keeps the Markdown"
+line = "Copy part of a Markdown page and paste it into Claude, a terminal or GitHub with its bullets, headings, tables and code intact. Hover a heading for a glyph that copies its whole section."
+
+[[feature]]
 id = "whats-new"
 since = "1.52.0"
 title = "What's new"
@@ -87,7 +100,7 @@ since = "1.50.0"
 title = "Routines"
 line = "A line that comes back. Type check-seedlings · every day 07:30 in a desk's notes, and snyvi runs that command at that hour, in a panel in the back. What it did waits for you on Home."
 still = "routines.png"
-show = "desk .dk-note.new"
+show = "desk .dk-rts .rt-in"
 
 [[feature]]
 id = "undo-waits"

@@ -183,6 +183,8 @@ pub(crate) struct AskBody {
     cmd: String,
     /// `key` only: the key's name, so adding it settles the turn.
     key: String,
+    /// `hand_over` only: a card of the desk's this one says again.
+    replaces: i64,
     /// `ask` with several questions, as one card (#110): each one's text,
     /// options and recommended, in place of the body's own.
     questions: Vec<QuestionBody>,
@@ -317,6 +319,7 @@ async fn pane_turn(
         pane: id,
         cmd: b.cmd,
         key_name: b.key,
+        replaces: if decide { 0 } else { b.replaces },
     };
     let desk = placed.desk_id;
     // Several questions are one card; a hand-over has no questions to put.
@@ -1056,10 +1059,14 @@ pub(crate) async fn desk_threads(
         ))
     });
     match r {
-        Ok((threads, turns, suggestions, away)) => Json(json!({
-            "threads": threads, "turns": turns, "suggestions": suggestions, "away": away,
-        }))
-        .into_response(),
+        Ok((threads, turns, suggestions, away)) => {
+            let mut turns = json!(turns);
+            super::routine_run::mark_waits(&app, id, &mut turns);
+            Json(json!({
+                "threads": threads, "turns": turns, "suggestions": suggestions, "away": away,
+            }))
+            .into_response()
+        }
         Err(e) => err(e),
     }
 }
@@ -1104,7 +1111,7 @@ fn row_act(app: &Arc<App>, id: i64, what: &str, row: i64, act: &str, body: &[u8]
         Ok(match (what, act) {
             ("threads", "remove") => thread::remove(c, id, row, now)?,
             ("threads", "restore") => thread::restore(c, id, row)?,
-            ("turns", "remove") => thread::remove_turn(c, id, row, now)?,
+            ("turns", "remove") => thread::remove_turn(c, id, row, "you", now)?,
             ("turns", "restore") => thread::restore_turn(c, id, row)?,
             // Send now typed it into the panel: told there, not again.
             ("turns", "sent") => thread::sent_turn(c, id, row, now)?,
@@ -1263,6 +1270,11 @@ pub(crate) async fn desk_answer_turn(
 ) -> Response {
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
+    }
+    // Run on a routine's card for a command not on its Waits list takes a
+    // second press (1.53, T7): said under the card, and nothing answered.
+    if let Some(no) = super::routine_run::run_refused(&app, id, t, &b.answer) {
+        return refused(StatusCode::CONFLICT, no);
     }
     // A due card is snyvi's own: Done ticks its line, a time moves it --
     // `later`, or a time as the answer itself (Home's corner sends one).

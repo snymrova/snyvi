@@ -296,11 +296,21 @@ fn routine_lines(
         .collect();
     let here = pane_in(&desk.panes, slot);
     if let Some(r) = real.iter().find(|r| !here.is_empty() && r.pane == here) {
+        // A draft runs only as a try (1.53), with the user watching.
+        let what = if r.started_at == 0 {
+            "a try of a draft the user is watching".to_string()
+        } else {
+            format!("run {}", r.runs + 1)
+        };
+        let first = if r.words() {
+            "its first words are the user's own, or their answers to its questions as the next message in this session"
+        } else {
+            "its first words are the user's line, or their answers on its cards: as `continue:` when the command reads that form, else as the next message in this session"
+        };
         let mut s = format!(
-            "This panel is the routine \"{}\" ({}), run {} by snyvi in a panel in the back: its first words are the user's line or their answers on its cards. Ask each decision with ask; end with leave_off.",
+            "This panel is the routine \"{}\" ({}), {what} by snyvi in a panel in the back: {first}. Ask each decision with ask; end with leave_off.",
             cut(&r.name, 60),
             r.every,
-            r.runs + 1
         );
         if !r.waits.is_empty() {
             let w: Vec<String> = r
@@ -323,10 +333,12 @@ fn routine_lines(
         }
         return vec![s];
     }
-    if real.is_empty() {
+    // A draft is not the desk's yet: only what runs on its own is named.
+    let live: Vec<&&crate::routine::Routine> = real.iter().filter(|r| r.started_at != 0).collect();
+    if live.is_empty() {
         return Vec::new();
     }
-    let named: Vec<String> = real
+    let named: Vec<String> = live
         .iter()
         .take(4)
         .map(|r| {
@@ -595,13 +607,26 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
     // (`thread::quiet_asks`): the message may be their answer.
     let open: Vec<String> = answers
         .iter()
-        .filter(|t| t.answered_at == 0)
+        .filter(|t| t.answered_at == 0 && t.kind == "decide")
         .map(|t| format!("\"{}\"", cut(&t.text, LINE_CHARS)))
         .collect();
     if !open.is_empty() {
         lines.push(format!(
             "Still open on the user's On you list, from you: {}. If their message answers them, call settle_asks; if not, leave them, they wait there.",
             open.join("; ")
+        ));
+    }
+    // Its own hand-overs still open (`thread::open_chores`), by id: settle_asks
+    // does not take them, remove_card does.
+    let chores: Vec<String> = answers
+        .iter()
+        .filter(|t| t.answered_at == 0 && t.kind != "decide")
+        .map(|t| format!("#{} {}: {}", t.id, t.kind, cut(&t.text, LINE_CHARS)))
+        .collect();
+    if !chores.is_empty() {
+        lines.push(format!(
+            "Your hand-overs still open on the user's On you list: {}. If their message says one is done, remove_card it with why; if not, leave it.",
+            chores.join("; ")
         ));
     }
     lines
@@ -1440,6 +1465,7 @@ mod tests {
             late_s: 13 * 3600,
             last_at: now - 37 * 3600,
             last_state: "done".into(),
+            started_at: 1,
             ..Default::default()
         };
         let offer = crate::routine::Routine {
@@ -1471,6 +1497,28 @@ mod tests {
             !other.contains("bench") && !mine.contains("bench"),
             "an offer is named to no one"
         );
+        // 1.53: a draft in its try says so, and is named to no other panel.
+        let draft = crate::routine::Routine {
+            name: "open PRs, summarise".into(),
+            every: "every weekday 09:00".into(),
+            pane: d.panes[4].id.clone(),
+            ..Default::default()
+        };
+        let all = [draft];
+        let work = Work {
+            routines: &all,
+            ..Work::default()
+        };
+        let mine = brief_of(&d, 5, &work, &[], &[], None, now);
+        assert!(
+            mine.contains("a try of a draft the user is watching"),
+            "{mine}"
+        );
+        assert!(
+            mine.contains("its first words are the user's own"),
+            "{mine}"
+        );
+        assert!(!brief_of(&d, 1, &work, &[], &[], None, now).contains("open PRs"));
     }
 
     /// 1.47: what is due today, a plan approved, whose a left-off is; and

@@ -1599,9 +1599,12 @@ pub fn set_note(
     // twice moves it to the end of that half rather than leaving it where the
     // first tick put it.
     // A tick from the page is the reader's own: whoever ticked it before, it
-    // is theirs now, and an untick clears it.
+    // is theirs now, and an untick clears it. A line that landed keeps the
+    // commit it landed with, as It works does: ten of eleven checks were
+    // plain ticks, and each lost its commit (audit 8fbe274f4e).
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = '', done_commit = '', done_doc = '', done_evidence = '', done_pane = '', suggested_by = ''
+        "UPDATE desk_notes SET done_at = ?3, done_by = '', done_commit = CASE WHEN ?3 != 0 THEN landed_commit ELSE '' END,
+                done_doc = '', done_evidence = '', done_pane = '', suggested_by = ''
          WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
         params![desk_id, id, if done { now } else { 0 }],
     )? > 0)
@@ -1676,15 +1679,30 @@ pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, tick: &Tick, now: i64
         String::new()
     };
     // A suggestion is not the reader's list yet, so it is not the agent's to
-    // tick: it is kept, or not, first.
+    // tick: it is kept, or not, first. Nor is a line that landed on main: it
+    // waits for the reader's check (`check_note`), which agents had taken
+    // from them (audit 8fbe274f4e).
     Ok(conn.execute(
         "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = ?5, done_doc = ?6, done_evidence = ?7, done_pane = ?8,
                 reply = CASE WHEN ?9 != '' THEN ?9 ELSE reply END,
                 reply_by = CASE WHEN ?9 != '' THEN ?4 ELSE reply_by END,
                 reply_at = CASE WHEN ?9 != '' THEN ?3 ELSE reply_at END
-         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
         params![desk_id, id, now, by, commit, doc, evidence, tick.pane, reply_of(&tick.say)],
     )? > 0)
+}
+
+/// The commit an open line landed with, when it is waiting for the reader's
+/// check: what an agent's refused tick is told (`tick_note`).
+pub fn landed_open(conn: &Connection, desk_id: i64, id: i64) -> Result<Option<String>> {
+    Ok(conn
+        .query_row(
+            "SELECT landed_commit FROM desk_notes WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0
+             AND done_at = 0 AND landed_commit != ''",
+            params![desk_id, id],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 /// An agent says how far it has got with a line on its own desk's list:

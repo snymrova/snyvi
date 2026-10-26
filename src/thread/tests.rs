@@ -15,6 +15,7 @@ fn db() -> Connection {
     conn.execute_batch(GROUP_COLUMN).unwrap();
     conn.execute_batch(PR_STATE_1_43).unwrap();
     conn.execute_batch(AWAY_COLUMN_1_44).unwrap();
+    conn.execute_batch(REMOVED_BY_1_53).unwrap();
     conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
     conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
     conn.execute_batch(crate::due::TURN_COLUMN_1_47).unwrap();
@@ -1558,4 +1559,183 @@ fn an_agent_puts_a_card_away_with_why_and_the_reader_brings_it_back() {
     let back = turn(&conn, d, t.id).unwrap().unwrap();
     assert_eq!((back.removed_at, back.away.as_str()), (0, ""));
     assert!(put_away_lately(&conn, d, 23).unwrap().is_empty());
+}
+
+/// The reader's merge ticks the thread's notes, but not one that landed
+/// already: that one waits for their check (audit 8fbe274f4e).
+#[test]
+fn a_merge_leaves_a_landed_note_for_the_readers_check() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    start_as(&mut conn, d, "A", "p1", &n[..2]);
+    assert_eq!(
+        crate::desk::land_notes(&conn, d, &[(n[0], "aaaaaaa".to_string(), 2)]).unwrap(),
+        1
+    );
+    let m = Seen {
+        pr: "https://github.com/o/r/pull/67".into(),
+        merged: "b6e235b".into(),
+        mine: true,
+        ..Seen::default()
+    };
+    seen(&mut conn, d, "p1", &m, 3).unwrap();
+    let notes = crate::desk::notes(&conn, d).unwrap();
+    let of = |id: i64| notes.iter().find(|x| x.id == id).unwrap();
+    assert_eq!(
+        (of(n[0]).done, of(n[0]).landed_commit.as_str()),
+        (false, "aaaaaaa")
+    );
+    assert_eq!((of(n[1]).done, of(n[1]).done_by.as_str()), (true, "merged"));
+}
+
+fn removed_by(conn: &Connection, id: i64) -> String {
+    conn.query_row("SELECT removed_by FROM turns WHERE id = ?1", [id], |r| {
+        r.get(0)
+    })
+    .unwrap()
+}
+
+/// Who put each card away (audit 8fbe274f4e: 81 of 98 said nothing): the
+/// reader's ✕, an agent with why, a newer card, its panel's dialog, age;
+/// and Bring back clears it.
+#[test]
+fn a_card_put_away_says_who_put_it_away() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let card = |kind: &str, text: &str, via: &str| Ask {
+        kind: kind.into(),
+        text: text.into(),
+        options: if kind == "decide" {
+            vec!["a".into(), "b".into()]
+        } else {
+            Vec::new()
+        },
+        via: via.into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let id = |a: Asked| match a {
+        Asked::Turn(t) => t.id,
+        other => panic!("{other:?}"),
+    };
+    let x = id(ask(&mut conn, d, &card("do", "Pay", ""), 10).unwrap());
+    let agent = id(ask(&mut conn, d, &card("do", "Sign in", ""), 11).unwrap());
+    let dialog = id(ask(&mut conn, d, &card("decide", "Which?", "dialog"), 12).unwrap());
+    assert!(remove_turn(&conn, d, x, "you", 20).unwrap());
+    put_away(&conn, d, agent, "panel 1", "signed in", 21).unwrap();
+    assert!(drop_dialog(&conn, d, dialog, 22).unwrap());
+    let run = Ask {
+        kind: "run".into(),
+        text: "Deploy".into(),
+        cmd: "npx wrangler deploy".into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let first = id(ask(&mut conn, d, &run, 23).unwrap());
+    id(ask(&mut conn, d, &run, 24).unwrap());
+    let old = id(ask(&mut conn, d, &card("try", "Look", ""), 25).unwrap());
+    retire(&conn, 25 + RETIRE_S + 1).unwrap();
+    let got: Vec<String> = [x, agent, dialog, first, old]
+        .iter()
+        .map(|&t| removed_by(&conn, t))
+        .collect();
+    assert_eq!(got, ["you", "agent", "panel", "replaced", "aged"]);
+    assert!(restore_turn(&conn, d, x).unwrap());
+    assert_eq!(removed_by(&conn, x), "");
+}
+
+/// A card said again in other words goes with `replaces`: the old one is
+/// put away as replaced by the new, said so in the tray, and comes back with
+/// Bring back. One already answered, or on another desk, stays as it is.
+#[test]
+fn a_card_said_again_replaces_the_old_one() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let run = |cmd: &str, replaces: i64| Ask {
+        kind: "run".into(),
+        text: "Build for iOS".into(),
+        cmd: cmd.into(),
+        by: "panel 1".into(),
+        pane: "p1".into(),
+        replaces,
+        ..Ask::default()
+    };
+    let id = |a: Asked| match a {
+        Asked::Turn(t) => t.id,
+        other => panic!("{other:?}"),
+    };
+    let first = id(ask(&mut conn, d, &run("eas build -p ios", 0), 10).unwrap());
+    let second = id(ask(
+        &mut conn,
+        d,
+        &run("npx eas-cli@latest build -p ios", first),
+        11,
+    )
+    .unwrap());
+    let open: Vec<i64> = waiting_on(&conn, d, false, 12)
+        .unwrap()
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    assert_eq!(open, vec![second]);
+    let away = &put_away_lately(&conn, d, 12).unwrap()[0];
+    assert_eq!(
+        (away.id, away.away.as_str()),
+        (first, format!("panel 1: replaced by #{second}").as_str())
+    );
+    assert_eq!(removed_by(&conn, first), "replaced");
+    // Another desk's card is not this desk's to replace.
+    let other = crate::desk::create(&conn, "/x", None, 0).unwrap().id;
+    let theirs = id(ask(&mut conn, other, &run("gh run rerun 7", 0), 13).unwrap());
+    id(ask(&mut conn, d, &run("gh run rerun 8", theirs), 14).unwrap());
+    assert_eq!(removed_by(&conn, theirs), "");
+    assert!(restore_turn(&conn, d, first).unwrap());
+    assert_eq!(turn(&conn, d, first).unwrap().unwrap().away, "");
+}
+
+/// A panel is told its own hand-overs still open, newest first and at most
+/// `CHORES_TOLD`: never its questions, never another panel's.
+#[test]
+fn a_panel_hears_its_own_open_hand_overs() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let h = |kind: &str, text: &str, pane: &str| Ask {
+        kind: kind.into(),
+        text: text.into(),
+        options: if kind == "decide" {
+            vec!["a".into(), "b".into()]
+        } else {
+            Vec::new()
+        },
+        cmd: if kind == "run" {
+            format!("echo {text}")
+        } else {
+            String::new()
+        },
+        pane: pane.into(),
+        ..Ask::default()
+    };
+    for (i, (kind, text, pane)) in [
+        ("do", "pay", "p1"),
+        ("decide", "which", "p1"),
+        ("key", "token", "p1"),
+        ("try", "look", "p2"),
+        ("run", "deploy", "p1"),
+        ("try", "phone", "p1"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        ask(&mut conn, d, &h(kind, text, pane), 10 + i as i64).unwrap();
+    }
+    let got: Vec<String> = open_chores(&conn, d, "p1")
+        .unwrap()
+        .iter()
+        .map(|t| t.text.clone())
+        .collect();
+    assert_eq!(got, ["phone", "deploy", "token"]);
+    let lines = crate::brief::answer_lines(&open_chores(&conn, d, "p1").unwrap());
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].starts_with("Your hand-overs still open on the user's On you list: #"));
+    assert!(lines[0].contains("remove_card"));
 }

@@ -4,6 +4,8 @@ use time::{Date, Month};
 fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(crate::routine::SCHEMA).unwrap();
+    conn.execute_batch(crate::routine::DRAFT_COLUMNS_1_53)
+        .unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
     conn.execute_batch(crate::desk::POS_COLUMN).unwrap();
     conn.execute_batch(crate::desk::SENT_BY_COLUMN).unwrap();
@@ -20,6 +22,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::thread::CMD_COLUMN).unwrap();
     conn.execute_batch(crate::thread::GROUP_COLUMN).unwrap();
     conn.execute_batch(crate::thread::AWAY_COLUMN_1_44).unwrap();
+    conn.execute_batch(crate::thread::REMOVED_BY_1_53).unwrap();
     for c in crate::thread::ON_YOU_1_36 {
         conn.execute_batch(c).unwrap();
     }

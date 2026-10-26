@@ -423,7 +423,7 @@ pub fn set(conn: &Connection, desk_id: i64, id: i64, due_at: i64, now: i64) -> R
 /// Put away the card still up for a line, as a ✕ would: recoverable.
 fn put_away(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<usize> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = ?3 WHERE desk_id = ?1 AND note_id = ?2 AND kind = 'due'
+        "UPDATE turns SET removed_at = ?3, removed_by = 'moved' WHERE desk_id = ?1 AND note_id = ?2 AND kind = 'due'
          AND answered_at = 0 AND removed_at = 0",
         params![desk_id, id, now],
     )?)
@@ -467,7 +467,7 @@ pub fn ring(conn: &Connection, now: i64) -> Result<Vec<i64>> {
         .collect::<rusqlite::Result<_>>()?;
     if !settled.is_empty() {
         conn.execute(
-            "UPDATE turns SET removed_at = ?1 WHERE kind = 'due' AND answered_at = 0 AND removed_at = 0
+            "UPDATE turns SET removed_at = ?1, removed_by = 'settled' WHERE kind = 'due' AND answered_at = 0 AND removed_at = 0
              AND note_id IN (SELECT id FROM desk_notes WHERE done_at != 0 OR removed_at != 0)",
             params![now],
         )?;

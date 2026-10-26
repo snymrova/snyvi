@@ -271,7 +271,7 @@ pub fn mark(
     )?;
     if n > 0 {
         conn.execute(
-            "UPDATE turns SET removed_at = ?3 WHERE desk_id = ?1 AND thread_id = ?2 AND kind = 'tell'
+            "UPDATE turns SET removed_at = ?3, removed_by = 'settled' WHERE desk_id = ?1 AND thread_id = ?2 AND kind = 'tell'
              AND answered_at = 0 AND removed_at = 0",
             params![desk_id, thread_id, now],
         )?;

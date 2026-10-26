@@ -283,6 +283,7 @@ async function main() {
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
     await section("#183: a picture, to keep", () => downloadRows(p, cdp, url, arrive, tmp));
+    await section("#194: a copy keeps the Markdown", () => copyRows(p, url, arrive));
     await section("a folder, opened in snyvi", () => folderRows(cdp, base, browsed));
     await section("a link out of a document", () => docLinkRows(p, base, token, first.doc.id));
     await section("the socket a page holds", () => socketRows(p, url, base, browsed));
@@ -2186,6 +2187,85 @@ async function downloadRows(p, cdp, url, arrive, tmp) {
     !!fl && fl.inside && fl.href === `/files/${takes.id}/pic.svg` && fl.name === "pic.svg" && JSON.stringify(before) === JSON.stringify(after),
     !img ? "the picture did not load" : !over ? "no ↓ while the pointer is on it" : !fl.inside ? "the ↓ is outside the picture" :
       JSON.stringify(before) !== JSON.stringify(after) ? `the picture moved: ${JSON.stringify(before)} → ${JSON.stringify(after)}` : JSON.stringify(fl)]);
+
+  // #195: pressed, the ↓ says so on itself, and the window's word comes
+  // beside it, not beside the picture's middle (the far corner, for a tall
+  // one). The window's word is played here: a browser never hears it.
+  if (over) await p.clickOn(".dl-fl");
+  const ticked = over && await until(`document.querySelector(".dl-fl")?.dataset.said === "1"`, 20);
+  await p.ev(`dispatchEvent(new CustomEvent("snyvi-downloaded", { detail: { ok: true, path: "/home/r/Downloads/pic.svg" } }))`);
+  const near = over && await until(`!!document.querySelector("#toasts .toast")`, 20) && await p.ev(`(() => {
+    const t = document.querySelector("#toasts .toast").getBoundingClientRect(), f = document.querySelector(".dl-fl").getBoundingClientRect();
+    const gap = Math.max(f.left - t.right, t.left - f.right, f.top - t.bottom, t.top - f.bottom, 0);
+    return { gap: Math.round(gap), said: document.querySelector("#toasts .toast").textContent };
+  })()`);
+  rows.push(["the ↓ pressed turns to a ✓, and \"Downloaded\" comes beside it",
+    !!ticked && !!near && near.gap <= 24 && /Downloaded/.test(near.said),
+    !over ? "no ↓ to press" : !ticked ? "no ✓ on the ↓" : !near ? "no toast for the window's word" : `${near.gap} px from the ↓: "${near.said}"`]);
+  await p.pointerAway();
+  return rows;
+}
+
+/** #194: a selection that crosses blocks in a Markdown page copies as
+ *  Markdown -- bullets, headings, a table in the source's own case, code in
+ *  its fence -- and the drawn page as the rich kind; a heading has a copy
+ *  glyph beside its `#` that copies its section. The copy is a real `copy`
+ *  event on a real selection, read off its own DataTransfer: what the
+ *  system's clipboard does with it is the engine's. */
+async function copyRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const src = ["# Copies", "", "Some words to start.", "", "## Steps", "", "1. first", "2. second", "   - nested", "", "| Name | Value |", "|:--|--:|", "| a | `1` |", "",
+    "```rust", "fn main() {}", "```", "", "## After", "", "The **end**.", ""].join("\n");
+  const doc = await arrive({ name: "copies.md", body: src });
+  await p.goto(`${new URL(url).origin}/d/${doc.id}`);
+  const ready = await until(`!!document.querySelector(".sec-fl") && !!document.querySelector("#doc article.kind-markdown h2")`, 80);
+  // From the first words to the end of the code: what a drag does.
+  const copy = sel => p.ev(`(() => {
+    const art = document.querySelector("#doc article"), r = document.createRange();
+    ${sel}
+    getSelection().removeAllRanges(); getSelection().addRange(r);
+    const dt = new DataTransfer(), e = new ClipboardEvent("copy", { clipboardData: dt, bubbles: true, cancelable: true });
+    art.dispatchEvent(e);
+    return { taken: e.defaultPrevented, text: dt.getData("text/plain"), html: dt.getData("text/html") };
+  })()`);
+  const all = ready && await copy(`r.setStart(art.querySelector("p").firstChild, 5); r.setEndAfter(art.querySelector("pre"));`);
+  const want = ["words to start.", "", "## Steps", "", "1. first", "2. second", "   - nested", "", "| Name | Value |", "| :-- | --: |", "| a | `1` |", "", "```rust", "fn main() {}", "```"].join("\n");
+  rows.push(["a selection across blocks copies as Markdown, the page as drawn beside it",
+    !!all && all.taken && all.text === want && /<table/.test(all.html) && !/<button/.test(all.html),
+    !ready ? "copy.js never came" : !all.taken ? "the engine's copy, not snyvi's" : all.text !== want ? JSON.stringify(all.text) : !/<table/.test(all.html) || /<button/.test(all.html) ? "no table in the rich kind, or a button in it" : `${all.text.split("\n").length} lines of Markdown`]);
+  // Words inside one paragraph are the engine's: there is no Markdown to keep.
+  const words = ready && await copy(`const t = art.querySelector("p").firstChild; r.setStart(t, 0); r.setEnd(t, 4);`);
+  rows.push(["words inside one paragraph are left to the engine", !!words && !words.taken, words?.taken ? JSON.stringify(words.text) : "the engine's"]);
+
+  // The section glyph: beside the `#`, in the gutter, over nothing; pressed,
+  // ✓, and the section on the clipboard.
+  const head = `#doc article h2`;
+  const before = await p.ev(`JSON.stringify(document.querySelector("${head}").getBoundingClientRect())`);
+  if (ready) await p.hoverOn(head);
+  const on = ready && await until(`document.querySelector(".sec-fl")?.classList.contains("on")`, 20);
+  const at = on && await p.ev(`(() => { const b = document.querySelector(".sec-fl").getBoundingClientRect(), h = document.querySelector("${head}").getBoundingClientRect();
+    return { gutter: b.right <= h.left + 1, level: Math.abs((b.top + b.height / 2) - (h.top + h.height / 2)) < h.height / 2 }; })()`);
+  const after = await p.ev(`JSON.stringify(document.querySelector("${head}").getBoundingClientRect())`);
+  rows.push(["a heading has a copy glyph in the gutter beside its #, and does not move",
+    !!at && at.gutter && at.level && before === after,
+    !on ? "no glyph on the heading's hover" : !at.gutter ? "the glyph is over the heading" : !at.level ? "the glyph is off the heading's line" : before !== after ? `the heading moved: ${before} → ${after}` : "beside the #; the heading held still"]);
+  // What it copies, read off the writer it hands to the clipboard: the
+  // heading and what is under it, to the next heading as high.
+  const sec = on && await p.ev(`(async () => {
+    let got = null;
+    const was = navigator.clipboard.write;
+    navigator.clipboard.write = async items => { got = await (await items[0].getType("text/plain")).text(); };
+    document.querySelector(".sec-fl").click();
+    for (let i = 0; i < 20 && got == null; i++) await new Promise(r => setTimeout(r, 50));
+    navigator.clipboard.write = was;
+    return { got, said: document.querySelector(".sec-fl").dataset.said === "1" };
+  })()`);
+  const wantSec = want.slice(want.indexOf("## Steps"));
+  rows.push(["the glyph copies its section as Markdown, and says ✓ on itself",
+    !!sec && sec.said && sec.got === wantSec,
+    !sec ? "no glyph to press" : !sec.said ? "no ✓" : JSON.stringify(sec.got)]);
+  await p.ev(`getSelection().removeAllRanges()`);
   await p.pointerAway();
   return rows;
 }
@@ -3462,9 +3542,9 @@ async function deskLossRows(cdp, base, token) {
     await toDesk(other);
     await until(`location.pathname === "/desk/${other}"`);
     await sleep(500);
-    const notes = await p.ev(`({ line: document.querySelector("#toc .dk-notes .no-reach")?.textContent || null, prompt: !!document.querySelector("#toc .dk-notes .dk-note.new") })`);
-    if (notes.line) await p.clickOn("#toc .dk-notes .no-reach [data-a=reload]");
-    const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes .dk-note.new")`);
+    const notes = await p.ev(`({ line: document.querySelector("#toc .dk-notes:not(.dk-rts) .no-reach")?.textContent || null, prompt: !!document.querySelector("#toc .dk-notes:not(.dk-rts) .dk-note.new") })`);
+    if (notes.line) await p.clickOn("#toc .dk-notes:not(.dk-rts) .no-reach [data-a=reload]");
+    const prompt = !!notes.line && await until(`!!document.querySelector("#toc .dk-notes:not(.dk-rts) .dk-note.new")`);
     rows.push(["notes fetch refused → Retry line, not the empty prompt", await refused(p) && !!notes.line && !notes.prompt && prompt,
       !(await refused(p)) ? "the desk never asked for its notes" : notes.prompt ? "the empty prompt, as if the list were empty" : !notes.line ? "nothing says the notes did not load" : prompt ? `"${notes.line}", and the Retry read the (empty) list` : "the Retry did not read the list"]);
 

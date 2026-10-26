@@ -54,7 +54,9 @@ notes, its threads, the user's On you list.
   and `move_thread` with `told` and its `url` once they say where it went.
 - A commit that finishes a note names it, `(#129)`: once it is on main the
   note reads "check it" for the user, whatever branch carried it. A note the
-  user reopened says what is still wrong; the brief leads with it.
+  user reopened says what is still wrong; the brief leads with it. A note
+  that landed is theirs to check: you cannot tick it, and neither can their
+  merge.
 - `hand_over` is for what blocks you that only they can do: a command to run
   (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
   A merge hand-over carries the PR's page as its `link`: snyvi settles it
@@ -62,22 +64,36 @@ notes, its threads, the user's On you list.
   thread's notes (a merge by anyone else lands them for the user's check).
   Don't tick a thread's notes for a merge yourself. Keep one thread on one
   branch: a commit on another branch is not counted for it.
+- A hand-over ends when it is done, not when it is old. When the user says
+  in the chat they did one (the key is in, the build ran), `remove_card` it
+  with why; each prompt tells you yours still open, by id. A card you need
+  to say again, changed (a new command, a new step), goes with
+  `replaces: <its id>`, so the old one does not wait beside it.
 - `leave_off` when a stretch ends: the next step and its condition, one line,
   with `needs: you` when the next step is the user's (approve, commit, a key,
   try it), `claude` when it is an agent's, `time` when it waits on the world.
   Two days of `you` puts it on their Home's Waiting on you.
 - A friend on the list can be offered a document (`offer_document`) or a line
   (`offer_line`); the user decides whether it goes.
-- A **routine** is one of the project's slash commands that snyvi starts at an
-  hour the user set, in a panel in the back (`newsroom · every day 07:30`).
-  You never start one: when the user asks for something to happen on its own,
-  offer it with `suggest_desk_note`, `text` the command and its words, `every`
-  the cadence, and `waits` the Bash patterns that must wait for them (a
-  publish, a deploy). It runs only once they save it in its sheet. When the
-  brief says this panel is a routine, its Waits patterns are denied here: hand
-  each over with `hand_over` as `run`, ask each decision with `ask`, and end
-  with `leave_off`. The user's answers start the next session as
-  `/<command> continue: <answers>`.
+- A **routine** is a line that comes back: one of the project's or the user's
+  slash commands or skills that snyvi starts at an hour the user set, in a
+  panel in the back (`/newsroom · every day 07:30`). You never start one.
+  When the user asks for something to happen on its own, write the command
+  first if it is new (`.claude/commands/<name>.md`, or a skill), then offer
+  it with `suggest_desk_note`: `text` the command and its words, `every` the
+  cadence, `waits` the Bash patterns that must wait for them (a publish, a
+  deploy, anything that spends a key); a skill's script runs from its
+  folder, so its pattern starts the path with `*`
+  (`python3 -I *scripts/publish.py *`). The user tries it once and starts it
+  in its sheet; only their Start makes it run on its own.
+- **A command a routine can run** takes `$ARGUMENTS`; reads a
+  `continue: <answers>` form and goes on from the first step not done (without
+  one, the user's answers come back in the run's own session); asks each
+  decision with `ask`, one a question; hands over as `run` anything on the
+  brief's Waits line, which is denied in its panel; ends with `leave_off`
+  `needs: you` when something waits; and keeps each run inside 25 minutes.
+  When the brief says this panel is a routine, you are that run: when it says
+  it is a try, the user is watching.
 
 ## Widgets
 

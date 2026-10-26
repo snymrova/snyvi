@@ -403,13 +403,20 @@ pub(crate) async fn pane_tick_note(
             emit(&app, "desknotes", json!({ "desk": placed.desk_id }));
             Json(json!({ "ok": true, "desk": placed.desk_name })).into_response()
         }
-        // Not on this desk's list, taken off it, or already done: the agent is
-        // told which it cannot tell apart, and nothing changed.
-        Ok(false) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": "no open note by that id on this desk" })),
-        )
-            .into_response(),
+        // Landed on main: the reader's to check, and the agent is told so, or
+        // it would tick again with another commit. Otherwise not on this
+        // desk's list, taken off it, or already done: the agent is told which
+        // it cannot tell apart, and nothing changed.
+        Ok(false) => {
+            let error = match app.store.landed_desk_note(placed.desk_id, note) {
+                Ok(Some(commit)) => format!(
+                    "#{note} landed on main ({}) and waits for the user's check in snyvi: leave it to them",
+                    commit.chars().take(7).collect::<String>()
+                ),
+                _ => "no open note by that id on this desk".to_string(),
+            };
+            (StatusCode::CONFLICT, Json(json!({ "error": error }))).into_response()
+        }
         Err(e) => err(e),
     }
 }
@@ -826,10 +833,16 @@ pub(crate) async fn pane_changes(
             held.extend(crate::routine::panes(c, desk.id)?);
             let mut a = crate::thread::take_untold(c, desk.id, &id, &held, now)?;
             a.extend(crate::thread::quiet_asks(c, desk.id, &id, now)?);
+            // Its own hand-overs still open, by id: the message may say one
+            // is done, and the agent is the one who can tell.
+            a.extend(crate::thread::open_chores(c, desk.id, &id)?);
             Ok(a)
         })
         .unwrap_or_default();
-    if answers.iter().any(|t| t.answered_at == 0) {
+    if answers
+        .iter()
+        .any(|t| t.answered_at == 0 && t.kind == "decide")
+    {
         super::api_thread::threads_moved(&app, desk.id);
     }
     if !brief_on(&app) {
@@ -972,7 +985,10 @@ pub(crate) struct SuggestBody {
 
 /// An agent offers a routine (1.50): a row under Routines with Accept…, and
 /// nothing more. It is not allowed, does not ring and has no panel until the
-/// reader saves its sheet; the command must be on disk already.
+/// reader's Start in its sheet (1.53: a draft, with Try once now first). Its
+/// name must resolve to one of the project's or the user's commands or
+/// skills (`routine::places`): an agent never offers its own words as a
+/// prompt, only a file the reader can read before they start it.
 fn suggest_routine(
     app: &App,
     placed: &crate::desk::Placed,
@@ -981,18 +997,28 @@ fn suggest_routine(
     every: &str,
 ) -> Response {
     let no = |code: StatusCode, why: String| (code, Json(json!({ "error": why }))).into_response();
-    let Some(line) = crate::routine::from_line(&format!("{} · {every}", b.text.trim())) else {
-        return no(StatusCode::BAD_REQUEST, format!("\"{}\" with \"{every}\" is not a routine: `text` starts with a slash command's name and `every` says when, like `every day 07:30`", b.text.trim()));
+    let text = b.text.trim().trim_start_matches('/');
+    let Some(line) = crate::routine::from_line(&format!("/{text} · {every}")) else {
+        return no(StatusCode::BAD_REQUEST, format!("\"{text}\" with \"{every}\" is not a routine: `text` starts with a slash command's or skill's name and `every` says when, like `every day 07:30`"));
     };
-    if crate::routine::hash_of(std::path::Path::new(&placed.root), &line.cmd).is_none() {
-        return no(
-            StatusCode::BAD_REQUEST,
-            format!(
-                "there is no .claude/commands/{}.md in this desk's folder",
-                line.cmd
-            ),
-        );
-    }
+    let file = match crate::routine::resolve(std::path::Path::new(&placed.root), &line) {
+        crate::routine::Made::File(p, _) => p.file,
+        crate::routine::Made::Two(a, b) => {
+            return no(
+                StatusCode::CONFLICT,
+                format!("/{} is both {a} and {b}, and Claude Code's docs don't say which runs: rename one first", line.cmd),
+            )
+        }
+        _ => {
+            return no(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "there is no /{} here: write it first as .claude/commands/{}.md or .claude/skills/{}/SKILL.md in this project",
+                    line.cmd, line.cmd, line.cmd
+                ),
+            )
+        }
+    };
     let waits = b.waits.clone().unwrap_or_default().join("\n");
     let Some(waits) = crate::routine::waits_ok(&waits) else {
         return no(
@@ -1008,7 +1034,7 @@ fn suggest_routine(
     let offer = crate::routine::Offer { by, pane };
     match app
         .store
-        .clocked(|c, now| crate::routine::add(c, placed.desk_id, &line, &waits, "", &offer, now))
+        .clocked(|c, now| crate::routine::add(c, placed.desk_id, &line, &waits, &file, &offer, now))
     {
         Ok(crate::routine::Added::Routine(r)) => {
             super::routine_run::changed(app, placed.desk_id);

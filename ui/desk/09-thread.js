@@ -348,14 +348,18 @@ function runRow(d, w, n, from, esc) {
   // A walk-through of several (#164) is a card of its own (16-steps.js).
   if (w.options && w.options.length) return stepsRow(d, w, n, from, esc);
   // A routine's card (1.50): Run starts the command as its panel's process.
+  // One click for a command on the routine's Waits list; any other takes a
+  // second, Run anyway, once the daemon has said so under the card (1.53).
   const rt = rtPane(w.pane);
   if (rt) {
+    const ok = w.waits_ok, anyway = !ok && rowErr && rowErr.k === `w${w.id}` && /Waits list/.test(rowErr.raw || "");
+    const v = anyway ? "Run anyway" : "Run";
     return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` +
-      `<code class="sg-cmd tn-cmd">${esc(w.cmd)}</code>` + byHtml(w, d, esc, ` · ${rt.name}`) +
-      `<div class="tn-acts"><button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="Run" data-tip="Run it in ${esc(rt.name)}'s panel" data-tip-sub="As that panel's process, in the desk's folder with its keys">Run</button>` +
+      `<code class="sg-cmd tn-cmd">${esc(w.cmd)}</code>` + byHtml(w, d, esc, ` · ${rt.name} · ${ok ? "✓ on your Waits list" : "not on your Waits list"}`) +
+      `<div class="tn-acts"><button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${v}" data-tip="${v} in ${esc(rt.name)}'s panel" data-tip-sub="As that panel's process, in the desk's folder with its keys">${v}</button>` +
       `<button type="button" class="tn-opt quiet" data-a="tn-copy" data-w="${w.id}" data-c="${esc(w.cmd)}">Copy</button>` +
       `<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
-      `</li>` + errLine(`w${w.id}`, esc);
+      `</li>` + (anyway ? "" : errLine(`w${w.id}`, esc));
   }
   const here = runsHere(views.get(w.pane));
   const run = here
@@ -578,7 +582,11 @@ async function answer(d, w, text, again = { a: "tn-pick", w: String(w.id), v: te
   // A routine's answers start its next run (routine_run), so are not typed.
   if (w.via !== "dialog" && send && !rtPane(w.pane)) sendable.set(w.id, true);
   rail();
-  if (await told(again, `w${w.id}`, "Could not answer", () => { Object.assign(w, was); sendable.delete(w.id); },
+  // A no puts the card back as it was: keys the daemon left out (an
+  // unanswered card has no `answered_at`) are taken off again too, or the
+  // card stayed answered here and left On you with nothing on the daemon.
+  const back = () => { for (const k of Object.keys(w)) if (!(k in was)) delete w[k]; Object.assign(w, was); sendable.delete(w.id); };
+  if (await told(again, `w${w.id}`, "Could not answer", back,
     () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.answer }))) await getFiled(d.id, true);
 }
 

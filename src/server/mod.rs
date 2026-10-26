@@ -511,6 +511,10 @@ fn pipeline_routes() -> Router<Arc<App>> {
             get(desk_routines).post(new_routine),
         )
         .route("/api/desks/{id}/commands", get(desk_commands))
+        // 1.53: what a line in the Routines field would become, and the
+        // one fix on a routine's Ready list that is a button.
+        .route("/api/desks/{id}/routines/read", get(read_line))
+        .route("/api/start-at-login", post(start_at_login))
         .route(
             "/api/desks/{id}/routines/{row}",
             get(routine_sheet).post(save_routine),

@@ -962,6 +962,15 @@ drawn, for a mail or a document -- and what you paste into takes the one it
 reads. A ✓ in its place says it is done. On a picture, a film or a song it
 is not there.
 
+Part of a Markdown page copies the same two ways. Select across a list, a
+table or a code block and press `⌘C` / `Ctrl+C`: what you paste into an
+agent, a terminal or GitHub is Markdown -- the bullets, the `##`, the table
+in its own case, the code in its fence -- and a mail or a document still
+gets the page as drawn. A few words inside one paragraph copy as words.
+Hover a heading and a copy glyph comes up beside its `#`: it copies that
+heading and everything under it, up to the next heading as high, with the
+footnotes it points at.
+
 A control that means nothing in the view you are in is faded rather
 than hidden, and its tooltip says why -- `Wrap · no code on this page`,
 `Font · code is always monospace`. Clicking it, or pressing its key,
@@ -1152,11 +1161,18 @@ Suggested in the rail's corner, where nothing they do moves the page.
   is and how old, and a click opens its card.
 
   A card leaves when it stops being true, not only when you answer it.
-  Handed the same command twice, snyvi keeps the newer card. And any Claude
-  on the desk may remove a card it can see is done -- the release ran, the
-  key is in -- with `remove_card` and a reason: the tray says **Removed by
-  panel 1: v1.43.0 is released** for a day, with **Bring back**. Nothing is
-  deleted.
+  Handed the same command twice, snyvi keeps the newer card, and a Claude
+  that says a card again in other words replaces the old one (**replaced
+  by #389**). Any Claude on the desk may remove a card it can see is done --
+  the release ran, the key is in, you told it in the chat -- with
+  `remove_card` and a reason: the tray says **Removed by panel 1: v1.43.0 is
+  released** for a day, with **Bring back**. Each prompt tells a Claude its
+  own cards still open, so one you did in the chat does not wait for a ✕.
+  Nothing is deleted.
+
+  A note whose commit reached main reads **check it**, and it is yours:
+  no Claude can tick it, nor can your merge. Your tick keeps the commit it
+  landed with.
 - **A date on a line.** End a note with when it is due -- `post the 1.47
   note by fri 10`, `call the bank tomorrow`, `check the stats in 3 days`,
   `send the invoice by 28 oct` -- and snyvi takes the date off the text and
@@ -1180,29 +1196,42 @@ Suggested in the rail's corner, where nothing they do moves the page.
   due and what you did; nothing is typed into a panel. A Claude can
   suggest a line with a date (`suggest_desk_note`'s `due`) when the line
   has a natural day, a launch step or a follow-up.
-- **A routine comes back.** End a line with when it comes back -- `newsroom
-  · every day 07:30`, `bench main, every weekday 9`, `every mon 09:00`,
-  `every 1st` -- and when its first word is one of the project's slash
-  commands (`.claude/commands/newsroom.md`), it is not a note but a
-  routine: the chip reads **↻ every day 07:30** while you type, and Enter
-  puts it under **Routines**, a head of its own below Notes that shows only
-  once a desk has one. At its hour snyvi starts `/newsroom` in a panel in
-  the back, named by the line, as a fresh Claude in auto mode, under a
-  settings file snyvi writes from the routine's **Waits for you** list:
-  what is on it -- a publish script, a deploy -- the agent cannot run, and
-  hands you as a card instead. **Run** on that card starts the command as
-  the panel's process. Your answers on its questions start its next
-  session, `/newsroom continue: approve 1, 3`. The row's one line is its
-  state (**every day 07:30 · next tomorrow 7:30 · ran 12 min ago**), or why
-  it did not run: the desk is parked, the command file changed since you
-  allowed it (**Allow** in the row), the five-hour window is past its
-  limit. A daemon that was off at the hour runs it once when it starts, and
-  says how late. Its ⋯ has **Run now**, **Pause**, **Change…**, **History**
-  and **Remove from view**; its sheet has When, Waits for you and Limits
-  (25 minutes, then it stops; it waits past 80% of the five-hour window).
-  A Claude can offer one (`suggest_desk_note`'s `every` and `waits`), and
-  it runs only once you save its sheet. A line whose first word is no
-  command stays a note, and the chip says **every needs a /command**.
+- **A routine comes back.** **Routines** is a section of its own under
+  Notes, always there: one line when a desk has none, the field. Type a
+  slash command or a skill and when it comes back -- `/newsroom · every day
+  07:30`, `/bench main, every weekday 9`, `every mon 09:00`, `every 1st` --
+  or your own words with a when, `open PRs, summarise · every weekday 9`.
+  `/` lists the commands and skills Claude Code would run here, the
+  project's first and then yours, each with its first line; a name in two
+  places is the one Claude Code's docs say wins (yours over the project's,
+  a skill over a command file). The chip says what snyvi reads in the line
+  as you type: **↻ every day 07:30 · project · command · first tomorrow
+  7:30**, **your words**, or **when?**. Enter makes a **draft** and opens
+  its sheet: the file it runs and where it lives, When, **Waits for you**
+  with what the file suggests (a publish, a deploy, a line that spends a
+  key), each showing the lines it catches, a **Ready** list (Claude Code
+  trusts the folder, the keys are on the desk, snyvi starts at login --
+  **Start at login** on Linux -- the back has room, how your answers come
+  back) and Limits. **Try once now** runs it in a panel in the back while
+  you watch; its questions come to On you, and your answers go on once.
+  **Start it** allows the file as it is and gives it its hour; nothing runs
+  on its own before that. At its hour snyvi starts it as a fresh Claude in
+  auto mode, under a settings file written from the Waits list: what is on
+  it the agent cannot run, and hands you as a card instead. **Run** on that
+  card starts the command as the panel's process, in one click when it is
+  on your Waits list and in two (**Run anyway**) when it is not. Your
+  answers on its questions start its next session: `/newsroom continue:
+  approve 1, 3` when the command reads a `continue:` form, else the run's
+  own session goes on with them. The row's one line is its state (**every
+  day 07:30 · next tomorrow 7:30 · ran 12 min ago**), or why it did not
+  run: the desk is parked, the file changed since you allowed it
+  (**Allow…** opens the sheet with what changed), the five-hour window is
+  past its limit. A paused routine starts nothing, answers included. Its ⋯
+  has **Run now**, **Pause**, **Change…**, **History** and **Remove from
+  view**; a draft's has **Try once now** and **Start it**. A Claude can
+  write a command and offer it as a routine (`suggest_desk_note`'s `every`
+  and `waits`); **Accept…** opens the same sheet, and it runs on its own
+  only after your Start.
 - **A launch is a list.** When you say *launch*, Claude suggests its steps
   as one set of dated lines (`suggest_desk_note`'s `lines`, from the skill's
   `launch.md`): pictures and copy a week out, the site, the post, Show HN,
