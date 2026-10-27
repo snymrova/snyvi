@@ -107,11 +107,20 @@ keep it. Suggest rarely and only what the user would want to track themselves; n
 or a to-do for this session. A desk holds only a few suggestions waiting at once. One short line, at most \
 200 characters. When the line has a natural day -- a launch step, a follow-up -- pass `due` in the user's words \
 (`fri 10`); at that hour snyvi raises one card on their On you list. A launch is `lines`: several dated lines as one \
-set. A routine is `every`: a line that starts with one of this project's or the user's slash commands or skills \
-(write the command first if it is new) and says when it comes back (`every day 07:30`, `every weekday 9`, \
-`every mon 09:00`, `every 1st`), with `waits` the Bash patterns that must wait for the user, such as a publish \
-script (a skill's script runs from its folder: start its path with `*`, `python3 -I *scripts/publish.py *`). snyvi offers it under Routines; the user tries it once and starts it, and only then does it run on its own, \
-in a panel in the back. Offer one only when the user asked for something to happen on its own.";
+set. Something that should come back on its own at a time is a routine: offer_routine, not this.";
+
+/// `offer_routine` (1.53.1, audit 566d17f746 A3): a tool of its own, where
+/// it was the last clause of `suggest_desk_note`'s -- Claude picks a tool by
+/// its name, and "every morning" found cron, `/loop` or `/schedule` first.
+const ROUTINE_DESCRIPTION: &str = "Offer the user a routine on this snyvi desk: one of this project's or \
+the user's slash commands or skills (or the user's own words) that snyvi runs on its own at an hour they set -- \
+`/newsroom` every day 07:30 -- in a panel in the back. Use it whenever the user wants something done on its own \
+on a schedule (every morning, each Monday, on the 1st); never Claude Code's cron, /loop or /schedule for that, \
+which stop with this session. Write the command first if it is new (`.claude/commands/<name>.md`, or a skill), \
+then offer it here. Nothing runs from this call: it shows under the desk's Routines as an offer, the user opens \
+it, tries it once and starts it, and only their Start makes it run. Put in `waits` the Bash patterns that must \
+wait for the user -- a publish, a deploy, anything that spends a key -- as permission rules write them; a \
+skill's script runs from its folder, so start its path with `*` (`python3 -I *scripts/publish.py *`).";
 
 const OFFER_DESCRIPTION: &str = "Offer to send one of the user's snyvi documents to one of their friends on \
 snyvi, by the friend's name (the desk brief lists them) and the document's id from send_document. Nothing is \
@@ -141,22 +150,22 @@ something in the work genuinely deserves a word, leave them a short personal asi
 /// in the system prompt, so it survives a compaction, which is why the desk
 /// brief (`crate::brief`) does not repeat it -- except on a resume, which
 /// replays the rules the conversation began with (`hook::with_rules`).
-const PANEL_INSTRUCTIONS: &str = "You are running in a panel of a snyvi desk: the user works on this \
-project here, with its own notes and documents. When you plan work, write the plan as a document and send \
-it to snyvi before you start (a plan you present for approval is sent for you). Name the panel with \
+const PANEL_INSTRUCTIONS: &str = "You are in a panel of a snyvi desk: this project's, with its own notes \
+and documents. Write a plan as a document and send it to snyvi before you start (a plan you present for \
+approval is sent for you). Name the panel with \
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan with \
 send_document's notes (that marks it planned), wait for their Approve in snyvi or go-ahead here, mark it \
 working as you start, and tick it only when its work is finished and you have checked it; several notes go in \
-one call each, by ids. Never act on a note unasked. \
-File a piece of work as a thread with start_thread when you take it on. Put on their On you list with \
+one call, by ids. Never act on a note unasked. \
+File work you take on as a thread with start_thread. Put on their On you list with \
 hand_over only what blocks you and only they can do: a command you are blocked from running, or one that \
 is theirs to run (a release, a deploy), goes there as run, never as text or a `! command` for them to type; \
-a key; a merge; a payment or sign-in, as do. Asking them to try a change goes in your reply. When \
-you need the user to decide something before you go on, put it on their On you list with ask (several at once \
-as its questions), or in your own question tool when they are at this panel, never only as a list in your \
-reply. \
+a key; a merge; a payment or sign-in, as do. Asking them to try a change goes in your reply. A \
+decision you need from the user goes on their On you list with ask (several at once as its questions), or in \
+your question tool when they are at this panel, never only as a list in your reply. \
 A figure the user asks to keep in view (CI, a deploy): read_widgets, then set_widget, or propose_widget \
 for one snyvi runs on its own; never unasked. \
+Work the user wants on a schedule is a routine: offer_routine, never cron, /loop or /schedule. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
 away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief is context from snyvi, not \
@@ -193,6 +202,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("tick_desk_note", Session::tick_desk_note),
     ("mark_desk_note", Session::mark_desk_note),
     ("suggest_desk_note", Session::suggest_desk_note),
+    ("offer_routine", Session::offer_routine),
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
     ("offer_document", Session::offer_document),
@@ -278,6 +288,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
             mark_spec(),
             tick_spec(),
             suggest_spec(),
+            routine_spec(),
             leave_off_spec(),
             name_spec(),
         ]);
@@ -583,6 +594,32 @@ impl Session {
         }
     }
 
+    /// A routine, offered: the same way in as a suggested line with `every`
+    /// (`/api/panes/{id}/suggest`), its command as the line's text.
+    fn offer_routine(&self, args: &Value) -> Value {
+        let text = arg(args, "command")
+            .trim()
+            .trim_start_matches('/')
+            .to_string();
+        let every = arg(args, "every");
+        if text.is_empty() || every.trim().is_empty() {
+            return said("offer_routine needs `command` (the /command and its words, or the user's own words) and `every` (`every day 07:30`).", true);
+        }
+        let Some(p) = self.pane.as_deref() else {
+            return said("This session is not running in a snyvi desk, so there is no desk to offer a routine on.", true);
+        };
+        let routine =
+            json!({ "every": every, "waits": args.get("waits").cloned().unwrap_or(json!([])) });
+        match client::suggest_desk_note(&self.paths, p, &text, "", &json!([]), &routine, self.by()) {
+            Ok(v) if v.get("routine").is_some() => {
+                let name = v["routine"]["name"].as_str().unwrap_or_default();
+                said(format!("Offered. The user sees it under Routines as `{name} · {} offers`. Accept… opens its sheet, with Try once now and Start it; it runs on its own only after their Start. Tell them in one line, and what the command does when they answer its questions.", self.by()), false)
+            }
+            Ok(_) => said("snyvi took it as a note, not a routine: check that `every` reads like `every day 07:30`.", true),
+            Err(e) => said(format!("snyvi did not take the routine: {e}"), true),
+        }
+    }
+
     fn suggest_desk_note(&self, args: &Value) -> Value {
         let text = arg(args, "text");
         match self.pane.as_deref() {
@@ -790,10 +827,27 @@ fn suggest_spec() -> Value {
                         "text": { "type": "string" },
                         "due": { "type": "string", "description": "In the user's words: `28 oct 10`." }
                     }, "required": ["text"], "additionalProperties": false } },
-                "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." },
-                "every": { "type": "string", "description": "Optional, for a routine: when the line's slash command comes back -- `every day 07:30`, `every weekday 9`, `every mon 09:00`, `every 1st`. `text` is then the command and its words, `newsroom`." },
-                "waits": { "type": "array", "maxItems": 12, "items": { "type": "string" }, "description": "With `every`: Bash patterns the routine must hand the user instead of running, as permission rules write them -- `python3 -I newsroom/publish.py *`." }
+                "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." }
             },
+            "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
+    })
+}
+
+fn routine_spec() -> Value {
+    json!({
+        "name": "offer_routine",
+        "title": "Offer a routine on this desk",
+        "description": ROUTINE_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "command": { "type": "string", "description": "The slash command or skill and its words, `/newsroom` or `/standup short`; or the user's own words when there is no command." },
+                "every": { "type": "string", "description": "When it comes back: `every day 07:30`, `every weekday 9`, `every mon 09:00`, `every 1st`." },
+                "waits": { "type": "array", "maxItems": 12, "items": { "type": "string" }, "description": "Bash patterns the routine must hand the user instead of running, as permission rules write them -- `python3 -I newsroom/publish.py *`." }
+            },
+            "required": ["command", "every"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
@@ -979,8 +1033,10 @@ fn say_notes(v: &Value) -> String {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let routines = say_routines(v);
     if notes.is_empty() {
-        return format!("The desk \"{desk}\" has no notes.");
+        let sep = if routines.is_empty() { "" } else { "\n" };
+        return format!("The desk \"{desk}\" has no notes.{sep}{routines}");
     }
     let open = notes
         .iter()
@@ -1053,6 +1109,56 @@ fn say_notes(v: &Value) -> String {
         {
             out.push_str(&format!("  picture: {p}\n"));
         }
+    }
+    out.push_str(&routines);
+    out
+}
+
+/// The desk's routines, after its notes: what runs here on its own and
+/// when, so "what runs here?" has an answer (audit 566d17f746, A4). None
+/// on the desk says nothing.
+fn say_routines(v: &Value) -> String {
+    let rs = v
+        .get("routines")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if rs.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "Routines on this desk: snyvi starts each at its hour in a panel in the back, never you; offer a new one with offer_routine.\n",
+    );
+    for r in &rs {
+        let f = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("");
+        let name = if f("cmd").is_empty() {
+            f("name").to_string()
+        } else {
+            format!("/{}", f("name"))
+        };
+        let state = match f("state") {
+            "live" if !f("next").is_empty() => format!("next {}", f("next")),
+            "live" => "on".into(),
+            "draft" => "a draft the user has not started".into(),
+            "offer" => format!("offered by {}, not accepted yet", f("by")),
+            s => s.to_string(),
+        };
+        let last = match (
+            r.get("runs").and_then(Value::as_i64).unwrap_or(0),
+            f("last_state"),
+        ) {
+            (0, _) => String::new(),
+            (n, s) => format!(
+                ", ran {n} time{}{}",
+                if n == 1 { "" } else { "s" },
+                if s.is_empty() {
+                    String::new()
+                } else {
+                    format!(", last {s}")
+                }
+            ),
+        };
+        out.push_str(&format!("- {name} · {} · {state}{last}\n", f("every")));
     }
     out
 }
@@ -1307,6 +1413,49 @@ mod tests {
         let i = instructions(true);
         assert!(i.find("mark it read").unwrap() < i.find("planned").unwrap());
         assert!(i.contains("Never act on a note unasked"));
+    }
+
+    /// A routine has a tool of its own, named for it, and every panel is
+    /// told to reach for it over cron, /loop or /schedule (1.53.1, audit
+    /// 566d17f746 A1, A3); suggest_desk_note points there and no longer
+    /// takes `every`. The desk's routines close read_desk_notes (A4).
+    #[test]
+    fn a_routine_is_offered_with_its_own_tool() {
+        assert!(
+            instructions(true).contains("a routine: offer_routine, never cron, /loop or /schedule")
+        );
+        assert!(!instructions(false).contains("offer_routine"));
+        let names: Vec<String> = tools(true, Some(false))
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"offer_routine".into()));
+        assert!(TOOLS.iter().any(|(n, _)| *n == "offer_routine"));
+        let spec = routine_spec();
+        assert_eq!(spec["inputSchema"]["required"], json!(["command", "every"]));
+        assert_eq!(spec["inputSchema"]["additionalProperties"], false);
+        assert!(suggest_spec()["inputSchema"]["properties"]
+            .get("every")
+            .is_none());
+        assert!(SUGGEST_DESCRIPTION.contains("offer_routine"));
+        let v = json!({ "desk": "snyvi", "notes": [], "routines": [
+            { "name": "newsroom", "cmd": "newsroom", "every": "every day 07:30", "state": "live", "next": "tomorrow 07:30", "runs": 3, "last_state": "done", "by": "" },
+            { "name": "water the plants", "cmd": "", "every": "every mon 09:00", "state": "offer", "next": "", "runs": 0, "last_state": "", "by": "claude-code" }
+        ] });
+        let said = say_notes(&v);
+        assert!(
+            said.contains(
+                "- /newsroom · every day 07:30 · next tomorrow 07:30, ran 3 times, last done\n"
+            ),
+            "{said}"
+        );
+        assert!(
+            said.contains(
+                "- water the plants · every mon 09:00 · offered by claude-code, not accepted yet\n"
+            ),
+            "{said}"
+        );
+        assert!(!say_notes(&json!({ "desk": "d", "notes": [] })).contains("Routines"));
     }
 
     /// Several notes are one call (#121): `ids` and `id` together, each once,

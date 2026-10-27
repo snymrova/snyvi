@@ -428,6 +428,9 @@ async fn ready(
             json!("Close a panel in the back"),
         ));
     }
+    // How a run takes answers is the command author's to change, not the
+    // reader's: the sheet folds these under "For the command's author"
+    // (audit 566d17f746, R5).
     if r.words() {
         v.push(item(
             true,
@@ -435,17 +438,19 @@ async fn ready(
             json!(null),
         ));
     } else if routine::continues(text) {
-        v.push(item(
-            true,
-            format!("answers go to /{} continue:", r.cmd),
-            json!(null),
-        ));
+        v.push(json!({
+            "ok": true,
+            "says": format!("answers go to /{} continue:", r.cmd),
+            "fix": null,
+            "author": true,
+        }));
     } else {
         v.push(json!({
             "ok": true,
             "says": "answers will resume the run's own session · add a continue form for a fresh one",
             "fix": null,
             "paste": CONTINUE_FORM,
+            "author": true,
         }));
     }
     v
@@ -487,17 +492,40 @@ fn diff_of(data_dir: &std::path::Path, r: &Routine, now: &str) -> String {
     lines.join("\n")
 }
 
-/// The keys a command file names: words like `OPENROUTER_API_KEY`.
+/// The keys a command file names: words like `OPENROUTER_API_KEY`. In its
+/// prose any such word counts; inside a fenced block only what the shell
+/// reads as one -- `$NAME`, `${NAME}`, `snyvi key NAME` -- since a code
+/// block's `"key":"SHORT_KEY"` is an example's text, and a "not on this
+/// desk" for it taught the reader to pass over the real ones (audit
+/// 566d17f746, R6).
 fn key_names(text: &str) -> Vec<String> {
-    let mut v: Vec<String> = text
-        .split(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
-        .filter(|w| {
-            w.len() >= 6
-                && w.starts_with(|c: char| c.is_ascii_uppercase())
-                && ["_KEY", "_TOKEN", "_SECRET"].iter().any(|e| w.ends_with(e))
-        })
-        .map(String::from)
-        .collect();
+    let keyish = |w: &str| {
+        w.len() >= 6
+            && w.starts_with(|c: char| c.is_ascii_uppercase())
+            && ["_KEY", "_TOKEN", "_SECRET"].iter().any(|e| w.ends_with(e))
+    };
+    let word = |c: char| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_';
+    let mut v: Vec<String> = Vec::new();
+    let mut fenced = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        let mut at = 0;
+        for w in line.split(|c: char| !word(c)) {
+            let start = line[at..].find(w).map_or(at, |i| at + i);
+            at = start + w.len();
+            if w.is_empty() || !keyish(w) {
+                continue;
+            }
+            let before = line[..start].trim_end_matches('{');
+            let read = before.ends_with('$') || line[..start].ends_with("snyvi key ");
+            if !fenced || read {
+                v.push(w.to_string());
+            }
+        }
+    }
     v.sort();
     v.dedup();
     v.truncate(8);
@@ -708,6 +736,17 @@ mod tests {
     fn a_command_files_keys_are_read() {
         let f = "---\ndescription: x\n---\n\n# The newsroom: today's news\n\nUses $OPENROUTER_API_KEY and GH_TOKEN, not PATH or HOME_DIR.\n";
         assert_eq!(key_names(f), vec!["GH_TOKEN", "OPENROUTER_API_KEY"]);
+    }
+
+    /// An example inside a code block is not a key the run reads; what the
+    /// shell reads there is (audit 566d17f746, R6).
+    #[test]
+    fn a_code_blocks_example_is_not_a_key() {
+        let f = "Log it:\n\n```bash\nlog '{\"key\":\"SHORT_KEY\"}'\ncurl -H \"$API_TOKEN\" -d ${POST_SECRET} x\nT=$(snyvi key CLOUD_TOKEN)\n```\n";
+        assert_eq!(
+            key_names(f),
+            vec!["API_TOKEN", "CLOUD_TOKEN", "POST_SECRET"]
+        );
     }
 
     #[test]

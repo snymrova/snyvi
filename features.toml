@@ -32,6 +32,13 @@ line = "When a Claude finishes a note and checks it, it ticks it, with the commi
 small = "yes"
 
 [[feature]]
+id = "routines-easier"
+since = "1.53.1"
+title = "Routines are easier to start"
+line = "Click the Routines field and your commands and skills are listed, with how to say when. The sheet says plainly what it does, when, and what it asks you before; Try once now comes first."
+show = "desk .dk-rts .rt-in"
+
+[[feature]]
 id = "routines-field"
 since = "1.53.0"
 title = "Routines have a field of their own"

@@ -324,7 +324,23 @@ pub(crate) async fn pane_notes(
                     n["due"] = json!(crate::due::label(at, now));
                 }
             }
-            Json(json!({ "desk": placed.desk_name, "notes": v })).into_response()
+            // The desk's routines too, said short (1.53.1, audit 566d17f746
+            // A4): "what runs here on its own?" had no answer for an agent.
+            let routines: Vec<serde_json::Value> = app
+                .store
+                .clocked(|c, _| crate::routine::for_desk(c, placed.desk_id))
+                .unwrap_or_default()
+                .iter()
+                .map(|r| {
+                    json!({
+                        "name": r.name, "cmd": r.cmd, "every": r.every, "state": r.state(),
+                        "next": if r.state() == "live" && r.due_at > 0 { crate::due::label(r.due_at, now) } else { String::new() },
+                        "last_state": r.last_state, "runs": r.runs, "by": r.suggested_by,
+                    })
+                })
+                .collect();
+            Json(json!({ "desk": placed.desk_name, "notes": v, "routines": routines }))
+                .into_response()
         }
         Err(e) => err(e),
     }

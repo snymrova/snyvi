@@ -1204,18 +1204,24 @@ Suggested in the rail's corner, where nothing they do moves the page.
   slash command or a skill and when it comes back -- `/newsroom · every day
   07:30`, `/bench main, every weekday 9`, `every mon 09:00`, `every 1st` --
   or your own words with a when, `open PRs, summarise · every weekday 9`.
-  `/` lists the commands and skills Claude Code would run here, the
-  project's first and then yours, each with its first line; a name in two
+  Clicking the field lists the commands and skills Claude Code would run
+  here, over the desk, the project's first and then yours, each with its
+  first line and the ways to say when; typing `/` and a few letters narrows
+  it, by name and then by what each says it does; a name in two
   places is the one Claude Code's docs say wins (yours over the project's,
   a skill over a command file). The chip says what snyvi reads in the line
   as you type: **↻ every day 07:30 · project · command · first tomorrow
   7:30**, **your words**, or **when?**. Enter makes a **draft** and opens
-  its sheet: the file it runs and where it lives, When, **Waits for you**
-  with what the file suggests (a publish, a deploy, a line that spends a
-  key), each showing the lines it catches, a **Ready** list (Claude Code
-  trusts the folder, the keys are on the desk, snyvi starts at login --
-  **Start at login** on Linux -- the back has room, how your answers come
-  back) and Limits. **Try once now** runs it in a panel in the back while
+  its sheet: **What it does** (the file and where it lives), **When** (with
+  the usual cadences a press away), **Ask me before** with what the file
+  suggests (a publish, a deploy, a line that spends a key), each showing
+  the lines it catches, **Before it runs on its own** (what would stop a
+  run: Claude Code not yet trusted in the folder, a key the file reads that
+  is not on the desk, snyvi not starting at login -- **Start at login** on
+  Linux -- no room in the back; what is fine in one quiet line; how your
+  answers come back, folded under *For the command's author*) and Limits.
+  **Try once now** is the main button until it has run once, then **Start
+  it** is. **Try once now** runs it in a panel in the back while
   you watch; its questions come to On you, and your answers go on once.
   **Start it** allows the file as it is and gives it its hour; nothing runs
   on its own before that. At its hour snyvi starts it as a fresh Claude in
@@ -1232,9 +1238,11 @@ Suggested in the rail's corner, where nothing they do moves the page.
   past its limit. A paused routine starts nothing, answers included. Its ⋯
   has **Run now**, **Pause**, **Change…**, **History** and **Remove from
   view**; a draft's has **Try once now** and **Start it**. A Claude can
-  write a command and offer it as a routine (`suggest_desk_note`'s `every`
-  and `waits`); **Accept…** opens the same sheet, and it runs on its own
-  only after your Start.
+  write a command and offer it as a routine (`offer_routine`, which every
+  panel is told to use instead of cron, `/loop` or `/schedule`); **Accept…**
+  opens the same sheet, and it runs on its own only after your Start. A
+  Claude's `read_desk_notes` ends with the desk's routines, so it can say
+  what runs here on its own.
 - **A launch is a list.** When you say *launch*, Claude suggests its steps
   as one set of dated lines (`suggest_desk_note`'s `lines`, from the skill's
   `launch.md`): pictures and copy a week out, the site, the post, Show HN,
