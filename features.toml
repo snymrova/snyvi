@@ -32,6 +32,13 @@ line = "When a Claude finishes a note and checks it, it ticks it, with the commi
 small = "yes"
 
 [[feature]]
+id = "friend-lines-on-you"
+since = "1.53.1"
+title = "A friend's line is on you"
+line = "A line from a friend waits in On you on every page and desk, with Keep on, until you keep it or remove it, and your desktop says when one or a document comes while snyvi is behind another app."
+small = "yes"
+
+[[feature]]
 id = "routines-easier"
 since = "1.53.1"
 title = "Routines are easier to start"

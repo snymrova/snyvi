@@ -164,6 +164,7 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 .cn-opt:hover { background: var(--bg-side); }
 .cn-link { padding: 2px 4px; border: 0; background: none; font-size: var(--fs-small); color: var(--fg-3); text-decoration: underline dotted; cursor: pointer; }
 .cn-link:hover { color: var(--fg); }
+.cn-keepl { margin-top: 4px; }
 .cn-cmd { display: block; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); overflow-wrap: anywhere; }
 /* Lately in the sidebar's popover: kept out of sight in #trees between
    openings, as menu.js puts a section back where it lives. It is On you's
@@ -202,6 +203,9 @@ const hand = (px = 13) => `<svg viewBox="0 0 24 24" width="${px}" height="${px}"
 const L = {
   rows: [], loaded: false, loading: null, more: false, unseen: false,
   turns: [], turnsSeen: null, offers: [],
+  /** A friend's lines waiting on the reader (#196), the friends muted, the
+   *  line whose Keep on list is open, and the desks it lists. */
+  lines: [], muted: new Set(), keepOpen: 0, desks: null,
   open: false, earlier: false, allToday: false, back: null,
   card: null, cardDrawn: null, timer: 0, rang: 0,
   /** A card settled since the tray was last opened: the pill stays, to say
@@ -231,9 +235,11 @@ export function init(ctx) {
   // "3 min ago" stays true in an open tray.
   setInterval(() => { if (!document.hidden && L.open) redraw(); }, 60000);
   load();
-  if (c.friends()) offersLoad();
+  // A line that came while no page was open is on the reader all the
+  // same (#196); with no friend there is nothing to read.
+  if (hasFriend()) offersLoad();
   return { event, refresh, moved, rise, offer, says, sayHeld, toggle, open: openTray, draw, redraw, lately,
-    cardHtml, trayHtml: latelyHtml, offersHtml, offerCount: () => liveOffers().length, dot, keep: () => L.kept,
+    cardHtml, trayHtml: latelyHtml, offersHtml, offerCount: () => liveOffers().length + liveLines().length, linesHtml, dot, keep: () => L.kept,
     act, opened, chime, ring, mark, hand, cornerHeld, away: () => away, lift, chimed: chimedLine,
     /** The desk's first page while its card is up: its row in the rail is ringed. */
     rising: id => L.card?.kind === "first" && L.card.key === `d${id}` };
@@ -258,13 +264,20 @@ async function load(before = 0) {
   mark();
   redraw();
 }
-function refresh() { L.loading = null; load(); if (c.friends()) offersLoad(); }
+function refresh() { L.loading = null; load(); if (hasFriend()) offersLoad(); }
+
+/** Whether there is a friend: the page's count, which only a friends event
+ *  sets, or what the page was served with (`boot.friends`). */
+function hasFriend() {
+  if (c.friends() != null) return !!c.friends();
+  try { return !!JSON.parse(document.getElementById("boot")?.textContent || "{}").friends; } catch { return false; }
+}
 
 /** Something on a desk moved, or an offer: what waits across desks is read
  *  again, soon, when it is this file's to draw. */
 let movedTimer = 0;
 function moved(what) {
-  if (what === "peeroffers") return void offersLoad();
+  if (what === "peeroffers" || what === "peernotes") return void offersLoad();
   if (c.onDesk() || !c.capability) return;
   clearTimeout(movedTimer);
   movedTimer = setTimeout(() => load(), 400);
@@ -274,8 +287,27 @@ async function offersLoad() {
   try {
     const j = await fetch("/api/peers").then(r => r.json());
     L.offers = Array.isArray(j.offers) ? j.offers : [];
+    // A promise is theirs to keep, not the reader's to do: Home has it.
+    L.lines = (Array.isArray(j.notes) ? j.notes : []).filter(n => !n.promise);
+    L.muted = new Set((j.friends || []).filter(f => f.muted).map(f => f.id));
   } catch { return; }
+  linesIn();
   redraw();
+}
+
+/** Lines new to this browser rise, one card for a burst, with the chime:
+ *  the first read too, so a line that came while no page was open is the
+ *  first thing seen when one opens (#196). A muted friend's do not. */
+function linesIn() {
+  let at = 0;
+  try { at = +c.store.get("snyvi.lines.at") || 0; } catch {}
+  const novel = L.lines.filter(n => n.arrived_at > at);
+  if (!novel.length) return;
+  c.store.set("snyvi.lines.at", String(Math.max(...novel.map(n => n.arrived_at))));
+  const heard = novel.filter(n => !L.muted.has(n.peer_id));
+  if (!heard.length) return;
+  const n = heard[heard.length - 1];
+  rise({ kind: "line", key: `l${n.id}`, line: n, more: heard.length - 1, ring: true });
 }
 
 /** The turns across desks, as `/api/lately` read them: a fresh one new to
@@ -360,7 +392,7 @@ function sayHeld() {
  *  drawn there already. */
 function rise(card) {
   const burst = L.card && Date.now() - L.card.since < BURST_MS;
-  if (card.ring && Date.now() - L.rang >= BURST_MS) ring(card.turn ? `${card.turn.desk_name || "A desk"}: ${card.turn.text}` : `An offer to ${card.offer?.to || "a friend"}: ${card.offer?.title || card.offer?.text || ""}`);
+  if (card.ring && Date.now() - L.rang >= BURST_MS) ring(card.turn ? `${card.turn.desk_name || "A desk"}: ${card.turn.text}` : card.line ? `A line from ${card.line.from}: ${card.line.text}` : `An offer to ${card.offer?.to || "a friend"}: ${card.offer?.title || card.offer?.text || ""}`);
   if (card.ring) L.rang = Date.now();
   if (L.open) return redraw();
   card.since = Date.now();
@@ -428,6 +460,7 @@ function escape(e) {
 /** The dot: something in Lately, or one of snyvi's own lines, unseen. */
 function dot() { return !!c.lately && (L.unseen || ownRows().some(r => !r.seen)); }
 const liveOffers = () => L.offers.filter(o => !L.said.has(`o${o.id}`));
+const liveLines = () => L.lines.filter(n => !L.said.has(`l${n.id}`));
 const freshTurns = () => L.turns.filter(w => !w.stale && !w.answered_at && !L.said.has(`t${w.id}`));
 
 function toggle() { L.open ? closeTray(true) : openTray(); }
@@ -484,7 +517,7 @@ function redraw() {
 function draw() {
   if (c.onDesk()) { if (el) el.hidden = true; return; }
   const { esc } = c;
-  const onYou = c.capability ? freshTurns().length : 0, offers = liveOffers().length;
+  const onYou = c.capability ? freshTurns().length : 0, offers = liveOffers().length + liveLines().length;
   const card = L.card ? cardHtml(false) : "";
   const tray = L.open ? offTray(esc) : "";
   const n = onYou + offers;
@@ -534,7 +567,7 @@ function offTray(esc) {
   // Older asks under the fresh, dimmed, not folded: an unanswered ask is on
   // the reader whatever its age, as the desk's tray has it (1.43).
   const asks = said + fresh.map(turnRow).join("") + offersHtml();
-  const older = old.length ? `<ul class="cn-list cn-dim" aria-label="Older">${old.map(turnRow).join("")}</ul>` : "";
+  const older = linesHtml() + (old.length ? `<ul class="cn-list cn-dim" aria-label="Older">${old.map(turnRow).join("")}</ul>` : "");
   const close = `<button type="button" class="oy-x" data-a="cn-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${c.glyph("x", 12)}</button>`;
   return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1"><div class="oy-head"><span class="oy-hi" aria-hidden="true">${hand()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do, across your desks">On you</h3><span class="oy-gap"></span>${close}</div>` +
     `<div class="oy-scroll">${asks || older ? (asks ? `<ul class="cn-list">${asks}</ul>` : "") + older : `<p class="oy-none">Nothing on you right now.</p>`}</div></div>`;
@@ -568,6 +601,32 @@ function offerRow(o) {
     `<span class="cn-t">Send ${what} to ${esc(o.to)}?</span>` +
     `<span class="cn-acts">${s ? `<span class="cn-said" role="status">${esc(s.text)}</span>${s.undo ? `<button type="button" class="cn-undo" data-a="cn-offer-undo" data-k="${o.id}">Undo</button>` : ""}`
       : `<button type="button" class="cn-opt rec" data-a="cn-send" data-k="${o.id}">Send</button><button type="button" class="cn-opt" data-a="cn-notsend" data-k="${o.id}">Not now</button>`}</span></span></li>`;
+}
+
+/** A friend's lines, under their own head (#196): each waited only on Home,
+ *  out of sight from a desk, and a reader there never knew one came. They
+ *  are On you's, since only the reader keeps or removes a line. */
+function linesHtml() {
+  // One kept or put away holds its place while its Undo stands.
+  const ids = new Set(L.lines.map(n => n.id));
+  const all = L.lines.concat([...L.said].filter(([k, v]) => k[0] === "l" && v.item && !ids.has(v.item.id)).map(([, v]) => v.item));
+  if (!all.length) return "";
+  return `<p class="oy-h">From friends</p><ul class="cn-list" data-part="corner.lines">${all.sort((a, b) => a.id - b.id).map(lineRow).join("")}</ul>`;
+}
+/** One line: who, when, the words, Keep on ▾ (a desk, in one click, as
+ *  Home's Arrived has it) and Home; ✕ removes it, with Undo. */
+function lineRow(n) {
+  const { esc } = c, s = L.said.get(`l${n.id}`), open = L.keepOpen === n.id && !s;
+  const ds = L.desks || [], desks = [...ds.filter(d => !d.parked), ...ds.filter(d => d.parked)];
+  const list = open ? `<span class="cn-acts cn-keepl" role="menu" aria-label="Keep it on">${!L.desks ? `<span class="cn-said">…</span>` : desks.length ? desks.map(d =>
+    `<button type="button" role="menuitem" class="cn-opt" data-a="cn-keepto" data-k="${n.id}" data-v="${d.id}">${esc(d.name)}${d.parked ? " · parked" : ""}</button>`).join("") : `<span class="cn-said">No desk yet: Home has it</span>`}</span>` : "";
+  const keep = c.capability ? `<button type="button" class="cn-opt rec" data-a="cn-keep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${open}" data-tip="Keep it on a desk" data-tip-sub="a note there, from ${esc(n.from)}">Keep on ▾</button>` : "";
+  const acts = s ? `<span class="cn-said" role="status">${esc(s.text)}</span>${s.undo ? `<button type="button" class="cn-undo" data-a="cn-lundo" data-k="${n.id}">Undo</button>` : ""}`
+    : `${keep}<button type="button" class="cn-link" data-a="cn-home">Home</button>`;
+  return `<li class="cn-row cn-ask${s ? " mine" : ""}"><span class="cn-ico">${c.who(n.from)}</span><span class="cn-b">` +
+    `<span class="cn-by"><b>${esc(n.from)}</b> · a line · ${c.relShort(n.arrived_at)}</span>` +
+    `<span class="cn-t">${code(n.text)}</span><span class="cn-acts">${acts}</span>${list}</span>` +
+    (s ? "" : `<button type="button" class="cn-rx" data-a="cn-ldrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">${c.glyph("x", 10)}</button>`) + `</li>`;
 }
 
 /* ---------- Lately ---------- */
@@ -726,11 +785,12 @@ function cardHtml(desk) {
   L.cardDrawn = k;
   // What waits on the reader is On you's; anything else came, and is
   // Lately's, which has no "+N more" while it is hidden.
-  const mine = k.kind === "turn" || k.kind === "offer";
+  const mine = k.kind === "turn" || k.kind === "offer" || k.kind === "line";
   const more = k.more && (mine || c.lately) ? `<button type="button" class="cn-more" data-a="${mine ? "cn-open" : "cn-lately"}">+${k.more} more</button>` : "";
   let body = "";
   if (k.kind === "turn") body = `<ul class="cn-list">${turnRow(k.turn)}</ul>`;
   else if (k.kind === "offer") body = `<ul class="cn-list">${offerRow(L.offers.find(o => o.id === k.offer.id) || k.offer)}</ul>`;
+  else if (k.kind === "line") body = `<ul class="cn-list">${lineRow(L.lines.find(n => n.id === k.line.id) || k.line)}</ul><p class="cn-where">It stays in On you until you keep it or remove it.</p>`;
   else if (k.kind === "aside") {
     const r = k.row, [, to] = rowText(r);
     const face = !desk && c.peek ? `<span class="cn-peek" aria-hidden="true">${c.peek(r.kind === "snyvi" ? "glad" : "rest")}</span>` : "";
@@ -775,6 +835,11 @@ function act(a, b) {
     "cn-send": () => offerAnswer(+k, true),
     "cn-notsend": () => offerAnswer(+k, false),
     "cn-offer-undo": () => offerUndo(+k),
+    "cn-keep": () => keepList(+k),
+    "cn-keepto": () => keepLine(+k, +b.dataset.v),
+    "cn-ldrop": () => dropLine(+k),
+    "cn-lundo": () => lineUndo(+k),
+    "cn-home": () => { settle(); if (L.open && !c.onDesk()) closeTray(false); c.showHome(true); },
   }[a];
   if (!go) return false;
   go();
@@ -891,6 +956,50 @@ async function offerAnswer(id, send) {
 async function offerUndo(id) {
   try { await post(`/api/peers/offers/${id}`, { undo: true }); } catch (e) { c.toast("Could not take it back", { sub: c.sayErr(e).why }); return; }
   L.said.delete(`o${id}`);
+  offersLoad();
+}
+
+/* ---------- a friend's line (#196) ---------- */
+
+/** Keep on ▾: the desks, read when the list first opens. */
+async function keepList(id) {
+  L.keepOpen = L.keepOpen === id ? 0 : id;
+  redraw();
+  if (!L.keepOpen || L.desks) return;
+  try { L.desks = (await c.deskApi("/api/desks")).desks || []; } catch { L.desks = []; }
+  redraw();
+}
+/** Kept on a desk: the desk's line now, from the friend; Undo takes it off
+ *  that desk the ✕'s way and puts the line back here. */
+async function keepLine(id, desk) {
+  L.keepOpen = 0;
+  const item = L.lines.find(n => n.id === id);
+  try {
+    const r = await c.deskApi(`/api/peers/notes/${id}`, { what: "keep", desk });
+    L.said.set(`l${id}`, { text: `Kept on ${r.name}`, undo: true, desk, note: r.note?.id, item });
+  } catch (e) { L.said.set(`l${id}`, { text: `Could not keep it: ${c.sayErr(e).why}`, item }); }
+  lineSaid(id);
+}
+async function dropLine(id) {
+  const item = L.lines.find(n => n.id === id);
+  try { await post(`/api/peers/notes/${id}`, { what: "remove" }); L.said.set(`l${id}`, { text: "Removed", undo: true, item }); }
+  catch (e) { L.said.set(`l${id}`, { text: `Could not remove it: ${c.sayErr(e).why}`, item }); }
+  lineSaid(id);
+}
+function lineSaid(id) {
+  if (L.card?.key === `l${id}`) settle();
+  redraw();
+  const s = L.said.get(`l${id}`);
+  setTimeout(() => { if (L.said.get(`l${id}`) === s) { L.said.delete(`l${id}`); offersLoad(); } }, SAID_MS);
+}
+async function lineUndo(id) {
+  const s = L.said.get(`l${id}`);
+  if (!s) return;
+  try {
+    if (s.note) await c.deskApi(`/api/desks/${s.desk}/notes/${s.note}/remove`, {});
+    await post(`/api/peers/notes/${id}`, { what: "restore" });
+  } catch (e) { c.toast("Could not take it back", { sub: c.sayErr(e).why }); return; }
+  L.said.delete(`l${id}`);
   offersLoad();
 }
 

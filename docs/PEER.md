@@ -116,7 +116,16 @@ friend's documents arrive read.
 
 A line for the notes waits on Home, in **Arrived** -- *"water the beans"
 from Trapti* -- with **Keep on…**, which puts it on the desk the reader
-picks in one click, and ✕. The line on the desk keeps who sent it
+picks in one click, and ✕. From 1.53.1 it waits in **On you** too (#196),
+on every page and desk, counted in amber with an agent's asks, under *From
+friends* with the same Keep on ▾, Home and ✕: a reader working on a desk
+never saw Home, and asked their friend where the line was. A line new to
+the page rises there as a card with those buttons and the chime, the
+first time a page opens after it came as well; with no page in front the
+desktop is told, *Trapti sent you a line*, once for a burst, a click on it
+opening On you (a document: *Trapti sent you a document*, opening it). A
+muted friend's lines are counted and never rise or notify. The sender's
+row says where it waits: *arrived 3 min ago · in their On you*. The line on the desk keeps who sent it
 (`desk_notes.sent_by`): the rail says *from Trapti* under it and the brief
 writes `#93 water the beans (from Trapti)`. Ticking it sends nothing back
 by itself: from 1.23 a ticked line from a friend shows **Tell Trapti ✓**,

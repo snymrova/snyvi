@@ -1452,7 +1452,10 @@ click with their name on it, and ✕. Then the newest documents you have
 not read; a click opens one, and it leaves the list. Five rows at most,
 and "Everything in the Inbox →" when more are waiting. Arrived cannot be
 hidden, so nothing that arrives is put out of sight. In a narrow window it
-comes right under the note bar.
+comes right under the note bar. A friend's line is in **On you** as well, on every
+page and desk, under *From friends*, with Keep on ▾ and ✕, until you keep
+it or remove it; and when snyvi is behind another app, your desktop says
+a friend sent you a line or a document.
 
 **Claude** has what is left of the five-hour and weekly windows, when that
 was read, and the fullest context window; a window past its reset is shown

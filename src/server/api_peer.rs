@@ -1640,6 +1640,12 @@ fn arrived(
             }
             if !p.muted && !received.existing {
                 eprintln!("snyvi: {} sent \"{}\"", p.name, received.doc.title);
+                notify_friend(
+                    app,
+                    &format!("{} sent you a document", p.name),
+                    &received.doc.title,
+                    &format!("/d/{}", received.doc.id),
+                );
             }
         }
         // Held before it got here (`take_in`); nothing to keep.
@@ -1672,6 +1678,7 @@ fn arrived(
                         json!({ "from": p.name, "quiet": p.muted, "desk": d.name, "desk_id": d.id, "text": text }),
                     );
                     if !p.muted {
+                        notify_line(app, p, &text, &format!("/desk/{}#onyou", d.id), false);
                         lately_log(
                             app,
                             lately::New {
@@ -1696,6 +1703,9 @@ fn arrived(
                 json!({ "from": p.name, "quiet": p.muted, "text": text, "promise": promise, "due_at": due_at }),
             );
             if !p.muted {
+                // A line waits in On you; a promise is a row on Home.
+                let path = if promise { "/" } else { "/#onyou" };
+                notify_line(app, p, &text, path, promise);
                 lately_log(
                     app,
                     lately::New {
@@ -1710,6 +1720,16 @@ fn arrived(
         }
     }
     Ok(())
+}
+
+/// A friend's line, told to the desktop when no page is in front (#196).
+fn notify_line(app: &App, p: &Peer, text: &str, path: &str, promise: bool) {
+    let title = if promise {
+        format!("{} promised you", p.name)
+    } else {
+        format!("{} sent you a line", p.name)
+    };
+    notify_friend(app, &title, &crate::thread::line(text, 140), path);
 }
 
 /// Where a friend's document about a repository goes: the reader's own

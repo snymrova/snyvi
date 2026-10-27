@@ -380,8 +380,16 @@ pub(crate) fn shell(
                 ))
             })
             .unwrap_or_default();
+        // A friend's waiting line and an agent's offer are on the reader
+        // too, so the corner is drawn at first paint for them (#196).
+        let friends_waiting = app
+            .store
+            .peer_notes()
+            .map(|ns| ns.iter().filter(|n| !n.promise).count())
+            .unwrap_or(0)
+            + app.store.peer_offers().map(|o| o.len()).unwrap_or(0);
         o.insert("lately_unseen".into(), json!(unseen));
-        o.insert("on_you".into(), json!(on_you));
+        o.insert("on_you".into(), json!(on_you + friends_waiting));
         // Whether there is a friend, so a menu offers Send to a friend… only
         // then; the menu asks again as it opens (`ui/menu.js`).
         o.insert("friends".into(), json!(friend_count(app)));

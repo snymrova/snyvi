@@ -440,11 +440,14 @@
   /** An event's body, or null for one that is not JSON. */
   const parse = ev => { try { return JSON.parse(ev.data); } catch { return null; } };
   /** A line from a friend arrived, or an agent offered a document to one:
-   *  an offer waits on the reader, so it is the corner's, an On you row;
-   *  the rest peer.js says (`event`), as a card that rises there too. */
+   *  an offer or a waiting line waits on the reader, so it is the corner's,
+   *  an On you row; the rest peer.js says (`event`), as a card that rises
+   *  there too. */
   const onPeer = ev => {
     const j = parse(ev); if (!j) return;
     if (ev.type === "peeroffers") return void corner(m => j.offer != null ? m.offer(j) : m.moved("peeroffers"));
+    // A friend's line is On you's too (#196): the corner reads them again.
+    if (ev.type === "peernotes") corner(m => m.moved("peernotes"));
     peerUse().then(m => m.event(peerCtx, j), () => {});
   };
   /** Home shows a little of all of these; each one reads it again, soon. */
