@@ -164,3 +164,25 @@ fn a_skill_folder_is_hashed_whole_and_a_large_one_by_its_skill_md() {
     assert_eq!((again.kind, again.who), (Kind::Skill, Who::Project));
     assert!(from_file(&p.path, ".claude/commands/gone.md").is_none());
 }
+
+/// An entry that comes and goes within one tick of the folder's clock
+/// leaves its time where it was (Windows' is about 15 ms): the list is read
+/// again all the same, because the names moved.
+#[cfg(unix)]
+#[test]
+fn a_command_gone_within_one_tick_is_gone_from_the_list() {
+    let (h, p) = two_homes("tick");
+    let cmds = p.path.join(".claude/commands");
+    put(&cmds.join("news.md"), "# News");
+    let at_ = at(&h, &p);
+    assert_eq!(one(resolve_at(&at_, "news")).name, "news");
+    let then = std::fs::metadata(&cmds).unwrap().modified().unwrap();
+    std::fs::remove_file(cmds.join("news.md")).unwrap();
+    // The folder's time put back, as one tick of a coarse clock would leave it.
+    std::fs::File::open(&cmds)
+        .unwrap()
+        .set_modified(then)
+        .unwrap();
+    assert_eq!(std::fs::metadata(&cmds).unwrap().modified().unwrap(), then);
+    assert_eq!(resolve_at(&at_, "news"), Resolved::Words);
+}

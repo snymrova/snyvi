@@ -325,22 +325,33 @@ pub(crate) fn list_at(roots: &Roots) -> Vec<Place> {
     v
 }
 
+/// A folder's stamp: its time, and the names in it. The time alone missed
+/// an entry that came and went within one tick of the clock it is kept by
+/// -- about 15 ms on Windows, a second or two on some disks -- and the list
+/// kept a command that was gone. Reading the names is one directory read,
+/// and no file is opened for it.
+type Stamp = (Option<SystemTime>, Vec<std::ffi::OsString>);
 /// The four folders' stamps: a list read again only when one moved (T15).
-type Stamps = Vec<Option<SystemTime>>;
+type Stamps = Vec<Stamp>;
 type Entries = Vec<(Option<String>, Place)>;
 /// By the reader's home and the desk's folder.
 type Cache = HashMap<(Option<PathBuf>, PathBuf), (Stamps, Entries)>;
 static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+fn stamp(dir: &Path) -> Stamp {
+    let time = std::fs::metadata(dir).and_then(|m| m.modified()).ok();
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.file_name())).collect())
+        .unwrap_or_default();
+    names.sort();
+    (time, names)
+}
+
 /// The entries for a desk, from the cache when no folder moved. A folder's
-/// time moves when an entry comes or goes; a file rewritten in place is
+/// stamp moves when an entry comes or goes; a file rewritten in place is
 /// read at its next resolve's `hash`, which never trusts the cache.
 fn cached(roots: &Roots) -> Entries {
-    let stamps: Stamps = roots
-        .dirs()
-        .iter()
-        .map(|(_, _, d)| std::fs::metadata(d).and_then(|m| m.modified()).ok())
-        .collect();
+    let stamps: Stamps = roots.dirs().iter().map(|(_, _, d)| stamp(d)).collect();
     let key = (roots.home.clone(), roots.root.to_path_buf());
     if let Ok(c) = CACHE.lock() {
         if let Some((s, v)) = c.get(&key) {
