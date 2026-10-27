@@ -65,8 +65,9 @@ files you can open and look at. A line can carry a date the user gave it, shown 
 acted on only when the user asks. A plan the user approved in snyvi says so.";
 
 const TICK_DESCRIPTION: &str = "Tick one of the user's notes on this snyvi desk: mark it done, by its id from \
-read_desk_notes, or several by `ids` when the same work finished each. Tick a note only when the work it names is finished in this session and you have checked it -- \
-built, tested, merged or whatever finished means for it -- or when the user asks you to. Never tick a note for work \
+read_desk_notes, or several by `ids` when the same work finished each. Tick a note as soon as the work it names is finished and you have checked it -- \
+committed and tested, deployed, written, or whatever finished means for it -- without waiting for the merge: a tick with a commit not yet on main \
+reads \"on a branch\" until it lands. Tick one the user asks you to, and one the brief says landed on main whose work you can check. Never tick a note for work \
 that is only partly done, planned, or done by someone else, and do not tick notes to tidy the list. The \
 tick shows your name beside the line, and the user can untick it. If the work went into a commit, pass its hash as \
 `commit` (as git log prints it); if you sent a document about it with send_document, pass its id as `about`; and \
@@ -995,12 +996,16 @@ fn say_notes(v: &Value) -> String {
         let id = n.get("id").and_then(Value::as_i64).unwrap_or(0);
         let field = |k: &str| n.get(k).and_then(Value::as_str).filter(|b| !b.is_empty());
         let by = match (field("done_by"), field("done_commit")) {
+            // An agent's tick off a branch, until its commit is on main.
+            (Some(b), Some(c)) if n.get("on_branch") == Some(&Value::Bool(true)) => {
+                format!(" (ticked by {b}, in {c}, not on main yet)")
+            }
             (Some(b), Some(c)) => format!(" (ticked by {b}, in {c})"),
             (Some(b), None) => format!(" (ticked by {b})"),
             // How far an agent has got with an open line.
-            // Out on main, by a commit that names it: the user's to check.
+            // Out on main, by a commit that names it: its agent's to tick.
             _ if !done && field("landed_commit").is_some() => format!(
-                " (landed in {}, waiting for the user's check)",
+                " (landed in {}, not ticked yet)",
                 field("landed_commit").unwrap_or("")
             ),
             _ if !done => match (field("stage"), field("stage_doc"), field("stage_panel")) {

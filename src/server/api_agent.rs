@@ -403,20 +403,13 @@ pub(crate) async fn pane_tick_note(
             emit(&app, "desknotes", json!({ "desk": placed.desk_id }));
             Json(json!({ "ok": true, "desk": placed.desk_name })).into_response()
         }
-        // Landed on main: the reader's to check, and the agent is told so, or
-        // it would tick again with another commit. Otherwise not on this
-        // desk's list, taken off it, or already done: the agent is told which
-        // it cannot tell apart, and nothing changed.
-        Ok(false) => {
-            let error = match app.store.landed_desk_note(placed.desk_id, note) {
-                Ok(Some(commit)) => format!(
-                    "#{note} landed on main ({}) and waits for the user's check in snyvi: leave it to them",
-                    commit.chars().take(7).collect::<String>()
-                ),
-                _ => "no open note by that id on this desk".to_string(),
-            };
-            (StatusCode::CONFLICT, Json(json!({ "error": error }))).into_response()
-        }
+        // Not on this desk's list, taken off it, or already done: the agent
+        // is told which it cannot tell apart, and nothing changed.
+        Ok(false) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no open note by that id on this desk" })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }

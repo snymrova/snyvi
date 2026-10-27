@@ -830,6 +830,11 @@ pub struct Seen {
     /// body: only the reader's merge ticks their notes.
     #[serde(skip)]
     pub mine: bool,
+    /// The notes the PR's commits name, as the daemon's own gh read them
+    /// (`gh::Pr::named`): the only ones the reader's merge ticks. Never
+    /// taken from the body either.
+    #[serde(skip)]
+    pub named: Option<Vec<i64>>,
 }
 
 /// A trunk is no thread's own branch: a thread whose first commit was on
@@ -913,6 +918,7 @@ pub fn seen(
         merged_at: now,
         head: String::new(),
         url: s.pr.trim().to_string(),
+        named: s.named.clone(),
     };
     pr_facts(&tx, &now_t, &facts, s.mine, pane, now)?;
     let t = get(&tx, desk_id, t.id)?.expect("the row just written");
@@ -950,6 +956,9 @@ pub struct PrFacts {
     pub head: String,
     /// The PR's page, for the ticked note's link.
     pub url: String,
+    /// The notes its commits name, when known (`gh::Pr::named`): the only
+    /// ones its merge ticks.
+    pub named: Option<Vec<i64>>,
 }
 
 impl From<&crate::gh::Pr> for PrFacts {
@@ -962,6 +971,7 @@ impl From<&crate::gh::Pr> for PrFacts {
             merged_at: p.merged_at,
             head: p.head.clone(),
             url: p.url.clone(),
+            named: p.named.clone(),
         }
     }
 }
@@ -1019,18 +1029,23 @@ pub fn pr_facts(
         // Merging is the reader's own yes to the work, and a note left open
         // after it is a tick an agent forgot (#103-#106 stood a day that
         // way). By "merged", with the merge and the PR, so the row says
-        // where the work went; the reader unticks one the merge did not
-        // finish. A suggestion is not theirs yet, and a line that landed
-        // already waits for their check, which a merge is not (audit
-        // 8fbe274f4e: four were closed so before the reader looked).
+        // where the work went. Only the thread's notes the PR's commits
+        // name: a site PR on a release's thread closed #183 and #187 with
+        // their work unpushed (audit 201cea362f), so a merge whose commits
+        // gh did not list ticks none, and the rest wait for their agent's
+        // tick or the reader's check. A suggestion is not theirs yet, and a
+        // line that landed already waits for its tick or check, which a
+        // merge is not (audit 8fbe274f4e).
         let evidence = Some(f.url.trim())
             .filter(|u| crate::desk::evidence_ok(u))
             .unwrap_or("");
-        conn.execute(
-            "UPDATE desk_notes SET done_at = ?3, done_by = 'merged', done_commit = ?4, done_doc = '', done_evidence = ?5, done_pane = ?6
-             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
-            params![desk_id, id, now, merge, evidence, pane],
-        )?;
+        for note in f.named.as_deref().unwrap_or_default() {
+            conn.execute(
+                "UPDATE desk_notes SET done_at = ?3, done_by = 'merged', done_commit = ?4, done_doc = '', done_evidence = ?5, done_pane = ?6
+                 WHERE desk_id = ?1 AND thread_id = ?2 AND id = ?7 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
+                params![desk_id, id, now, merge, evidence, pane, note],
+            )?;
+        }
     } else {
         // Out, but not by the reader's hand: "check it", as a commit on main
         // that names a line lands it (`desk::land_notes`).

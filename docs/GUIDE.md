@@ -1170,9 +1170,12 @@ Suggested in the rail's corner, where nothing they do moves the page.
   own cards still open, so one you did in the chat does not wait for a ✕.
   Nothing is deleted.
 
-  A note whose commit reached main reads **check it**, and it is yours:
-  no Claude can tick it, nor can your merge. Your tick keeps the commit it
-  landed with.
+  A Claude ticks its note when the work is committed and checked, with the
+  commit; until that commit is on main the note reads **on a branch**.
+  Your merge closes only the notes its PR's commits name. A note whose
+  commit reached main with no tick reads **check it**. On a note a Claude
+  or a merge ticked, **not yet…** says what is still wrong and reopens it.
+  Your tick keeps the commit it landed with.
 - **A date on a line.** End a note with when it is due -- `post the 1.47
   note by fri 10`, `call the bank tomorrow`, `check the stats in 3 days`,
   `send the invoice by 28 oct` -- and snyvi takes the date off the text and

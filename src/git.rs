@@ -282,13 +282,14 @@ fn main_ref(root: &Path) -> Option<&'static str> {
         .find(|m| run(root, &["rev-parse", "--verify", "-q", m]).is_some())
 }
 
-/// The commits on the main line since `since` whose messages name desk
-/// notes, newest first: `(note, commit, its time)` for every note a message
-/// names (`named_in`). How a line whose work went out by another branch than
-/// its thread's -- a release branch that gathered several, a branch reused,
-/// a worktree with none -- is found: by what the commit says it finishes,
-/// "(#129-#131, #153)". Blocking, through `run`; at most the last 500.
-pub fn notes_named(root: &Path, since: i64) -> Vec<(i64, String, i64)> {
+/// The commits on the main line since `since`, newest first: each one's
+/// hash, its time, and the desk notes its message names (`named_in`). How a
+/// line whose work went out by another branch than its thread's -- a
+/// release branch that gathered several, a branch reused, a worktree with
+/// none -- is found: by what the commit says it finishes, "(#129-#131,
+/// #153)"; and how a line an agent ticked off a branch is found out: by its
+/// commit, merged in. Blocking, through `run`; at most the last 500.
+pub fn main_since(root: &Path, since: i64) -> Vec<(String, i64, Vec<i64>)> {
     let Some(main) = main_ref(root) else {
         return Vec::new();
     };
@@ -307,11 +308,7 @@ pub fn notes_named(root: &Path, since: i64) -> Vec<(i64, String, i64)> {
         let Ok(at) = at.trim().parse::<i64>() else {
             continue;
         };
-        found.extend(
-            named_in(msg)
-                .into_iter()
-                .map(|n| (n, sha.trim().to_string(), at)),
-        );
+        found.push((sha.trim().to_ascii_lowercase(), at, named_in(msg)));
     }
     found
 }

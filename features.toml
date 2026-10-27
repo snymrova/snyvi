@@ -25,6 +25,13 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "agent-ticks"
+since = "1.53.1"
+title = "Claude ticks its own notes"
+line = "When a Claude finishes a note and checks it, it ticks it, with the commit. Until the work is on main the note says on a branch; if it isn't right, press not yet… under it and say what's wrong."
+small = "yes"
+
+[[feature]]
 id = "routines-field"
 since = "1.53.0"
 title = "Routines have a field of their own"

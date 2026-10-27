@@ -73,4 +73,4 @@ Review in a test window on a spare port (`SNYVI_PORT=78xx`, `SNYVI_UI_DIR=ui` ho
 - `app.js` and `desk.js` are parts: add code to the part it belongs to, or a new numbered part; never recreate the whole file.
 - A new route goes in its `api_*.rs`, the router, and the table in `tests.rs`, or the count test fails.
 - Plans and docs for the maker go to snyvi (`send_document`), with Mermaid flows and a before/after.
-- A commit that finishes a desk note names it, `(#129)` or `(#129-#131)`: once it is on main, snyvi marks the note "check it" whatever branch carried it (`git::named_in`). Never write a PR's number as a bare `#N`; write `PR #79`.
+- A commit that finishes a desk note names it, `(#129)` or `(#129-#131)`, and the agent ticks the note with that commit once it is checked; the note reads "on a branch" until the commit is on main (`git::main_since`), and the user's merge closes only the notes its commits name. Never write a PR's number as a bare `#N`; write `PR #79`.

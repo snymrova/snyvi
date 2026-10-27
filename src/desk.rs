@@ -423,10 +423,12 @@ pub struct DeskNote {
     pub tellable: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub told: bool,
-    /// The commit on main that names this line, found by git
-    /// (`git::notes_named`), and when it was made: the work is out and the
-    /// line reads "check it" until the reader says it works or is still
-    /// broken. Never a tick on its own: a typo in a subject is not a yes.
+    /// The commit on main that names this line, or that an agent ticked it
+    /// with, found by git (`git::main_since`), and when it was made: the
+    /// work is out. Open, the line reads "check it" until its agent ticks it
+    /// or the reader says it works or is still broken; ticked, it no longer
+    /// reads "on a branch". Never a tick on its own: a typo in a subject is
+    /// not a yes.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub landed_commit: String,
     #[serde(skip_serializing_if = "is_zero")]
@@ -450,6 +452,31 @@ pub struct DeskNote {
     /// When the reader approved its plan (`crate::waiting`), or 0.
     #[serde(skip_serializing_if = "is_zero")]
     pub ok_at: i64,
+    /// An agent ticked it with a commit that is not on main yet
+    /// (`on_branch`): the row says "on a branch" until it lands.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub on_branch: bool,
+    /// An agent or a merge ticked it within `RECHECK_S`: the row offers
+    /// not yet..., which takes the tick back (`check_note`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub recheck: bool,
+}
+
+/// How long a tick that was not the reader's still offers not yet...
+pub const RECHECK_S: i64 = 7 * 86_400;
+
+/// Whether a line is an agent's tick off a branch, as of `now`: ticked by an
+/// agent (not the reader, not a merge) with a commit, that commit not found
+/// on main, and ticked within the window it is looked for in
+/// (`LAND_WINDOW_S`) -- an older one is history, and saying "on a branch"
+/// of it for ever would be a guess.
+pub fn on_branch(n: &DeskNote, now: i64) -> bool {
+    n.done
+        && !n.done_by.is_empty()
+        && n.done_by != "merged"
+        && !n.done_commit.is_empty()
+        && n.landed_commit.is_empty()
+        && n.done_at > now - LAND_WINDOW_S
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -1487,9 +1514,14 @@ pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
-    let notes: Vec<DeskNote> = stmt
+    let mut notes: Vec<DeskNote> = stmt
         .query_map(params![desk_id], row_to_note)?
         .collect::<rusqlite::Result<_>>()?;
+    let now = crate::store::now();
+    for n in &mut notes {
+        n.on_branch = on_branch(n, now);
+        n.recheck = n.done && !n.done_by.is_empty() && n.done_at > now - RECHECK_S;
+    }
     Ok(notes)
 }
 
@@ -1679,30 +1711,20 @@ pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, tick: &Tick, now: i64
         String::new()
     };
     // A suggestion is not the reader's list yet, so it is not the agent's to
-    // tick: it is kept, or not, first. Nor is a line that landed on main: it
-    // waits for the reader's check (`check_note`), which agents had taken
-    // from them (audit 8fbe274f4e).
+    // tick: it is kept, or not, first. A line that landed on main is the
+    // agent's to close as any other (1.53.1: the reader's check is the
+    // optional "not yet…", audit 201cea362f), with the landing's commit when
+    // it names none. One ticked off a branch reads "on a branch" until its
+    // commit is found on main (`land_notes`).
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = ?5, done_doc = ?6, done_evidence = ?7, done_pane = ?8,
+        "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = CASE WHEN ?5 != '' THEN ?5 ELSE landed_commit END,
+                done_doc = ?6, done_evidence = ?7, done_pane = ?8,
                 reply = CASE WHEN ?9 != '' THEN ?9 ELSE reply END,
                 reply_by = CASE WHEN ?9 != '' THEN ?4 ELSE reply_by END,
                 reply_at = CASE WHEN ?9 != '' THEN ?3 ELSE reply_at END
-         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
         params![desk_id, id, now, by, commit, doc, evidence, tick.pane, reply_of(&tick.say)],
     )? > 0)
-}
-
-/// The commit an open line landed with, when it is waiting for the reader's
-/// check: what an agent's refused tick is told (`tick_note`).
-pub fn landed_open(conn: &Connection, desk_id: i64, id: i64) -> Result<Option<String>> {
-    Ok(conn
-        .query_row(
-            "SELECT landed_commit FROM desk_notes WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0
-             AND done_at = 0 AND landed_commit != ''",
-            params![desk_id, id],
-            |r| r.get(0),
-        )
-        .optional()?)
 }
 
 /// An agent says how far it has got with a line on its own desk's list:
@@ -1764,27 +1786,38 @@ pub fn settle_stage(n: &mut DeskNote, live: bool) {
     }
 }
 
+/// How far back an agent's tick off a branch is looked for on main: a
+/// branch not merged in a month was dropped, and its line keeps saying so.
+pub const LAND_WINDOW_S: i64 = 30 * 86_400;
+
 /// The lines git may land (`land_notes`), with the time a commit has to be
-/// newer than: open lines the reader kept, that an agent has picked up -- a
-/// stage, or a thread -- and that nothing has landed yet. A line no agent
-/// touched never jumps to "check it" on a stray "#12" in a subject. A line
-/// the reader reopened takes only a commit made after they did, or the
-/// commit they just said did not fix it would land it again at once.
-pub fn landable(conn: &Connection, desk_id: i64) -> Result<Vec<(i64, i64)>> {
+/// newer than and the commit an agent ticked it with: open lines the reader
+/// kept, that an agent has picked up -- a stage, or a thread -- and that
+/// nothing has landed yet; and lines an agent ticked with a commit, in the
+/// last `LAND_WINDOW_S`, not yet seen on main. A line no agent touched never
+/// jumps to "check it" on a stray "#12" in a subject. A line the reader
+/// reopened takes only a commit made after they did, or the commit they
+/// just said did not fix it would land it again at once.
+pub fn landable(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<(i64, i64, String)>> {
     let mut stmt = conn.prepare(
-        "SELECT id, CASE WHEN stage = ?2 THEN stage_at ELSE created_at END FROM desk_notes
-         WHERE desk_id = ?1 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''
-           AND landed_commit = '' AND (stage != '' OR thread_id != 0)",
+        "SELECT id, CASE WHEN stage = ?2 THEN stage_at ELSE created_at END,
+                CASE WHEN done_at = 0 THEN '' ELSE done_commit END FROM desk_notes
+         WHERE desk_id = ?1 AND removed_at = 0 AND suggested_by = '' AND landed_commit = ''
+           AND (done_at = 0 AND (stage != '' OR thread_id != 0)
+                OR done_at > ?3 AND done_by NOT IN ('', 'merged') AND done_commit != '')",
     )?;
     let rows = stmt
-        .query_map(params![desk_id, REOPENED], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .query_map(params![desk_id, REOPENED, now - LAND_WINDOW_S], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
 
-/// Land lines git found named on main: `(line, commit, its time)`. Each
-/// reads "check it" with the commit, and waits for the reader. Only a line
-/// still open and not landed; how many changed.
+/// Land lines git found on main: `(line, commit, its time)`. An open one
+/// reads "check it" with the commit, for its agent to tick or the reader to
+/// check; one an agent ticked off a branch stops reading "on a branch". Only
+/// a line not landed; how many changed.
 pub fn land_notes(conn: &Connection, desk_id: i64, found: &[(i64, String, i64)]) -> Result<usize> {
     let mut n = 0;
     for (id, commit, at) in found {
@@ -1794,7 +1827,8 @@ pub fn land_notes(conn: &Connection, desk_id: i64, found: &[(i64, String, i64)])
         }
         n += conn.execute(
             "UPDATE desk_notes SET landed_commit = ?3, landed_at = ?4
-             WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
+             WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND suggested_by = '' AND landed_commit = ''
+               AND (done_at = 0 OR done_by NOT IN ('', 'merged'))",
             params![desk_id, id, commit, at],
         )?;
     }
@@ -1806,7 +1840,9 @@ pub fn land_notes(conn: &Connection, desk_id: i64, found: &[(i64, String, i64)])
 /// the landing is cleared and the line is reopened, out of its thread -- a
 /// shipped thread would go on saying "check it" -- with the reader's words,
 /// when they gave some, as its reply; the next agent's brief leads with it.
-/// The plan stays. False when the line is not open on this desk.
+/// The plan stays. Still broken is said of a line an agent or a merge ticked
+/// too (1.53.1): the tick is taken back with the landing. False when the
+/// line is not open on this desk, or is the reader's own done one.
 pub fn check_note(
     conn: &Connection,
     desk_id: i64,
@@ -1824,11 +1860,12 @@ pub fn check_note(
     }
     Ok(conn.execute(
         "UPDATE desk_notes SET landed_commit = '', landed_at = 0, thread_id = 0,
+                done_at = 0, done_by = '', done_commit = '', done_doc = '', done_evidence = '', done_pane = '',
                 stage = ?4, stage_by = '', stage_at = ?3, stage_pane = '', stage_session = '',
                 reply = CASE WHEN ?5 != '' THEN ?5 ELSE reply END,
                 reply_by = CASE WHEN ?5 != '' THEN '' ELSE reply_by END,
                 reply_at = CASE WHEN ?5 != '' THEN ?3 ELSE reply_at END
-         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND (done_at = 0 OR done_by != '') AND suggested_by = ''",
         params![desk_id, id, now, REOPENED, reply_of(say)],
     )? > 0)
 }
@@ -2124,6 +2161,8 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         due_at: r.get(26)?,
         due_rang_at: r.get(27)?,
         ok_at: r.get(28)?,
+        on_branch: false,
+        recheck: false,
     })
 }
 
