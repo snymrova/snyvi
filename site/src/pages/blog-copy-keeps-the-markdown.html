@@ -1,0 +1,60 @@
+<!--{
+  "path": "/blog/copy-keeps-the-markdown",
+  "title": "Copy keeps the Markdown · snyvi",
+  "description": "Copy part of a plan out of snyvi and paste it into Claude, a terminal or GitHub: in snyvi 1.53 it arrives as Markdown, bullets, code and tables intact. And a Download now says where the file went.",
+  "nav": "blog",
+  "head": "Blog",
+  "og": "/blog/copy-keeps-the-markdown.png",
+  "article": true,
+  "rail": "toc"
+}-->
+<h1>Copy keeps the Markdown</h1>
+<p class="byline"><time datetime="2026-10-27">27 Oct 2026</time> · snyvi 1.53</p>
+<p class="lede">Most of what I read in snyvi was written by an agent: a plan, a review, a list of what's left. Most of what I do with it is take part of it somewhere else. Step 3 goes back to Claude with "do this one". A table goes into an issue. The commands go into a terminal.</p>
+
+<p>That used to go badly. Select across a few paragraphs, copy, paste into Claude, and what arrived was the page as text. The bullets were gone, the headings were plain lines, a code block lost its fence, and a table came out as one cell after another. I'd fix it by hand, or open the source and copy from there.</p>
+
+<h2 id="two-kinds">Two kinds on the clipboard</h2>
+<p>Now a copy from a Markdown page puts two things on the clipboard, and whatever you paste into takes the one it reads:</p>
+<ul>
+<li><b>Markdown, as plain text</b>, for an agent, a terminal or GitHub. Bullets, numbered steps, headings, tables, code fences, links and footnotes come out as Markdown, as if you'd copied that part of the source.</li>
+<li><b>The page as drawn</b>, for a mail or a document, which keep the formatting they're given.</li>
+</ul>
+<p>You don't choose. Select and copy as you always do.</p>
+
+<figure class="shot"><img src="/blog/copy-select.webp" width="640" height="445" loading="lazy" alt="A plan open in snyvi with its Step 2 section selected: the heading, three bullets, a command in a code block and a three-row table"><figcaption>A section of a plan, selected.</figcaption></figure>
+
+<p>Here is what that selection pastes as, exactly as snyvi put it on the clipboard:</p>
+<pre><code>## Step 2: fetch and summarise
+
+- Read `links.md` and keep the links added since the last digest.
+- Fetch each page once, and skip any that fails (log it, don't retry).
+- Write two lines per link: what it argues, and why it's on the list.
+
+```bash
+node digest.mjs --since last --out digests/2026-10-28.md
+```
+
+| Link kind | Fetched as | Kept |
+| --- | --- | --- |
+| Article | its readable text | title, two lines |
+| Video | its description | title, length |
+| Paper | its abstract | title, authors |</code></pre>
+
+<h2 id="a-section">A whole section at once</h2>
+<p>Hover a heading and a small copy mark appears beside its <code>#</code>. It copies the heading and everything under it, down to the next heading at its level. That includes the footnotes it points to, which live at the end of the page. It's the quickest way to hand Claude one part of a long plan.</p>
+
+<h2 id="download">Download says where it went</h2>
+<p>Pictures, films, songs and PDFs got a Download in 1.51. Pressing it saved the file, and that was all: a check mark, and a word beside the middle of the picture, which for a tall one was the far corner of the window. You had to go and find the file.</p>
+<p>Now the answer is where you pressed. The ↓ turns to a ✓, and beside it snyvi says where the file went, with <b>Open</b> and <b>Show in folder</b> right there.</p>
+
+<figure class="shot"><img src="/blog/copy-download.webp" width="610" height="385" loading="lazy" alt="A chart in a snyvi page after pressing its download button: a check mark where the button was, and beside it Downloaded, ~/Downloads/reads.png, with Open and Show in folder buttons"><figcaption>The answer beside the ↓: where it went, and a way to it.</figcaption></figure>
+
+<p>There was a second reason it said nothing. The window that reports a download shipped in 1.52, but updating snyvi from inside the app kept the old window running. So for anyone who updated, Download drew its check mark and stayed quiet. An update now restarts a window older than 1.52. A release that changes the window without raising that minimum now fails CI, so this doesn't happen again.</p>
+
+<h2 id="left-out">What I left out</h2>
+<p>This covers Markdown pages, which is most of what agents write. A page that arrives as HTML copies the way any browser does, because there's no source in the right shape to give back.</p>
+
+<h2 id="try-it">Try it</h2>
+<p>snyvi is free, runs on your machine, and has no account. It's <a href="/install">here for Linux, macOS and Windows</a>, and the source is <a href="https://github.com/snymrova/snyvi">on GitHub</a>. If you already have it, it updates itself, and its What's new page will show you both.</p>
+<p class="byline"><i>Agents make it easy to start. snyvi helps you finish.</i></p>
