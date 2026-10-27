@@ -1,0 +1,57 @@
+<!--{
+  "path": "/blog/routines",
+  "title": "Routines you try once, then start · snyvi",
+  "description": "Some work comes back every morning. In snyvi 1.53 a routine is one of your Claude Code commands or skills, or your own words, at an hour you pick: you try it once while you watch, then start it.",
+  "nav": "blog",
+  "head": "Blog",
+  "og": "/blog/routines.png",
+  "article": true,
+  "rail": "toc"
+}-->
+<h1>Routines you try once, then start</h1>
+<p class="byline"><time datetime="2026-10-26">26 Oct 2026</time> · snyvi 1.53</p>
+<p class="lede">Some work comes back. Every morning, read what came in overnight and write the digest. Every Monday, check the links in the posts. Every first of the month, sort the reading list. You end up asking Claude for the same thing on the same day each time.</p>
+
+<p>A routine is that request, written once. snyvi starts it at the hour you pick, in a panel in the back of the project's desk. What it writes lands on the desk like any other page, and anything it needs from you waits on your On you list.</p>
+
+<h2 id="the-field">A field of its own</h2>
+<p>Each desk has a <b>Routines</b> section under Notes, with a field. Type <code>/</code> and snyvi lists the commands and skills Claude Code would find in this project and in your own setup, each with what it's for and where it comes from.</p>
+
+<figure class="shot"><img src="/blog/routines-slash.webp" width="362" height="300" loading="lazy" alt="The Routines field with / typed: /digest and /links (project commands), /publish (a project skill), /inbox (your own command), each with its one-line description"><figcaption>The <code>/</code> list on a blog's desk: the project's two commands and its skill, then a command of your own.</figcaption></figure>
+
+<p>Then say when: <code>every day 7:30</code>, <code>every weekday 9</code>, <code>every mon</code>, <code>every 1st</code>. A line under the field says what snyvi read, for example "every day 07:30 · project command · first tomorrow 7:30", before you press Enter.</p>
+<p>It doesn't have to be a command. Write your own words, such as <code>tidy the drafts folder · every fri 17</code>, and that's what Claude is asked.</p>
+<p>A command is resolved the way Claude Code resolves it. A skill beats a command of the same name, and yours beat the project's. Where the docs leave the order open (your command and the project's skill sharing a name), snyvi says so and doesn't guess.</p>
+
+<h2 id="a-draft">First it's a draft</h2>
+<p>Enter doesn't start anything. It makes a <b>draft</b> and opens its sheet, where everything a routine depends on is in one place:</p>
+
+<figure class="shot"><img src="/blog/routines-sheet.webp" width="500" height="602" loading="lazy" alt="The sheet for a draft routine called digest: Runs /digest from .claude/commands/digest.md, When every day 07:30, Waits for you, Ready with a check that Claude Code trusts the folder and a warning that snyvi does not start at login, Limits, and the buttons Try once now, Start it and Cancel"><figcaption>A draft's sheet. Nothing runs on its own until Start it.</figcaption></figure>
+
+<ul>
+<li><b>Runs</b> names the file. The routine runs that file as it is when you start it.</li>
+<li><b>Waits for you</b> lists the commands the agent may not run on its own: a publish, a deploy, anything that spends a key. They're written as Claude Code's permission rules are. When a run gets to one, it hands it to you as a card, and Run on the card starts it.</li>
+<li><b>Ready</b> checks what would make an early-morning run fail: that Claude Code trusts the folder, that snyvi starts when you log in (a routine runs only while snyvi does), and how your answers will get back to it.</li>
+<li><b>Limits</b> keep a run short, and hold it back when your usage is near its limit.</li>
+</ul>
+
+<h2 id="try-it-once">Try it once, then start it</h2>
+<p><b>Try once now</b> runs it straight away, in a panel in the back, while you watch. If the command asks you something, the question comes to On you, and your answer goes back to it. Once it does what you meant, <b>Start it</b>, and it comes back at its hour from then on.</p>
+<p>Answers keep working when you're away. If the command has a form for being continued, the next session starts fresh with your answer, as <code>/digest continue: …</code>. Otherwise snyvi resumes the run's own session, so Claude remembers what it asked.</p>
+
+<h2 id="it-stays-yours">It stays the routine you started</h2>
+<p>A routine runs the file you started. If someone changes that file, an agent or a pull, the routine waits, and its sheet shows what changed, with <b>Allow</b> to run the new version.</p>
+<p>Pause holds a routine, answers and all. Remove takes it out of view, and like everything in snyvi it can be brought back.</p>
+<p>When you ask Claude in a panel for something to happen on its own, it can write the command and offer it as a routine. The offer opens as a sheet, and you try it and start it the same way. Nothing an agent offers runs until you do.</p>
+
+<h2 id="also-new">Also in this update</h2>
+<ul>
+<li><b>Copy keeps the Markdown.</b> Copy part of a page and paste it into Claude, a terminal or GitHub, with its bullets, headings, tables and code intact. Hover a heading for a mark that copies its whole section.</li>
+<li><b>A note that landed waits for you.</b> When the commit that finishes a note reaches main, the note asks you to check it, and only you can tick it. Your tick keeps the commit.</li>
+<li><b>Cards leave when they're done.</b> Tell Claude in the chat that you added the key or ran the build, and it takes the card off On you, saying why. A card it asks again in other words replaces the old one.</li>
+<li><b>Download says so.</b> Downloading a page now answers beside its ↓.</li>
+</ul>
+
+<h2 id="try-it">Try it</h2>
+<p>snyvi is free, runs on your machine, and has no account. It's <a href="/install">here for Linux, macOS and Windows</a>, and the source is <a href="https://github.com/snymrova/snyvi">on GitHub</a>. If you already have it, it updates itself, and its What's new page will show you Routines and Copy.</p>
+<p class="byline"><i>Agents make it easy to start. snyvi helps you finish.</i></p>
