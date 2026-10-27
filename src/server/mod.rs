@@ -651,6 +651,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/update/later", post(update_later))
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/reveal", post(reveal))
+        .route("/api/downloads/open", post(open_download))
         .route("/api/resolve", post(resolve_path))
         .route("/api/find", get(find_files))
         .route("/api/find/open", post(find_open))

@@ -248,7 +248,7 @@
    *  reaches the clipboard with nothing awaited before it, which WebKit
    *  asks. A click before it came waits for it. */
   let copyMod = null;
-  const useCopy = () => chunk("copy").then(m => (copyMod = m.init({ state, rawUrl, toast, keyHint, mmd: () => mmd })));
+  const useCopy = () => chunk("copy").then(m => (copyMod = m.init({ state, rawUrl, toast, keyHint, mmd: () => mmd, capability, deskApi })));
   const copyAll = btn => copyMod ? copyMod.copyAll(btn) : useCopy().then(m => m.copyAll(btn));
   $("#btn-copy-top").addEventListener("click", e => copyAll(e.currentTarget));
   // Save as PDF (#182) is the same chunk's: its print sheet is in it too.

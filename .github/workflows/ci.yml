@@ -171,6 +171,19 @@ jobs:
           packaging/manifest.py 0.0.0 /tmp/sums --out /tmp/latest.json --app-min 0.0.0 2>/dev/null && { echo "manifest.py wrote a manifest with a download missing"; exit 1; }
           # And app_min in Cargo.toml is a version the release could carry.
           python3 -c "import tomllib; d=tomllib.load(open('Cargo.toml','rb')); v=d['package']['version']; m=d['package']['metadata']['snyvi']['app_min']; assert tuple(map(int,m.split('.')))<=tuple(map(int,v.split('.'))), f'app_min {m} is newer than {v}'"
+          # And the window is relaunched for a change to its own code: if
+          # src/bin/ or tauri.conf.json changed since the last release below
+          # this version, app_min has to be this version (#195). Two trees
+          # are all a diff needs, so the tag is fetched one deep.
+          v=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['package']['version'])")
+          m=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['package']['metadata']['snyvi']['app_min'])")
+          last=$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/v||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | awk -v v="$v" '{ split($0,a,"."); split(v,b,"."); if (a[1]*1e6+a[2]*1e3+a[3] < b[1]*1e6+b[2]*1e3+b[3]) l=$0 } END { print l }')
+          if [ -n "$last" ]; then
+            git fetch -q --depth=1 origin "refs/tags/v$last:refs/tags/v$last"
+            if ! git diff --quiet "v$last" HEAD -- src/bin tauri.conf.json && [ "$m" != "$v" ]; then
+              echo "src/bin/ or tauri.conf.json changed since v$last: set app_min in Cargo.toml to $v, so an update relaunches the window"; exit 1
+            fi
+          fi
       - name: Lay out the .app
         # The other packaging script, which only a Mac can finish (the icon
         # and the signature) but any machine can lay out. Run here so that an

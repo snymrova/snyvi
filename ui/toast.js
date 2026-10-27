@@ -36,6 +36,9 @@ const CSS = `
 .toast .act { font: inherit; font-size: var(--fs-small); font-weight: 500; color: var(--accent); background: transparent; border: 1px solid var(--rule-2); border-radius: var(--r-sm); padding: 3px 9px; margin-left: 4px; cursor: pointer; flex: none; }
 .toast .act:hover { background: var(--bg-side); }
 .toast .act:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.toast.many { flex-wrap: wrap; row-gap: 6px; max-width: 340px; }
+.toast.many .say { flex: 1 1 0; }
+.toast .acts { flex: 1 0 100%; display: flex; justify-content: flex-end; gap: 4px; }
 /* An error has no face and no timer: it stays until its ✕. */
 .toast[role=alert] { padding-left: 12px; cursor: auto; }
 .toast .tx { border: 0; color: var(--fg-3); padding: 3px 4px; margin-left: 0; }
@@ -131,7 +134,8 @@ function unsay() {
  *    on its own -- it stays until its ✕, with `retry` as its button;
  *    "undo", an offer, which `action` makes on its own. News from the
  *    background is not a toast: it rises in the corner (ui/corner.js).
- *  - `action` ({label, run}) is a button in it; `go` makes it one.
+ *  - `action` ({label, run}, or a list of them) is a button in it; `go`
+ *    makes it one.
  *  - `face`: the mascot's, from the kind unless given; `null` for none. It
  *    is never read off the title's words. */
 function say(title, o, acted) {
@@ -154,11 +158,16 @@ function say(title, o, acted) {
   if (face) el.dataset.feel = face;
   el.innerHTML = (face ? `<span class="who">${mascotHead(face)}</span>` : "") +
     `<span class="say"><div class="t">${esc(title)}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ""}</span>`;
-  if (action) {
+  // One button beside the words, or a few on a row of their own under them:
+  // a Download's Open and Show in folder, which beside the words would cut
+  // the path they are there to show down to "~/Downl…".
+  const acts = [].concat(action || []), row = acts.length > 1 ? document.createElement("div") : el;
+  if (row !== el) { row.className = "acts"; el.classList.add("many"); el.appendChild(row); }
+  for (const a of acts) {
     const b = document.createElement("button");
-    b.type = "button"; b.className = "act"; b.textContent = action.label;
-    b.addEventListener("click", ev => { ev.stopPropagation(); unsay(); action.run(); });
-    el.appendChild(b);
+    b.type = "button"; b.className = "act"; b.textContent = a.label;
+    b.addEventListener("click", ev => { ev.stopPropagation(); unsay(); a.run(); });
+    row.appendChild(b);
   }
   // `go` is the whole toast, beside a button or without one: news about a
   // document is a way to it (#66).

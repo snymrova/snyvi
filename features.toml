@@ -25,6 +25,13 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "download-open"
+since = "1.53.1"
+title = "A download says where it went"
+line = "Press Download on a picture, a film, a song or a PDF and snyvi says where it saved it, with Open and Show in folder right beside."
+small = "yes"
+
+[[feature]]
 id = "agent-ticks"
 since = "1.53.1"
 title = "Claude ticks its own notes"

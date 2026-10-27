@@ -1099,3 +1099,91 @@ pub(crate) fn dir_of(p: std::path::PathBuf) -> Option<std::path::PathBuf> {
         p.parent().map(|d| d.to_path_buf())
     }
 }
+
+#[derive(Deserialize)]
+pub(crate) struct DownloadBody {
+    name: String,
+    #[serde(default)]
+    reveal: bool,
+}
+
+/// What a Download may be opened with (#195): the kinds the page offers one
+/// for -- a picture, a film, a song, a PDF -- by the name's ending. An SVG,
+/// a page, a script is shown in its folder and never opened: snyvi runs
+/// nothing it was sent.
+pub(crate) fn opens(name: &str) -> bool {
+    const KINDS: &[&str] = &[
+        "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "heic", "mp4", "webm", "mov", "m4v",
+        "mkv", "mp3", "m4a", "wav", "ogg", "oga", "opus", "flac", "aac", "pdf",
+    ];
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| KINDS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// The file a name names in `dir`, when it is a bare name of a file there:
+/// no separator, no `..`, nothing hidden, nothing that is not a file.
+pub(crate) fn in_downloads(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    let bare = !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\', '\0'])
+        && std::path::Path::new(name).file_name() == Some(std::ffi::OsStr::new(name));
+    let p = dir.join(name);
+    (bare && p.is_file()).then_some(p)
+}
+
+/// A file the window just saved into Downloads (#195), opened in the
+/// desktop's own app for it, or shown in its folder. The window says where
+/// a Download went (src/bin/app.rs), and the page offers Open and Show in
+/// folder beside it. The page names the file by its name alone; the folder
+/// is the system's Downloads, looked up here, so nothing the caller types
+/// is a path. Behind the desk's gate: only the window saves a Download, and
+/// the token opens nothing.
+pub(crate) async fn open_download(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<DownloadBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let no = |why: &str| (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response();
+    // A Linux desktop without user-dirs.dirs names no Downloads folder, and
+    // the window's engine falls back to ~/Downloads there too.
+    let dir = dirs::download_dir().or_else(|| dirs::home_dir().map(|h| h.join("Downloads")));
+    let Some(dir) = dir.filter(|d| d.is_dir()) else {
+        return no("no Downloads folder");
+    };
+    // Show in folder asks nothing of the name: the window that never said
+    // where a file went (copy.js) still offers the folder it most likely
+    // went to.
+    let file = in_downloads(&dir, &b.name);
+    if !b.reveal && file.is_none() {
+        return no("not in Downloads");
+    }
+    if !b.reveal && !opens(&b.name) {
+        return no("only a picture, a film, a song or a PDF opens");
+    }
+    if !platform::has_display() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "no desktop session to open it in" })),
+        )
+            .into_response();
+    }
+    let done = match file {
+        Some(file) if !b.reveal => platform::open_file(&file),
+        _ => platform::open_folder(&dir),
+    };
+    if done {
+        Json(json!({ "ok": true })).into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "nothing on this machine opens it" })),
+        )
+            .into_response()
+    }
+}
