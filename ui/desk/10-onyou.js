@@ -103,8 +103,9 @@ function oyNode() {
   return oyEl;
 }
 
-/** What the notch counts: fresh waiting turns, suggestions and an agent's
- *  offers, which are in amber; and the older ones, which are not. */
+/** What the notch counts: fresh waiting turns, suggestions, an agent's
+ *  offers and a friend's lines (#196), which are in amber; and the older
+ *  ones, which are not. */
 function oyCounts(d, f) {
   const waiting = f.turns.filter(w => shown(w) && !w.answered_at);
   const now = waiting.filter(w => fresh(d, w)).length;
@@ -163,10 +164,10 @@ function trayHtml(d, f, esc) {
   qClamp = false;
   const said = rows ? `<ul class="dk-turn-list" data-part="desk.turns">${rows}</ul>` : "";
   const older = old ? `<ul class="cn-list cn-old oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, asked over half an hour ago, or its panel was prompted since. It goes by itself after three days, and can come back">${old}</ul>` : "";
-  const K = ctx.corner?.(), offers = K ? K.offersHtml() : "";
+  const K = ctx.corner?.(), offers = K ? K.offersHtml() : "", lines = K?.linesHtml?.() || "";
   const away = awayRows(f, esc);
   const all = said + older + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
-    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + sugRows(f, d);
+    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d);
   const n = oyCounts(d, f), count = n.now + n.old;
   oy.empty = !all;
   const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +

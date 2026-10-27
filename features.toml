@@ -25,6 +25,34 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "download-open"
+since = "1.53.1"
+title = "A download says where it went"
+line = "Press Download on a picture, a film, a song or a PDF and snyvi says where it saved it, with Open and Show in folder right beside."
+small = "yes"
+
+[[feature]]
+id = "agent-ticks"
+since = "1.53.1"
+title = "Claude ticks its own notes"
+line = "When a Claude finishes a note and checks it, it ticks it, with the commit. Until the work is on main the note says on a branch; if it isn't right, press not yet… under it and say what's wrong."
+small = "yes"
+
+[[feature]]
+id = "friend-lines-on-you"
+since = "1.53.1"
+title = "A friend's line is on you"
+line = "A line from a friend waits in On you on every page and desk, with Keep on, until you keep it or remove it, and your desktop says when one or a document comes while snyvi is behind another app."
+small = "yes"
+
+[[feature]]
+id = "routines-easier"
+since = "1.53.1"
+title = "Routines are easier to start"
+line = "Click the Routines field and your commands and skills are listed, with how to say when. The sheet says plainly what it does, when, and what it asks you before; Try once now comes first."
+show = "desk .dk-rts .rt-in"
+
+[[feature]]
 id = "routines-field"
 since = "1.53.0"
 title = "Routines have a field of their own"

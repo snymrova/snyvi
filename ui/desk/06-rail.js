@@ -650,7 +650,9 @@ function noteRow(x, esc) {
   // A ticked line keeps its number and its pictures under it; where its
   // work went -- the commit, the PR -- is its tip and its menu, since a done
   // line is history and they were the loudest marks on it (7c0fc42885).
-  const marks = x.done ? picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : stageMark(x, esc) + dueMark(x, esc) + promiseMark(x, esc) + picMark(x, esc);
+  // An open line's date comes first: the marks' room cuts from the end, and
+  // "overdue" was the word cut to "ove" behind a long stage (N2).
+  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + stageMark(x, esc) + promiseMark(x, esc) + picMark(x, esc);
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
@@ -730,7 +732,7 @@ function stageMark(x, esc) {
   const t = !x.done && !liveOn(x) ? threadOf(x) : null;
   if (t && t.pr && !t.merged) {
     const tone = /fail|error/i.test(t.ci) ? " fail" : /pass|success/i.test(t.ci) ? " pass" : "";
-    const sub = `${t.ci ? `checks ${esc(t.ci)} · ` : ""}merging it ticks this note`;
+    const sub = `${t.ci ? `checks ${esc(t.ci)} · ` : ""}merging it ticks this note when its commits name it`;
     return `<span class="dk-stage pr${tone}" role="img" data-tip="In PR #${esc(t.pr)}" data-tip-sub="${sub}" aria-label="In PR #${esc(t.pr)}${t.ci ? `, checks ${esc(t.ci)}` : ""}"><span class="w">PR #${esc(t.pr)}</span></span>`;
   }
   // A plan or a read with nothing since, a day on: its age beside its word,
@@ -801,16 +803,29 @@ function duePop(x, esc) {
     `<input class="dk-due-in" data-n="${x.id}" maxlength="40" spellcheck="false" placeholder="Pick a time: fri 16" aria-label="Pick a time for ${esc(x.text)}"></span>`;
 }
 
+/** A ticked line's marks that are not history (1.53.1): an agent's tick
+ *  whose commit is not on main yet says "on a branch" (`desk::on_branch`),
+ *  and for a week a tick that was not the reader's offers not yet..., the
+ *  same field the check of a landed line opens, which takes the tick back
+ *  and reopens it (`desk::check_note`). The reader's own tick has neither:
+ *  its circle unticks it. */
+function doneMark(x, esc) {
+  const branch = x.on_branch ? `<span class="dk-stage branch" role="img" data-tip="On a branch: ${esc(x.done_commit.slice(0, 7))}" data-tip-sub="it says so until the commit is on main" aria-label="On a branch"><span class="w">on a branch</span></span>` : "";
+  const again = x.recheck ? `<button type="button" class="dk-stage dk-chk" data-a="note-broken" data-n="${x.id}" data-tip="Not yet" data-tip-sub="say what is still wrong; the tick comes off, and the next agent's brief leads with it" aria-label="Still broken: ${esc(x.text)}">not yet…</button>` : "";
+  return branch + again;
+}
+
 /** How long a plan or a read stands with nothing since before it says so. */
 const STALE_S = 24 * 3600;
 
 /** Where a line's work went out, when it did: a commit on main that names
- *  it (`landed_commit`, 1.37), or its thread -- its PR merged, or moved to
- *  shipped. Null while the work is not out. */
+ *  it (`landed_commit`, 1.37). Null while the work is not out. Its thread
+ *  merged or moved to shipped no longer says so (1.53.1): a merge ticks the
+ *  lines its commits name, and the rest of the thread was asking "works?"
+ *  of lines whose work had not gone anywhere -- #192, a line to tell a
+ *  friend, on a thread whose PR was the site's (audit 566d17f746, N1). */
 function shippedOf(x) {
-  if (x.landed_commit) return { commit: x.landed_commit };
-  const t = threadOf(x);
-  return t && (t.merged || t.stage === "shipped") ? t : null;
+  return x.landed_commit ? { commit: x.landed_commit } : null;
 }
 
 /** The one line said about a line (1.37): what an agent said with its tick

@@ -36,6 +36,9 @@ pub struct Pr {
     pub ci: String,
     /// The PR's page.
     pub url: String,
+    /// The desk notes its commits name (`git::named_in`): what its merge
+    /// closes. None when gh did not list the commits.
+    pub named: Option<Vec<i64>>,
 }
 
 fn gh(dir: &Path, args: &[&str]) -> Option<String> {
@@ -66,7 +69,7 @@ pub fn view(dir: &Path, n: &str) -> Option<Pr> {
             "view",
             n,
             "--json",
-            "state,mergeCommit,mergedBy,mergedAt,headRefName,statusCheckRollup,url",
+            "state,mergeCommit,mergedBy,mergedAt,headRefName,statusCheckRollup,url,commits",
         ],
     )?;
     parse_view(&out)
@@ -140,7 +143,32 @@ pub fn parse_view(out: &str) -> Option<Pr> {
         head: s(&["headRefName"]),
         ci: ci_of(&rollup),
         url: s(&["url"]),
+        named: v
+            .get("commits")
+            .and_then(Value::as_array)
+            .map(|cs| named_by(cs)),
     })
+}
+
+/// The notes a PR's commits name, each once, in the order first named.
+/// GitHub cuts a long subject with "…" and goes on with "…" in the body: the
+/// two halves are one line again, or a "(#194-#195)" across the cut is lost.
+fn named_by(commits: &[Value]) -> Vec<i64> {
+    let s = |c: &Value, k: &str| c.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let mut ids: Vec<i64> = Vec::new();
+    for c in commits {
+        let (head, body) = (s(c, "messageHeadline"), s(c, "messageBody"));
+        let msg = match (head.strip_suffix('…'), body.strip_prefix('…')) {
+            (Some(h), Some(b)) => format!("{h}{b}"),
+            _ => format!("{head}\n{body}"),
+        };
+        for n in crate::git::named_in(&msg) {
+            if !ids.contains(&n) {
+                ids.push(n);
+            }
+        }
+    }
+    ids
 }
 
 /// The checks as one word, the mod's `ciOf` in Rust: `9/13` while running,
@@ -199,6 +227,18 @@ pub fn iso_secs(t: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What its merge closes: the notes its commits name, each once; not a
+    /// PR's own number. None when gh listed no commits.
+    #[test]
+    fn a_pr_says_which_notes_its_commits_name() {
+        let p = parse_view(r#"{"state":"MERGED","commits":[{"messageHeadline":"Fold the rail (#129-#131)","messageBody":"Fixes PR #79 too"},{"messageHeadline":"Icons (#131, #153)","messageBody":""}]}"#).unwrap();
+        assert_eq!(p.named, Some(vec![129, 130, 131, 153]));
+        let p = parse_view(r#"{"state":"OPEN"}"#).unwrap();
+        assert_eq!(p.named, None);
+        let cut = parse_view(r#"{"state":"MERGED","commits":[{"messageHeadline":"A copy keeps its Markdown (#19…","messageBody":"…4-#195)\n\nCo-Authored-By: x"}]}"#).unwrap();
+        assert_eq!(cut.named, Some(vec![194, 195]));
+    }
 
     #[test]
     fn a_merged_pr_says_who_and_when() {

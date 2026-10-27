@@ -1170,9 +1170,12 @@ Suggested in the rail's corner, where nothing they do moves the page.
   own cards still open, so one you did in the chat does not wait for a ✕.
   Nothing is deleted.
 
-  A note whose commit reached main reads **check it**, and it is yours:
-  no Claude can tick it, nor can your merge. Your tick keeps the commit it
-  landed with.
+  A Claude ticks its note when the work is committed and checked, with the
+  commit; until that commit is on main the note reads **on a branch**.
+  Your merge closes only the notes its PR's commits name. A note whose
+  commit reached main with no tick reads **check it**. On a note a Claude
+  or a merge ticked, **not yet…** says what is still wrong and reopens it.
+  Your tick keeps the commit it landed with.
 - **A date on a line.** End a note with when it is due -- `post the 1.47
   note by fri 10`, `call the bank tomorrow`, `check the stats in 3 days`,
   `send the invoice by 28 oct` -- and snyvi takes the date off the text and
@@ -1201,18 +1204,24 @@ Suggested in the rail's corner, where nothing they do moves the page.
   slash command or a skill and when it comes back -- `/newsroom · every day
   07:30`, `/bench main, every weekday 9`, `every mon 09:00`, `every 1st` --
   or your own words with a when, `open PRs, summarise · every weekday 9`.
-  `/` lists the commands and skills Claude Code would run here, the
-  project's first and then yours, each with its first line; a name in two
+  Clicking the field lists the commands and skills Claude Code would run
+  here, over the desk, the project's first and then yours, each with its
+  first line and the ways to say when; typing `/` and a few letters narrows
+  it, by name and then by what each says it does; a name in two
   places is the one Claude Code's docs say wins (yours over the project's,
   a skill over a command file). The chip says what snyvi reads in the line
   as you type: **↻ every day 07:30 · project · command · first tomorrow
   7:30**, **your words**, or **when?**. Enter makes a **draft** and opens
-  its sheet: the file it runs and where it lives, When, **Waits for you**
-  with what the file suggests (a publish, a deploy, a line that spends a
-  key), each showing the lines it catches, a **Ready** list (Claude Code
-  trusts the folder, the keys are on the desk, snyvi starts at login --
-  **Start at login** on Linux -- the back has room, how your answers come
-  back) and Limits. **Try once now** runs it in a panel in the back while
+  its sheet: **What it does** (the file and where it lives), **When** (with
+  the usual cadences a press away), **Ask me before** with what the file
+  suggests (a publish, a deploy, a line that spends a key), each showing
+  the lines it catches, **Before it runs on its own** (what would stop a
+  run: Claude Code not yet trusted in the folder, a key the file reads that
+  is not on the desk, snyvi not starting at login -- **Start at login** on
+  Linux -- no room in the back; what is fine in one quiet line; how your
+  answers come back, folded under *For the command's author*) and Limits.
+  **Try once now** is the main button until it has run once, then **Start
+  it** is. **Try once now** runs it in a panel in the back while
   you watch; its questions come to On you, and your answers go on once.
   **Start it** allows the file as it is and gives it its hour; nothing runs
   on its own before that. At its hour snyvi starts it as a fresh Claude in
@@ -1229,9 +1238,11 @@ Suggested in the rail's corner, where nothing they do moves the page.
   past its limit. A paused routine starts nothing, answers included. Its ⋯
   has **Run now**, **Pause**, **Change…**, **History** and **Remove from
   view**; a draft's has **Try once now** and **Start it**. A Claude can
-  write a command and offer it as a routine (`suggest_desk_note`'s `every`
-  and `waits`); **Accept…** opens the same sheet, and it runs on its own
-  only after your Start.
+  write a command and offer it as a routine (`offer_routine`, which every
+  panel is told to use instead of cron, `/loop` or `/schedule`); **Accept…**
+  opens the same sheet, and it runs on its own only after your Start. A
+  Claude's `read_desk_notes` ends with the desk's routines, so it can say
+  what runs here on its own.
 - **A launch is a list.** When you say *launch*, Claude suggests its steps
   as one set of dated lines (`suggest_desk_note`'s `lines`, from the skill's
   `launch.md`): pictures and copy a week out, the site, the post, Show HN,
@@ -1441,7 +1452,10 @@ click with their name on it, and ✕. Then the newest documents you have
 not read; a click opens one, and it leaves the list. Five rows at most,
 and "Everything in the Inbox →" when more are waiting. Arrived cannot be
 hidden, so nothing that arrives is put out of sight. In a narrow window it
-comes right under the note bar.
+comes right under the note bar. A friend's line is in **On you** as well, on every
+page and desk, under *From friends*, with Keep on ▾ and ✕, until you keep
+it or remove it; and when snyvi is behind another app, your desktop says
+a friend sent you a line or a document.
 
 **Claude** has what is left of the five-hour and weekly windows, when that
 was read, and the fullest context window; a window past its reset is shown

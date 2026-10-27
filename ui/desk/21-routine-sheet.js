@@ -2,8 +2,9 @@
  * order (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
 // ---------- a routine's sheet ----------
 
-/* Runs · When · Waits for you · Ready · Limits · History (1.53, plan
- * f30461f2c1 §3.10). Over the desk, never in it, so it moves nothing; Esc
+/* What it does · When · Ask me before · Before it runs on its own ·
+ * Limits · History (1.53, plan f30461f2c1 §3.10; said in the reader's
+ * words in 1.53.1, audit 566d17f746 R5: it read as a permissions file). Over the desk, never in it, so it moves nothing; Esc
  * closes it. Opened by Enter in the Routines field (the draft's own reply),
  * from a row, from Change… and History, and from Accept… on an agent's
  * offer.
@@ -42,6 +43,9 @@ function rtClose() {
   rtOpen = null;
 }
 
+/** The cadences the When field is shown, each one press away. */
+const RT_WHENS = ["every day 9", "every weekday 9", "every mon 9:00", "every 1st"];
+
 /** A run's why, in the sheet's words. */
 const RT_WHY = { clock: "at its hour", you: "Run now", try: "Try once now", answer: "your answers", card: "a Run card" };
 
@@ -57,17 +61,18 @@ function rtRuns(j, e) {
 function rtRunsPart(j, e) {
   const r = j.routine, p = j.place;
   if (!r.cmd) {
-    return `<div class="rt-part"><h4>Runs</h4><textarea name="words" rows="2" spellcheck="true" aria-label="Your words, the prompt">${e(r.name)}</textarea>` +
-      `<p class="rt-fine">your words, sent as they are to a new session in its panel</p></div>`;
+    return `<div class="rt-part"><h4>What it does</h4><textarea name="words" rows="2" spellcheck="true" aria-label="Your words, the prompt">${e(r.name)}</textarea>` +
+      `<p class="rt-fine">your words, said to a new Claude in a panel in the back</p></div>`;
   }
-  const file = { ok: "allowed", new: "allowed by Start it, as it is then", changed: r.state === "draft" || r.state === "offer" ? "changed" : "changed since you allowed it · Save allows it as it is now", gone: "gone", two: "two files hold this name: rename one" }[r.file] || r.file;
+  const file = { ok: "", new: "", changed: r.state === "draft" || r.state === "offer" ? "" : "changed since you started it · Save takes it as it is now", gone: "the file is gone", two: "two files hold this name: rename one" }[r.file] ?? r.file;
+  const whose = p ? { "yours · skill": "one of your skills", "yours · command": "one of your commands", "project · skill": "this project's skill", "project · command": "this project's command" }[p.where] || p.where : "";
   const keys = (j.keys || []).map(k => `<span class="rt-key${k.has ? "" : " no"}">${e(k.name)} ${k.has ? "✓" : "· not on this desk"}</span>`).join("");
   const diff = j.diff
     ? `<button type="button" class="rt-limline" data-rt="diff" aria-expanded="${!!rtOpen.diff}">${rtOpen.diff ? "Fold what changed" : "See what changed"}</button>` +
       (rtOpen.diff ? `<pre class="rt-diff">${j.diff.split("\n").map(l => `<span class="${l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : ""}">${e(l)}</span>`).join("\n")}</pre>` : "")
     : "";
-  return `<div class="rt-part"><h4>Runs</h4><p><code>/${e(r.name)}</code>${j.about ? ` · ${e(j.about)}` : ""}</p>` +
-    `<p class="rt-fine">${e(p ? p.file : r.path)}${p ? ` · ${e(p.where)}` : ""} · ${e(file)}${p && p.large ? " · large: SKILL.md only" : ""}</p>${diff}` +
+  return `<div class="rt-part"><h4>What it does</h4><p><code>/${e(r.name)}</code>${j.about ? ` · ${e(j.about)}` : ""}</p>` +
+    `<p class="rt-fine" data-tip="${e(p ? p.file : r.path)}">${whose ? `${e(whose)} · ` : ""}${e(p ? p.file : r.path)}${file ? ` · ${e(file)}` : ""}</p>${diff}` +
     (keys ? `<p class="rt-keys">${keys}</p>` : "") + `</div>`;
 }
 
@@ -79,30 +84,44 @@ function rtWaitsPart(j, e) {
   const lines = n => n.length ? `catches line${n.length > 1 ? "s" : ""} ${n.join(" ")}` : "catches no line in the file";
   const ticks = sug.map(s => `<label class="rt-sug"><input type="checkbox" data-p="${e(s.pattern)}"${s.on ? " checked" : ""}><code>${e(s.pattern)}</code><span class="rt-fine">${e(s.why)} · ${lines(s.lines)}</span></label>`).join("");
   const caught = (j.catches || []).filter(c => own.includes(c.pattern)).map(c => `<li><code>${e(c.pattern)}</code> ${r.cmd ? lines(c.lines) : ""}</li>`).join("");
-  return `<div class="rt-part"><h4>Waits for you</h4>${ticks ? `<div class="rt-sugs">${ticks}</div>` : r.cmd ? "" : `<p class="rt-fine">Your words have no file to read: add what must wait for you.</p>`}` +
-    `<textarea name="waits" rows="2" spellcheck="false" aria-label="What waits for you, one pattern a line" placeholder="python3 -I newsroom/publish.py *">${e(own.join("\n"))}</textarea>` +
+  const empty = !sug.length && !own.length ? `<p class="rt-fine">Nothing yet: it may do every step itself.</p>` : "";
+  return `<div class="rt-part"><h4>Ask me before</h4>${ticks ? `<div class="rt-sugs">${ticks}</div>` : ""}${empty}` +
+    `<textarea name="waits" rows="1" spellcheck="false" aria-label="Commands it asks you before running, one a line" placeholder="a command it must ask you before, like a publish or a deploy">${e(own.join("\n"))}</textarea>` +
     (caught ? `<ul class="rt-caught">${caught}</ul>` : "") +
-    `<p class="rt-fine">Commands the agent may not run, one a line, as Claude Code's permission rules write them. It hands each to you as a card, and Run on the card starts it here. A pattern catches its dry run too.${j.place && /skill$/.test(j.place.where) ? " A skill's scripts run from its folder: put * before a script's path, python3 -I *scripts/publish.py *." : ""}</p></div>`;
+    `<p class="rt-fine" data-tip="One a line, as Claude Code's permission rules write them: python3 -I publish.py *" data-tip-sub="${j.place && /skill$/.test(j.place.where) ? "a skill's scripts run from its folder: put * before a script's path, python3 -I *scripts/publish.py *" : "a pattern catches its dry run too"}">When it gets there, it stops and gives you the command on a card, with Run.</p></div>`;
 }
 
-/** Ready: one line an item, ✓ or !, with its fix as a button or words. */
+/** Before it runs on its own: what would stop a run, each with its fix as
+ *  a button or words; what is fine in one quiet line under them; and what
+ *  only the command's author acts on (`author`) folded away, since a
+ *  reader starting a routine has nothing to do with it (R5). */
 function rtReadyPart(j, e) {
-  const items = (j.ready || []).map((x, i) => {
+  const all = j.ready || [];
+  const line = (x, i) => {
     const fix = !x.fix ? "" : typeof x.fix === "string" ? ` <span class="rt-fix">· ${e(x.fix)}</span>` : `<button type="button" class="rt-fixb" data-rt="${e(x.fix.act)}">${e(x.fix.label)}</button>`;
     const paste = x.paste ? `<button type="button" class="rt-limline" data-rt="paste" aria-expanded="${!!rtOpen.paste}">${rtOpen.paste ? "Fold the lines" : "the lines to add"}</button>` +
       (rtOpen.paste ? `<pre class="rt-diff">${e(x.paste)}</pre><button type="button" class="rt-fixb" data-rt="copy" data-i="${i}">Copy</button>` : "") : "";
     return `<li class="${x.ok ? "ok" : "no"}"><span class="rt-mark" aria-hidden="true">${x.ok ? "✓" : "!"}</span><span>${e(x.says)}${fix}${paste}</span></li>`;
-  }).join("");
-  return items ? `<div class="rt-part"><h4>Ready</h4><ul class="rt-ready">${items}</ul></div>` : "";
+  };
+  const no = all.map((x, i) => !x.ok && !x.author ? line(x, i) : "").join("");
+  const ok = all.filter(x => x.ok && !x.author).map(x => e(x.says));
+  const author = all.map((x, i) => x.author ? line(x, i) : "").join("");
+  if (!all.length) return "";
+  return `<div class="rt-part"><h4>Before it runs on its own</h4>${no ? `<ul class="rt-ready">${no}</ul>` : `<p class="rt-fine">Nothing stops it.</p>`}` +
+    (ok.length ? `<p class="rt-fine">✓ ${ok.join(" · ")}</p>` : "") +
+    (author ? `<details class="rt-author"${rtOpen.paste ? " open" : ""}><summary>For the command's author</summary><ul class="rt-ready">${author}</ul></details>` : "") + `</div>`;
 }
 
 /** The acts, by state. */
 function rtActs(j, e) {
   const r = j.routine;
-  const start = `<button type="button" class="pri" data-rt="start" data-tip="Start it" data-tip-sub="allows the file as it is now; it runs on its own from its next hour">Start it</button>`;
+  // Try once, then start: until a try has run, Try is the main button
+  // and Start the second (R7); after one, Start is.
+  const tried = (j.runs || []).length > 0;
+  const start = `<button type="button"${tried ? ` class="pri"` : ""} data-rt="start" data-tip="Start it" data-tip-sub="from its next hour it runs on its own, with the file as it is now">Start it</button>`;
   if (r.state === "draft" || r.state === "offer") {
     const trying = !!r.running_since;
-    return `<div class="rt-acts">${trying ? `<button type="button" data-rt="panel">Show the panel</button>` : `<button type="button" data-rt="try" data-tip="Try once now" data-tip-sub="one run in its panel in the back, while you watch; its questions come to On you">Try once now</button>`}` +
+    return `<div class="rt-acts">${trying ? `<button type="button" data-rt="panel">Show the panel</button>` : `<button type="button"${tried ? "" : ` class="pri"`} data-rt="try" data-tip="Try once now" data-tip-sub="one run in a panel in the back, while you watch; its questions come to On you">${tried ? "Try again" : "Try once now"}</button>`}` +
       start + `<button type="button" data-rt="cancel">${r.state === "offer" ? "Not this one" : "Cancel"}</button></div>`;
   }
   return `<div class="rt-acts"><button type="button" class="pri" data-rt="save">Save</button><button type="button" data-rt="close">Close</button>${r.running_since ? `<button type="button" data-rt="panel">Show the panel</button>` : `<button type="button" data-rt="run">Run now</button>`}</div>`;
@@ -129,22 +148,24 @@ function rtSheet() {
   if (!j) { el.innerHTML = `<p class="rt-err" role="alert">${e(rtOpen.err || "Could not read it")}</p><div class="rt-acts"><button type="button" data-rt="close">Close</button></div>`; return; }
   const r = j.routine;
   const fine = r.state === "offer" ? `offered by ${e(r.suggested_by)} · nothing runs until you start it`
-    : r.state === "draft" ? (r.running_since ? "a draft · trying now" : "a draft · nothing runs on its own until Start it")
+    : r.state === "draft" ? (r.running_since ? "a draft · trying now" : "a draft · try it once, then start it")
     : r.runs ? `ran ${r.runs} time${r.runs === 1 ? "" : "s"}` : "not run yet";
   const lim = rtOpen.limits
-    ? `<label class="rt-lim"><input type="number" name="minutes" min="1" max="240" value="${r.minutes}"> min, then it stops · at <input type="number" name="five_hour" min="10" max="100" value="${r.five_hour}"> % of the five-hour window it waits</label>`
-    : `<button type="button" class="rt-limline" data-rt="limits" data-tip="Change the limits">${r.minutes} min · waits past ${r.five_hour}% of the five-hour window</button>`;
+    ? `<label class="rt-lim">stops after <input type="number" name="minutes" min="1" max="240" value="${r.minutes}"> min · waits when your Claude plan's five hours are <input type="number" name="five_hour" min="10" max="100" value="${r.five_hour}"> % used</label>`
+    : `<button type="button" class="rt-limline" data-rt="limits" data-tip="Change the limits">stops after ${r.minutes} min · waits when your Claude plan's five hours are ${r.five_hour}% used</button>`;
   const runs = rtRuns(j, e);
   el.innerHTML = `<header class="rt-head"><b>${e(r.name)}</b><span class="rt-fine">${fine}</span><button type="button" class="rt-x" data-rt="close" aria-label="Close">✕</button></header>` +
     rtRunsPart(j, e) +
-    `<div class="rt-part"><h4>When</h4><input name="every" value="${e(r.every)}" spellcheck="false" aria-label="When it runs"><p class="rt-fine">every day 07:30 · every weekday 9 · every mon 09:00 · every 1st${r.due_at && r.state === "live" ? ` · next ${e(dueWhen(r.due_at))}` : ""}</p></div>` +
+    `<div class="rt-part"><h4>When</h4><input name="every" value="${e(r.every)}" spellcheck="false" aria-label="When it runs"><p class="rt-fine rt-whens">${RT_WHENS.map(w => `<button type="button" class="rt-when-b" data-rt="when" data-w="${w}">${w}</button>`).join("")}${r.due_at && r.state === "live" ? `<span>next ${e(dueWhen(r.due_at))}</span>` : ""}</p></div>` +
     rtWaitsPart(j, e) + rtReadyPart(j, e) +
     `<div class="rt-part"><h4>Limits</h4>${lim}</div>` +
     (rtOpen.err ? `<p class="rt-err" role="alert">${e(rtOpen.err)}</p>` : "") +
     rtActs(j, e) +
     `<div class="rt-part rt-runs"><h4>History</h4>${runs ? `<ul>${runs}</ul>` : `<p class="rt-fine">Nothing yet.</p>`}</div>`;
   if (rtOpen.at === "runs") el.querySelector(".rt-runs")?.scrollIntoView({ block: "nearest" });
-  else el.querySelector("[name=every]")?.focus();
+  // The focus goes to its ✕, not its When field: an accent ring on a field
+  // no one has touched read as an error (R8). Esc still closes it.
+  else el.querySelector(".rt-x")?.focus({ preventScroll: true });
 }
 
 /** What the sheet says now, as Save sends it: the ticks and the reader's
@@ -165,6 +186,8 @@ async function rtSheetClick(ev) {
   const d = current(), el = document.querySelector(".rt-sheet"), id = rtOpen.id, w = b.dataset.rt;
   const again = () => { rtOpen.redraw = true; rtSheet(); };
   if (w === "close") return rtClose();
+  // An example is a press away from the field, which keeps the rest typed.
+  if (w === "when") { const f = el.querySelector("[name=every]"); if (f) { f.value = b.dataset.w; f.focus(); } return; }
   if (w === "limits") { rtOpen.limits = true; return again(); }
   if (w === "diff") { rtOpen.diff = !rtOpen.diff; return again(); }
   if (w === "paste") { rtOpen.paste = !rtOpen.paste; return again(); }
@@ -208,6 +231,7 @@ const RT_SHEET_CSS = `
 .rt-part p { margin: 0; }
 .rt-part input[name=every], .rt-part textarea { width: 100%; box-sizing: border-box; font: inherit; font-family: var(--pn-font, monospace); font-size: 12px; color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: var(--r-xs); padding: 4px 6px; }
 .rt-part textarea[name=words] { font-family: inherit; }
+.rt-part textarea::placeholder { font-family: var(--sans); }
 .rt-part textarea { resize: vertical; min-height: 40px; }
 .rt-lim input { width: 5ch; font: inherit; }
 .rt-limline { background: none; border: 0; padding: 0; color: var(--fg-2); cursor: pointer; font: inherit; font-size: 11px; text-align: left; text-decoration: underline dotted; }
@@ -227,6 +251,12 @@ const RT_SHEET_CSS = `
 .rt-diff { margin: 4px 0 0; padding: 6px; max-height: 220px; overflow: auto; font-family: var(--pn-font, monospace); font-size: 11px; background: var(--bg); border: 1px solid var(--rule); border-radius: var(--r-xs); white-space: pre-wrap; }
 .rt-diff .add { color: var(--ok, var(--accent-d)); }
 .rt-diff .del { color: var(--danger); }
+.rt-whens { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 4px; align-items: baseline; }
+.rt-when-b { font: inherit; font-size: 11px; padding: 0 7px; border-radius: var(--r-pill); border: 1px solid var(--rule); background: none; color: var(--fg-2); cursor: pointer; }
+.rt-when-b:hover { border-color: var(--fg-3); color: var(--fg); }
+.rt-author { margin-top: 6px; font-size: 11px; color: var(--fg-3); }
+.rt-author summary { cursor: pointer; }
+.rt-author .rt-ready { margin-top: 4px; }
 .rt-acts { display: flex; gap: 8px; margin-top: 12px; }
 .rt-acts button { font: inherit; padding: 3px 10px; border-radius: var(--r-pill); border: 1px solid var(--rule); background: none; color: var(--fg); cursor: pointer; }
 .rt-acts button:disabled { opacity: .5; cursor: default; }

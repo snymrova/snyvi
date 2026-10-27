@@ -1870,11 +1870,6 @@ impl Store {
         desk::tick_note(&self.conn.lock().unwrap(), desk_id, id, tick, now())
     }
 
-    /// The commit a line landed with while it waits for the reader's check.
-    pub fn landed_desk_note(&self, desk_id: i64, id: i64) -> Result<Option<String>> {
-        desk::landed_open(&self.conn.lock().unwrap(), desk_id, id)
-    }
-
     /// The lines taken off a desk's list since `since`, for the panel's
     /// changes (`crate::brief::changes`).
     pub fn removed_desk_notes_since(&self, desk_id: i64, since: i64) -> Result<Vec<(i64, String)>> {

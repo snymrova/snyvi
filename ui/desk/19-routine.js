@@ -77,36 +77,51 @@ function routineSec(d) {
   }, (rows ? `<ul class="dk-list">${rows}</ul>` : "") + rtFieldHtml(esc));
 }
 
-/* Short enough for the rail's width; the tip says the rest. */
-const RT_HOLD = "/command · every day 9";
+/* Short enough for the rail's width. It was `/command · every day 9`,
+ * which read as a syntax to copy (audit 566d17f746, R3): the list that
+ * opens on focus now shows the `/` and the when. */
+const RT_HOLD = "Something to run on its own…";
 
 /** The field at the list's foot: quiet until clicked, then live, in the
  *  same room, so nothing under it moves as it opens and shuts. */
 function rtFieldHtml(esc) {
   const lead = `<span class="dk-lead"><span class="dk-tick dk-ring ghost" aria-hidden="true">${RT_HANDS}</span></span>`;
-  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="/ picks a command or a skill; or write your own words. Then when: every day 9, every weekday 7:30, every mon, every 1st" spellcheck="false"></div>`;
+  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="a /command or skill, or your own words, then when: every weekday 9" spellcheck="false"></div>`;
   return `<div class="dk-note new rt-new">${lead}<input class="rt-in" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="rt-comp" aria-expanded="false">` +
     `<span class="dk-due-guess rt-chip" aria-hidden="true" hidden></span>` +
     (rtField.err ? `<span class="field-err" role="alert">${esc(rtField.err)}</span>` : "") + `</div>`;
 }
 
-/** What the list shows for what is typed: only while the name is being
- *  typed (`/new`, no space yet), the project's first, eight at most. */
+/** What the list shows for what is typed: while the field is empty or a
+ *  name is being typed (`/new`, no space yet). A name that starts with what
+ *  is typed comes first, then one that holds it, then one whose about does,
+ *  so `/video` finds the skill that makes one (R2); within each, A to Z
+ *  with a leading `_` passed over, the project's ahead of the reader's. */
 function rtMatches() {
   const t = rtField ? rtField.text : "";
-  if (!/^\/[\w-]*$/.test(t) || rtCmds.at !== deskId) return [];
+  if (!rtListing(t) || rtCmds.at !== deskId) return [];
   const q = t.slice(1).toLowerCase();
-  const by = c => c.name.toLowerCase().startsWith(q) ? 0 : c.name.toLowerCase().includes(q) ? 1 : 2;
-  return rtCmds.list.filter(c => by(c) < 2).sort((a, b) => by(a) - by(b)).slice(0, 8);
+  const by = c => { const n = c.name.toLowerCase(); return n.startsWith(q) ? 0 : n.includes(q) ? 1 : q && (c.about || "").toLowerCase().includes(q) ? 2 : 3; };
+  const key = c => c.name.replace(/^[^a-z0-9]+/i, "").toLowerCase();
+  return rtCmds.list.filter(c => by(c) < 3)
+    .sort((a, b) => (a.who === b.who ? 0 : a.who === "project" ? -1 : 1) || by(a) - by(b) || key(a).localeCompare(key(b)));
 }
+
+/** Whether the field is at the point the list serves: empty, or a `/name`. */
+const rtListing = t => t === "" || /^\/[\w-]*$/.test(t);
 
 /** The list under the field, drawn on its own: typing never redraws the
  *  rail. It lives on the page's body, over the desk, as the sheet does: in
- *  the rail it was clipped, and its height scrolled the rail sideways. */
+ *  the rail it was clipped, and its height scrolled the rail sideways.
+ *
+ *  It opens upward when the room below is short. The field is the rail's
+ *  last line, so below it was the window's edge: the list was drawn there
+ *  and the reader saw no skills at all (R1). It opens with the field, so
+ *  the way to say a command and when is in sight before anything is typed. */
 function rtCompDraw() {
   const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)");
   const ms = rtMatches(), e = ctx.esc;
-  const open = !!(inp && rtField && !rtField.away) && (ms.length > 0 || /^\/[\w-]*$/.test(rtField.text) && rtCmds.at === deskId);
+  const open = !!(inp && rtField && !rtField.away) && rtListing(rtField.text) && rtCmds.at === deskId;
   inp?.setAttribute("aria-expanded", String(open));
   let el = document.getElementById("rt-comp");
   if (!open) { el?.remove(); return; }
@@ -120,13 +135,27 @@ function rtCompDraw() {
     document.body.append(el);
   }
   rtField.pick = Math.min(rtField.pick || 0, Math.max(0, ms.length - 1));
-  // Its right edge on the field's, so it opens over the desk.
-  const at = inp.getBoundingClientRect(), w = Math.max(at.width, 320);
-  Object.assign(el.style, { top: `${at.bottom + 2}px`, left: `${Math.max(8, at.right - w)}px`, width: `${w}px`, maxHeight: `${Math.max(120, innerHeight - at.bottom - 16)}px` });
-  el.innerHTML = (ms.length ? ms.map((c, i) => `<button type="button" role="option" id="rt-o${i}" aria-selected="${i === rtField.pick}" data-n="${e(c.name)}"><span class="rt-o-n">/${e(c.name)}</span><span class="rt-o-tag">${e(c.tag)}</span>${c.about ? `<span class="rt-o-ab">${e(c.about)}</span>` : ""}</button>`).join("")
-    : `<p class="rt-o-none">No command or skill by that name: words without a / are your own.</p>`) +
-    `<p class="rt-o-foot">${rtCmds.project} project · ${rtCmds.yours} yours · plugin and folder commands aren't listed</p>`;
-  inp.setAttribute("aria-activedescendant", ms.length ? `rt-o${rtField.pick}` : "");
+  // Its right edge on the field's, so it opens over the desk; up when
+  // there is more room above than below.
+  const at = inp.getBoundingClientRect(), w = Math.max(at.width, 360);
+  const below = innerHeight - at.bottom - 12, above = at.top - 12, up = below < 260 && above > below;
+  Object.assign(el.style, { left: `${Math.max(8, at.right - w)}px`, width: `${w}px`, maxHeight: `${Math.min(420, up ? above : below)}px`,
+    top: up ? "" : `${at.bottom + 2}px`, bottom: up ? `${innerHeight - at.top + 2}px` : "" });
+  el.classList.toggle("up", up);
+  const head = (who, n) => `<p class="rt-o-h">${who === "project" ? "This project" : "Yours"} · ${n}</p>`;
+  let rows = "", was = "";
+  ms.forEach((c, i) => {
+    if (c.who !== was) { was = c.who; rows += head(c.who, ms.filter(x => x.who === c.who).length); }
+    rows += `<button type="button" role="option" id="rt-o${i}" aria-selected="${i === rtField.pick && !!rtField.moved}" data-n="${e(c.name)}"><span class="rt-o-n">/${e(c.name)}</span><span class="rt-o-tag">${e(c.kind)}</span>${c.about ? `<span class="rt-o-ab">${e(c.about)}</span>` : ""}</button>`;
+  });
+  const none = !rtCmds.list.length ? "No commands or skills in this project or yours yet: write your own words instead."
+    : "No command or skill by that name: words without a / are your own.";
+  el.innerHTML = (rows || `<p class="rt-o-none">${none}</p>`) +
+    `<p class="rt-o-foot">then when: <b>every weekday 9</b> · <b>every mon 9:00</b> · <b>every 1st</b> · or your own words instead of a /command</p>`;
+  inp.setAttribute("aria-activedescendant", ms.length && rtField.moved ? `rt-o${rtField.pick}` : "");
+  // Up, the list's foot is nearest the field: start it scrolled there.
+  if (up && !rtField.moved) el.scrollTop = 0;
+  el.querySelector("[aria-selected=true]")?.scrollIntoView({ block: "nearest" });
 }
 
 /** The chip under the field: what the daemon read, there or not. It
@@ -186,7 +215,7 @@ function rtFocus() {
   if (!inp || !rtField || !d) return;
   inp.value = rtField.text;
   const typed = () => {
-    rtField.text = inp.value; rtField.caret = inp.selectionStart; rtField.pick = 0;
+    rtField.text = inp.value; rtField.caret = inp.selectionStart; rtField.pick = 0; rtField.moved = false;
     if (rtField.err) { rtField.err = ""; inp.parentElement?.querySelector(".field-err")?.remove(); }
     rtCompDraw(); rtRead(d);
   };
@@ -198,15 +227,19 @@ function rtFocus() {
     const ms = rtMatches();
     if (ms.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
-      rtField.pick = (rtField.pick + (e.key === "ArrowDown" ? 1 : ms.length - 1)) % ms.length;
+      // The first press lands on the first line, not past it.
+      rtField.pick = !rtField.moved ? (e.key === "ArrowDown" ? 0 : ms.length - 1) : (rtField.pick + (e.key === "ArrowDown" ? 1 : ms.length - 1)) % ms.length;
+      rtField.moved = true;
       return rtCompDraw();
     }
-    if (ms.length && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); return rtPick(ms[rtField.pick].name); }
+    // A name being typed takes the first match; an empty field only the
+    // line the arrows chose, so Enter on nothing never picks for the reader.
+    if (ms.length && (rtField.moved || rtField.text) && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); return rtPick(ms[rtField.moved ? rtField.pick : 0].name); }
     if (e.key === "Enter") { e.preventDefault(); rtAdd(d); }
     else if (e.key === "Escape") {
       e.preventDefault();
       // The list goes first, as a space would take it: the field stays.
-      if (ms.length) { rtField.text += " "; inp.value = rtField.text; rtCompDraw(); return rtRead(d); }
+      if (ms.length && rtField.text) { rtField.text += " "; inp.value = rtField.text; rtCompDraw(); return rtRead(d); }
       rtField = null; rail();
     }
   });
@@ -222,12 +255,19 @@ function rtFocus() {
   inp.focus();
   const at = Math.min(rtField.caret, inp.value.length);
   inp.setSelectionRange(at, at);
+  // The focus can scroll the rail to the field: the list is measured after
+  // it, and again whenever the rail scrolls, so it stays on the field.
+  rtCompDraw();
+  if (!rtScrollHeard) { rtScrollHeard = true; ctx.tocEl.addEventListener("scroll", () => { if (rtField && document.getElementById("rt-comp")) rtCompDraw(); }, { passive: true }); }
 }
+
+/** Whether the rail's scroll is heard for the list yet: once a page. */
+let rtScrollHeard = false;
 
 /** A name from the list: the line takes it and waits for when. */
 function rtPick(name) {
   if (!rtField) return;
-  rtField.text = `/${name} `; rtField.caret = rtField.text.length; rtField.pick = 0; rtField.away = false;
+  rtField.text = `/${name} `; rtField.caret = rtField.text.length; rtField.pick = 0; rtField.moved = false; rtField.away = false;
   const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)");
   if (inp) { inp.value = rtField.text; inp.focus(); inp.setSelectionRange(rtField.caret, rtField.caret); }
   rtCompDraw();
@@ -304,7 +344,14 @@ async function routineAct(a, b, d) {
   if (!a.startsWith("rt-")) { if (rtMenu) { rtMenu = 0; rail(); } return false; }
   const id = +b.dataset.r, r = rts.find(x => x.id === id);
   const call = (act, why, back = () => {}) => told({ ...b.dataset }, `r${id}`, why, back, () => ctx.api(`/api/desks/${d.id}/routines/${id}/${act}`, {}));
-  if (a === "rt-new") { if (!rtField) rtField = { text: "", caret: 0, err: "", read: null, pick: 0, away: false }; rtField.away = false; if (rtCmds.at !== d.id) rtCmdsGet(d.id); rail(); return true; }
+  // The head's + is the way to the field when the rail is scrolled away
+  // from it, at the foot of a long list of notes (R4).
+  if (a === "rt-new") {
+    if (!rtField) rtField = { text: "", caret: 0, err: "", read: null, pick: 0, away: false };
+    rtField.away = false; if (rtCmds.at !== d.id) rtCmdsGet(d.id); rail();
+    ctx.tocEl.querySelector(".rt-new")?.scrollIntoView({ block: "nearest" }); rtCompDraw();
+    return true;
+  }
   if (a === "rt-menu") { rtMenu = rtMenu === id ? 0 : id; rail(); if (rtMenu) ctx.tocEl.querySelector(".rt-pop button")?.focus(); return true; }
   rtMenu = 0;
   if (a === "rt-sheet" || a === "rt-history") { rtSheetGet(id, a === "rt-history" ? "runs" : ""); rail(); return true; }
@@ -365,6 +412,8 @@ const RT_CSS = `
 .rt-o-n { font-family: var(--pn-font, monospace); }
 .rt-o-tag { color: var(--fg-3); font-size: var(--fs-micro); justify-self: end; }
 .rt-o-ab { grid-column: 1 / -1; color: var(--fg-3); font-size: var(--fs-micro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rt-o-none, .rt-o-foot { margin: 0; padding: 3px 8px; color: var(--fg-3); font-size: var(--fs-micro); }
-.rt-o-foot { border-top: 1px solid var(--rule); margin-top: 3px; }
+.rt-o-none, .rt-o-foot, .rt-o-h { margin: 0; padding: 3px 8px; color: var(--fg-3); font-size: var(--fs-micro); }
+.rt-o-h { padding-top: 6px; font-weight: 600; color: var(--fg-2); }
+.rt-o-foot { position: sticky; bottom: -3px; background: var(--bg-raise); border-top: 1px solid var(--rule); margin-top: 3px; padding-bottom: 6px; }
+.rt-o-foot b { font-weight: 500; color: var(--fg-2); font-family: var(--pn-font, monospace); }
 `;

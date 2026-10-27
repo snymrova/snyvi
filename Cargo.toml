@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.53.0"
+version = "1.53.1"
 edition = "2021"
 description = "All your passion projects, in one calm place"
 license = "MIT"
@@ -31,8 +31,12 @@ exclude = [
 # releases never touch the window, and the reader should not see it flash for
 # them. Bump it by hand, to the version being released, whenever the window's
 # own code changes: src/desktop.rs, src/bin/app.rs, tauri.conf.json, the frame.
+# CI holds to it for src/bin/ and tauri.conf.json: a change to either since
+# the last release, with app_min below the version, fails the build. It sat
+# at 1.21.0 through four window changes, and every reader who updated in the
+# app kept a window without them until they quit it (#195).
 [package.metadata.snyvi]
-app_min = "1.21.0"
+app_min = "1.52.0"
 
 [dependencies]
 axum = { version = "0.8", features = ["json", "ws"] }

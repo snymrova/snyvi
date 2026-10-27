@@ -123,6 +123,14 @@ pub fn open_folder(dir: &std::path::Path) -> bool {
     }
 }
 
+/// Open a file in the desktop's own app for it (#195). The same hands as
+/// `open_folder`, for the same reason on Windows: Explorer, `xdg-open` and
+/// `open` each open a file with its default app as readily as they show a
+/// folder.
+pub fn open_file(file: &std::path::Path) -> bool {
+    open_folder(file)
+}
+
 /// The browsers that can open a chrome-less window, in the order to try them.
 ///
 /// A Chromium-family browser in app mode has no tabs, no address bar and no

@@ -607,6 +607,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-due-pop > button:hover, .dk-due-pop > button:focus-visible { background: var(--rule); color: var(--fg); }
 .dk-meta .dk-marks > .dk-chk:hover { text-decoration: underline; }
 .dk-meta .dk-marks > .dk-chk:not(.ok) { font-weight: 400; color: var(--fg-2); }
+/* An agent's tick whose commit is not on main yet: said, quietly. */
+.dk-meta .dk-marks > .dk-stage.branch { color: var(--fg-2); }
 /* Reopened: the reader said it is still broken. */
 .dk-meta .dk-marks > .dk-stage.reopened { color: var(--warn); font-weight: 600; }
 /* A plan or a read a day old with nothing since: there, and quieter. */

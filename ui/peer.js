@@ -313,7 +313,7 @@ function overLine(t) {
 export function note(ctx, peerId, name) {
   const { esc } = ctx;
   open(`A line for ${esc(name)}`,
-    `<p>It goes on their Home, or on the desk they keep your things on, until they keep it. One line, as a note is; a date in it ("by Friday") becomes its date there.</p>` +
+    `<p>They find it in <b>On you</b>, the ✋ count on any page of their snyvi, and on their Home, until they keep it on a desk; or as a suggestion on the desk they keep your things on. One line, as a note is; a date in it ("by Friday") becomes its date there.</p>` +
     `<div class="pr-row"><textarea id="pr-line" rows="1" placeholder="What should they not forget?" autocomplete="off"></textarea><button type="button" class="pr-go" data-pr="send">Send</button></div>` +
     `<div class="pr-n" aria-live="polite"></div><div class="pr-said" aria-live="polite"></div>`);
   const go = async () => {
@@ -476,9 +476,10 @@ export function event(ctx, j) {
     if (!open) ctx.refreshDoc?.(j.doc);
     if (!j.quiet) ctx.rise({ kind: "friend", key: `pr${Date.now()}`, from: `<b>${from}</b> replied`, title: j.reply, label: open ? "Show it" : "Open", go: open ? () => ctx.refreshDoc(j.doc) : () => ctx.showDoc?.(j.doc) });
   }
-  else if (j.from && !j.quiet) {
-    // On their desk it is a suggestion there, to keep or not; else it waits
-    // on Home. A promise is theirs, said as one.
+  else if (j.from && !j.quiet && (j.desk || j.promise)) {
+    // On their desk it is a suggestion there, to keep or not. A promise is
+    // theirs, said as one. A line that waits is the corner's, which rises
+    // it as an On you row with its Keep on (corner.js `linesIn`, #196).
     const where = j.desk ? { label: `Open ${j.desk}`, go: () => ctx.openDesk?.(j.desk_id) || ctx.home() } : { label: "Home", go: ctx.home };
     ctx.rise({ kind: "friend", key: `pn${Date.now()}`, from: j.promise ? `<b>${from}</b> promised you` : `<b>${from}</b>${j.desk ? ` · a suggestion on ${esc(j.desk)}` : ""}`, title: j.text || "a line", ...where });
   }

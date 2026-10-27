@@ -168,6 +168,14 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/reveal", Some("{}"), Gate::Reader, true),
+    // No file by that name in Downloads: refused once it is past the gate.
+    (
+        "POST",
+        "/api/downloads/open",
+        Some(r#"{"name":"no-such-download.png"}"#),
+        Gate::Desk,
+        true,
+    ),
     (
         "POST",
         "/api/resolve",

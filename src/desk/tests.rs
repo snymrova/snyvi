@@ -1404,7 +1404,10 @@ fn a_landed_line_waits_for_the_readers_check_and_can_be_reopened() {
         ("One strip, counts aligned", "claude-code", 20)
     );
     // Only the picked-up line can land.
-    assert_eq!(landable(&conn, d).unwrap(), vec![(picked, 10)]);
+    assert_eq!(
+        landable(&conn, d, 100).unwrap(),
+        vec![(picked, 10, String::new())]
+    );
     let found = [(picked, "6D732B2".to_string(), 30)];
     assert_eq!(land_notes(&conn, d, &found).unwrap(), 1);
     let got = &notes(&conn, d).unwrap()[0];
@@ -1413,7 +1416,7 @@ fn a_landed_line_waits_for_the_readers_check_and_can_be_reopened() {
         ("6d732b2", 30, false)
     );
     assert!(
-        landable(&conn, d).unwrap().is_empty(),
+        landable(&conn, d, 100).unwrap().is_empty(),
         "a landed line is not landed twice"
     );
     // Still broken: open again, the reader's words, a fresh start for git.
@@ -1432,8 +1435,8 @@ fn a_landed_line_waits_for_the_readers_check_and_can_be_reopened() {
         ("icons still off", "", "82cc8f2d3c")
     );
     assert_eq!(
-        landable(&conn, d).unwrap(),
-        vec![(picked, 40)],
+        landable(&conn, d, 100).unwrap(),
+        vec![(picked, 40, String::new())],
         "only a commit after the reopen"
     );
     // An agent's next mark takes the line back from "reopened".
@@ -1628,35 +1631,40 @@ fn a_reopened_desk_keeps_its_back() {
     assert_eq!(id_at(&conn, d, GRID + 1), dev);
 }
 
-/// A line that landed is the reader's to check (audit 8fbe274f4e): an
-/// agent's tick is refused, and says why; the reader's plain tick keeps the
-/// commit it landed with, as Works does, and their untick clears it.
+/// A line that landed is its agent's to tick as any other (1.53.1, audit
+/// 201cea362f), and the tick keeps the commit it landed with when it names
+/// none; the reader's plain tick keeps it too, as Works does, and their
+/// untick clears it.
 #[test]
-fn a_landed_line_is_the_readers_and_their_tick_keeps_its_commit() {
+fn a_landed_line_ticks_with_the_commit_it_landed_with() {
     let mut conn = db();
     let d = create(&conn, "/w", None, 0).unwrap().id;
     let n = add_note(&mut conn, d, "fold the rail", 10)
         .unwrap()
         .unwrap()
         .id;
-    assert_eq!(landed_open(&conn, d, n).unwrap(), None);
     assert_eq!(
         land_notes(&conn, d, &[(n, "6d732b2".to_string(), 30)]).unwrap(),
         1
     );
+    assert!(tick_note(&conn, d, n, &by("claude-code"), 40).unwrap());
+    let got = &notes(&conn, d).unwrap()[0];
     assert_eq!(
-        landed_open(&conn, d, n).unwrap().as_deref(),
-        Some("6d732b2")
+        (
+            got.done,
+            got.done_by.as_str(),
+            got.done_commit.as_str(),
+            got.on_branch
+        ),
+        (true, "claude-code", "6d732b2", false)
     );
-    assert!(!tick_note(&conn, d, n, &by("claude-code"), 40).unwrap());
-    assert!(!notes(&conn, d).unwrap()[0].done);
+    assert!(set_note(&conn, d, n, None, Some(false), 45).unwrap());
     assert!(set_note(&conn, d, n, None, Some(true), 50).unwrap());
     let got = &notes(&conn, d).unwrap()[0];
     assert_eq!(
         (got.done, got.done_by.as_str(), got.done_commit.as_str()),
         (true, "", "6d732b2")
     );
-    assert_eq!(landed_open(&conn, d, n).unwrap(), None, "done, not waiting");
     assert!(set_note(&conn, d, n, None, Some(false), 60).unwrap());
     assert_eq!(notes(&conn, d).unwrap()[0].done_commit, "");
     // A line that never landed ticks with no commit, as before.
@@ -1665,4 +1673,72 @@ fn a_landed_line_is_the_readers_and_their_tick_keeps_its_commit() {
     let got = notes(&conn, d).unwrap();
     let got = got.iter().find(|x| x.id == other).unwrap();
     assert_eq!(got.done_commit, "");
+}
+
+/// An agent ticks when its work is committed and checked, before the merge:
+/// the line is done and "on a branch" until git finds the commit on main,
+/// then it carries the landing. Not yet... on it takes the tick back and
+/// reopens it; the reader's own tick has no not yet... to take back.
+#[test]
+fn an_agents_tick_off_a_branch_lands_later_and_can_be_taken_back() {
+    let mut conn = db();
+    let now = crate::store::now();
+    let d = create(&conn, "/w", None, 0).unwrap().id;
+    let n = add_note(&mut conn, d, "fold the rail", now - 100)
+        .unwrap()
+        .unwrap()
+        .id;
+    assert!(mark_note(&conn, d, n, &mark("working", ""), now - 90).unwrap());
+    let tick = Tick {
+        commit: "ABC1234".into(),
+        ..by("claude-code")
+    };
+    assert!(tick_note(&conn, d, n, &tick, now - 50).unwrap());
+    let got = &notes(&conn, d).unwrap()[0];
+    assert_eq!(
+        (
+            got.done,
+            got.on_branch,
+            got.recheck,
+            got.done_commit.as_str()
+        ),
+        (true, true, true, "abc1234")
+    );
+    assert_eq!(
+        landable(&conn, d, now).unwrap(),
+        vec![(n, now - 100, "abc1234".to_string())]
+    );
+    // A month on, it is history and no longer looked for.
+    assert!(landable(&conn, d, now + LAND_WINDOW_S).unwrap().is_empty());
+    assert_eq!(
+        land_notes(&conn, d, &[(n, "abc1234ffff".to_string(), now - 10)]).unwrap(),
+        1
+    );
+    let got = &notes(&conn, d).unwrap()[0];
+    assert_eq!(
+        (
+            got.done,
+            got.done_by.as_str(),
+            got.on_branch,
+            got.landed_commit.as_str()
+        ),
+        (true, "claude-code", false, "abc1234ffff")
+    );
+    assert!(landable(&conn, d, now).unwrap().is_empty());
+    // Not yet...: the tick and the landing come off, with the reader's words.
+    assert!(check_note(&conn, d, n, false, "still folds wrong", now).unwrap());
+    let got = &notes(&conn, d).unwrap()[0];
+    assert_eq!(
+        (
+            got.done,
+            got.done_by.as_str(),
+            got.stage.as_str(),
+            got.reply.as_str()
+        ),
+        (false, "", REOPENED, "still folds wrong")
+    );
+    // The reader's own tick is theirs to untick, not to take back so.
+    assert!(set_note(&conn, d, n, None, Some(true), now).unwrap());
+    assert!(!notes(&conn, d).unwrap()[0].recheck);
+    assert!(!check_note(&conn, d, n, false, "no", now).unwrap());
 }

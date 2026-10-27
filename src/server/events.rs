@@ -183,16 +183,40 @@ pub(crate) fn ask_notifies(off: bool, focused: bool, last: i64, now: i64) -> boo
 /// thing the desktop never said (plan b0bca0a11f). A click opens its desk
 /// with the corner's tray open (`#onyou`, `ui/corner.js`).
 pub(crate) fn notify_waiting(app: &App, title: &str, body: &str, desk: Option<i64>) {
+    let path = match desk {
+        Some(d) => format!("/desk/{d}#onyou"),
+        None => "/#onyou".to_string(),
+    };
+    notify_burst(app, &ASKED_AT, title, body, &path);
+}
+
+/// When a friend's line or document last raised a notification.
+static FRIEND_AT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// A friend's line or document, told to the desktop when no snyvi page is
+/// in front (#196): a page has its corner, and nothing else said it, so a
+/// line sent while the reader was in another app waited unseen on Home.
+/// `path` is where a click goes: On you, its desk, or the document.
+pub(crate) fn notify_friend(app: &App, title: &str, body: &str, path: &str) {
+    notify_burst(app, &FRIEND_AT, title, body, path);
+}
+
+/// The desktop told, once for a burst counted from `last`; a click opens
+/// `path` in the window, raised, or a browser when there is no window.
+fn notify_burst(
+    app: &App,
+    last: &std::sync::atomic::AtomicI64,
+    title: &str,
+    body: &str,
+    path: &str,
+) {
     let off = std::env::var("SNYVI_NOTIFY").is_ok_and(|v| v == "0");
     let now = crate::store::now();
-    if !ask_notifies(off, focused(app), ASKED_AT.load(Ordering::Relaxed), now) {
+    if !ask_notifies(off, focused(app), last.load(Ordering::Relaxed), now) {
         return;
     }
-    ASKED_AT.store(now, Ordering::Relaxed);
-    let url = match desk {
-        Some(d) => format!("{}/desk/{d}#onyou", config::base_url()),
-        None => format!("{}/#onyou", config::base_url()),
-    };
+    last.store(now, Ordering::Relaxed);
+    let url = format!("{}{path}", config::base_url());
     let has_window = app.has_window();
     crate::platform::notify_open(title, body, move || {
         if has_window && crate::desktop::hand_to_window(&url) {

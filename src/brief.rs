@@ -262,7 +262,9 @@ pub fn brief_of(
             .take(DONE_SHOWN)
             .map(|n| {
                 let mut s = format!("#{} {}", n.id, cut(&n.text, LINE_CHARS));
-                if !n.done_commit.is_empty() {
+                if n.on_branch {
+                    s.push_str(&format!(" (in {}, not on main yet)", n.done_commit));
+                } else if !n.done_commit.is_empty() {
                     s.push_str(&format!(" (in {})", n.done_commit));
                 }
                 s
@@ -366,9 +368,10 @@ fn ago_words(s: i64) -> String {
 }
 
 /// What the loop left open, ahead of the list: lines whose work landed on
-/// main and wait for the user's check, and lines the user said are still
-/// broken, with their words. Any panel can close these, not only the one
-/// that started them; a reopened line is the first thing to fix.
+/// main with no tick, for the agent that can check the work to tick, and
+/// lines the user said are still broken, with their words. Any panel can
+/// close these, not only the one that started them; a reopened line is the
+/// first thing to fix.
 fn loose_ends(open: &[&DeskNote]) -> Vec<String> {
     let mut lines = Vec::new();
     let reopened: Vec<String> = open
@@ -396,7 +399,7 @@ fn loose_ends(open: &[&DeskNote]) -> Vec<String> {
         .collect();
     if !landed.is_empty() {
         lines.push(format!(
-            "Landed on main and waiting for the user's check, not yours to tick: {}.",
+            "Landed on main with no tick: {}. Tick each whose work you can check, with that commit; leave the rest for the user.",
             landed.join(", ")
         ));
     }

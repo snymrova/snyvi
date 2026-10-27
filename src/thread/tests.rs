@@ -218,12 +218,13 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
     assert_eq!((t.branch.as_str(), changed), ("claude/a", false));
 }
 
-/// The first sight of the reader's own merge ticks the thread's open notes,
-/// by "merged", with the merge and the PR; a note outside the thread stays
-/// open, and one the reader unticks is not ticked again by the same merge
-/// seen again.
+/// The first sight of the reader's own merge ticks the thread's open notes
+/// its PR's commits name, by "merged", with the merge and the PR; one on
+/// the thread they do not name stays open (audit 201cea362f: a site PR
+/// closed #183 and #187), as does a note outside the thread, and one the
+/// reader unticks is not ticked again by the same merge seen again.
 #[test]
-fn a_merge_ticks_the_threads_notes() {
+fn a_merge_ticks_the_notes_its_commits_name() {
     let mut conn = db();
     let (d, n) = desk(&mut conn);
     start_as(&mut conn, d, "A", "p1", &n[..2]);
@@ -244,15 +245,16 @@ fn a_merge_ticks_the_threads_notes() {
     let m = Seen {
         merged: "B6E235B".into(),
         mine: true,
+        named: Some(vec![n[0], 999]),
         ..pr
     };
     let (_, changed) = seen(&mut conn, d, "p1", &m, 3).unwrap().unwrap();
     assert!(changed);
     let notes = crate::desk::notes(&conn, d).unwrap();
     let done: Vec<_> = notes.iter().filter(|x| x.done).collect();
-    assert_eq!(done.len(), 2);
+    assert_eq!(done.len(), 1, "only the note its commits name");
     for x in &done {
-        assert!(n[..2].contains(&x.id));
+        assert_eq!(x.id, n[0]);
         assert_eq!(
             (
                 x.done_by.as_str(),
@@ -265,7 +267,29 @@ fn a_merge_ticks_the_threads_notes() {
     conn.execute("UPDATE desk_notes SET done_at = 0 WHERE id = ?1", [n[0]])
         .unwrap();
     seen(&mut conn, d, "p1", &m, 4).unwrap();
-    assert_eq!(open(&conn), 2);
+    assert_eq!(open(&conn), 3);
+}
+
+/// A merge whose commits gh could not list ticks nothing: its notes wait
+/// for their agent's tick or the reader's check.
+#[test]
+fn a_merge_with_no_commits_known_ticks_nothing() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    start_as(&mut conn, d, "A", "p1", &n[..2]);
+    let m = Seen {
+        pr: "https://github.com/o/r/pull/67".into(),
+        merged: "b6e235b".into(),
+        mine: true,
+        ..Seen::default()
+    };
+    seen(&mut conn, d, "p1", &m, 3).unwrap();
+    let t = of_pane(&conn, d, "p1").unwrap().unwrap();
+    assert_eq!(t.stage, "shipped");
+    assert!(crate::desk::notes(&conn, d)
+        .unwrap()
+        .iter()
+        .all(|x| !x.done));
 }
 
 /// A merge git found, which no panel saw, ships the thread as of the merge
@@ -482,6 +506,7 @@ fn the_prs_word_settles_its_own_card() {
         merged_at: 7,
         head: "claude/foot-cards".into(),
         url: "https://github.com/o/r/pull/89".into(),
+        named: Some(n[..2].to_vec()),
         ..PrFacts::default()
     };
     assert!(pr_facts(&conn, &foot, &merged, true, "", 8).unwrap());
@@ -1562,7 +1587,7 @@ fn an_agent_puts_a_card_away_with_why_and_the_reader_brings_it_back() {
 }
 
 /// The reader's merge ticks the thread's notes, but not one that landed
-/// already: that one waits for their check (audit 8fbe274f4e).
+/// already: that one waits for its agent's tick or the reader's check.
 #[test]
 fn a_merge_leaves_a_landed_note_for_the_readers_check() {
     let mut conn = db();
@@ -1576,6 +1601,7 @@ fn a_merge_leaves_a_landed_note_for_the_readers_check() {
         pr: "https://github.com/o/r/pull/67".into(),
         merged: "b6e235b".into(),
         mine: true,
+        named: Some(n[..2].to_vec()),
         ..Seen::default()
     };
     seen(&mut conn, d, "p1", &m, 3).unwrap();

@@ -522,7 +522,7 @@ pub(crate) async fn pane_seen(
     let desk = placed.desk_id;
     let mut b = b;
     if !b.merged.trim().is_empty() {
-        b.mine = merged_by_reader(&app, desk, &id, &b).await;
+        (b.mine, b.named) = merged_by_reader(&app, desk, &id, &b).await;
     }
     match app
         .store
@@ -544,35 +544,47 @@ pub(crate) async fn pane_seen(
 /// Whether the merge the mod saw was the reader's own: who merged it, as
 /// the mod's gh said or the daemon's own asks, is who gh is signed in as
 /// here. Not knowing is not the reader's: the notes then land for their
-/// check rather than tick (#167). Off the lock and the runtime.
-async fn merged_by_reader(app: &Arc<App>, desk: i64, pane: &str, b: &Seen) -> bool {
+/// check rather than tick (#167). With it, the notes the PR's commits name
+/// (`gh::Pr::named`), which are all its merge ticks (1.53.1): the daemon's
+/// own look does not come back to a PR the mod filed as merged, so it is
+/// read here, once, while the merge is new to the thread. Off the lock and
+/// the runtime.
+async fn merged_by_reader(
+    app: &Arc<App>,
+    desk: i64,
+    pane: &str,
+    b: &Seen,
+) -> (bool, Option<Vec<i64>>) {
     let Ok(Some(root)) = app.store.desk(desk).map(|d| d.map(|d| d.root)) else {
-        return false;
+        return (false, None);
     };
-    let pr = match thread::pr_number(&b.pr) {
-        Some(n) => n,
-        None => app
-            .store
-            .clocked(|c, _| thread::of_pane(c, desk, pane))
-            .ok()
-            .flatten()
-            .map(|t| t.pr)
-            .unwrap_or_default(),
-    };
+    let t = app
+        .store
+        .clocked(|c, _| thread::of_pane(c, desk, pane))
+        .ok()
+        .flatten();
+    let merge = b.merged.trim().to_ascii_lowercase();
+    if t.as_ref().is_some_and(|t| t.merged == merge) {
+        return (false, None);
+    }
+    let pr = thread::pr_number(&b.pr)
+        .or_else(|| t.map(|t| t.pr))
+        .unwrap_or_default();
     let said = b.merged_by.trim().to_string();
     tokio::task::spawn_blocking(move || {
         let dir = std::path::Path::new(&root);
+        let p = crate::gh::view(dir, &pr);
         let by = if said.is_empty() {
-            crate::gh::view(dir, &pr)
-                .map(|p| p.merged_by)
-                .unwrap_or_default()
+            p.as_ref().map(|p| p.merged_by.clone()).unwrap_or_default()
         } else {
             said
         };
-        !by.is_empty() && crate::gh::viewer(dir).is_some_and(|me| me.eq_ignore_ascii_case(&by))
+        let mine =
+            !by.is_empty() && crate::gh::viewer(dir).is_some_and(|me| me.eq_ignore_ascii_case(&by));
+        (mine, p.and_then(|p| p.named))
     })
     .await
-    .unwrap_or(false)
+    .unwrap_or((false, None))
 }
 
 /// The band's line above the mod's prompt: the pane's thread and what is
@@ -982,8 +994,10 @@ fn file_looked(c: &rusqlite::Connection, desk: i64, l: &Looked, now: i64) -> any
 /// none -- and no merge of its thread's branch ever came: #129-#131 sat at
 /// "planned" on 1.36 with their commit in 1.35. So the commits on main are
 /// read too, for what they say they finish ("(#129-#131)", `git::named_in`),
-/// and a line one names lands: "check it", with the commit, for the reader
-/// to check (`desk::land_notes`). As often as the merges, off the lock.
+/// and a line one names lands: "check it", with the commit
+/// (`desk::land_notes`). A line an agent ticked off a branch lands the same
+/// way, or by its own commit found on main, and stops reading "on a
+/// branch". As often as the merges, off the lock.
 async fn notes_landed(app: &Arc<App>, desk: i64) {
     static LOOKED: std::sync::Mutex<Vec<(i64, std::time::Instant)>> =
         std::sync::Mutex::new(Vec::new());
@@ -998,26 +1012,21 @@ async fn notes_landed(app: &Arc<App>, desk: i64) {
     let Ok(Some(root)) = app.store.desk(desk).map(|d| d.map(|d| d.root)) else {
         return;
     };
-    let Ok(open) = app.store.clocked(|c, _| crate::desk::landable(c, desk)) else {
+    let Ok(open) = app
+        .store
+        .clocked(|c, now| crate::desk::landable(c, desk, now))
+    else {
         return;
     };
-    let Some(since) = open.iter().map(|(_, t)| *t).min() else {
+    let Some(since) = open.iter().map(|(_, t, _)| *t).min() else {
         return;
     };
-    let named = tokio::task::spawn_blocking(move || {
-        crate::git::notes_named(std::path::Path::new(&root), since)
+    let main = tokio::task::spawn_blocking(move || {
+        crate::git::main_since(std::path::Path::new(&root), since)
     })
     .await
     .unwrap_or_default();
-    // Newest first from git: the latest commit that names a line, made after
-    // the line was written (or reopened), is the one it lands with.
-    let mut found: Vec<(i64, String, i64)> = Vec::new();
-    for (id, commit, at) in named {
-        let fits = open.iter().any(|(n, t)| *n == id && at >= *t);
-        if fits && !found.iter().any(|(f, ..)| *f == id) {
-            found.push((id, commit, at));
-        }
-    }
+    let found = landings(&open, &main);
     if found.is_empty() {
         return;
     }
@@ -1029,6 +1038,31 @@ async fn notes_landed(app: &Arc<App>, desk: i64) {
     {
         notes_moved(app, desk);
     }
+}
+
+/// Which of the `open` lines (`desk::landable`) the commits on `main`
+/// (`git::main_since`, newest first) land, and with which: the latest
+/// commit that names a line, made after the line was written (or
+/// reopened); or, for a line an agent ticked with a commit, that commit
+/// itself, once it is on main. `(line, commit, its time)`.
+fn landings(
+    open: &[(i64, i64, String)],
+    main: &[(String, i64, Vec<i64>)],
+) -> Vec<(i64, String, i64)> {
+    let mut found: Vec<(i64, String, i64)> = Vec::new();
+    for (sha, at, named) in main {
+        for (id, since, ticked) in open {
+            if found.iter().any(|(f, ..)| f == id) {
+                continue;
+            }
+            let names = named.contains(id) && at >= since;
+            let is_tick = ticked.len() >= 7 && sha.starts_with(ticked.as_str());
+            if names || is_tick {
+                found.push((*id, sha.clone(), *at));
+            }
+        }
+    }
+    found
 }
 
 /// A desk's threads, its turns and its waiting suggestions: the rail's three
@@ -1322,6 +1356,31 @@ fn log_answered(app: &App, t: &thread::Turn) {
 
 #[cfg(test)]
 mod tests {
+    /// A commit on main lands an open line it names, if made after the line;
+    /// a line an agent ticked lands by its own commit, short or full.
+    #[test]
+    fn main_lands_named_lines_and_ticked_commits() {
+        let open = vec![
+            (1, 100, String::new()),
+            (2, 100, String::new()),
+            (3, 100, "abc1234".to_string()),
+        ];
+        let main = vec![
+            ("f00d000".to_string(), 300, vec![1]),
+            ("abc1234beef".to_string(), 200, vec![]),
+            ("0ld0000".to_string(), 50, vec![2]),
+            ("e1de000".to_string(), 40, vec![1]),
+        ];
+        assert_eq!(
+            super::landings(&open, &main),
+            vec![
+                (1, "f00d000".to_string(), 300),
+                (3, "abc1234beef".to_string(), 200),
+            ],
+            "#2 was named before it was written"
+        );
+    }
+
     use super::*;
 
     #[test]

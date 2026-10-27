@@ -113,7 +113,7 @@ function downloads() {
   bar.addEventListener("click", e => {
     const t = target();
     if (!t) return e.preventDefault();
-    bar.href = t.url; bar.download = t.name; asked = { name: t.name, at: bar };
+    bar.href = t.url; bar.download = t.name; ask(t.name, bar);
     heard(bar, GLYPH);
   });
 
@@ -143,12 +143,12 @@ function downloads() {
   // far corner, where nobody was looking. Now the ↓ stays and turns to a ✓,
   // and the word comes beside the place it stood, kept as a rect: the ↓ may
   // be gone by the time the file is.
-  fl.addEventListener("click", () => { asked = { name: fl.download, at: fl.getBoundingClientRect() }; heard(fl, GLYPH); });
+  fl.addEventListener("click", () => { ask(fl.download, fl.getBoundingClientRect()); heard(fl, GLYPH); });
   // Any other ↓ -- a song's pill (player.js) -- is answered beside itself
   // too. Capture, so the ones above, which say more, still have the last word.
   addEventListener("click", e => {
     const a = e.target.closest?.("a[download]");
-    if (a && a !== fl && a !== bar) asked = { name: a.download, at: a.getBoundingClientRect() };
+    if (a && a !== fl && a !== bar) ask(a.download, a.getBoundingClientRect());
   }, true);
   // A press puts a player where its button was, and a song's pill has its
   // own ↓ from then on.
@@ -157,15 +157,51 @@ function downloads() {
   new MutationObserver(() => { off(); sync(); }).observe(docEl, { childList: true });
   sync();
 
-  // The window's word on where it went (src/bin/app.rs). A tab never hears
-  // this: the browser shows its own downloads.
+  // The window's word on where it went (src/bin/app.rs), and a way to it
+  // (#195, reopened: "where it saved, and how to open that"): Open for what
+  // the desktop has an app for, Show in folder for anything. A tab never
+  // hears this: the browser shows its own downloads.
   addEventListener("snyvi-downloaded", e => {
+    clearTimeout(waiting);
     const { ok, path } = e.detail || {}, name = path ? path.split(/[\\/]/).pop() : asked?.name || "";
-    const a = asked?.at, at = a instanceof Element ? (a.isConnected ? a : null) : a || null;
+    const at = askedAt();
     asked = null;
-    if (ok) c.toast("Downloaded", { sub: path ? tilde(path) : name, at });
-    else c.toast("Could not download", { sub: name, at });
+    if (!ok) return c.toast("Could not download", { sub: name, at });
+    c.toast("Downloaded", { sub: path ? tilde(path) : name, at, kind: "answer", action: waysTo(name) });
   });
+}
+
+/* A Download asked for, and in the window, a word for it however it goes.
+ * A window that never answers -- one from before 1.52 that an update left
+ * open (`app_min`), or an engine that keeps its own counsel -- still put the
+ * file somewhere, most likely Downloads, so after WAIT_MS it says that much
+ * and offers the folder. */
+const WAIT_MS = 3000;
+let waiting = 0;
+function ask(name, at) {
+  asked = { name, at };
+  clearTimeout(waiting);
+  if (c.capability) waiting = setTimeout(() => {
+    const at = askedAt(), name = asked?.name || "";
+    asked = null;
+    c.toast("Saved to your Downloads", { sub: name, at, kind: "answer", action: waysTo(name).slice(-1) });
+  }, WAIT_MS);
+}
+/** Where the press was, if it is still there to answer beside. */
+function askedAt() {
+  const a = asked?.at;
+  return a instanceof Element ? (a.isConnected ? a : null) : a || null;
+}
+
+/* Open and Show in folder: the name goes to the daemon, which looks for it
+ * in Downloads itself and opens it with the desktop's app, or shows the
+ * folder (`open_download`). The daemon decides what may open; OPENS only
+ * keeps Open off the line for what it would refuse. */
+const OPENS = /\.(png|jpe?g|gif|webp|avif|bmp|heic|mp4|webm|mov|m4v|mkv|mp3|m4a|wav|og[ga]|opus|flac|aac|pdf)$/i;
+function waysTo(name) {
+  const go = reveal => c.deskApi("/api/downloads/open", { name, reveal })
+    .catch(err => c.toast(reveal ? "Could not show the folder" : `Could not open ${name}`, { sub: err }));
+  return [...(OPENS.test(name) ? [{ label: "Open", run: () => go(false) }] : []), { label: "Show in folder", run: () => go(true) }];
 }
 
 /* Save as PDF (#182): the page as it reads, through the system's print

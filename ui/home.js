@@ -1273,7 +1273,7 @@ function friendRow(f, j) {
  *  beside their name read as theirs (audit 6f451571c6, F9). */
 function friendSub(f) {
   const { esc } = c, last = (peers?.sent || []).find(x => x.peer_id === f.id);
-  let t = last ? `you sent ${last.promise ? "a promise, " : ""}“${esc(last.what)}” · ${esc(sentWord(last))}${sentAt(last) ? ` ${ago(sentAt(last))}` : ""}`
+  let t = last ? `you sent ${last.promise ? "a promise, " : ""}“${esc(last.what)}” · ${esc(sentWord(last))}${sentAt(last) ? ` ${ago(sentAt(last))}` : ""}${sentWhere(last)}`
     : f.last_from ? `last heard from ${ago(f.last_from)}` : `paired ${ago(f.paired_at)}`;
   if (f.away) t = `away now; what you send waits for them · ${t}`;
   return `<span class="hm-fsub">${t}</span>`;
@@ -1282,6 +1282,9 @@ const sentAt = x => x.done_at || x.read_at || x.arrived_at || x.held_at || x.sen
 /** What became of a thing that went: kept or done, read, arrived, held
  *  while they are away, or sent. */
 const sentWord = x => x.done_at ? `${x.promise ? "kept" : "done"} ✓${x.done_commit ? ` · ${x.done_commit.slice(0, 7)}` : ""}` : x.read_at ? "read" : x.arrived_at ? "arrived" : x.held_at ? "held, they’re away" : "sent";
+/** Where a line that arrived waits for them, so "where do I see it?" has
+ *  its answer on this side too (#196): their On you, until they keep it. */
+const sentWhere = x => !x.doc_id && !x.promise && x.arrived_at && !x.done_at ? " · in their On you" : "";
 
 /** What has not gone to a friend yet, in their row: one that stopped trying
  *  says why, with Retry; the rest are a count, the oldest's reason in its

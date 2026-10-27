@@ -1,10 +1,10 @@
 //! The server's tests, with the route table every route must be in.
 
 use super::{
-    desk_key, desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
-    BOOT_JS, BROWSE_JS, COPY_JS, CORNER_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS,
-    INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NAV_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS,
-    TOAST_JS,
+    desk_key, desk_refusal, dir_of, hello_allows, in_downloads, opens, parse_range, Span, Ui,
+    ABOUT_JS, APP_CSS, APP_JS, BOOT_JS, BROWSE_JS, COPY_JS, CORNER_JS, DESK_JS, DIFF_JS, FIND_JS,
+    FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NAV_JS, PALETTE_JS,
+    PATHS_JS, PEER_JS, TIP_JS, TOAST_JS,
 };
 use super::{
     new_app, router, App, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
@@ -23,6 +23,47 @@ fn a_file_opens_beside_itself() {
     std::fs::write(&file, "x").unwrap();
     assert_eq!(dir_of(file), Some(tmp.path.clone()));
     assert_eq!(dir_of(tmp.path.clone()), Some(tmp.path.clone()));
+}
+
+/// A Download is opened by its bare name in Downloads, and only a picture,
+/// a film, a song or a PDF opens (#195): the rest is shown in its folder.
+#[test]
+fn a_download_opens_by_its_name_alone() {
+    let tmp = crate::store::tempdir::Dir::new("snyvi-downloads");
+    let (dir, outside) = (tmp.path.join("Downloads"), tmp.path.join("secret.png"));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("frame 06.png"), "x").unwrap();
+    std::fs::write(dir.join(".hidden.png"), "x").unwrap();
+    std::fs::write(&outside, "x").unwrap();
+    std::fs::create_dir(dir.join("sub.png")).unwrap();
+    assert_eq!(
+        in_downloads(&dir, "frame 06.png"),
+        Some(dir.join("frame 06.png"))
+    );
+    for name in [
+        "",
+        "../secret.png",
+        "..",
+        ".hidden.png",
+        "sub.png",
+        "a/b.png",
+        "a\\b.png",
+        "missing.png",
+        &outside.to_string_lossy(),
+    ] {
+        assert_eq!(in_downloads(&dir, name), None, "{name:?} is not a download");
+    }
+    assert!(opens("frame 06.PNG") && opens("take.mp4") && opens("talk.pdf"));
+    for name in [
+        "run.sh",
+        "page.html",
+        "x.svg",
+        "app.exe",
+        "x.desktop",
+        "png",
+    ] {
+        assert!(!opens(name), "{name} only shows in its folder");
+    }
 }
 
 /// What a player sends when it seeks, and what it must get back.

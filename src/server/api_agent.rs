@@ -324,7 +324,23 @@ pub(crate) async fn pane_notes(
                     n["due"] = json!(crate::due::label(at, now));
                 }
             }
-            Json(json!({ "desk": placed.desk_name, "notes": v })).into_response()
+            // The desk's routines too, said short (1.53.1, audit 566d17f746
+            // A4): "what runs here on its own?" had no answer for an agent.
+            let routines: Vec<serde_json::Value> = app
+                .store
+                .clocked(|c, _| crate::routine::for_desk(c, placed.desk_id))
+                .unwrap_or_default()
+                .iter()
+                .map(|r| {
+                    json!({
+                        "name": r.name, "cmd": r.cmd, "every": r.every, "state": r.state(),
+                        "next": if r.state() == "live" && r.due_at > 0 { crate::due::label(r.due_at, now) } else { String::new() },
+                        "last_state": r.last_state, "runs": r.runs, "by": r.suggested_by,
+                    })
+                })
+                .collect();
+            Json(json!({ "desk": placed.desk_name, "notes": v, "routines": routines }))
+                .into_response()
         }
         Err(e) => err(e),
     }
@@ -403,20 +419,13 @@ pub(crate) async fn pane_tick_note(
             emit(&app, "desknotes", json!({ "desk": placed.desk_id }));
             Json(json!({ "ok": true, "desk": placed.desk_name })).into_response()
         }
-        // Landed on main: the reader's to check, and the agent is told so, or
-        // it would tick again with another commit. Otherwise not on this
-        // desk's list, taken off it, or already done: the agent is told which
-        // it cannot tell apart, and nothing changed.
-        Ok(false) => {
-            let error = match app.store.landed_desk_note(placed.desk_id, note) {
-                Ok(Some(commit)) => format!(
-                    "#{note} landed on main ({}) and waits for the user's check in snyvi: leave it to them",
-                    commit.chars().take(7).collect::<String>()
-                ),
-                _ => "no open note by that id on this desk".to_string(),
-            };
-            (StatusCode::CONFLICT, Json(json!({ "error": error }))).into_response()
-        }
+        // Not on this desk's list, taken off it, or already done: the agent
+        // is told which it cannot tell apart, and nothing changed.
+        Ok(false) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "no open note by that id on this desk" })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
