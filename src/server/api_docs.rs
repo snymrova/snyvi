@@ -793,13 +793,22 @@ pub(crate) async fn lately(
         } else {
             Vec::new()
         };
+        // Everything that is the reader's, ranked, for the tray (1.54,
+        // `crate::onyou`): behind the same gate as the turns. Only the
+        // first page asks; a page of older Lately does not need it again.
+        let onyou = if desks && before == 0 {
+            Some(crate::onyou::gather(c, now)?)
+        } else {
+            None
+        };
         Ok((
             crate::lately::list(c, before, now)?,
             crate::lately::unseen(c, now)?,
             turns,
+            onyou,
         ))
     });
-    let (rows, unseen, turns) = match read {
+    let (rows, unseen, turns, onyou) = match read {
         Ok(r) => r,
         Err(e) => return err(e),
     };
@@ -821,6 +830,7 @@ pub(crate) async fn lately(
         "unseen": unseen,
         "more": rows.len() == crate::lately::PAGE,
         "turns": desks.then_some(turns),
+        "onyou": onyou,
     }))
     .into_response()
 }

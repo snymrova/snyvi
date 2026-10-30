@@ -437,19 +437,23 @@ fn put_away(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<usize>
 pub fn ring(conn: &Connection, now: i64) -> Result<Vec<i64>> {
     let mut desks: Vec<i64> = Vec::new();
     let mut st = conn.prepare(
-        "SELECT n.id, n.desk_id, n.text FROM desk_notes n JOIN desks d ON d.id = n.desk_id
+        "SELECT n.id, n.desk_id, n.text, n.doc FROM desk_notes n JOIN desks d ON d.id = n.desk_id
          WHERE n.due_at > 0 AND n.due_at <= ?1 AND n.due_rang_at = 0 AND n.done_at = 0
            AND n.removed_at = 0 AND n.suggested_by = '' AND d.closed_at = 0
          ORDER BY n.due_at, n.id LIMIT 24",
     )?;
-    let due: Vec<(i64, i64, String)> = st
-        .query_map(params![now], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    let due: Vec<(i64, i64, String, String)> = st
+        .query_map(params![now], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
         .collect::<rusqlite::Result<_>>()?;
-    for (id, desk, text) in due {
+    // The card carries the line's document as its link (1.54): the corner
+    // draws Open and Copy from it.
+    for (id, desk, text, doc) in due {
         conn.execute(
-            "INSERT INTO turns(desk_id, by, kind, via, text, created_at, note_id)
-             VALUES(?1, 'snyvi', ?2, 'clock', ?3, ?4, ?5)",
-            params![desk, KIND, text, now, id],
+            "INSERT INTO turns(desk_id, by, kind, via, text, created_at, note_id, link)
+             VALUES(?1, 'snyvi', ?2, 'clock', ?3, ?4, ?5, ?6)",
+            params![desk, KIND, text, now, id, doc],
         )?;
         conn.execute(
             "UPDATE desk_notes SET due_rang_at = ?2 WHERE id = ?1",

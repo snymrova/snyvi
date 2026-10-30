@@ -30,9 +30,11 @@ ALTER TABLE desks ADD COLUMN left_off_ok_at INTEGER NOT NULL DEFAULT 0;";
 pub const NEEDS: [&str; 3] = ["you", "claude", "time"];
 
 /// How long a left-off that needs the reader sits on the desk head before
-/// it is a row on Home: two days, so a sentence said at the end of an
-/// evening is not on them by morning.
-pub const LEFT_WAIT_S: i64 = 2 * 86_400;
+/// it is a row on On you: a day. It was two, so a sentence said at the end
+/// of an evening was not on them by morning; with a list to sit in (1.54,
+/// `crate::onyou`) a day is enough, and a routine's line does not wait at
+/// all, since its run was for this morning.
+pub const LEFT_WAIT_S: i64 = 86_400;
 
 /// How long a plan waits for Approve before it is a row on Home: a day.
 pub const PLAN_WAIT_S: i64 = 86_400;
@@ -153,7 +155,8 @@ pub struct Waiting {
 
 /// What has waited on the reader long enough to be on Home, on desks open
 /// and not parked, the oldest first: left-offs that need them for
-/// `LEFT_WAIT_S` and were not approved since, and plans unapproved for
+/// `LEFT_WAIT_S` and were not approved since -- nor moved to Tomorrow or
+/// said Not this to (1.54, `crate::onyou`) -- and plans unapproved for
 /// `PLAN_WAIT_S`.
 pub fn rows(conn: &Connection, now: i64) -> Result<Vec<Waiting>> {
     let mut out: Vec<Waiting> = conn
@@ -163,9 +166,10 @@ pub fn rows(conn: &Connection, now: i64) -> Result<Vec<Waiting>> {
                     COALESCE((SELECT r.name FROM routines r WHERE r.pane != '' AND r.pane = desks.left_off_pane
                               AND r.removed_at = 0 LIMIT 1), left_off_by) FROM desks
              WHERE closed_at = 0 AND parked_at = 0 AND left_off != '' AND left_off_needs = 'you'
-               AND left_off_at <= ?1 AND left_off_ok_at < left_off_at",
+               AND left_off_at <= ?1 AND left_off_ok_at < left_off_at
+               AND left_off_until <= ?2 AND left_off_not = ''",
         )?
-        .query_map(params![now - LEFT_WAIT_S], |r| {
+        .query_map(params![now - LEFT_WAIT_S, now], |r| {
             Ok(Waiting {
                 desk: r.get(0)?,
                 kind: "left",

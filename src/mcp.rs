@@ -97,8 +97,10 @@ case is in orders.rs.\" Call it when a stretch of work ends -- the user is wrapp
 you are stopping partway -- not after every step. It replaces the one before (the user can undo that), \
 shows in the desk's head and on snyvi's Home, and is at most 200 characters. Pass `about` with a document's \
 id from send_document when the next step is written up there. Pass `needs` when it is plain whose the next step \
-is: `you` for the user's (approve, commit, add a key, try it), which after two days is on their Home's Waiting \
-on you; `claude` for an agent's; `time` when it waits on something outside both.";
+is: `you` only for what truly only the user can do (a payment, a sign-in, a post from their account, a merge), \
+which after a day is on their On you list; `claude` for an agent's, including a step you may take with their \
+permission (their Go ahead says so); `time` when it waits on something outside both. A line for the user names \
+its document (`about`) or its command.";
 
 const SUGGEST_DESCRIPTION: &str = "Suggest a line for the user's notes on this snyvi desk: something that \
 came up in the work and should not be forgotten, like a follow-up, a known gap, or a decision left open. It \
@@ -635,6 +637,9 @@ impl Session {
                     let also = if undated.is_empty() { String::new() } else { format!(" These went without a date, as their `due` was not one: {}.", undated.join("; ")) };
                     said(format!("Suggested {n} lines as one set; the user keeps them with Keep all, or one by one.{also} Mention it in your reply."), false)
                 }
+                Ok(v) if v.get("doc_error").and_then(Value::as_str).is_some() => {
+                    said(format!("Suggested, without its document: {}. It waits beside the user's notes until they keep it or remove it; mention it in your reply.", v["doc_error"].as_str().unwrap_or_default()), false)
+                }
                 Ok(v) => match v.get("due_error").and_then(Value::as_str) {
                     Some(why) => said(format!("Suggested, without a date: {why}. It waits beside the user's notes until they keep it or remove it; mention it in your reply."), false),
                     None => said("Suggested. It waits beside the user's notes until they keep it or remove it; mention it in your reply.", false),
@@ -827,7 +832,8 @@ fn suggest_spec() -> Value {
                         "text": { "type": "string" },
                         "due": { "type": "string", "description": "In the user's words: `28 oct 10`." }
                     }, "required": ["text"], "additionalProperties": false } },
-                "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." }
+                "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." },
+                "doc": { "type": "string", "description": "Optional: the id of a document you sent on this desk that the line is about (the post, the run sheet). Its row and its due card open and copy it." }
             },
             "additionalProperties": false
         },

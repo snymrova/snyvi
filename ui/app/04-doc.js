@@ -22,7 +22,15 @@
    *  A PDF gets no sandbox attribute, because the browser's own viewer refuses to run
    *  inside one and shows a broken page instead. That is safe for a different reason:
    *  the bytes are served as application/pdf with nosniff, so they can only ever reach
-   *  the PDF viewer, never be parsed as a page in our origin. */
+   *  the PDF viewer, never be parsed as a page in our origin.
+   *
+   *  The referrer policy as a property: the same attribute, set the way
+   *  the frame's own source is, and fewer bytes in first paint for the
+   *  line after it. The title stays an attribute, a name for a screen reader.
+   *
+   *  A page shown as itself can fill the screen (#199): ui/fill.js brings
+   *  the button into the bar, its key and its look, fetched here the first
+   *  time and a cached module every time after. */
   function applyPreview() {
     const art = docEl.querySelector("article");
     if (!art || !state.previewOn || !state.previewUrl) return;
@@ -30,11 +38,12 @@
     wrap.className = "preview";
     const frame = document.createElement("iframe");
     if (state.preview !== "pdf") frame.setAttribute("sandbox", "allow-scripts");
-    frame.setAttribute("referrerpolicy", "no-referrer");
+    frame.referrerPolicy = "no-referrer";
     frame.setAttribute("title", "Preview");
     frame.src = state.previewUrl;
-    wrap.appendChild(frame);
+    wrap.append(frame);
     art.replaceWith(wrap);
+    chunk("fill");
   }
 
   function togglePreview() {
@@ -57,7 +66,7 @@
    *  it is an 80 ms fade and no movement, and nothing at all when a key did
    *  it -- the keyboard's result is simply there (docs/DESIGN.md §7.2). */
   function swapIn() {
-    if (swapAnim) swapAnim.cancel();
+    swapAnim?.cancel();
     const byKey = keyAt > (press?.t ?? -1e9);
     swapAnim = still.matches || byKey ? null : docEl.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 80, easing: "ease-out" });
   }
@@ -90,7 +99,7 @@
    *  typed in cold -- and that one has nothing to draw from anyway. */
   const knownDocs = new Map();
   function noteKnown(d) {
-    if (d && d.id && !knownDocs.has(d.id)) knownDocs.set(d.id, { title: d.title, kind: d.kind, received_at: d.received_at });
+    if (d?.id && !knownDocs.has(d.id)) knownDocs.set(d.id, { title: d.title, kind: d.kind, received_at: d.received_at });
     return d;
   }
 
@@ -335,7 +344,7 @@
   const showWelcome = (push = true) => pages().then(m => m.showWelcome(push), () => {});
   const welcomePage = () => pages().then(m => m.welcomePage(), () => "");
   const connectClaude = (b, done) => pages().then(m => m.connectClaude(b, done), () => {});
-  const refreshAgents = () => { if (pagesMod) pagesMod.refreshAgents(); };
+  const refreshAgents = () => pagesMod?.refreshAgents();
   /** /sidebars: the two sidebars arranged, and the widgets (ui/sidebars.js,
    *  a chunk: arranging happens once in a while). */
   let sidebarsLoading = null;

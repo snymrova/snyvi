@@ -330,6 +330,10 @@ pub struct Turn {
     /// (`quiet_asks`): the reader may have answered it there.
     #[serde(skip)]
     pub quiet_at: i64,
+    /// Tomorrow or Next week on the reader's ✕ (1.54, `crate::onyou`):
+    /// off every list until then, and fresh again from then.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub until: i64,
     /// A `key` turn's key, by name, when the agent said it: adding a key of
     /// that name on the desk settles the turn (`settle_key`).
     #[serde(rename = "key", skip_serializing_if = "String::is_empty")]
@@ -1243,7 +1247,7 @@ pub fn moved_since(conn: &Connection, desk_id: i64, pane: &str, since: i64) -> R
 const TURN_COLS: &str =
     "id, desk_id, thread_id, pane, by, kind, via, text, options, recommended, link,
      answer, answered_in, answered_at, told_at, created_at, removed_at, cmd, ask_group,
-     quiet_at, key_name, away";
+     quiet_at, key_name, away, until";
 
 fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
     let options: String = r.get(8)?;
@@ -1274,6 +1278,7 @@ fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
         quiet_at: r.get(19)?,
         key_name: r.get(20)?,
         away: r.get(21)?,
+        until: r.get(22)?,
         stale: false,
     })
 }
@@ -1297,7 +1302,9 @@ pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()>
                     g
                 }
             };
-        t.stale = closed || t.quiet_at != 0 || now - t.created_at >= OLDER_S;
+        // A card moved to Tomorrow is fresh again from then (1.54).
+        let since = t.created_at.max(t.until);
+        t.stale = closed || t.quiet_at != 0 || now - since >= OLDER_S;
     }
     Ok(())
 }
@@ -1307,7 +1314,7 @@ pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()>
 /// where turns are read, so no timer is needed. How many went.
 pub fn retire(conn: &Connection, now: i64) -> Result<usize> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = ?1, removed_by = 'aged' WHERE answered_at = 0 AND removed_at = 0 AND created_at < ?2",
+        "UPDATE turns SET removed_at = ?1, removed_by = 'aged' WHERE answered_at = 0 AND removed_at = 0 AND created_at < ?2 AND until < ?2",
         params![now, now - RETIRE_S],
     )?)
 }
@@ -1329,14 +1336,14 @@ pub fn turn(conn: &Connection, desk_id: i64, id: i64) -> Result<Option<Turn>> {
 /// off the end of the read, and its Send now with it (audit e0a854b732, B4).
 pub fn turns(conn: &Connection, desk_id: i64, answered_since: i64, now: i64) -> Result<Vec<Turn>> {
     let mut st = conn.prepare(&format!(
-        "SELECT {TURN_COLS} FROM turns t WHERE desk_id = ?1 AND removed_at = 0
+        "SELECT {TURN_COLS} FROM turns t WHERE desk_id = ?1 AND removed_at = 0 AND until <= ?3
          AND (answered_at = 0 OR answered_at >= ?2 OR (kind = 'decide' AND thread_id != 0 AND id IN (
            SELECT d.id FROM turns d WHERE d.desk_id = ?1 AND d.thread_id = t.thread_id AND d.kind = 'decide'
            AND d.answered_at != 0 AND d.removed_at = 0 ORDER BY d.answered_at DESC LIMIT 3)))
          ORDER BY answered_at != 0, CASE WHEN answered_at = 0 THEN id ELSE -answered_at END LIMIT 60"
     ))?;
     let mut v: Vec<Turn> = st
-        .query_map(params![desk_id, answered_since], row_to_turn)?
+        .query_map(params![desk_id, answered_since, now], row_to_turn)?
         .collect::<rusqlite::Result<_>>()?;
     mark_stale(conn, &mut v, now)?;
     Ok(v)
@@ -1349,11 +1356,11 @@ pub fn turns(conn: &Connection, desk_id: i64, answered_since: i64, now: i64) -> 
 pub fn waiting_on(conn: &Connection, desk_id: i64, dialog: bool, now: i64) -> Result<Vec<Turn>> {
     let via = if dialog { "" } else { " AND via != 'dialog'" };
     let mut st = conn.prepare(&format!(
-        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND answered_at = 0 AND removed_at = 0{via}
+        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND answered_at = 0 AND removed_at = 0 AND until <= ?2{via}
          ORDER BY id LIMIT 60"
     ))?;
     let mut v: Vec<Turn> = st
-        .query_map(params![desk_id], row_to_turn)?
+        .query_map(params![desk_id, now], row_to_turn)?
         .collect::<rusqlite::Result<_>>()?;
     mark_stale(conn, &mut v, now)?;
     Ok(v)
@@ -1369,10 +1376,10 @@ pub fn waiting(conn: &Connection, now: i64) -> Result<Vec<Turn>> {
         .join(", ");
     let mut st = conn.prepare(&format!(
         "SELECT {cols} FROM turns t JOIN desks d ON d.id = t.desk_id
-         WHERE t.removed_at = 0 AND t.answered_at = 0 AND d.closed_at = 0 ORDER BY t.id LIMIT 30"
+         WHERE t.removed_at = 0 AND t.answered_at = 0 AND t.until <= ?1 AND d.closed_at = 0 ORDER BY t.id LIMIT 30"
     ))?;
     let mut v: Vec<Turn> = st
-        .query_map([], row_to_turn)?
+        .query_map(params![now], row_to_turn)?
         .collect::<rusqlite::Result<_>>()?;
     mark_stale(conn, &mut v, now)?;
     Ok(v)
@@ -1711,10 +1718,34 @@ pub fn remove_turn(conn: &Connection, desk_id: i64, id: i64, by: &str, now: i64)
     )? > 0)
 }
 
+/// Back on the reader: a Not this gives its word back too, and Tomorrow
+/// its day (1.54).
 pub fn restore_turn(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = 0, away = '', removed_by = '' WHERE desk_id = ?1 AND id = ?2",
+        "UPDATE turns SET removed_at = 0, away = '', until = 0,
+                answer = CASE WHEN removed_by = 'not' THEN '' ELSE answer END, removed_by = ''
+         WHERE desk_id = ?1 AND id = ?2",
         params![desk_id, id],
+    )? > 0)
+}
+
+/// Tomorrow or Next week on a card's ✕ (1.54, `crate::onyou`): off every
+/// list until then, answered by no one. 0 brings it back now.
+pub fn later_turn(conn: &Connection, desk_id: i64, id: i64, until: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE turns SET until = ?3 WHERE desk_id = ?1 AND id = ?2 AND answered_at = 0 AND removed_at = 0",
+        params![desk_id, id, until],
+    )? > 0)
+}
+
+/// Not this on a card's ✕, with the reader's word: put away as `not`, the
+/// word where an answer would be, and said in its desk's brief for a week
+/// (`onyou::nots`). `restore_turn` takes it back.
+pub fn not_turn(conn: &Connection, desk_id: i64, id: i64, word: &str, now: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE turns SET removed_at = ?3, removed_by = 'not', answer = ?4
+         WHERE desk_id = ?1 AND id = ?2 AND answered_at = 0 AND removed_at = 0",
+        params![desk_id, id, now, line(word, 120)],
     )? > 0)
 }
 

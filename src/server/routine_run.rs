@@ -17,7 +17,9 @@
 //!   parked, the command on disk as it was allowed, the account signed in,
 //!   the five-hour window under the routine's limit, no run under way.
 //! - **It stops.** A run past its minutes is stopped; the reader typing in
-//!   its panel takes it over; a turn's end is the run's end.
+//!   its panel takes it over; a turn's end is the run's end. Its minutes
+//!   are the ones it ran: a laptop asleep mid-run does not use them up
+//!   (1.54, #198, `asleep`).
 //! - **Run on a card starts the command as the panel's process** (decision
 //!   of 24 Oct), on the reader's click, in the desk's folder with its keys:
 //!   at once when the command is on the routine's Waits list, and only at a
@@ -40,17 +42,44 @@ const TICK: Duration = Duration::from_secs(5);
 const GRACE_S: i64 = 15;
 /// How long a panel's last process is given to go before a run starts.
 const STOP_WAIT: Duration = Duration::from_secs(10);
+/// A tick this much later than its `TICK` is a machine that slept. A busy
+/// box or a held store lock keeps a tick back a few seconds; half a minute
+/// is longer than any of that and shorter than any sleep worth counting.
+const ASLEEP_AFTER_S: i64 = 30;
 
 /// The runner, on its own task, from the daemon's start: a run that was
 /// under way when the last daemon stopped is over, and says so.
+///
+/// Sleep is a gap between ticks on the wall clock. Not a monotonic clock:
+/// whether one counts a suspend differs by OS, and a wall-clock gap between
+/// 5 s ticks reads the same on Linux, macOS and Windows. The clock set
+/// forward by more than half a minute reads as sleep too, and a run gets
+/// those minutes back; set back, it reads as nothing.
 pub(crate) fn spawn(app: Arc<App>) {
     let _ = app.store.clocked(|c, now| routine::end_all(c, now));
     tokio::spawn(async move {
+        let mut last = crate::store::now();
         loop {
             tokio::time::sleep(TICK).await;
+            let slept = asleep(crate::store::now() - last);
+            if slept > 0 {
+                let _ = app.store.clocked(|c, _| routine::slept(c, slept));
+            }
             tick(&app).await;
+            last = crate::store::now();
         }
     });
+}
+
+/// The seconds a machine slept, from the wall time between two ticks: what
+/// came after the tick's own `TICK`, once that is past `ASLEEP_AFTER_S`.
+fn asleep(gap_s: i64) -> i64 {
+    let after = gap_s - TICK.as_secs() as i64;
+    if after > ASLEEP_AFTER_S {
+        after
+    } else {
+        0
+    }
 }
 
 /// A desk's routines moved: its windows read them again, on the
@@ -168,6 +197,33 @@ pub(crate) async fn start(app: &Arc<App>, id: i64, why: &str) -> Result<(), Stri
     start_with(app, id, why, None).await
 }
 
+/// Go ahead on a routine's line in On you (1.54, `crate::onyou`): its own
+/// session resumes with *go ahead* and the line it said, as the reader's
+/// answers resume it (`after_answers`), so the run goes on inside its
+/// Waits -- a command outside them still stops at a run card. Without a
+/// session to resume, its prompt again, saying so. Started as `answer`,
+/// which `blocked` lets through a draft and a parked desk; running, paused
+/// or changed come back as the reason.
+pub(crate) async fn go_ahead(app: &Arc<App>, id: i64, line: &str) -> Result<(), String> {
+    let Ok(Some(r)) = app.store.clocked(|c, _| routine::get(c, id)) else {
+        return Err("no such routine".into());
+    };
+    let said = format!("go ahead: {}", crate::thread::line(line, 200));
+    let session = app
+        .store
+        .pane(&r.pane)
+        .ok()
+        .flatten()
+        .map(|p| p.pane.agent_session)
+        .unwrap_or_default();
+    let begin = if session.is_empty() {
+        Begin::Prompt(format!("{} (resumed: no) The user said {said}", r.prompt()))
+    } else {
+        Begin::Resume(session, said)
+    };
+    start_with(app, id, "answer", Some(begin)).await
+}
+
 async fn start_with(
     app: &Arc<App>,
     id: i64,
@@ -191,8 +247,15 @@ async fn start_with(
                 .store
                 .clocked(|c, now| routine::skipped(c, id, &no, now));
             changed(app, r.desk_id);
+        } else if why == "clock" {
+            // An hour that came while its last run was still under way:
+            // the row keeps that run's lateness, not the hour's.
+            let _ = app.store.clocked(|c, _| routine::late_as_last(c, id));
         }
         return Err(no);
+    }
+    if why != "clock" {
+        let _ = app.store.clocked(|c, _| routine::not_late(c, id));
     }
     let begin = begin.unwrap_or_else(|| Begin::Prompt(r.prompt()));
     match start_now(app, &r, &desk, &begin).await {
@@ -575,10 +638,16 @@ fn watch(app: &App, r: &Routine, now: i64) {
     if r.running == routine::SESSION && status.entered_at > r.running_since {
         return end(format!("taken over {}", hm(status.entered_at)));
     }
-    if now - r.running_since > r.minutes * 60 {
+    if over(r, now) {
         app.panes.get(&r.pane).stop();
         end(format!("stopped at {} min", r.minutes));
     }
+}
+
+/// Whether a run under way is past its minutes: the time it ran, without
+/// the time the machine slept through it.
+fn over(r: &Routine, now: i64) -> bool {
+    now - r.running_since - r.slept_s > r.minutes * 60
 }
 
 #[cfg(test)]
@@ -593,6 +662,36 @@ mod tests {
         );
         assert_eq!(last_line("- one\n- two"), "two");
         assert_eq!(last_line(""), "");
+    }
+
+    #[test]
+    fn a_tick_half_a_minute_late_is_a_machine_that_slept() {
+        assert_eq!(asleep(5), 0);
+        assert_eq!(asleep(-3600), 0, "a clock set back is not sleep");
+        // A busy box holds a tick back; that is not sleep.
+        assert_eq!(asleep(5 + ASLEEP_AFTER_S), 0);
+        assert_eq!(asleep(6 + ASLEEP_AFTER_S), 1 + ASLEEP_AFTER_S);
+        assert_eq!(asleep(5 + 40 * 60), 40 * 60);
+    }
+
+    #[test]
+    fn a_runs_minutes_are_the_ones_it_ran_not_the_ones_it_slept() {
+        let r = Routine {
+            minutes: 25,
+            running_since: 1_000,
+            ..Routine::default()
+        };
+        // Forty minutes on the wall, thirty-five of them asleep: five ran.
+        let slept = Routine {
+            slept_s: 35 * 60,
+            ..r.clone()
+        };
+        assert!(!over(&slept, 1_000 + 40 * 60));
+        // The same forty minutes awake are over its twenty-five.
+        assert!(over(&r, 1_000 + 40 * 60));
+        // Asleep or not, a run that truly ran past its minutes is over.
+        assert!(over(&slept, 1_000 + 35 * 60 + 25 * 60 + 1));
+        assert!(!over(&r, 1_000 + 25 * 60));
     }
 
     #[test]

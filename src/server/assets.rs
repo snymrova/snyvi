@@ -108,6 +108,10 @@ pub(crate) const FRIEND_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frien
 /// controls, and a first desk's rings. Fetched when one of them is wanted.
 pub(crate) const GUIDE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/guide.js"));
 
+/// A page shown as itself, filling the screen (#199): its button, key and
+/// look, fetched when a page is first shown as a page.
+pub(crate) const FILL_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/fill.js"));
+
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
 
@@ -1043,6 +1047,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("plan.js", PLAN_JS, JS),
     ("friend.js", FRIEND_JS, JS),
     ("guide.js", GUIDE_JS, JS),
+    ("fill.js", FILL_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.

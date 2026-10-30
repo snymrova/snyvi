@@ -24,6 +24,9 @@ fn db() -> Connection {
         crate::due::COLUMNS_1_47,
         crate::due::TURN_COLUMN_1_47,
         crate::waiting::COLUMNS_1_47,
+        crate::onyou::NOTE_COLUMN_1_54,
+        crate::onyou::TURN_COLUMN_1_54,
+        crate::onyou::DESK_COLUMNS_1_54,
     ]
     .into_iter()
     .chain(thread::SUGGEST_COLUMNS_1_30)

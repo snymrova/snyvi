@@ -6,6 +6,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::thread::SCHEMA).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(DRAFT_COLUMNS_1_53).unwrap();
+    conn.execute_batch(LATE_COLUMNS_1_54).unwrap();
     conn.execute(
         "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'news', '/tmp/news', 1)",
         [],
@@ -134,6 +135,7 @@ fn a_routine_from_before_1_53_stays_live_with_its_file() {
     )
     .unwrap();
     conn.execute_batch(DRAFT_COLUMNS_1_53).unwrap();
+    conn.execute_batch(LATE_COLUMNS_1_54).unwrap();
     let a = get(&conn, 1).unwrap().unwrap();
     assert_eq!(
         (a.state(), a.started_at, a.file.as_str()),
@@ -377,4 +379,49 @@ fn a_run_begins_ends_and_is_kept() {
         get(&c, r.id).unwrap().unwrap().last_state,
         "ended: snyvi restarted"
     );
+}
+
+#[test]
+fn a_clock_catch_up_says_how_late_and_its_sleep_on_its_line() {
+    let mut c = db();
+    let now = 1_800_000_000;
+    let Added::Routine(r) = add(
+        &mut c,
+        1,
+        &line("tick · every day 07:30"),
+        &[],
+        "",
+        &Offer::default(),
+        now,
+    )
+    .unwrap() else {
+        panic!("added");
+    };
+    assert!(start(&c, r.id, "", "", now).unwrap());
+    // A daemon that slept through the hour: the clock's run is late, on
+    // the row and on its line in History.
+    let r = get(&c, r.id).unwrap().unwrap();
+    let at = r.due_at + 2 * 3600 + 600;
+    assert_eq!(rearm(&c, &r, at).unwrap(), 2 * 3600 + 600);
+    began(&c, r.id, "clock", "/tick", SESSION, at).unwrap();
+    // The machine slept forty minutes through it; nothing else is running.
+    assert_eq!(slept(&c, 40 * 60).unwrap(), 1);
+    let r = get(&c, r.id).unwrap().unwrap();
+    assert_eq!((r.late_s, r.slept_s), (2 * 3600 + 600, 40 * 60));
+    ended(&c, r.id, "done", "", at + 50 * 60).unwrap();
+    let run = &runs_of(&c, r.id, 1).unwrap()[0];
+    assert_eq!((run.late_s, run.slept_s), (2 * 3600 + 600, 40 * 60));
+    // An hour that could not run leaves the row on the last run's lateness.
+    rearm(&c, &r, r.due_at + 5 * 3600).unwrap();
+    skipped(&c, r.id, "desk parked", at + 2 * 86_400).unwrap();
+    assert_eq!(get(&c, r.id).unwrap().unwrap().late_s, 2 * 3600 + 600);
+    // Run now is on time, and its sleep starts at nothing.
+    began(&c, r.id, "you", "/tick", SESSION, at + 3 * 86_400).unwrap();
+    let r = get(&c, r.id).unwrap().unwrap();
+    assert_eq!((r.late_s, r.slept_s), (0, 0));
+    assert_eq!(runs_of(&c, r.id, 1).unwrap()[0].late_s, 0);
+    // Not running: a sleep counts against nothing.
+    ended(&c, r.id, "done", "", at + 3 * 86_400 + 60).unwrap();
+    assert_eq!(slept(&c, 600).unwrap(), 0);
+    assert_eq!(runs_of(&c, r.id, 1).unwrap()[0].slept_s, 0);
 }

@@ -1,6 +1,6 @@
 [package]
 name = "snyvi"
-version = "1.53.1"
+version = "1.54.0"
 edition = "2021"
 description = "All your passion projects, in one calm place"
 license = "MIT"

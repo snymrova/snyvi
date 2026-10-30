@@ -25,6 +25,41 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "onyou"
+since = "1.54.0"
+title = "On you is everything that's yours"
+line = "One list on every page, in the corner: Claude's asks, a dated line, a routine's line from this morning, a plan to approve, a left-off waiting on you, each with its document and the one button for its step. It opens by itself the first time you arrive each day."
+show = "home .hm-wait"
+
+[[feature]]
+id = "goahead"
+since = "1.54.0"
+title = "Go ahead, Tomorrow, Not this"
+line = "On a routine's line, Go ahead lets it carry on inside its Waits without opening its panel. The ✕ on a row asks: Tomorrow, Next week, or Not this with a word, which Claude hears so it does not ask again."
+small = "yes"
+
+[[feature]]
+id = "linedoc"
+since = "1.54.0"
+title = "A line carries its document"
+line = "Paste a document's link after a note and the note carries it: its card and its row in On you open and copy it."
+small = "yes"
+
+[[feature]]
+id = "html-fill"
+since = "1.54.0"
+title = "HTML pages fill the screen"
+line = "An HTML document has Full screen beside Width and Copy, or press f. Esc gives the column back."
+small = "yes"
+
+[[feature]]
+id = "routine-late"
+since = "1.54.0"
+title = "A routine says how late it ran"
+line = "A routine that caught up after the laptop slept says how late it ran, on its row and in its history, and time asleep no longer counts against its minutes."
+small = "yes"
+
+[[feature]]
 id = "download-open"
 since = "1.53.1"
 title = "A download says where it went"

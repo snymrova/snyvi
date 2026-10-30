@@ -277,6 +277,8 @@ function rtPick(name) {
 
 /** How long ago, in the rail's words. */
 const rtAgo = s => s < 60 ? "just now" : s < 3600 ? `${s / 60 | 0} min ago` : s < 86400 ? `${s / 3600 | 0} h ago` : `${s / 86400 | 0} d ago`;
+/** How long, roughly, as the row says it: `2 h`, `3 d`, `40 min`. */
+const rtLong = s => s < 3600 ? `${Math.max(1, s / 60 | 0)} min` : s < 86400 ? `${s / 3600 | 0} h` : `${s / 86400 | 0} d`;
 /** When next, in the rail's words. */
 const rtNext = at => dueWord(at).w.replace(/^due /, "");
 
@@ -286,12 +288,16 @@ function rtMeta(r) {
   if (r.state === "offer") return `${r.suggested_by} offers · ${r.every}`;
   if (r.state === "draft") return r.running_since ? "draft · trying" : `draft · ${r.every} · Start it to run`;
   if (rtStarted.get(r.id) > Date.now()) return `started · it runs on its own from ${rtNext(r.due_at)}`;
-  if (r.running_since) return `running ${Math.max(1, (now - r.running_since) / 60 | 0)} min${r.running !== "session" ? ` · ${r.running}` : ""}`;
+  // A run's minutes are the ones it ran: a laptop asleep mid-run is said
+  // apart, and does not use them up (#198, `server::routine_run::over`).
+  if (r.running_since) return `running ${Math.max(1, (now - r.running_since - (r.slept_s || 0)) / 60 | 0)} min${r.slept_s ? ` · slept ${rtLong(r.slept_s)}` : ""}${r.running !== "session" ? ` · ${r.running}` : ""}`;
   if (r.file === "gone") return "command gone";
   if (r.file === "two") return "two files hold it: rename one";
   if (r.file === "changed") return "changed since you allowed it";
   if (r.paused_at) return `paused · ${r.every}`;
-  const last = r.last_at ? ` · ran ${rtAgo(now - r.last_at)}` : "";
+  // A clock's catch-up says how late it ran: only a clock start is late,
+  // and an hour that never ran leaves the last run's word (#198).
+  const last = r.last_at ? ` · ran ${rtAgo(now - r.last_at)}${r.late_s ? ` · ${rtLong(r.late_s)} late` : ""}` : "";
   const st = r.last_state && !["done", "running"].includes(r.last_state) ? ` · ${r.last_state}` : "";
   return `${r.every} · next ${rtNext(r.due_at)}${last}${st}`;
 }

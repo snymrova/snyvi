@@ -52,10 +52,9 @@
   const snyviSays = key => { if (OWN.has(key) && !store.get(`snyvi.seen.${key}`)) corner(m => m.says(key)); };
   // A moment held when the last page closed is still owed.
   if ((store.get("snyvi.own.held") || "[]") !== "[]") setTimeout(() => corner(m => m.sayHeld()), 30e3);
-  {
-    const a = (boot.notes || []).find(n => !n.dismissed);
-    if (LATELY_SHOWN && a && !a.seen) root.dataset.note = a.lit ? "lit" : "new";
-  }
+  // The logo's mark for an unseen aside is the corner's (`mark`), set once
+  // it loads; with Lately hidden there was nothing to set before it. Its
+  // early copy here paid for On you's arrival (1.54), in this same part.
   // Ctrl+Alt+Y ("you") opens and closes the corner's tray on every page; a
   // desk's corner hears it first, its panels' keys included (10-onyou.js).
   document.addEventListener("keydown", e => {
@@ -246,10 +245,17 @@
     const word = `${focused}|${visible}|${desk ?? ""}`;
     if (word === saidFocus && !again) return;
     saidFocus = word;
-    fetch("/api/focus", { method: "POST", keepalive: true, body: JSON.stringify({ focused, visible, desk: desk ?? null, page: pageMark, seq: ++focusSeq }) }).catch(() => {});
+    // The answer says when On you opens itself: the first time today, or
+    // more became the reader's since (1.54, `onyou::arrive`). Only the
+    // window's page may hear it, by its capability: a tab cannot read the
+    // list, and must not spend the day's arrival.
+    fetch("/api/focus", { method: "POST", keepalive: true, headers: { "x-snyvi-capability": capability }, body: JSON.stringify({ focused, visible, desk: desk ?? null, page: pageMark, seq: ++focusSeq }) })
+      .then(r => r.json()).then(j => j.open && corner(m => m.open())).catch(() => {});
   }
   const beacon = () => sayFocus();
   onPlace = beacon;
   addEventListener("focus", beacon); addEventListener("blur", beacon); document.addEventListener("visibilitychange", beacon);
   addEventListener("pagehide", () => sayFocus(1, 1));
-  beacon();
+  // The first word once every part has run: it carries the capability,
+  // which a later part (07-nav.js) declares.
+  setTimeout(beacon);

@@ -109,7 +109,10 @@ function oyNode() {
 function oyCounts(d, f) {
   const waiting = f.turns.filter(w => shown(w) && !w.answered_at);
   const now = waiting.filter(w => fresh(d, w)).length;
-  return { now: now + f.suggestions.length + (ctx.corner?.()?.offerCount() || 0), old: waiting.length - now };
+  // And what is on the reader off this desk, from the corner's ranked list
+  // (1.54): a desk's notch is On you's count, as every page's pill is.
+  const K = ctx.corner?.();
+  return { now: now + f.suggestions.length + (K?.offerCount() || 0) + (K?.elsewhere?.(d.id) || 0), old: waiting.length - now };
 }
 
 /** On you in the rail's foot (1.44): the icon, and the count while anything
@@ -166,8 +169,12 @@ function trayHtml(d, f, esc) {
   const older = old ? `<ul class="cn-list cn-old oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, asked over half an hour ago, or its panel was prompted since. It goes by itself after three days, and can come back">${old}</ul>` : "";
   const K = ctx.corner?.(), offers = K ? K.offersHtml() : "", lines = K?.linesHtml?.() || "";
   const away = awayRows(f, esc);
+  // The rest of On you, under this desk's own (1.54): its dated lines,
+  // routine, plan and left-off, and every other desk's, ranked.
+  const rest = K?.onyouHtml?.(false, d.id) || "";
   const all = said + older + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
-    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d);
+    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d) +
+    (rest ? `<p class="oy-h">Also on you</p>${rest}` : "");
   const n = oyCounts(d, f), count = n.now + n.old;
   oy.empty = !all;
   const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +

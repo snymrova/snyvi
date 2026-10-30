@@ -452,6 +452,14 @@ pub struct DeskNote {
     /// When the reader approved its plan (`crate::waiting`), or 0.
     #[serde(skip_serializing_if = "is_zero")]
     pub ok_at: i64,
+    /// The line's document (1.54, `crate::onyou`): its link pasted after
+    /// the words (`linked`), or `suggest_desk_note doc`. The row opens it,
+    /// its due card carries it, On you's row has Open and Copy. The title
+    /// is filled in by `notes` for the row and the brief.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub doc: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub doc_title: String,
     /// An agent ticked it with a commit that is not on main yet
     /// (`on_branch`): the row says "on a branch" until it lands.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1510,7 +1518,7 @@ pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
         "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images,
                 stage, stage_by, stage_doc, stage_at, stage_pane, stage_session, done_pane, sent_by, thread_id,
                 (sent_peer != 0 AND sent_frame != ''), told_at,
-                landed_commit, landed_at, reply, reply_by, reply_at, due_at, due_rang_at, ok_at FROM desk_notes
+                landed_commit, landed_at, reply, reply_by, reply_at, due_at, due_rang_at, ok_at, doc FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -1521,6 +1529,9 @@ pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     for n in &mut notes {
         n.on_branch = on_branch(n, now);
         n.recheck = n.done && !n.done_by.is_empty() && n.done_at > now - RECHECK_S;
+        if !n.doc.is_empty() {
+            n.doc_title = doc_title(conn, &n.doc);
+        }
     }
     Ok(notes)
 }
@@ -1550,7 +1561,8 @@ pub fn add_note_from(
     now: i64,
 ) -> Result<Option<DeskNote>> {
     let sent_by: String = sent_by.trim().chars().take(60).collect();
-    let (text, due_at) = dated_as(clip(text), &sent_by, now);
+    let (text, doc) = linked(conn, text);
+    let (text, due_at) = dated_as(clip(&text), &sent_by, now);
     if text.is_empty() {
         return Ok(None);
     }
@@ -1575,8 +1587,8 @@ pub fn add_note_from(
         return Ok(None);
     }
     tx.execute(
-        "INSERT INTO desk_notes(desk_id, text, created_at, sent_by, due_at) VALUES(?1, ?2, ?3, ?4, ?5)",
-        params![desk_id, text, now, sent_by, due_at],
+        "INSERT INTO desk_notes(desk_id, text, created_at, sent_by, due_at, doc) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+        params![desk_id, text, now, sent_by, due_at, doc],
     )?;
     let id = tx.last_insert_rowid();
     tx.commit()?;
@@ -1586,6 +1598,7 @@ pub fn add_note_from(
         created_at: now,
         sent_by,
         due_at,
+        doc,
         ..DeskNote::default()
     }))
 }
@@ -1604,18 +1617,21 @@ pub fn set_note(
     now: i64,
 ) -> Result<bool> {
     if let Some(text) = text {
-        let text = clip(text);
+        let (text, doc) = linked(conn, text);
+        let text = clip(&text);
         // An emptied line is not a line; it is put away, the way the ✕ does,
         // so the row goes rather than sitting there blank.
         if text.is_empty() {
             return remove_note(conn, desk_id, id, now);
         }
         // A date at the end of the new words moves the line there; words
-        // without one leave the date it had, which the chip shows apart.
+        // without one leave the date it had, which the chip shows apart. A
+        // document's link after them sets the document the same way.
         let (text, due_at) = dated(text, now);
         if conn.execute(
-            "UPDATE desk_notes SET text = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
-            params![desk_id, id, text],
+            "UPDATE desk_notes SET text = ?3, doc = CASE WHEN ?4 = '' THEN doc ELSE ?4 END
+             WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+            params![desk_id, id, text, doc],
         )? == 0
         {
             return Ok(false);
@@ -1912,7 +1928,8 @@ pub fn suggest_note_from(
     now: i64,
 ) -> Result<Suggested> {
     let sent_by: String = sent_by.trim().chars().take(60).collect();
-    let (text, due_at) = dated_as(clip(text), &sent_by, now);
+    let (text, doc) = linked(conn, text);
+    let (text, due_at) = dated_as(clip(&text), &sent_by, now);
     if text.is_empty() {
         return Ok(Suggested::Empty);
     }
@@ -1944,8 +1961,8 @@ pub fn suggest_note_from(
         return Ok(Suggested::Full);
     }
     tx.execute(
-        "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by, sent_by, due_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-        params![desk_id, text, now, by, sent_by, due_at],
+        "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by, sent_by, due_at, doc) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![desk_id, text, now, by, sent_by, due_at, doc],
     )?;
     let id = tx.last_insert_rowid();
     tx.commit()?;
@@ -1956,6 +1973,7 @@ pub fn suggest_note_from(
         suggested_by: by,
         sent_by,
         due_at,
+        doc,
         ..DeskNote::default()
     })))
 }
@@ -2093,6 +2111,65 @@ fn clip(text: &str) -> String {
     }
 }
 
+/// A line and its document, when it ends in a document's link (1.54,
+/// `crate::onyou`): the page's `http://127.0.0.1:7777/d/<id>`, the window's
+/// `snyvi://d/<id>`, or a bare `/d/<id>`, cut off the words and kept as the
+/// line's `doc` when the id is a document in the library. Anything else
+/// stays in the words: a line about a web page keeps its address.
+fn linked(conn: &Connection, text: &str) -> (String, String) {
+    let whole = text.trim_end();
+    let tok = whole.rsplit(char::is_whitespace).next().unwrap_or("");
+    let Some((head, id)) = tok.trim_end_matches('/').rsplit_once("/d/") else {
+        return (text.to_string(), String::new());
+    };
+    // The page's address is this machine's: the same path on another host
+    // is a web page, and stays in the words.
+    let own = head.is_empty()
+        || head == "snyvi:/"
+        || head.starts_with("http://127.0.0.1")
+        || head.starts_with("http://localhost");
+    if !own || !doc_ok(id) || !doc_exists(conn, id) {
+        return (text.to_string(), String::new());
+    }
+    (
+        whole[..whole.len() - tok.len()].trim_end().to_string(),
+        id.to_string(),
+    )
+}
+
+/// Whether a document is in the library. A store without one (a test's)
+/// has no documents.
+pub fn doc_exists(conn: &Connection, id: &str) -> bool {
+    conn.prepare_cached("SELECT 1 FROM docs WHERE id = ?1 AND deleted_at = 0")
+        .ok()
+        .is_some_and(|mut st| st.exists(params![id]).unwrap_or(false))
+}
+
+/// A document's title for a row, or nothing.
+fn doc_title(conn: &Connection, id: &str) -> String {
+    conn.prepare_cached("SELECT title FROM docs WHERE id = ?1 AND deleted_at = 0")
+        .ok()
+        .and_then(|mut st| {
+            st.query_row(params![id], |r| r.get::<_, String>(0))
+                .optional()
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_default()
+}
+
+/// The reader sets a line's document from the row, or clears it with an
+/// empty id. False for no such line or no such document.
+pub fn set_note_doc(conn: &Connection, desk_id: i64, id: i64, doc: &str) -> Result<bool> {
+    if !doc.is_empty() && !(doc_ok(doc) && doc_exists(conn, doc)) {
+        return Ok(false);
+    }
+    Ok(conn.execute(
+        "UPDATE desk_notes SET doc = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
+        params![desk_id, id, doc],
+    )? > 0)
+}
+
 /// A line and its date, when it ends in one (`crate::due::split`); the line
 /// as it came and 0 otherwise.
 fn dated(text: String, now: i64) -> (String, i64) {
@@ -2161,6 +2238,8 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         due_at: r.get(26)?,
         due_rang_at: r.get(27)?,
         ok_at: r.get(28)?,
+        doc: r.get(29)?,
+        doc_title: String::new(),
         on_branch: false,
         recheck: false,
     })

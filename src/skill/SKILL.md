@@ -72,9 +72,14 @@ notes, its threads, the user's On you list.
   to say again, changed (a new command, a new step), goes with
   `replaces: <its id>`, so the old one does not wait beside it.
 - `leave_off` when a stretch ends: the next step and its condition, one line,
-  with `needs: you` when the next step is the user's (approve, commit, a key,
-  try it), `claude` when it is an agent's, `time` when it waits on the world.
-  Two days of `you` puts it on their Home's Waiting on you.
+  with `needs: you` only for what truly only the user can do (a payment, a
+  sign-in, a post from their account, a merge, a phone); a step you may do
+  with their permission is `needs: claude`, and their Go ahead in On you
+  says so. `time` when it waits on the world. A day of `you` puts it in On
+  you; a routine's line is there at once. Name its document with `about`, or
+  the command, or the line is not finished.
+- The user's *Not this* on a row reaches you in the brief with their word:
+  do not hand that thing to them again.
 - A friend on the list can be offered a document (`offer_document`) or a line
   (`offer_line`); the user decides whether it goes.
 - A **routine** is a line that comes back: one of the project's or the user's

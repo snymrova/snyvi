@@ -39,7 +39,10 @@ pub(crate) async fn home(
     // And what is due by the end of the reader's day, and what has waited
     // on them long enough to say so (`crate::due`, `crate::waiting`).
     let null = serde_json::Value::Null;
-    let (turns, threads, due, wait) = if gated {
+    // On you's box is the same ranked list as the corner's tray (1.54,
+    // `crate::onyou`); `due` and `wait` stay one release for a page that
+    // has not reloaded since.
+    let (turns, threads, due, wait, onyou) = if gated {
         app.store
             .clocked(|c, now| {
                 crate::thread::retire(c, now)?;
@@ -48,12 +51,13 @@ pub(crate) async fn home(
                     crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN)?,
                     crate::due::due_by(c, crate::due::end_of_day(now))?,
                     crate::waiting::rows(c, now)?,
+                    crate::onyou::gather(c, now)?,
                 ))
             })
-            .map(|(t, th, du, w)| (json!(t), json!(th), json!(du), json!(w)))
-            .unwrap_or((null.clone(), null.clone(), null.clone(), null))
+            .map(|(t, th, du, w, o)| (json!(t), json!(th), json!(du), json!(w), json!(o)))
+            .unwrap_or((null.clone(), null.clone(), null.clone(), null.clone(), null))
     } else {
-        (null.clone(), null.clone(), null.clone(), null)
+        (null.clone(), null.clone(), null.clone(), null.clone(), null)
     };
     Json(json!({
         "desks": desks,
@@ -62,6 +66,7 @@ pub(crate) async fn home(
         "threads": threads,
         "due": due,
         "wait": wait,
+        "onyou": onyou,
         // Your week, Sunday 20:00 to Tuesday 06:00 (1.48, `crate::week`).
         "week": if gated { super::api_week::week_json(&app) } else { serde_json::Value::Null },
         "queue": app.store.queue(5).unwrap_or_default(),
@@ -360,6 +365,10 @@ pub(crate) struct NoteEditBody {
     /// empty to clear it: the chip's menu.
     #[serde(default)]
     pub(crate) due: Option<String>,
+    /// The line's document by id, or empty to clear it (1.54): what a
+    /// pasted link sets from the words, set on its own.
+    #[serde(default)]
+    pub(crate) doc: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -747,6 +756,20 @@ pub(crate) async fn set_desk_note(
     if let Some(words) = b.due.as_deref() {
         return set_due(&app, id, note, words);
     }
+    if let Some(doc) = b.doc.as_deref() {
+        let doc = doc.trim().to_ascii_lowercase();
+        return match app
+            .store
+            .clocked(|c, _| crate::desk::set_note_doc(c, id, note, &doc))
+        {
+            Ok(true) => {
+                notes_moved(&app, id);
+                Json(json!({ "ok": true })).into_response()
+            }
+            Ok(false) => StatusCode::NOT_FOUND.into_response(),
+            Err(e) => err(e),
+        };
+    }
     match app.store.set_desk_note(id, note, b.text.as_deref(), b.done) {
         Ok(true) => {
             notes_moved(&app, id);
@@ -1082,9 +1105,31 @@ pub(crate) async fn desk_left_off(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
+    // On you's row (1.54, `crate::onyou`): Go ahead on a routine's line
+    // resumes its session inside its Waits, and approves the line so the
+    // row goes; on a session's it is Approve. Tomorrow and Next week take
+    // the row off until then; Not this takes it off with the reader's word.
+    if b.go {
+        return left_off_go(&app, id).await;
+    }
+    let answered = match (b.later.as_deref(), b.not.as_deref(), b.not_undo) {
+        (Some(when), _, _) => Some(app.store.clocked(|c, now| {
+            let until = later_until(when, now);
+            crate::onyou::later_left_off(c, id, until)
+        })),
+        (None, Some(word), _) => Some(
+            app.store
+                .clocked(|c, _| crate::onyou::not_left_off(c, id, Some(word))),
+        ),
+        (None, None, true) => Some(
+            app.store
+                .clocked(|c, _| crate::onyou::not_left_off(c, id, None)),
+        ),
+        _ => None,
+    };
     // Home's Approve and *On me* change the sentence's standing, not the
     // sentence (`crate::waiting`).
-    let standing = match (b.approve, b.mark.as_deref()) {
+    let standing = answered.or_else(|| match (b.approve, b.mark.as_deref()) {
         (Some(yes), _) => Some(
             app.store
                 .clocked(|c, now| crate::waiting::approve_left_off(c, id, !yes, now)),
@@ -1094,7 +1139,7 @@ pub(crate) async fn desk_left_off(
                 .clocked(|c, _| crate::waiting::set_needs(c, id, needs)),
         ),
         (None, None) => None,
-    };
+    });
     if let Some(r) = standing {
         return match r {
             Ok(true) => {
@@ -1126,6 +1171,69 @@ pub(crate) struct LeftOffBody {
     pub(crate) approve: Option<bool>,
     #[serde(default)]
     pub(crate) mark: Option<String>,
+    /// On you's ✕ (1.54): `tomorrow`, `next week`, or empty to bring it
+    /// back; `not` with the reader's word, `not_undo` to take it back.
+    #[serde(default)]
+    pub(crate) later: Option<String>,
+    #[serde(default)]
+    pub(crate) not: Option<String>,
+    #[serde(default)]
+    pub(crate) not_undo: bool,
+    /// On you's Go ahead.
+    #[serde(default)]
+    pub(crate) go: bool,
+}
+
+/// Tomorrow and Next week, as On you's ✕ says them, at the reader's
+/// nine in the morning; anything else is now, which brings the row back.
+pub(crate) fn later_until(when: &str, now: i64) -> i64 {
+    let words = match when {
+        "tomorrow" => "tomorrow 9",
+        "next week" => "mon 9",
+        _ => return 0,
+    };
+    crate::due::parse(words, now).unwrap_or(now + 86_400)
+}
+
+/// Go ahead on a desk's left-off: a routine's resumes its own session with
+/// the line (`routine_run::go_ahead`); a session's is Approve, which its
+/// panel hears at its next prompt. Either way the line is approved, so the
+/// row goes. A routine that cannot start says why, and the row stays.
+async fn left_off_go(app: &std::sync::Arc<App>, id: i64) -> Response {
+    let found = app.store.clocked(|c, _| {
+        let Some(desk) = crate::desk::get(c, id)? else {
+            return Ok(None);
+        };
+        let Some(left) = desk.left_off else {
+            return Ok(None);
+        };
+        let routine = match left.pane.as_str() {
+            "" => None,
+            pane => crate::routine::of_pane(c, pane)?.map(|r| r.id),
+        };
+        Ok(Some((left.text, routine)))
+    });
+    let (line, routine) = match found {
+        Ok(Some(f)) => f,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    if let Some(rid) = routine {
+        if let Err(why) = super::routine_run::go_ahead(app, rid, &line).await {
+            return Json(json!({ "ok": false, "why": why })).into_response();
+        }
+    }
+    match app
+        .store
+        .clocked(|c, now| crate::waiting::approve_left_off(c, id, false, now))
+    {
+        Ok(true) => {
+            desks_moved(app);
+            Json(json!({ "ok": true, "resumed": routine.is_some() })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
 }
 
 #[derive(Deserialize, Default)]

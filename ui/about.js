@@ -342,7 +342,7 @@ const HELP = `
 <div class="help-col" id="help-col-2">
   <section>
     <h3>Diagram</h3>
-    <div class="hk"><span>Fullscreen</span><span class="keys"><kbd>f</kbd></span></div>
+    <div class="hk"><span>Fill the screen <em>a diagram, or an HTML page</em></span><span class="keys"><kbd>f</kbd></span></div>
     <div class="hk"><span>Fit to window</span><span class="keys"><kbd>0</kbd></span></div>
     <div class="hk"><span>Zoom</span><span class="keys">${kb("mod")}<i>+</i>scroll</span></div>
     <div class="hk"><span>Pan</span><span class="keys">drag</span></div>
