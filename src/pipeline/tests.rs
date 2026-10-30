@@ -9,7 +9,9 @@ fn db() -> Connection {
     conn.execute_batch(crate::desk::SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::desk::LOOP_COLUMNS_1_37).unwrap();
     conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::onyou::NOTE_COLUMN_1_54).unwrap();
     conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::onyou::DESK_COLUMNS_1_54).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn
 }

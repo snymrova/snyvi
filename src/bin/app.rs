@@ -218,6 +218,13 @@ fn main() {
             }
             reveal(&w);
         }
+        // The plugin saves every window on the way out, before this runs;
+        // what it wrote is put inside the work area if it covers a monitor
+        // (`keep_inside`).
+        #[cfg(target_os = "linux")]
+        if matches!(_event, tauri::RunEvent::Exit) {
+            keep_inside(_app, None);
+        }
     });
 }
 
@@ -423,9 +430,158 @@ fn window(app: &tauri::App, parsed: tauri::Url, home: &str) -> tauri::Result<Web
     // Size and position from the last run, saved by the plugin on close.
     let _ = w.restore_state(REMEMBERED);
     #[cfg(target_os = "linux")]
+    keep_inside(app.handle(), Some(&w));
+    #[cfg(target_os = "linux")]
     paste_pictures(&w);
     Ok(w)
 }
+
+/// Linux: a window saved as big as its monitor comes back at its first-run
+/// size, in the middle of the monitor's work area, maximised again if it was,
+/// and is never saved that big again.
+///
+/// The window has no frame of the system's (`.decorations(frame)` above),
+/// and mutter, GNOME's window manager, takes an undecorated window that
+/// exactly covers a monitor for a full-screen program of the old kind, from
+/// before a program could ask for full screen, and stacks it over the top
+/// bar and the dock. On a 1920x1080 screen whose work area is 1920x1051
+/// under GNOME's 29 px top bar, the reader lost the bar, its clock and the
+/// dock (hidden on its own, it never came up over the window either), and
+/// nothing but a resize gave them back.
+///
+/// The size came from the window-state plugin. It notes the window's size
+/// every time it changes, so a window that was really full screen -- a
+/// diagram's or a page's fill asks the engine for full screen -- and was
+/// closed or quit that way left 1920x1080 at 0,0 in the file, and every run
+/// after opened at it. Leaving SIZE and POSITION out of the save would not
+/// keep the size before: the plugin has the full-screen one in its memory by
+/// then, from the resize, and a save writes all of its memory. So the file
+/// is put right after each save, and the window after the restore.
+///
+/// Read from the file and not from the window: on Linux a size asked for a
+/// moment ago arrives later, with the window manager's answer, and right
+/// after the restore the window still reports the size it opened at.
+/// `w` is the window to move as well, on the way in; on the way out the
+/// file is enough.
+///
+/// Not the work area itself: on a monitor with no panel of GNOME's -- the
+/// one that is not primary, where the top bar is not -- the work area is the
+/// whole monitor, and a window put there is the same full-screen one again
+/// (the 1.54 review, on two monitors). A window of ordinary size that mutter
+/// maximises is another thing to it: maximised, under the bar.
+#[cfg(target_os = "linux")]
+fn keep_inside(handle: &tauri::AppHandle, w: Option<&WebviewWindow>) {
+    use tauri_plugin_window_state::AppHandleExt;
+    let Ok(dir) = handle.path().app_config_dir() else {
+        return;
+    };
+    let path = dir.join(handle.filename());
+    let Some(mut all) = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+    else {
+        return;
+    };
+    let Some(saved) = all.get_mut("main") else {
+        return;
+    };
+    let Some(m) = monitor_of(handle, saved) else {
+        return;
+    };
+    let (size, area) = (m.size(), m.work_area());
+    let rect = (
+        area.position.x,
+        area.position.y,
+        area.size.width,
+        area.size.height,
+    );
+    let Some((x, y, width, height)) = uncover(saved, (size.width, size.height), rect) else {
+        return;
+    };
+    let maximized = saved.get("maximized").and_then(serde_json::Value::as_bool) == Some(true);
+    if let Ok(bytes) = serde_json::to_vec_pretty(&all) {
+        let _ = std::fs::write(&path, bytes);
+    }
+    // Out of the maximised state first, or the window manager keeps the
+    // geometry it had and ignores the new one; back into it after, if that
+    // is how the reader left it.
+    if let Some(w) = w {
+        let _ = w.unmaximize();
+        let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        let _ = w.set_size(tauri::PhysicalSize::new(width, height));
+        if maximized {
+            let _ = w.maximize();
+        }
+    }
+}
+
+/// The monitor a saved window sits on: the one holding its middle, or the
+/// primary one when none does (a monitor since unplugged).
+#[cfg(target_os = "linux")]
+fn monitor_of(handle: &tauri::AppHandle, saved: &serde_json::Value) -> Option<tauri::Monitor> {
+    let n = |k: &str| {
+        saved
+            .get(k)
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0)
+    };
+    let (cx, cy) = (n("x") + n("width") / 2, n("y") + n("height") / 2);
+    let holds = |m: &tauri::Monitor| {
+        let (p, s) = (m.position(), m.size());
+        let (x, y) = (i64::from(p.x), i64::from(p.y));
+        cx >= x && cy >= y && cx < x + i64::from(s.width) && cy < y + i64::from(s.height)
+    };
+    handle
+        .available_monitors()
+        .ok()?
+        .into_iter()
+        .find(holds)
+        .or_else(|| handle.primary_monitor().ok().flatten())
+}
+
+/// Whether a window of `size` covers a monitor of `monitor`: as wide and as
+/// tall, or more. A monitor that reports no size is covered by nothing.
+#[cfg(any(target_os = "linux", test))]
+fn covers(size: (u32, u32), monitor: (u32, u32)) -> bool {
+    monitor.0 > 0 && monitor.1 > 0 && size.0 >= monitor.0 && size.1 >= monitor.1
+}
+
+/// The plugin's saved state for one window, moved into the work area `area`
+/// (x, y, width, height) when it covers its monitor. True when it was moved.
+/// Both positions go, the one it had and the one before it was maximised,
+/// since a maximised window is put back at the second.
+#[cfg(any(target_os = "linux", test))]
+fn uncover(
+    saved: &mut serde_json::Value,
+    monitor: (u32, u32),
+    area: (i32, i32, u32, u32),
+) -> Option<(i32, i32, u32, u32)> {
+    let n = |k: &str| {
+        saved
+            .get(k)
+            .and_then(serde_json::Value::as_u64)
+            .map_or(0, |v| u32::try_from(v).unwrap_or(u32::MAX))
+    };
+    if !covers((n("width"), n("height")), monitor) {
+        return None;
+    }
+    let o = saved.as_object_mut()?;
+    let (ax, ay, aw, ah) = area;
+    let (width, height) = (FIRST_SIZE.0.min(aw), FIRST_SIZE.1.min(ah));
+    let x = ax + i32::try_from((aw - width) / 2).unwrap_or(0);
+    let y = ay + i32::try_from((ah - height) / 2).unwrap_or(0);
+    for (k, v) in [("x", x), ("y", y), ("prev_x", x), ("prev_y", y)] {
+        o.insert(k.into(), v.into());
+    }
+    o.insert("width".into(), width.into());
+    o.insert("height".into(), height.into());
+    Some((x, y, width, height))
+}
+
+/// The window's size on a first run (`inner_size` in `window`), and the one
+/// a monitor-sized save is put back to.
+#[cfg(any(target_os = "linux", test))]
+const FIRST_SIZE: (u32, u32) = (1280, 860);
 
 /// Closing the window hides it when there is a tray to bring it back.
 fn hide_on_close(handle: &tauri::AppHandle, w: &WebviewWindow, tray: bool) {
@@ -449,6 +605,8 @@ fn hide_on_close(handle: &tauri::AppHandle, w: &WebviewWindow, tray: bool) {
             // Written now rather than on exit, because by then the
             // window has been hidden and has no geometry worth saving.
             let _ = handle.save_window_state(REMEMBERED);
+            #[cfg(target_os = "linux")]
+            keep_inside(&handle, None);
             let _ = window.hide();
             said_where_it_went();
         }
@@ -973,5 +1131,61 @@ mod tests {
             "http://127.0.0.1:7777/d/abc?v=2",
             "no mark, nothing added"
         );
+    }
+
+    /// #200: the state found on a GNOME box, 1920x1080 at 0,0, under a
+    /// 29 px top bar. Mutter stacked it over the bar and the dock.
+    #[test]
+    fn a_window_as_big_as_its_monitor_goes_inside_the_work_area() {
+        assert!(covers((1920, 1080), (1920, 1080)));
+        assert!(covers((2000, 1100), (1920, 1080)));
+        assert!(
+            !covers((1920, 1051), (1920, 1080)),
+            "the work area is not the monitor"
+        );
+        assert!(!covers((1280, 860), (1920, 1080)));
+        assert!(!covers((1920, 1080), (0, 0)), "a monitor with no size");
+
+        let area = (0, 29, 1920, 1051);
+        let mut saved = serde_json::json!({ "width": 1920, "height": 1080, "x": 0, "y": 0, "prev_x": 0, "prev_y": 0,
+            "maximized": true, "visible": true, "decorated": false, "fullscreen": false });
+        assert_eq!(
+            uncover(&mut saved, (1920, 1080), area),
+            Some((320, 124, 1280, 860)),
+            "its first-run size, in the middle of the work area"
+        );
+        assert_eq!(
+            (saved["x"].as_i64(), saved["y"].as_i64()),
+            (Some(320), Some(124))
+        );
+        assert_eq!(
+            (saved["prev_x"].as_i64(), saved["prev_y"].as_i64()),
+            (Some(320), Some(124))
+        );
+        assert_eq!(
+            (saved["width"].as_u64(), saved["height"].as_u64()),
+            (Some(1280), Some(860))
+        );
+        assert_eq!(
+            saved["maximized"], true,
+            "maximised stays as the reader left it"
+        );
+        assert!(
+            uncover(&mut saved, (1920, 1080), area).is_none(),
+            "once is enough"
+        );
+        // A monitor with no panel: its work area is all of it, and the
+        // window still comes back smaller than it.
+        let mut side =
+            serde_json::json!({ "width": 1920, "height": 1080, "x": 0, "y": 0, "maximized": true });
+        assert_eq!(
+            uncover(&mut side, (1920, 1080), (0, 0, 1920, 1080)),
+            Some((320, 110, 1280, 860))
+        );
+
+        let mut fine = serde_json::json!({ "width": 1280, "height": 860, "x": 300, "y": 120 });
+        let before = fine.clone();
+        assert!(uncover(&mut fine, (1920, 1080), area).is_none());
+        assert_eq!(fine, before, "a window that fits is left where it is");
     }
 }

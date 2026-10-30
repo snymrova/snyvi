@@ -1141,11 +1141,23 @@ fn row_act(app: &Arc<App>, id: i64, what: &str, row: i64, act: &str, body: &[u8]
     if (what, act) == ("suggestions", "open") {
         return open_suggestion(app, id, row, body);
     }
+    // On you's ✕ on a card (1.54, `crate::onyou`): `later` is Tomorrow or
+    // Next week, off every list until then; `not` is Not this, with the
+    // reader's word, which the desk's brief carries for a week. An empty
+    // body is the ✕ it always was.
+    let said: RemoveBody = serde_json::from_slice(body).unwrap_or_default();
     let r = app.store.clocked(|c, now| {
         Ok(match (what, act) {
             ("threads", "remove") => thread::remove(c, id, row, now)?,
             ("threads", "restore") => thread::restore(c, id, row)?,
-            ("turns", "remove") => thread::remove_turn(c, id, row, "you", now)?,
+            ("turns", "remove") => match (said.later.as_deref(), said.not.as_deref()) {
+                (Some(when), _) => {
+                    let until = super::api_desk::later_until(when, now);
+                    thread::later_turn(c, id, row, until)?
+                }
+                (None, Some(word)) => thread::not_turn(c, id, row, word, now)?,
+                (None, None) => thread::remove_turn(c, id, row, "you", now)?,
+            },
             ("turns", "restore") => thread::restore_turn(c, id, row)?,
             // Send now typed it into the panel: told there, not again.
             ("turns", "sent") => thread::sent_turn(c, id, row, now)?,
@@ -1178,6 +1190,15 @@ fn row_act(app: &Arc<App>, id: i64, what: &str, row: i64, act: &str, body: &[u8]
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
+}
+
+/// What a card's ✕ said, from On you's popover (1.54).
+#[derive(Deserialize, Default)]
+struct RemoveBody {
+    #[serde(default)]
+    later: Option<String>,
+    #[serde(default)]
+    not: Option<String>,
 }
 
 fn open_suggestion(app: &Arc<App>, id: i64, row: i64, body: &[u8]) -> Response {

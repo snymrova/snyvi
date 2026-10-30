@@ -23,6 +23,7 @@ mod lately;
 mod launch;
 mod links;
 mod mcp;
+mod onyou;
 mod pane;
 mod peer;
 mod pipeline;

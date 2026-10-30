@@ -573,6 +573,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (31, desk::BACK_COLUMN_1_49), // 1.49: a closed pane's side
     (32, crate::routine::DRAFT_COLUMNS_1_53), // 1.53: a routine's draft and its file
     (33, crate::thread::REMOVED_BY_1_53), // 1.53: who put a turn away
+    // 1.54: On you widened -- a line's document, Tomorrow and Not this on a
+    // card and a left-off, the tray's arrival stamps (`crate::onyou`)
+    (34, crate::onyou::NOTE_COLUMN_1_54),
+    (34, crate::onyou::TURN_COLUMN_1_54),
+    (34, crate::onyou::DESK_COLUMNS_1_54),
+    (34, crate::onyou::HOME_COLUMNS_1_54),
+    (34, crate::routine::LATE_COLUMNS_1_54), // 1.54: a run's lateness, a run's sleep (#198)
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

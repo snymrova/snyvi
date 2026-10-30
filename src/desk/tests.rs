@@ -12,7 +12,9 @@ fn db() -> Connection {
     conn.execute_batch(crate::thread::THREAD_COLUMN).unwrap();
     conn.execute_batch(LOOP_COLUMNS_1_37).unwrap();
     conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::onyou::NOTE_COLUMN_1_54).unwrap();
     conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::onyou::DESK_COLUMNS_1_54).unwrap();
     conn.execute_batch(crate::links::COLUMN_1_43).unwrap();
     conn.execute_batch(crate::accounts::SCHEMA).unwrap();
     for c in crate::accounts::COLUMNS_1_30 {
@@ -1741,4 +1743,53 @@ fn an_agents_tick_off_a_branch_lands_later_and_can_be_taken_back() {
     assert!(set_note(&conn, d, n, None, Some(true), now).unwrap());
     assert!(!notes(&conn, d).unwrap()[0].recheck);
     assert!(!check_note(&conn, d, n, false, "no", now).unwrap());
+}
+
+/// A line ending in one of the library's documents keeps it as its `doc`,
+/// in any of the three forms a link comes in, with its date too; a link to
+/// a document that is not there, or a web page, stays in the words.
+#[test]
+fn a_documents_link_after_a_line_is_its_document() {
+    let mut conn = db();
+    conn.execute_batch(
+        "CREATE TABLE docs(id TEXT PRIMARY KEY, title TEXT NOT NULL, deleted_at INTEGER NOT NULL DEFAULT 0);
+         INSERT INTO docs(id, title) VALUES('93ebc26095', 'Posts for 1.54');",
+    )
+    .unwrap();
+    let d = create(&conn, "/w", None, 0).unwrap().id;
+    for (said, kept) in [
+        ("post 1.54 http://127.0.0.1:7777/d/93ebc26095", "post 1.54"),
+        ("post 1.54 snyvi://d/93ebc26095", "post 1.54"),
+        ("post 1.54 /d/93ebc26095/", "post 1.54"),
+    ] {
+        let n = add_note(&mut conn, d, said, 10).unwrap().unwrap();
+        assert_eq!(
+            (n.text.as_str(), n.doc.as_str()),
+            (kept, "93ebc26095"),
+            "{said}"
+        );
+    }
+    let dated = add_note(&mut conn, d, "post it fri 10 /d/93ebc26095", 10)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (dated.text.as_str(), dated.doc.as_str()),
+        ("post it", "93ebc26095")
+    );
+    assert!(dated.due_at > 0);
+    let gone = add_note(&mut conn, d, "read /d/0000000000", 10)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (gone.text.as_str(), gone.doc.as_str()),
+        ("read /d/0000000000", "")
+    );
+    let web = add_note(&mut conn, d, "read https://example.com/d/93ebc26095", 10)
+        .unwrap()
+        .unwrap();
+    assert_eq!(web.doc, "", "the same path on another host is a web page");
+    let titled = notes(&conn, d).unwrap();
+    assert!(titled.iter().any(|n| n.doc_title == "Posts for 1.54"));
+    assert!(set_note_doc(&conn, d, gone.id, "93ebc26095").unwrap());
+    assert!(!set_note_doc(&conn, d, gone.id, "1111111111").unwrap());
 }

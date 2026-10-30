@@ -165,6 +165,37 @@ fn next_weekday(now: i64, hour: u8) -> i64 {
         .unix_timestamp()
 }
 
+/// The document a thread shipped, for the line the card writes (1.54,
+/// `crate::onyou`): the newest its panel sent since the thread began --
+/// the post, the release note -- or the desk's newest since then when the
+/// panel is gone. Nothing when there is none, or no library to look in.
+pub fn doc_for(conn: &Connection, desk_id: i64, thread_id: i64) -> String {
+    let Ok((pane, since)) = conn.query_row(
+        "SELECT pane, created_at FROM threads WHERE desk_id = ?1 AND id = ?2",
+        params![desk_id, thread_id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+    ) else {
+        return String::new();
+    };
+    let slot: i64 = conn
+        .query_row("SELECT slot FROM panes WHERE id = ?1", params![pane], |r| {
+            r.get(0)
+        })
+        .unwrap_or(0);
+    conn.prepare_cached(
+        "SELECT id FROM docs WHERE desk_id = ?1 AND (?2 = 0 OR desk_slot = ?2) AND received_at >= ?3
+           AND deleted_at = 0 ORDER BY received_at DESC LIMIT 1",
+    )
+    .ok()
+    .and_then(|mut st| {
+        st.query_row(params![desk_id, slot, since], |r| r.get::<_, String>(0))
+            .optional()
+            .ok()
+            .flatten()
+    })
+    .unwrap_or_default()
+}
+
 /// What a row of the card puts on the desk: the line and when it is due.
 /// `None` for No one, which writes nothing.
 pub fn line_for(answer: &str, name: &str, now: i64) -> Option<(String, i64)> {
@@ -214,10 +245,11 @@ pub fn answer(
                 |r| r.get(0),
             )?;
             if held < crate::desk::NOTES_PER_DESK {
+                let doc = doc_for(conn, desk_id, turn.thread_id);
                 conn.execute(
-                    "INSERT INTO desk_notes(desk_id, text, created_at, due_at, thread_id)
-                     VALUES(?1, ?2, ?3, ?4, ?5)",
-                    params![desk_id, text, now, due_at, turn.thread_id],
+                    "INSERT INTO desk_notes(desk_id, text, created_at, due_at, thread_id, doc)
+                     VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![desk_id, text, now, due_at, turn.thread_id, doc],
                 )?;
                 note = conn.last_insert_rowid();
             }

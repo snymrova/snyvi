@@ -652,7 +652,7 @@ function noteRow(x, esc) {
   // line is history and they were the loudest marks on it (7c0fc42885).
   // An open line's date comes first: the marks' room cuts from the end, and
   // "overdue" was the word cut to "ove" behind a long stage (N2).
-  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + stageMark(x, esc) + promiseMark(x, esc) + picMark(x, esc);
+  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + stageMark(x, esc) + promiseMark(x, esc) + picMark(x, esc);
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
@@ -783,6 +783,14 @@ function dueWord(at) {
   return { w: `due ${d.toLocaleDateString([], days < 7 ? { weekday: "short" } : { day: "numeric", month: "short" })}`, tone: "" };
 }
 const dueWhen = at => new Date(at * 1000).toLocaleString([], { weekday: "long", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+/** The line's document (1.54): a link pasted after its words, or the one an
+ *  agent named. It opens it; its due card and On you's row carry it too. */
+function docMark(x, esc) {
+  if (!x.doc) return "";
+  const t = esc(x.doc_title || "its document");
+  return `<button type="button" class="dk-stage" data-a="note-doc" data-d="${esc(x.doc)}" data-tip="${t}" data-tip-sub="this line's document · its card opens and copies it" aria-label="Open ${t}">${ico("doc")}<span class="w">doc</span></button>`;
+}
 
 function dueMark(x, esc) {
   if (!x.due_at) return "";

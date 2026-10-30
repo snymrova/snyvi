@@ -87,6 +87,7 @@ const CSS = `
 .hm-wh { display: flex; align-items: center; gap: 8px; height: 28px; margin: 0 0 8px; border-bottom: 1px solid var(--rule); }
 /* A head reads as the head of what is under it: the rows' size, a step
    brighter than their facts (audit 67d008cb6f; it was 11 px under 13). */
+.hm-wh .hm-gap { flex: 1; }
 .hm-wh h2 { margin: 0; font-size: var(--fs-ui); font-weight: 600; color: var(--fg-2); }
 .hm-wh h2 .n { margin-left: 6px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .hm-wh .hm-act { margin-left: auto; }
@@ -301,6 +302,12 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-due.now { color: var(--accent); font-weight: 600; }
 .hm-due.late { color: var(--warn); font-weight: 600; }
 .hm-nt > .hm-due { margin-left: 6px; font-size: var(--fs-micro); }
+/* On you's rows on Home are all of them, not the tray's seven: twenty on
+   nine desks pushed the rest of Home off the page. Past the tray's own
+   height they scroll under the box's head, which stays, as the tray's do.
+   The padding keeps what a scroller would clip in view: the ✕ that hangs
+   past a row's right, the new dot past its left, the focus band. */
+.oy-home { max-height: 60vh; margin: -4px -10px; padding: 4px 10px; overflow-y: auto; overscroll-behavior: contain; }
 .hm-wait .hm-sub { margin: 6px 0 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
 .hm-wait .hm-wt-d { color: inherit; }
 .hm-wait .hm-acts > .hm-s { flex: 1 1 auto; }
@@ -475,7 +482,8 @@ export async function show(ctx) {
   tick();
   claudeAsk();
   // Lately is the corner's, drawn large here (ui/corner.js), when it is shown.
-  if (!cornerMod && c.lately) c.corner?.().then(m => { cornerMod = m; redraw(); }, () => {});
+  // And On you's box is the corner's ranked rows (1.54), Lately or not.
+  if (!cornerMod) c.corner?.().then(m => { cornerMod = m; redraw(); }, () => {});
   if (last) draw(last);
   await refresh();
 }
@@ -1338,6 +1346,10 @@ function onMe(id, l) {
 const deskName = (j, id) => (j.desks || []).find(d => d.id === id)?.name || "a desk";
 
 function waitBox(j) {
+  // On you, ranked (1.54, `crate::onyou`): every row, through the corner's
+  // own drawing so a row reads and answers the same in both places; a quiet
+  // desk's Park it stays Home's.
+  if (cornerMod?.onyou?.()) return onyouBox(j);
   const { esc, plural } = c, due = j.due || [];
   // A desk quiet ten days with lines still open waits on you too, with Park
   // it (1.48): the desk card's own Park it?, said where the waiting is.
@@ -1380,8 +1392,31 @@ function waitBox(j) {
     (ghosts ? `<ul class="hm-arr">${ghosts}</ul>` : "") + `</section>`;
 }
 
+/** On you's box: its head with the count and the ⋯ (whether the tray
+ *  opens itself on arrival), the rows grouped by desk past four desks, then
+ *  the quiet desks with Park it. Nothing when nothing is on the reader. */
+function onyouBox(j) {
+  const { esc, plural } = c, o = cornerMod.onyou();
+  const old = Date.now() / 1000 - QUIET_DAYS * DAY;
+  const quiet = (j.desks || []).filter(d => !d.parked && d.open && d.touched && d.touched < old && !o.rows.some(r => r.desk === d.id));
+  const quietRows = quiet.map(d => `<li><span class="hm-ab"><span class="hm-t">Quiet since ${new Date(d.touched * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${plural(d.open, "line")} open</span><span class="hm-acts">` +
+    (arrSaid.get(`q${d.id}:`) ? saidRow(arrSaid.get(`q${d.id}:`)) : `<a class="hm-t hm-wt-d" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><button type="button" class="hm-link" data-hm="wpark" data-k="${d.id}" data-tip="Park it" data-tip-sub="the desk goes on the shelf; nothing on it is closed">Park it</button>`) + `</span></span></li>`).join("");
+  const rows = cornerMod.onyouHtml(true);
+  if (!o.left && !quietRows && !o.ran_quiet && !o.older) return "";
+  const more = `<button type="button" class="hm-link" data-hm="arrive" data-n="${o.arrive_off ? "on" : "off"}" aria-pressed="${!o.arrive_off}" data-tip="${o.arrive_off ? "Open On you when I arrive" : "Don't open it when I arrive"}" data-tip-sub="the first time your window is in front each day, and again when more became yours">${o.arrive_off ? "Opens: off" : "Opens on arrival"}</button>`;
+  return `<section class="hm-w hm-wait" data-part="home.wait" aria-label="On you"><div class="hm-wh"><h2>On you${o.left ? ` <span class="n">${o.left}</span>` : ""}</h2><span class="hm-gap"></span>${more}</div>` +
+    `<div class="oy-home">${rows}${quietRows ? `<ul class="hm-arr">${quietRows}</ul>` : ""}</div></section>`;
+}
+
 /** The box's buttons, and On me. True when the click was one of them. */
 async function waitClick(k, id, b) {
+  if (k === "arrive") {
+    b.disabled = true;
+    try { await c.deskApi("/api/home/week", { hide: `arrive-${b.dataset.n}` }); } catch (e) { b.disabled = false; c.peerCtx.toast("Could not change it", { sub: c.peerCtx.sayErr(e).why }); return true; }
+    cornerMod?.refresh?.();
+    soonRefresh();
+    return true;
+  }
   if (!["udone", "ulater", "wplan", "wok", "wlater", "wdrop", "wundo", "onme", "wpark", "wunpark"].includes(k)) return false;
   const n = b.dataset.n || "", api = c.deskApi;
   const x = (last?.wait || []).find(w => w.desk === id && (k !== "wplan" || w.doc === n));

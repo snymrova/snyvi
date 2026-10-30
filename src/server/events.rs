@@ -49,6 +49,7 @@ pub(crate) async fn focus(State(app): S, headers: HeaderMap, body: Bytes) -> Res
     }
     let b: FocusBody = serde_json::from_slice(&body).unwrap_or_default();
     let focused = b.focused.unwrap_or(true);
+    let named = b.page.as_ref().is_some_and(|p| !p.is_empty());
     if let Some(page) = b.page.filter(|p| !p.is_empty() && p.len() <= 64) {
         let seq = b.seq.unwrap_or(0);
         let mut m = FOCUSED.lock().unwrap();
@@ -76,7 +77,23 @@ pub(crate) async fn focus(State(app): S, headers: HeaderMap, body: Bytes) -> Res
     if focused {
         *app.last_focus.lock().unwrap() = Instant::now();
     }
-    StatusCode::NO_CONTENT.into_response()
+    // In front and seen: the first time today, or an hour on with more
+    // become the reader's, On you's tray opens itself (1.54,
+    // `crate::onyou::arrive`). The answer says so; the page opens it. Only
+    // a page that names itself asks: a beacon from before 1.27 does not.
+    // And only to the window's page: a browser tab has no capability, cannot
+    // read the list, and would spend the day's arrival on an empty tray.
+    let open = focused
+        && named
+        && refuse_desk(&app, &headers, &HashMap::new()).is_none()
+        && b.visible.unwrap_or(focused)
+        && app
+            .store
+            .clocked(|c, now| crate::onyou::arrive(c, now))
+            .ok()
+            .flatten()
+            .is_some();
+    Json(json!({ "open": open })).into_response()
 }
 
 /// Whether a page is in front now: one said so and pages are open still, or

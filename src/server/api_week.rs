@@ -39,6 +39,9 @@ pub(crate) async fn home_week(
         "week" => crate::week::skip(c, now).map(|_| Vec::new()),
         "off" => crate::week::set_off(c, true).map(|_| Vec::new()),
         "on" => crate::week::set_off(c, false).map(|_| Vec::new()),
+        // On you's box ⋯ (1.54): whether the tray opens on arrival.
+        "arrive-off" => crate::onyou::set_arrive_off(c, true).map(|_| Vec::new()),
+        "arrive-on" => crate::onyou::set_arrive_off(c, false).map(|_| Vec::new()),
         _ => crate::week::file(c, b.ship.as_ref(), b.tell.as_ref(), now),
     });
     match r {

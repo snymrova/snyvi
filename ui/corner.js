@@ -78,6 +78,16 @@ const CSS = `
    600, its count after it (.sec-n). Uppercase read as another app's. */
 .oy-h { margin: 2px 2px 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); letter-spacing: .01em; }
 .oy-head .sec-n { padding: 0 2px; }
+/* On you, ranked (1.54): the sentence over the rows, the thing a row is
+   about, the fold past seven, the grey lines, and the ✕'s answers, all
+   inside the row's own height until pressed. */
+.oy-sent { margin: 2px 2px 6px; font-size: var(--fs-small); color: var(--fg-2); }
+.cn-nodoc { font-size: var(--fs-micro); color: var(--fg-3); }
+.cn-doc { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oy-fold, .oy-grey { margin: 4px 2px; font-size: var(--fs-micro); color: var(--fg-3); }
+.oy-fold button { padding: 0; border: 0; background: none; font: inherit; color: var(--fg-2); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.cn-pop { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cn-pop input { flex: 1 1 120px; min-width: 0; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-xs); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }
 .oy-hi { display: grid; place-items: center; width: 14px; margin-right: 4px; color: var(--fg-3); }
 .oy-hi svg { width: 13px; height: 13px; }
 .oy-scroll .oy-h { margin-top: 10px; }
@@ -217,6 +227,9 @@ const L = {
   said: new Map(),
   /** The reader's own answers opened to their full text, by row id. */
   expanded: new Set(),
+  /** On you, ranked, as `/api/lately` gave it (1.54, `crate::onyou`), and
+   *  the row whose ✕ has its answers open. */
+  onyou: null, pop: "",
 };
 
 export function init(ctx) {
@@ -241,6 +254,10 @@ export function init(ctx) {
   return { event, refresh, moved, rise, offer, says, sayHeld, toggle, open: openTray, draw, redraw, lately,
     cardHtml, trayHtml: latelyHtml, offersHtml, offerCount: () => liveOffers().length + liveLines().length, linesHtml, dot, keep: () => L.kept,
     act, opened, chime, ring, mark, hand, cornerHeld, away: () => away, lift, chimed: chimedLine,
+    /** On you, ranked (1.54): its rows for Home and a desk's tray, the
+     *  list as read, and how many are on the reader off a desk. */
+    onyouHtml, onyou: () => L.onyou,
+    elsewhere: desk => L.onyou ? L.onyou.rows.filter(r => !(r.desk === desk && (r.kind === "card" || r.kind === "suggested"))).length : 0,
     /** The desk's first page while its card is up: its row in the rail is ringed. */
     rising: id => L.card?.kind === "first" && L.card.key === `d${id}` };
 }
@@ -260,6 +277,7 @@ async function load(before = 0) {
     L.rows = before ? L.rows.concat(j.rows || []) : (j.rows || []).concat(keep).sort((a, b) => b.id - a.id);
     L.more = !!j.more; L.unseen = !!j.unseen; L.loaded = true;
     if (!before && Array.isArray(j.turns)) turnsIn(j.turns);
+    if (!before && j.onyou) L.onyou = j.onyou;
   } catch { return; }
   mark();
   redraw();
@@ -278,7 +296,9 @@ function hasFriend() {
 let movedTimer = 0;
 function moved(what) {
   if (what === "peeroffers" || what === "peernotes") return void offersLoad();
-  if (c.onDesk() || !c.capability) return;
+  // On a desk too since 1.54: its tray carries what is on the reader on
+  // the other desks, and its notch counts it.
+  if (!c.capability) return;
   clearTimeout(movedTimer);
   movedTimer = setTimeout(() => load(), 400);
 }
@@ -517,7 +537,7 @@ function redraw() {
 function draw() {
   if (c.onDesk()) { if (el) el.hidden = true; return; }
   const { esc } = c;
-  const onYou = c.capability ? freshTurns().length : 0, offers = liveOffers().length + liveLines().length;
+  const onYou = c.capability ? (L.onyou ? L.onyou.left : freshTurns().length) : 0, offers = liveOffers().length + liveLines().length;
   const card = L.card ? cardHtml(false) : "";
   const tray = L.open ? offTray(esc) : "";
   const n = onYou + offers;
@@ -563,14 +583,17 @@ function keyOf(b) {
 function offTray(esc) {
   const turns = c.capability ? L.turns.filter(w => !w.answered_at) : [];
   const fresh = turns.filter(w => !w.stale), old = turns.filter(w => w.stale);
-  const said = [...L.said].filter(([k]) => k[0] === "t").map(([, s]) => `<li class="cn-row mine" role="status"><span class="cn-b"><span class="cn-t">${esc(s.text)}</span></span></li>`).join("");
+  const said = [...L.said].filter(([k, v]) => k[0] === "t" && !v.item).map(([, s]) => `<li class="cn-row mine" role="status"><span class="cn-b"><span class="cn-t">${esc(s.text)}</span></span></li>`).join("");
   // Older asks under the fresh, dimmed, not folded: an unanswered ask is on
   // the reader whatever its age, as the desk's tray has it (1.43).
-  const asks = said + fresh.map(turnRow).join("") + offersHtml();
-  const older = linesHtml() + (old.length ? `<ul class="cn-list cn-dim" aria-label="Older">${old.map(turnRow).join("")}</ul>` : "");
+  // Ranked, when the daemon gave the list (1.54): the sentence, seven rows,
+  // the fold and the grey lines; then offers and a friend's lines.
+  const ranked = L.onyou ? onyouHtml() : "";
+  const asks = ranked ? said + offersHtml() : said + fresh.map(turnRow).join("") + offersHtml();
+  const older = ranked ? linesHtml() : linesHtml() + (old.length ? `<ul class="cn-list cn-dim" aria-label="Older">${old.map(turnRow).join("")}</ul>` : "");
   const close = `<button type="button" class="oy-x" data-a="cn-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${c.glyph("x", 12)}</button>`;
   return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1"><div class="oy-head"><span class="oy-hi" aria-hidden="true">${hand()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do, across your desks">On you</h3><span class="oy-gap"></span>${close}</div>` +
-    `<div class="oy-scroll">${asks || older ? (asks ? `<ul class="cn-list">${asks}</ul>` : "") + older : `<p class="oy-none">Nothing on you right now.</p>`}</div></div>`;
+    `<div class="oy-scroll">${ranked}${asks || older ? (asks ? `<ul class="cn-list">${asks}</ul>` : "") + older : ranked ? "" : `<p class="oy-none">Nothing on you right now.</p>`}</div></div>`;
 }
 
 /** Who asked, as the reader knows them. */
@@ -585,9 +608,158 @@ function turnRow(w) {
   return `<li class="cn-row cn-ask"><span class="cn-ico">${c.glyph("aside", 12)}</span><span class="cn-b">` +
     `<span class="cn-by"><b>${esc(w.by || whoOf(w))}</b> · ${where} · ${c.relShort(w.created_at)}</span>` +
     `<span class="cn-t">${code(w.text)}</span>${w.kind === "run" && w.options && w.options.length ? `<span class="cn-by">${w.options.filter(o => !o.startsWith("# ")).length} steps, run one at a time on the desk</span>` : w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>` : ""}` +
+    (L.pop === `t${w.id}` ? popHtml(`t${w.id}`, false) :
     `<span class="cn-acts">${opts.map((o, i) => `<button type="button" class="cn-opt${i === w.recommended ? " rec" : ""}" data-a="cn-answer" data-k="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
-    `<button type="button" class="cn-link" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}">${w.kind === "run" ? "Run on the desk" : "Go to desk"}</button></span></span>` +
-    `<button type="button" class="cn-rx" data-a="cn-notnow" data-k="${w.id}" aria-label="Not now: ${esc(w.text)}" data-tip="Not now" data-tip-sub="nothing is deleted">${c.glyph("x", 10)}</button></li>`;
+    // A dated line's card carries the line's document (1.54): Open, Copy.
+    (w.kind === "due" && /^[0-9a-f]{6,64}$/.test(w.link || "") ? `<button type="button" class="cn-opt" data-a="cn-oy-open" data-k="${esc(w.link)}">Open</button><button type="button" class="cn-opt" data-a="cn-oy-copy" data-k="${esc(w.link)}">Copy</button>` : "") +
+    `<button type="button" class="cn-link" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}">${w.kind === "run" ? "Run on the desk" : "Go to desk"}</button></span>`) + `</span>` +
+    (L.onyou ? oyX(`t${w.id}`, w.text) : `<button type="button" class="cn-rx" data-a="cn-notnow" data-k="${w.id}" aria-label="Not now: ${esc(w.text)}" data-tip="Not now" data-tip-sub="nothing is deleted">${c.glyph("x", 10)}</button>`) + `</li>`;
+}
+
+/* ---------- On you, ranked (1.54) ----------
+ * The daemon's one list (`crate::onyou`): a card an agent is blocked on, a
+ * dated line due, a routine's line, a plan or a line to keep, a session's
+ * left-off. Each row carries its thing -- its document, Open and Copy, or
+ * "no document" in grey when the agent named none -- and the one button
+ * for its step. The ✕ is an answer, not a bin: Tomorrow, Next week, or
+ * Not this with a word, which the agent hears in its brief. */
+
+/** A row's key in `L.said` and `L.pop`. */
+const oyKey = r => r.kind === "card" ? `t${r.turn.id}` : r.kind === "due" || r.kind === "suggested" ? `n${r.note}` : r.kind === "plan" ? `p${r.desk}:${r.doc}` : `l${r.desk}`;
+const OY_BY = { due: "A dated line", plan: "A plan", suggested: "A line to keep", left: "Left off" };
+const OY_STEP = { due: ["Done", "cn-oy-done"], routine: ["Go ahead", "cn-oy-go"], left: ["Go ahead", "cn-oy-go"], plan: ["Approve", "cn-oy-approve"], suggested: ["Keep", "cn-oy-keep"] };
+const OY_TIP = { "cn-oy-go": "its next step is Claude's: a routine resumes inside its Waits", "cn-oy-approve": "its panel hears it next", "cn-oy-keep": "on the desk's notes", "cn-oy-done": "ticks the line" };
+
+/** The sentence, the rows (seven in the tray, all on Home), the fold, the
+ *  two grey lines. `skip` is a desk whose own tray draws its cards and its
+ *  lines to keep: the rest of the list is what is on the reader elsewhere. */
+function onyouHtml(all = false, skip = 0) {
+  const o = L.onyou, { esc } = c;
+  if (!o || !c.capability) return "";
+  // A row answered here keeps its place while its words and Undo stand,
+  // after the read that no longer has it (undo where the click was).
+  const ghosts = [...L.said].filter(([k, v]) => v.item && !o.rows.some(r => oyKey(r) === k)).map(([, v]) => v.item);
+  const rows = ghosts.concat(o.rows).filter(r => !(skip && r.desk === skip && (r.kind === "card" || r.kind === "suggested")));
+  const shown = all ? rows : rows.slice(0, 7);
+  const more = rows.length - shown.length;
+  const desks = new Set(rows.slice(shown.length).map(r => r.desk)).size;
+  const fold = more ? `<p class="oy-fold"><button type="button" data-a="cn-home">and ${more} more, on ${desks} desk${desks === 1 ? "" : "s"}</button></p>` : "";
+  const grey = (o.ran_quiet ? `<p class="oy-grey">${o.ran_quiet} routine${o.ran_quiet === 1 ? "" : "s"} ran today with nothing for you.</p>` : "") +
+    (o.older ? `<p class="oy-grey">${o.older} thread${o.older === 1 ? "" : "s"} on ${o.older_desks} desk${o.older_desks === 1 ? "" : "s"} still for two weeks: Sunday's week has them.</p>` : "");
+  const sent = skip ? "" : `<p class="oy-sent">${esc(o.sentence)}</p>`;
+  return sent + oyGroups(shown, all) + fold + grey;
+}
+
+/** The rows as one list, or on Home past four desks under a head per desk,
+ *  the desk with the first-ranked row first: twenty rows on nine desks read
+ *  as where they are before what they are. */
+function oyGroups(rows, all) {
+  const ul = rs => `<ul class="cn-list" data-part="corner.onyou">${rs.map(oyRow).join("")}</ul>`;
+  const desks = [...new Set(rows.map(r => r.desk))];
+  if (!rows.length) return "";
+  if (!all || desks.length <= 4) return ul(rows);
+  return desks.map(d => { const rs = rows.filter(r => r.desk === d); return `<p class="oy-h">${c.esc(rs[0].desk_name || "a desk")}</p>${ul(rs)}`; }).join("");
+}
+
+/** When a dated line is: its hour today, or how late. */
+function oyWhen(r) {
+  const d = new Date(r.at * 1000), hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return r.at * 1000 < Date.now() ? `overdue since ${new Date().toDateString() === d.toDateString() ? hm : c.relShort(r.at)}` : `today ${hm}`;
+}
+
+function oyRow(r) {
+  const { esc } = c, key = oyKey(r), s = L.said.get(key);
+  if (r.kind === "card" && !s?.item) return turnRow({ ...r.turn, desk_name: r.desk_name });
+  const who = r.kind === "routine" ? esc(r.routine) : esc(r.by && r.kind !== "due" ? r.by : OY_BY[r.kind]);
+  const when = r.kind === "due" ? oyWhen(r) : r.kind === "routine" ? `ran ${c.relShort(r.at)}` : c.relShort(r.at);
+  const thing = r.doc ? `<button type="button" class="cn-link cn-doc" data-a="cn-oy-open" data-k="${esc(r.doc)}" data-tip="Open" data-tip-sub="${esc(r.doc_title)}">${esc(r.doc_title || "its document")}</button>`
+    : r.no_doc ? `<span class="cn-nodoc">no document</span>` : "";
+  const [step, a] = OY_STEP[r.kind] || [];
+  const acts = s ? `<span class="cn-acts"><span class="cn-said" role="status">${esc(s.text)}</span>${s.undo ? `<button type="button" class="cn-undo" data-a="cn-oy-undo" data-k="${esc(key)}">Undo</button>` : ""}</span>`
+    : L.pop === key ? popHtml(key, r.kind === "due")
+    : `<span class="cn-acts">${step ? `<button type="button" class="cn-opt rec" data-a="${a}" data-k="${esc(key)}" data-tip="${step}" data-tip-sub="${OY_TIP[a]}">${step}</button>` : ""}` +
+      (r.doc ? `<button type="button" class="cn-opt" data-a="cn-oy-copy" data-k="${esc(r.doc)}" data-tip="Copy" data-tip-sub="the document's text">Copy</button>` : "") +
+      `<button type="button" class="cn-link" data-a="cn-desk" data-k="${r.desk}" data-v="0">Go to desk</button></span>`;
+  const x = s || r.kind === "plan" || r.kind === "suggested" ? "" : oyX(key, r.text);
+  return `<li class="cn-row cn-ask${s ? " mine" : ""}"><span class="cn-ico">${c.glyph("aside", 12)}</span><span class="cn-b">` +
+    `<span class="cn-by"><b>${who}</b> · ${esc(r.desk_name || "a desk")} · ${when}</span>` +
+    `<span class="cn-t">${code(r.text)}</span>${thing ? `<span class="cn-by">${thing}</span>` : ""}${acts}</span>${x}</li>`;
+}
+
+/** A row's ✕: it opens the row's answers in place. */
+const oyX = (key, text) => `<button type="button" class="cn-rx" data-a="cn-oy-x" data-k="${c.esc(key)}" aria-expanded="${L.pop === key}" aria-label="Not now: ${c.esc(text)}" data-tip="Not now" data-tip-sub="Tomorrow, next week, or not this">${c.glyph("x", 10)}</button>`;
+
+/** The ✕'s answers, in the row: a dated line moves its date or leaves the
+ *  view; anything else comes back tomorrow or next week, or is Not this,
+ *  with a word for the agent. */
+function popHtml(key, dated) {
+  const b = (v, l) => `<button type="button" class="cn-opt" data-a="cn-oy-later" data-k="${c.esc(key)}" data-v="${v}">${l}</button>`;
+  return `<span class="cn-acts cn-pop" role="group" aria-label="Not now">${b("tomorrow", "Tomorrow")}${b("next week", "Next week")}` +
+    (dated ? `<button type="button" class="cn-opt" data-a="cn-oy-drop" data-k="${c.esc(key)}">Remove from view</button>`
+      : `<input type="text" class="cn-notw" maxlength="120" placeholder="Not this: why, in a word" aria-label="Why it is not yours"><button type="button" class="cn-opt" data-a="cn-oy-not" data-k="${c.esc(key)}">Not this</button>`) + `</span>`;
+}
+
+/** The row a key names, from the list. */
+const oyFind = key => L.onyou?.rows.find(r => oyKey(r) === key);
+
+/** A row's step or answer: said in the row with its Undo, the daemon told,
+ *  the list read again. `undo` posts what puts it back. */
+async function oyDo(key, said, url, body, undo) {
+  const r = oyFind(key);
+  if (!r) return;
+  L.pop = "";
+  L.said.set(key, { text: said, undo: !!undo, back: undo, item: r });
+  redraw();
+  try {
+    const j = await c.deskApi(url, body);
+    if (j && j.ok === false && j.why) { L.said.set(key, { text: `Could not: ${j.why}`, undo: false, item: r }); redraw(); }
+  } catch (e) { L.said.set(key, { text: `Could not: ${c.sayErr(e).why}`, undo: false, item: r }); redraw(); }
+  load();
+  setTimeout(() => { if (L.said.get(key)?.text === said) { L.said.delete(key); redraw(); } }, SAID_MS);
+}
+
+/** `oct 28 10:30`, a line's date again for its Undo, as `crate::due` reads it. */
+const dueWords = at => { const d = new Date(at * 1000); return `${d.toLocaleString("en", { month: "short" }).toLowerCase()} ${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+function oyAct(a, b) {
+  const key = b.dataset.k, r = key && key[0] !== "/" ? oyFind(key) : null;
+  if (a === "cn-oy-x") { L.pop = L.pop === key ? "" : key; return redraw(); }
+  if (a === "cn-oy-open") { if (L.open && !c.onDesk()) closeTray(false); return c.showDoc(key); }
+  if (a === "cn-oy-copy") return oyCopy(key, b);
+  if (a === "cn-oy-undo") {
+    const s = L.said.get(key);
+    L.said.delete(key); redraw();
+    return s?.back ? c.deskApi(s.back[0], s.back[1]).catch(() => {}).then(() => load()) : undefined;
+  }
+  if (!r) return;
+  const d = r.desk, t = r.turn;
+  if (a === "cn-oy-done") return oyDo(key, `Done: ${r.text}`, `/api/desks/${d}/notes/${r.note}`, { done: true }, [`/api/desks/${d}/notes/${r.note}`, { done: false }]);
+  if (a === "cn-oy-keep") return oyDo(key, `Kept on ${r.desk_name}`, `/api/desks/${d}/notes/${r.note}/keep`, {});
+  if (a === "cn-oy-approve") return oyDo(key, "Approved: its panel hears it next", `/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, {}, [`/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, { undo: true }]);
+  if (a === "cn-oy-go") return oyDo(key, r.kind === "routine" ? `Go ahead: ${r.routine} resumes inside its Waits` : "Go ahead: its panel hears it next", `/api/desks/${d}/leftoff`, { go: true }, r.kind === "left" ? [`/api/desks/${d}/leftoff`, { approve: false }] : null);
+  const v = b.dataset.v;
+  if (a === "cn-oy-later") {
+    if (r.kind === "due") return oyDo(key, `Moved to ${v}: ${r.text}`, `/api/desks/${d}/notes/${r.note}`, { due: v === "tomorrow" ? "tomorrow 9" : "mon 9" }, [`/api/desks/${d}/notes/${r.note}`, { due: dueWords(r.at) }]);
+    if (t) return oyDo(key, `Back ${v}: ${r.text}`, `/api/desks/${d}/turns/${t.id}/remove`, { later: v }, [`/api/desks/${d}/turns/${t.id}/restore`, {}]);
+    return oyDo(key, `Back ${v}: ${r.text}`, `/api/desks/${d}/leftoff`, { later: v }, [`/api/desks/${d}/leftoff`, { later: "" }]);
+  }
+  if (a === "cn-oy-drop") return oyDo(key, `Removed from view: ${r.text}`, `/api/desks/${d}/notes/${r.note}/remove`, {}, [`/api/desks/${d}/notes/${r.note}/restore`, {}]);
+  if (a === "cn-oy-not") {
+    const word = b.parentElement?.querySelector(".cn-notw")?.value.trim() || "";
+    const said = `Not this${word ? ` (“${word}”)` : ""}: the agent hears it`;
+    if (t) return oyDo(key, said, `/api/desks/${d}/turns/${t.id}/remove`, { not: word }, [`/api/desks/${d}/turns/${t.id}/restore`, {}]);
+    return oyDo(key, said, `/api/desks/${d}/leftoff`, { not: word }, [`/api/desks/${d}/leftoff`, { not_undo: true }]);
+  }
+}
+
+/** Copy a row's document: its text, straight to the clipboard, the fetch
+ *  inside the write so nothing is awaited before it (WebKit, as copy.js). */
+function oyCopy(id, b) {
+  const text = fetch(`/api/docs/${encodeURIComponent(id)}/raw`).then(r => r.ok ? r.text() : Promise.reject(new Error(`snyvi answered ${r.status}`)));
+  const done = ok => { b.textContent = ok ? "Copied" : "Could not copy"; setTimeout(() => { if (b.isConnected) b.textContent = "Copy"; }, 2000); };
+  const blob = text.then(t => new Blob([t], { type: "text/plain" }));
+  const w = typeof ClipboardItem === "function" ? navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]) : text.then(t => navigator.clipboard.writeText(t));
+  w.then(() => done(true), () => text.then(t => navigator.clipboard.writeText(t)).then(() => done(true), () => done(false)));
 }
 
 /** An agent's offer to send a friend something: On you, since it waits on
@@ -814,6 +986,7 @@ function cardHtml(desk) {
  *  Home. True when it was. */
 function act(a, b) {
   if (!a?.startsWith("cn-")) return false;
+  if (a.startsWith("cn-oy-")) { oyAct(a, b); return true; }
   const k = b.dataset.k, r = b.dataset.r;
   const go = {
     "cn-open": () => toggle(),

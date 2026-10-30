@@ -41,7 +41,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          arm='{"target":"aarch64-apple-darwin","runner":"macos-14"}'
+          arm='{"target":"aarch64-apple-darwin","runner":"macos-15"}'
           intel='{"target":"x86_64-apple-darwin","runner":"macos-15-intel"}'
           full=true macs="[$arm,$intel]"
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then

@@ -91,6 +91,15 @@ pub const DRAFT_COLUMNS_1_53: &str =
      UPDATE routines SET started_at = created_at WHERE suggested_by = '';
      UPDATE routines SET file = '.claude/commands/' || cmd || '.md' WHERE cmd != '';";
 
+/// 1.54 (#198): how late each run started, for its line in History, and
+/// how long the machine slept through a run, so a laptop's lid never
+/// counts against its minutes (`slept`). A run's sleep is kept on its
+/// history line too. Version 34 of `store::MIGRATIONS`.
+pub const LATE_COLUMNS_1_54: &str =
+    "ALTER TABLE routine_runs ADD COLUMN late_s INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE routine_runs ADD COLUMN slept_s INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE routines ADD COLUMN slept_s INTEGER NOT NULL DEFAULT 0;";
+
 /// How many routines a desk keeps: a handful is the point.
 pub const PER_DESK: i64 = 6;
 /// The longest line a routine is: the reader's words are its prompt.
@@ -134,8 +143,12 @@ pub struct Routine {
     pub running_since: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub running: String,
-    /// How late the run under way, or the last, started, in seconds.
+    /// How late the run under way, or the last, started, in seconds: a
+    /// clock's catch-up only; any other start is on time.
     pub late_s: i64,
+    /// How long the machine slept while the run under way ran (1.54,
+    /// #198): its minutes are counted without it.
+    pub slept_s: i64,
     /// The agent offering it, while it is an offer.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub suggested_by: String,
@@ -202,6 +215,10 @@ pub struct Run {
     pub ended_at: i64,
     pub state: String,
     pub line: String,
+    /// How late a clock's catch-up started, in seconds; 0 for any other.
+    pub late_s: i64,
+    /// How long the machine slept while it ran.
+    pub slept_s: i64,
 }
 
 /// A line read as a routine: its name, its command, its cadence.
@@ -355,7 +372,7 @@ pub fn settings(deny: &[&str], waits: &[String]) -> serde_json::Value {
 const COLS: &str =
     "id, desk_id, name, cmd, every, due_at, waits, minutes, five_hour, pane, cmd_hash,
     allowed_at, last_at, last_state, last_line, runs, running_since, running, late_s,
-    suggested_by, suggested_pane, paused_at, created_at, removed_at, started_at, file";
+    suggested_by, suggested_pane, paused_at, created_at, removed_at, started_at, file, slept_s";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Routine> {
     let waits: String = r.get(6)?;
@@ -386,6 +403,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Routine> {
         removed_at: r.get(23)?,
         started_at: r.get(24)?,
         file: r.get(25)?,
+        slept_s: r.get(26)?,
     })
 }
 
@@ -707,7 +725,9 @@ pub fn set_pane(conn: &Connection, id: i64, pane: &str) -> Result<()> {
 }
 
 /// A run under way: `what` is the prompt or the command, `running` says
-/// which.
+/// which. Only the clock's start is late, by what `rearm` found just
+/// before it; Run now, a try, an answer and a card are on time, and the
+/// row stops saying the last clock run's lateness. Its sleep starts at 0.
 pub fn began(
     conn: &Connection,
     id: i64,
@@ -717,14 +737,48 @@ pub fn began(
     now: i64,
 ) -> Result<i64> {
     conn.execute(
-        "UPDATE routines SET running_since = ?2, running = ?3, last_state = 'running' WHERE id = ?1",
-        params![id, now, running],
+        "UPDATE routines SET running_since = ?2, running = ?3, last_state = 'running', slept_s = 0,
+           late_s = CASE WHEN ?4 = 'clock' THEN late_s ELSE 0 END
+         WHERE id = ?1",
+        params![id, now, running, why],
     )?;
     conn.execute(
-        "INSERT INTO routine_runs(routine_id, why, what, started_at) VALUES(?1, ?2, ?3, ?4)",
+        "INSERT INTO routine_runs(routine_id, why, what, started_at, late_s)
+         VALUES(?1, ?2, ?3, ?4, COALESCE((SELECT late_s FROM routines WHERE id = ?1), 0))",
         params![id, why, what, now],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// A start not from the clock, before its session starts: on time. Said
+/// before the start and not only in `began`, since the brief the session
+/// reads at its start tells it how late it is.
+pub fn not_late(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("UPDATE routines SET late_s = 0 WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// An hour that never ran leaves the row saying the last run's lateness,
+/// not its own: `rearm` wrote it before a start that did not happen.
+pub fn late_as_last(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE routines SET late_s = COALESCE((SELECT late_s FROM routine_runs
+           WHERE routine_id = ?1 AND state NOT LIKE 'skipped%'
+           ORDER BY started_at DESC, id DESC LIMIT 1), 0)
+         WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
+}
+
+/// The machine slept `secs` (`server::routine_run` sees it as a gap in its
+/// tick): every run under way had them taken away while it slept, so none
+/// is counted against its minutes.
+pub fn slept(conn: &Connection, secs: i64) -> Result<usize> {
+    Ok(conn.execute(
+        "UPDATE routines SET slept_s = slept_s + ?1 WHERE running_since != 0",
+        params![secs.max(0)],
+    )?)
 }
 
 /// The run under way is over: `done`, `stopped at 25 min`, `taken over`,
@@ -740,7 +794,8 @@ pub fn ended(conn: &Connection, id: i64, state: &str, line: &str, now: i64) -> R
     )?;
     if n > 0 {
         conn.execute(
-            "UPDATE routine_runs SET ended_at = ?2, state = ?3, line = ?4
+            "UPDATE routine_runs SET ended_at = ?2, state = ?3, line = ?4,
+               slept_s = (SELECT slept_s FROM routines WHERE id = ?1)
              WHERE routine_id = ?1 AND ended_at = 0",
             params![id, now, state, line],
         )?;
@@ -749,8 +804,10 @@ pub fn ended(conn: &Connection, id: i64, state: &str, line: &str, now: i64) -> R
 }
 
 /// An hour that could not run, and why: the row says it, the history keeps
-/// it, the next hour is kept.
+/// it, the next hour is kept, and the lateness the row says is the last
+/// run's again.
 pub fn skipped(conn: &Connection, id: i64, why: &str, now: i64) -> Result<()> {
+    late_as_last(conn, id)?;
     conn.execute(
         "UPDATE routines SET last_state = ?2 WHERE id = ?1",
         params![id, format!("skipped: {why}")],
@@ -778,7 +835,7 @@ pub fn end_all(conn: &Connection, now: i64) -> Result<usize> {
 /// A routine's runs, newest first.
 pub fn runs_of(conn: &Connection, id: i64, limit: i64) -> Result<Vec<Run>> {
     let mut st = conn.prepare_cached(
-        "SELECT id, why, what, started_at, ended_at, state, line FROM routine_runs
+        "SELECT id, why, what, started_at, ended_at, state, line, late_s, slept_s FROM routine_runs
          WHERE routine_id = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
     )?;
     let v = st
@@ -791,6 +848,8 @@ pub fn runs_of(conn: &Connection, id: i64, limit: i64) -> Result<Vec<Run>> {
                 ended_at: r.get(4)?,
                 state: r.get(5)?,
                 line: r.get(6)?,
+                late_s: r.get(7)?,
+                slept_s: r.get(8)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

@@ -49,10 +49,19 @@ const RT_WHENS = ["every day 9", "every weekday 9", "every mon 9:00", "every 1st
 /** A run's why, in the sheet's words. */
 const RT_WHY = { clock: "at its hour", you: "Run now", try: "Try once now", answer: "your answers", card: "a Run card" };
 
+/** A while to the minute, as History says it: `2 h 10 min`, `40 min`. */
+function rtWhile(s) {
+  const h = s / 3600 | 0, m = (s % 3600) / 60 | 0;
+  return h ? `${h} h${m ? ` ${m} min` : ""}` : `${Math.max(1, m)} min`;
+}
+
+/* A run's line: its hour, why, and how late a clock's catch-up started;
+ * how it ended and the minutes it ran -- without the ones the machine
+ * slept through, said apart (#198). */
 function rtRuns(j, e) {
   return (j.runs || []).map(x => `<li><span class="rt-when">${e(new Date(x.started_at * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }))}</span>` +
-    `<span class="rt-why">${e(RT_WHY[x.why] || x.why)}</span>` +
-    `<span class="rt-st">${e(x.state || (x.ended_at ? "" : "running"))}${x.ended_at && x.started_at && x.ended_at > x.started_at ? ` · ${Math.max(1, (x.ended_at - x.started_at) / 60 | 0)} min` : ""}</span>` +
+    `<span class="rt-why">${e(RT_WHY[x.why] || x.why)}${x.late_s ? ` · ${rtWhile(x.late_s)} late` : ""}</span>` +
+    `<span class="rt-st">${e(x.state || (x.ended_at ? "" : "running"))}${x.ended_at && x.started_at && x.ended_at > x.started_at ? ` · ${Math.max(1, (x.ended_at - x.started_at - (x.slept_s || 0)) / 60 | 0)} min` : ""}${x.slept_s ? ` · slept ${rtWhile(x.slept_s)}` : ""}</span>` +
     (x.line ? `<span class="rt-line">${e(x.line)}</span>` : x.why === "card" ? `<code class="rt-line">${e(x.what)}</code>` : "") + `</li>`).join("");
 }
 

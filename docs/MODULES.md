@@ -64,6 +64,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/statusline.rs` | 514 | Claude Code status line: feeds the panel, prints its line in a desk panel |
 | `src/links.rs` | 252 | a desk's links in the rail's foot (`pin_link`) |
 | `src/due.rs` | 530 | a date on a line (1.47): the tail grammar (`by fri 10`), the local offset read once, the clock that raises one `due` card at the hour, its Done and Later |
+| `src/onyou.rs` | 558 | On you, widened (1.54): every row that is the reader's -- cards, dated lines, a routine's line, plans, lines to keep, left-offs -- ranked into one list with its sentence; when the tray opens itself (`arrive`); Tomorrow and Not this on a left-off; what the brief says was Not this |
 | `src/waiting.rs` | 198 | what waits on the reader (1.47): `needs` on a left-off, Approve on a plan and on a left-off, Home's Waiting on you rows |
 | `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |
 | `src/agents.rs` | 1157 | the registry: claude, codex, cursor, gemini; what each has |

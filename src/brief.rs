@@ -80,6 +80,9 @@ pub struct Work<'a> {
     /// for a week after it, so a panel's Claude knows what the reader can
     /// now do (#191).
     pub updated: Option<String>,
+    /// What the reader said Not this to in On you, with their word and
+    /// when (1.54, `onyou::nots`): said for a week, so it is not asked again.
+    pub nots: &'a [(String, String, i64)],
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -175,10 +178,16 @@ pub fn brief_of(
                 } else {
                     format!(" (from {})", n.sent_by)
                 };
-                let due = if n.due_at > 0 {
-                    format!(" (due {})", crate::due::label(n.due_at, now))
-                } else {
-                    String::new()
+                // A dated line names its document, so the agent knows what
+                // the reminder is about (1.54).
+                let due = match (n.due_at > 0, n.doc_title.is_empty()) {
+                    (true, true) => format!(" (due {})", crate::due::label(n.due_at, now)),
+                    (true, false) => format!(
+                        " (due {}, with \"{}\")",
+                        crate::due::label(n.due_at, now),
+                        cut(&n.doc_title, 60)
+                    ),
+                    (false, _) => String::new(),
                 };
                 format!("#{} {}{from}{due}", n.id, cut(&n.text, LINE_CHARS))
             })
@@ -195,6 +204,7 @@ pub fn brief_of(
             }
         ));
     }
+    lines.extend(nots(work.nots, now));
     lines.extend(routine_lines(desk, slot, work.routines, now));
     lines.extend(thread_lines(desk, slot, work.threads, work.waiting));
     if let Some((text, due)) = &work.ship {
@@ -281,6 +291,34 @@ pub fn brief_of(
         ));
     }
     capped(lines)
+}
+
+/// Not this, from On you's ✕ (1.54): what the user said was not theirs,
+/// their word with it, so the agent does not hand it to them again.
+fn nots(nots: &[(String, String, i64)], now: i64) -> Option<String> {
+    if nots.is_empty() {
+        return None;
+    }
+    let said: Vec<String> = nots
+        .iter()
+        .take(4)
+        .map(|(text, word, at)| {
+            let word = if word.is_empty() {
+                String::new()
+            } else {
+                format!(" (\"{}\")", cut(word, 80))
+            };
+            format!(
+                "\"{}\" {}{word}",
+                cut(text, OLDER_CHARS),
+                crate::text::ago(now - at)
+            )
+        })
+        .collect();
+    Some(format!(
+        "The user said Not this to: {}. Do not hand these to them again; if one still needs doing, do it yourself or say why it cannot be done.",
+        said.join("; ")
+    ))
 }
 
 /// The desk's routines: for the panel one runs in, what this run is and
@@ -1441,6 +1479,7 @@ mod tests {
             ship: None,
             routines: &[],
             updated: None,
+            nots: &[],
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
         assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");
@@ -1601,5 +1640,39 @@ mod tests {
             "{c}"
         );
         assert!(c.contains("The user approved where the work was left (\"If you approve, ship it\"): go ahead."), "{c}");
+    }
+
+    /// Not this from On you is said for the week `onyou::nots` keeps, with
+    /// the reader's word or without; a dated line names its document.
+    #[test]
+    fn not_this_and_a_lines_document_reach_the_brief() {
+        let d = desk(1, None);
+        let nots = [
+            (
+                "Sign in to Cloudflare".to_string(),
+                "done by hand".to_string(),
+                -3600,
+            ),
+            ("Pay the invoice".to_string(), String::new(), -60),
+        ];
+        let notes = [DeskNote {
+            id: 7,
+            text: "post 1.54".into(),
+            due_at: 86_400,
+            doc: "0123456789".into(),
+            doc_title: "Posts for 1.54".into(),
+            ..DeskNote::default()
+        }];
+        let work = Work {
+            notes: &notes,
+            nots: &nots,
+            ..Work::default()
+        };
+        let b = brief_of(&d, 1, &work, &[], &[], None, 0);
+        assert!(b.contains("The user said Not this to: \"Sign in to Cloudflare\" 1 h ago (\"done by hand\"); \"Pay the invoice\" "), "{b}");
+        assert!(b.contains("#7 post 1.54 (due "), "{b}");
+        assert!(b.contains(", with \"Posts for 1.54\")"), "{b}");
+        let quiet = brief_of(&d, 1, &Work::default(), &[], &[], None, 0);
+        assert!(!quiet.contains("Not this"));
     }
 }

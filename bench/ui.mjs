@@ -284,6 +284,7 @@ async function main() {
     await section("a link into a folder", () => browseRows(p, browsed));
     await section("#183: a picture, to keep", () => downloadRows(p, cdp, url, arrive, tmp));
     await section("#194: a copy keeps the Markdown", () => copyRows(p, url, arrive));
+    await section("#199: an HTML page, filling the screen", () => fillRows(p, url, arrive));
     await section("a folder, opened in snyvi", () => folderRows(cdp, base, browsed));
     await section("a link out of a document", () => docLinkRows(p, base, token, first.doc.id));
     await section("the socket a page holds", () => socketRows(p, url, base, browsed));
@@ -1029,6 +1030,50 @@ async function diagramRows(p, url) {
   await p.pointerAway();
   rows.push(["the button, both ways", byButton.full && !byButtonBack.full && byButtonBack.width > 0,
     !byButton.full ? "the button filled nothing" : byButtonBack.full ? "the button did not give the page back" : byButtonBack.width === 0 ? "back with no size" : "fills on one click, gives the page back on the next"]);
+  return rows;
+}
+
+/** #199: an HTML page shown as itself has Full screen in its bar, in Save
+ *  as PDF's place, which such a page keeps empty; pressed, the page covers
+ *  the window -- the sidebars, the corner and the bar under it -- and
+ *  Escape gives the column back, on the same document: an Esc the page's
+ *  own handler read as "leave" would have gone back a page. A page of
+ *  Markdown has no Full screen at all. ui/fill.js. */
+async function fillRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const page = await arrive({ name: "page.html", body: "<!doctype html><title>A page</title><body style=\"margin:0\"><h1>A page, made to be seen</h1></body>\n" });
+  const prose = await arrive({ name: "prose.md", body: "# Prose\n\nA page of Markdown, read in the column.\n" });
+  const origin = new URL(url).origin;
+  const read = () => p.ev(`(() => {
+    const a = document.querySelector("#doc article.preview"), r = a?.getBoundingClientRect(), hit = document.elementFromPoint(Math.round(innerWidth / 2), 8);
+    return { fill: !!a?.classList.contains("fill"), box: r ? [r.left, r.top, r.width, r.height].map(Math.round) : null, win: [innerWidth, innerHeight],
+      over: !!hit?.closest("#doc article.preview"), inert: !!document.querySelector("#chrome")?.inert, path: location.pathname,
+      sandbox: a?.querySelector("iframe")?.getAttribute("sandbox") };
+  })()`);
+
+  await p.goto(`${origin}/d/${page.id}`);
+  const shown = await until(`!!document.querySelector("#doc article.preview > iframe[sandbox]") && window.__ui.vis("#btn-fill-top")`, 80);
+  const before = await read();
+  if (shown) await p.clickOn("#btn-fill-top");
+  await sleep(400);
+  const filled = await read();
+  await p.press("Escape");
+  await sleep(400);
+  const back = await read();
+  const covers = filled.fill && filled.over && filled.box?.join() === `0,0,${filled.win.join()}` && filled.sandbox === "allow-scripts";
+  const gaveBack = !back.fill && !back.inert && back.path === before.path && back.box?.[2] < back.win[0];
+  rows.push(["an HTML page fills the screen from its bar, and Escape gives the column back",
+    shown && covers && gaveBack,
+    !shown ? "no Full screen on the HTML page" : !filled.fill ? "the press filled nothing" : !filled.over ? "the bar is still over the page"
+      : !covers ? `the page is ${JSON.stringify(filled.box)} in a ${filled.win.join("×")} window, sandbox ${filled.sandbox}`
+        : back.fill || back.inert ? "Escape left it filling" : back.path !== before.path ? `Escape left the document for ${back.path}`
+          : back.box?.[2] >= back.win[0] ? `came back ${back.box?.[2]} px wide` : `${filled.win.join("×")} filled, back in a ${back.box[2]} px column`]);
+
+  await p.goto(`${origin}/d/${prose.id}`);
+  const proseUp = await until(`!!document.querySelector("#doc article.kind-markdown")`, 80);
+  const none = proseUp && await p.ev(`!window.__ui.vis("#btn-fill-top")`);
+  rows.push(["a page of Markdown has no Full screen", none, !proseUp ? "the Markdown page never came" : none ? "none in its bar" : "Full screen shows on Markdown"]);
   return rows;
 }
 

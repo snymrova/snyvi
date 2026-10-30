@@ -23,6 +23,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::thread::GROUP_COLUMN).unwrap();
     conn.execute_batch(crate::thread::AWAY_COLUMN_1_44).unwrap();
     conn.execute_batch(crate::thread::REMOVED_BY_1_53).unwrap();
+    conn.execute_batch(crate::onyou::TURN_COLUMN_1_54).unwrap();
     for c in crate::thread::ON_YOU_1_36 {
         conn.execute_batch(c).unwrap();
     }
@@ -33,10 +34,13 @@ fn db() -> Connection {
         conn.execute_batch(c).unwrap();
     }
     conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::onyou::NOTE_COLUMN_1_54).unwrap();
     conn.execute_batch(crate::due::TURN_COLUMN_1_47).unwrap();
     conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::onyou::DESK_COLUMNS_1_54).unwrap();
     conn.execute_batch(crate::told::COLUMNS_1_48).unwrap();
     conn.execute_batch(COLUMNS_1_48).unwrap();
+    conn.execute_batch(crate::onyou::HOME_COLUMNS_1_54).unwrap();
     // A plan's title is read from the documents (`waiting::rows`).
     conn.execute_batch("CREATE TABLE docs (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
         .unwrap();

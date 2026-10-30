@@ -671,7 +671,7 @@ pub(crate) async fn pane_brief(
         .filter(|p| p.removed_at == 0)
         .map(|p| p.name)
         .collect();
-    let (threads, waiting, cards, untold, ship, routines) = app
+    let (threads, waiting, cards, untold, ship, routines, nots) = app
         .store
         .clocked(|c, now| {
             Ok((
@@ -684,10 +684,13 @@ pub(crate) async fn pane_brief(
                 crate::told::untold(c, desk.id, now)?,
                 crate::week::ship_line(c, desk.id, now)?,
                 crate::routine::for_desk(c, desk.id)?,
+                // What the reader said Not this to, for a week (1.54).
+                crate::onyou::nots(c, desk.id, now)?,
             ))
         })
         .unwrap_or_default();
     let work = crate::brief::Work {
+        nots: &nots,
         notes: &notes,
         threads: &threads,
         waiting: &waiting,
@@ -990,6 +993,9 @@ pub(crate) struct SuggestBody {
     pub(crate) every: Option<String>,
     #[serde(default)]
     pub(crate) waits: Option<Vec<String>>,
+    /// The document the line is about, by id (1.54): one of this desk's.
+    #[serde(default)]
+    pub(crate) doc: Option<String>,
 }
 
 /// An agent offers a routine (1.50): a row under Routines with Accept…, and
@@ -1114,8 +1120,28 @@ pub(crate) async fn pane_suggest_note(
                     None => said = json!(format!("\"{}\" is not a date snyvi reads (try `fri 10`, `tomorrow`, `in 3 days`, `28 oct`); the line has none", b.due.trim())),
                 }
             }
+            // Its document, when it is one of this desk's: an agent may
+            // point a line at what it made here, not at another desk's.
+            let doc = b.doc.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+            let mut doc_said = serde_json::Value::Null;
+            if !doc.is_empty() {
+                let set = app.store.clocked(|c, _| {
+                    let mine = crate::desk::doc_ok(&doc)
+                        && c.query_row(
+                            "SELECT 1 FROM docs WHERE id = ?1 AND desk_id = ?2 AND deleted_at = 0",
+                            rusqlite::params![doc, placed.desk_id],
+                            |_| Ok(()),
+                        )
+                        .is_ok();
+                    Ok(mine && crate::desk::set_note_doc(c, placed.desk_id, note.id, &doc)?)
+                });
+                match set {
+                    Ok(true) => note.doc = doc,
+                    _ => doc_said = json!(format!("\"{doc}\" is not a document on this desk; the line has none")),
+                }
+            }
             notes_moved(&app, placed.desk_id);
-            (StatusCode::CREATED, Json(json!({ "note": note, "desk": placed.desk_name, "due_error": said }))).into_response()
+            (StatusCode::CREATED, Json(json!({ "note": note, "desk": placed.desk_name, "due_error": said, "doc_error": doc_said }))).into_response()
         }
         Ok(crate::desk::Suggested::Empty) => (
             StatusCode::BAD_REQUEST,

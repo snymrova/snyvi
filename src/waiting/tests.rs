@@ -22,7 +22,9 @@ fn db() -> Connection {
         conn.execute_batch(c).unwrap();
     }
     conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::onyou::NOTE_COLUMN_1_54).unwrap();
     conn.execute_batch(COLUMNS_1_47).unwrap();
+    conn.execute_batch(crate::onyou::DESK_COLUMNS_1_54).unwrap();
     conn.execute_batch("CREATE TABLE docs(id TEXT PRIMARY KEY, title TEXT NOT NULL)")
         .unwrap();
     conn
