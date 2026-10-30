@@ -1001,7 +1001,7 @@ The half of 0.15 that was machines rather than code, as its own release.
 What changed is what CI builds, on what, and what it checks after
 building; the page changed by one stylesheet rule, at the end.
 
-**macOS.** Two legs in the release matrix, Apple silicon on `macos-14`
+**macOS.** Two legs in the release matrix, Apple silicon on `macos-15`
 and Intel on `macos-15-intel`, and each ships one thing: `snyvi.app`.
 Both executables are inside it. The window is what the bundle runs, and
 when it is run with no URL -- which is what a double-click is -- it
