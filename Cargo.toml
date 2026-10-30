@@ -23,6 +23,9 @@ exclude = [
     "/bench",
     "/.github",
     "/relay",
+    # snyvi.com: its fonts, a post's film and pictures. The 1.54 post's took
+    # the crate to 8.1 MB, over the check's 8.
+    "/site",
 ]
 
 # The oldest snyvi-app this daemon is happy with. The release job copies it
