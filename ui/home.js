@@ -488,19 +488,35 @@ export async function show(ctx) {
   await refresh();
 }
 
-/** The corner's Lately moved: its section drawn again from what Home
- *  already holds, and nothing else -- a burst of asides is not a burst of
- *  Home redrawn under the pointer. */
+/** The corner's Lately or On you moved: those two sections drawn again from
+ *  what Home already holds, and nothing else -- a burst of asides is not a
+ *  burst of Home redrawn under the pointer. On you's box is the corner's
+ *  since 1.54, and the corner's list comes after Home's first draw: without
+ *  this, a fresh Home kept the old Waiting box until something else moved. */
 export function redraw() {
-  const sec = c && c.view() === "home" && last && c.docEl.querySelector(".hm-arrived");
-  if (!sec) return;
+  // The side column, not Lately's section: with Lately hidden and nothing
+  // arrived there is no such section, and the box was never drawn again.
+  const side = c && c.view() === "home" && last && c.docEl.querySelector(".hm-side");
+  if (!side) return;
+  swap(side, ".hm-wait", waitBox(last));
+  swap(side, ".hm-arrived", arrived(last), side.querySelector(":scope > .hm-wait"));
+}
+
+/** One section of Home's side swapped for its fresh markup when that
+ *  differs, the focus kept on the button it was on; put in at the top, or
+ *  after `after`, when it was not there, taken out when it draws nothing. */
+function swap(side, cls, html, after = null) {
+  const sec = side.querySelector(`:scope > ${cls}`);
   const t = document.createElement("template");
-  t.innerHTML = arrived(last);
+  t.innerHTML = html;
   const fresh = t.content.firstElementChild;
-  if (!fresh || sec.innerHTML === fresh.innerHTML) return;
+  if (!fresh) return void sec?.remove();
+  if (!sec) return void (after ? after.after(fresh) : side.prepend(fresh));
+  if (sec.innerHTML === fresh.innerHTML) return;
   const was = sec.contains(document.activeElement) ? document.activeElement.dataset : null;
   sec.replaceWith(fresh);
-  if (was?.a) fresh.querySelector(`[data-a="${window.CSS.escape(was.a)}"]${was.r ? `[data-r="${window.CSS.escape(was.r)}"]` : ""}`)?.focus({ preventScroll: true });
+  const sel = was && (was.a ? `[data-a="${window.CSS.escape(was.a)}"]` : was.hm ? `[data-hm="${window.CSS.escape(was.hm)}"]` : "");
+  if (sel) fresh.querySelector(`${sel}${was.r ? `[data-r="${window.CSS.escape(was.r)}"]` : was.k ? `[data-k="${window.CSS.escape(was.k)}"]` : ""}`)?.focus({ preventScroll: true });
 }
 let cornerMod = null;
 
@@ -691,7 +707,11 @@ function status(j) {
     // is said apart, in the line's own ink (src/thread.rs `mark_stale`). Six
     // turns days old read "6 things are on you" in amber, while every desk's
     // pill called them older (audit e0a854b732, X2).
-    const ts = (j.turns || []).filter(w => w.via !== "dialog"), on = ts.filter(w => !w.stale).length, old = ts.length - on;
+    const ts = (j.turns || []).filter(w => w.via !== "dialog");
+    // Since 1.54 one list says what is on the reader (`crate::onyou`), older
+    // cards, due lines and left-offs in it: its count is the line's, so the
+    // line under the title and the box beside it say the same number.
+    const oy = j.onyou, on = oy ? oy.left : ts.filter(w => !w.stale).length, old = oy ? 0 : ts.length - on;
     if (asking.length) {
       ring = true;
       const [d, p] = asking[0];
@@ -702,7 +722,7 @@ function status(j) {
     if (on) bits.push(`<button type="button" class="hm-onyou" data-hm="turns" aria-haspopup="dialog" data-key="ctrl+alt+y">${on === 1 ? "One thing is" : `${on} things are`} on you ›</button>`);
     // Lines due by tonight, and what has waited on the reader (1.47): the
     // box at the head of the side column has them.
-    const due = (j.due || []).length, wt = (j.wait || []).length;
+    const due = oy ? 0 : (j.due || []).length, wt = oy ? 0 : (j.wait || []).length;
     if (due) bits.push(`<span class="hm-due now">${due} due today</span>`);
     if (wt) bits.push(`<span class="hm-due late">${wt} waiting on you</span>`);
     if (!asking.length && !on && !due && !wt) bits.push("Nothing needs you");
