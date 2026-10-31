@@ -124,6 +124,43 @@ fn a_routines_line_does_not_wait_and_a_sessions_waits_a_day() {
     );
 }
 
+/// A routine whose panel has a card open on the reader is one row, the
+/// card: its line said the same ask again, and On you counted it twice
+/// (#202). Answered, the line is the row again; and the desk's left-off
+/// never comes back as a session's.
+#[test]
+fn a_routines_line_with_its_card_open_is_one_row() {
+    let (c, _d) = db();
+    let r = desk(&c, "everything.dog");
+    routine(&c, r, "eva-pack", "p-eva");
+    left_off(
+        &c,
+        r,
+        "The explainer still waits for your answer",
+        NOW - 60,
+        "p-eva",
+    );
+    let t = card(&c, r, "2 · Explainer: leash pulling", NOW - 120);
+    c.execute("UPDATE turns SET pane = 'p-eva' WHERE id = ?1", params![t])
+        .unwrap();
+    assert_eq!(kinds(&gather(&c, NOW + LEFT).unwrap()), ["card"]);
+
+    // Another panel's card on the same desk leaves the line alone.
+    c.execute(
+        "UPDATE turns SET pane = 'p-other' WHERE id = ?1",
+        params![t],
+    )
+    .unwrap();
+    assert_eq!(kinds(&gather(&c, NOW).unwrap()), ["card", "routine"]);
+
+    c.execute(
+        "UPDATE turns SET pane = 'p-eva', answered_at = ?2 WHERE id = ?1",
+        params![t, NOW - 10],
+    )
+    .unwrap();
+    assert_eq!(kinds(&gather(&c, NOW).unwrap()), ["routine"]);
+}
+
 /// Seven rows in the tray, the rest counted with their desks.
 #[test]
 fn past_seven_the_rest_is_counted_with_its_desks() {

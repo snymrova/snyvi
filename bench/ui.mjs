@@ -2727,6 +2727,31 @@ async function deskRows(cdp, base, token) {
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     await p.pointerAway();
 
+    // #202: a desk's hand counts that desk. 1.54 counted On you across every
+    // desk, so each one said 18 or 19 "on this desk" with none of it its own.
+    // A card asked on still-b is in still-a's tray, under On other desks, and
+    // its tip says so; still-a's number does not move.
+    const handN = `document.querySelector("#meta .oy-foot .n, #onyou .oy-pill .n")?.textContent || ""`;
+    const nBefore = await p.ev(handN);
+    // Only a running panel is an agent's to ask from (`agent_pane`); a
+    // builtin keeps it running, since this bench's PATH has no /usr/bin.
+    const started202 = await post(`/api/panes/${third}/start`, { cmd: "while :; do read -r x; done" }).catch(e => ({ error: String(e) }));
+    await sleep(500);
+    const r202 = await fetch(`${base}/api/panes/${third}/handover`, { method: "POST", headers: TK, body: JSON.stringify({ kind: "do", text: "bench: a card on still-b", by: "bench-agent" }) });
+    const asked202 = await r202.text().then(t => { try { return JSON.parse(t); } catch { return { status: r202.status, body: t }; } });
+    const t202 = asked202.turn && asked202.turn.id;
+    const tipped = !!t202 && await until(`/\\d+ on other desks/.test(document.querySelector("#meta .oy-foot")?.dataset.tipSub || "")`, 40);
+    const nAfter = await p.ev(handN);
+    await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
+    if (tipped) await p.clickOn("#meta .oy-foot");
+    const listed202 = tipped && await until(`(() => { const t = document.querySelector("#onyou .oy-tray"); const h = [...(t?.querySelectorAll(".oy-h") || [])].find(e => /On other desks/.test(e.textContent)); return !!h && /bench: a card on still-b/.test(t.textContent.slice(t.textContent.indexOf(h.textContent))); })()`, 30);
+    rows.push(["a desk's hand counts that desk; another desk's card waits in its tray under On other desks", tipped && nAfter === nBefore && listed202,
+      !t202 ? `the hand-over answered ${JSON.stringify(asked202).slice(0, 120)}, its panel's start ${JSON.stringify(started202).slice(0, 120)}` : !tipped ? "the hand's tip never said what is on other desks" : nAfter !== nBefore ? `still-a's hand went from "${nBefore}" to "${nAfter}" for still-b's card` :
+        !listed202 ? "the tray has no On other desks with still-b's card" : `still-a's hand stayed at "${nBefore}", and the card is under On other desks`]);
+    await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
+    if (t202) await post(`/api/desks/${db}/turns/${t202}/remove`, {}).catch(() => {});
+    await p.pointerAway();
+
     if (LATELY) {
     // 1.38, the one the reader lost: a page from another desk rises while
     // they work in a panel, and a click into the panel used to take it away

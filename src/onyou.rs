@@ -272,21 +272,39 @@ fn routine_rows(
     let name = |id: i64| desks.get(&id).cloned().unwrap_or_default();
     let mut routine_desks: Vec<i64> = Vec::new();
     // 3. A routine's last line for the reader, from whatever run: no wait,
-    // since the run was for this morning, and Go ahead beside it.
-    let lines: Vec<(i64, String, i64, String, String, i64)> = conn
+    // since the run was for this morning, and Go ahead beside it. Not while
+    // its panel has a card open on the reader (#202): the card is the thing
+    // to answer and the line says it again ("the leash-pulling explainer
+    // still waits for your answer"), so On you counted one ask twice. The
+    // desk is still the routine's, so a session's rank 5 does not say it.
+    let lines: Vec<(i64, String, i64, String, String, i64, bool)> = conn
         .prepare_cached(
-            "SELECT d.id, d.left_off, d.left_off_at, d.left_off_about, r.name, r.id FROM desks d
+            "SELECT d.id, d.left_off, d.left_off_at, d.left_off_about, r.name, r.id,
+                    EXISTS(SELECT 1 FROM turns t WHERE t.desk_id = d.id AND t.pane = d.left_off_pane
+                           AND t.answered_at = 0 AND t.removed_at = 0 AND t.until <= ?1 AND t.via != 'dialog')
+             FROM desks d
              JOIN routines r ON r.pane != '' AND r.pane = d.left_off_pane AND r.removed_at = 0
              WHERE d.closed_at = 0 AND d.parked_at = 0 AND d.left_off != '' AND d.left_off_needs = 'you'
                AND d.left_off_ok_at < d.left_off_at AND d.left_off_until <= ?1 AND d.left_off_not = ''
              ORDER BY d.left_off_at DESC",
         )?
         .query_map(params![now], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
         })?
         .collect::<rusqlite::Result<_>>()?;
-    for (desk, text, at, about, routine, routine_id) in lines {
+    for (desk, text, at, about, routine, routine_id, carded) in lines {
         routine_desks.push(desk);
+        if carded {
+            continue;
+        }
         let (doc, doc_title) = doc_titled(conn, &about);
         rows.push(Row {
             kind: "routine",
