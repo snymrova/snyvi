@@ -241,6 +241,10 @@ main { margin-left: var(--side-w); min-height: 100vh; }
   width: 100%; height: auto; border-radius: var(--r-md);
   box-shadow: 0 0 0 1px var(--rule-2), 0 24px 64px -24px color-mix(in srgb, #000 40%, transparent), 0 2px 6px color-mix(in srgb, #000 8%, transparent);
 }
+/* A picture of one part of the window (a box, a row) at its own size, its
+   file twice that for sharp screens (srcset, sizes): at
+   the column's width, a 372 px box read as a poster. */
+.shot.narrow > img { width: auto; max-width: 100%; }
 /* A post's film holds its 16:9 box before it loads, on its poster. */
 .shot > video { aspect-ratio: 16 / 9; background: var(--bg-raise); }
 .shot figcaption { font-size: var(--fs-small); color: var(--fg-3); margin-top: var(--sp-5); max-width: 70ch; }
