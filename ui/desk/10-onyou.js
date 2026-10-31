@@ -103,16 +103,20 @@ function oyNode() {
   return oyEl;
 }
 
-/** What the notch counts: fresh waiting turns, suggestions, an agent's
- *  offers and a friend's lines (#196), which are in amber; and the older
- *  ones, which are not. */
+/** What the notch counts: this desk's fresh waiting turns, its suggestions,
+ *  its dated line, routine's line, plan and left-off (the corner's ranked
+ *  list, `here`), and an agent's offers and a friend's lines (#196), which
+ *  are a friend's, not a desk's, and so every desk's: all in amber; and the
+ *  older turns, which are not. `others` is what is on the reader on the
+ *  other desks: the tray shows it, the tip says it, the number never has it
+ *  (#202). 1.54 counted the whole list here, and every desk said 18 or 19
+ *  "on this desk" with none of it the desk's. */
 function oyCounts(d, f) {
   const waiting = f.turns.filter(w => shown(w) && !w.answered_at);
   const now = waiting.filter(w => fresh(d, w)).length;
-  // And what is on the reader off this desk, from the corner's ranked list
-  // (1.54): a desk's notch is On you's count, as every page's pill is.
   const K = ctx.corner?.();
-  return { now: now + f.suggestions.length + (K?.offerCount() || 0) + (K?.elsewhere?.(d.id) || 0), old: waiting.length - now };
+  const mine = K ? K.here(d.id) + K.offerCount() : 0;
+  return { now: now + f.suggestions.length + mine, old: waiting.length - now, others: K ? K.others(d.id) : 0 };
 }
 
 /** On you in the rail's foot (1.44): the icon, and the count while anything
@@ -124,9 +128,13 @@ function oyFoot(d) {
   const label = !count ? "Nothing on you right now" : `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
   // What On you is, always, then how it stands: with nothing on the reader
   // the tip said only that, and a first hover never learned what it was for.
-  const sub = `What only you can do on this desk · ${n.now ? "new" : count ? "older asks waiting" : "nothing right now"}${ctx.esc(ctx.corner?.()?.chimed(" · ") || "")}`;
+  const sub = `What only you can do on this desk · ${n.now ? "new" : count ? "older asks waiting" : "nothing right now"}${oyOthers(n)}${ctx.esc(ctx.corner?.()?.chimed(" · ") || "")}`;
   return `<button type="button" class="oy-foot${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span></button>`;
 }
+
+/** The tip's word on the other desks, so a desk at nought does not read as
+ *  nothing anywhere. */
+const oyOthers = n => n.others ? ` · ${n.others} on other desks` : "";
 
 /** On you's mark, the hand, drawn by the corner (ui/corner.js `hand`),
  *  which the window loads with the desk. */
@@ -169,13 +177,15 @@ function trayHtml(d, f, esc) {
   const older = old ? `<ul class="cn-list cn-old oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, asked over half an hour ago, or its panel was prompted since. It goes by itself after three days, and can come back">${old}</ul>` : "";
   const K = ctx.corner?.(), offers = K ? K.offersHtml() : "", lines = K?.linesHtml?.() || "";
   const away = awayRows(f, esc);
-  // The rest of On you, under this desk's own (1.54): its dated lines,
-  // routine, plan and left-off, and every other desk's, ranked.
-  const rest = K?.onyouHtml?.(false, d.id) || "";
-  const all = said + older + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
-    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d) +
-    (rest ? `<p class="oy-h">Also on you</p>${rest}` : "");
+  // This desk's own rest of On you (1.54): its dated line, routine's line,
+  // plan and left-off. Then the other desks', under their own head with
+  // their count in grey: there to answer, never in this desk's number (#202).
+  const here = K?.onyouHtml?.(false, d.id, "here") || "";
+  const rest = K?.onyouHtml?.(false, d.id, "others") || "";
   const n = oyCounts(d, f), count = n.now + n.old;
+  const all = said + older + here + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
+    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d) +
+    (rest ? `<p class="oy-h">On other desks <span class="sec-n">${n.others}</span></p>${rest}` : "");
   oy.empty = !all;
   const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +
     (count ? `<span class="sec-n${n.now ? " warn" : ""}">${count}</span>` : "");
@@ -238,7 +248,7 @@ function onYou(d) {
   const count = n.now + n.old;
   const label = `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
   const pill = !tray && count && !oy.inRail
-    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="${n.now ? "What only you can do on this desk" : "Older asks, still waiting on you"}${esc(K?.chimed(" · ") || "")}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count}</span></button>` : "";
+    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="${n.now ? "What only you can do on this desk" : "Older asks, still waiting on you"}${oyOthers(n)}${esc(K?.chimed(" · ") || "")}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count}</span></button>` : "";
   // A redraw replaces every button: the one the keyboard was on gets the
   // focus back, by what it does and to which row, or a press on a card
   // button dropped the hand to the page's body (W24).

@@ -252,12 +252,20 @@ export function init(ctx) {
   // same (#196); with no friend there is nothing to read.
   if (hasFriend()) offersLoad();
   return { event, refresh, moved, rise, offer, says, sayHeld, toggle, open: openTray, draw, redraw, lately,
-    cardHtml, trayHtml: latelyHtml, offersHtml, offerCount: () => liveOffers().length + liveLines().length, linesHtml, dot, keep: () => L.kept,
+    cardHtml, trayHtml: latelyHtml, offersHtml, linesHtml, dot, keep: () => L.kept,
+    /** An agent's offers to send a friend something, and a friend's lines:
+     *  a friend's, not a desk's, so every desk counts them. An offer's panel
+     *  has mostly closed by the time it is answered (six of seven, 31 Oct),
+     *  so by its panel it would be "another desk's" wrongly. */
+    offerCount: () => liveOffers().length + liveLines().length,
     act, opened, chime, ring, mark, hand, cornerHeld, away: () => away, lift, chimed: chimedLine,
     /** On you, ranked (1.54): its rows for Home and a desk's tray, the
-     *  list as read, and how many are on the reader off a desk. */
+     *  list as read, and a desk's share of it (#202): `here`, its own rows
+     *  the desk does not count from its own list (a dated line, a routine's
+     *  line, a plan, a left-off), and `others`, every other desk's. */
     onyouHtml, onyou: () => L.onyou,
-    elsewhere: desk => L.onyou ? L.onyou.rows.filter(r => !(r.desk === desk && (r.kind === "card" || r.kind === "suggested"))).length : 0,
+    here: desk => oyPart(desk, "here", L.onyou?.rows).length,
+    others: desk => oyPart(desk, "others", L.onyou?.rows).length,
     /** The desk's first page while its card is up: its row in the rail is ringed. */
     rising: id => L.card?.kind === "first" && L.card.key === `d${id}` };
 }
@@ -630,23 +638,43 @@ const OY_BY = { due: "A dated line", plan: "A plan", suggested: "A line to keep"
 const OY_STEP = { due: ["Done", "cn-oy-done"], routine: ["Go ahead", "cn-oy-go"], left: ["Go ahead", "cn-oy-go"], plan: ["Approve", "cn-oy-approve"], suggested: ["Keep", "cn-oy-keep"] };
 const OY_TIP = { "cn-oy-go": "its next step is Claude's: a routine resumes inside its Waits", "cn-oy-approve": "its panel hears it next", "cn-oy-keep": "on the desk's notes", "cn-oy-done": "ticks the line" };
 
+/** The list's rows, and the ones answered here, which keep their place while
+ *  their words and Undo stand, after the read that no longer has them (undo
+ *  where the click was). */
+function oyRows() {
+  const o = L.onyou;
+  if (!o) return [];
+  const ghosts = [...L.said].filter(([k, v]) => v.item && !o.rows.some(r => oyKey(r) === k)).map(([, v]) => v.item);
+  return ghosts.concat(o.rows);
+}
+
+/** A desk's share of the list (#202). The hand in a desk's foot counted the
+ *  whole list from 1.54, so every desk said 18 or 19 while saying "on this
+ *  desk", and none of it was the desk's. `here` is what is the desk's that
+ *  its own list does not hold (its cards and lines to keep it draws itself);
+ *  `others` is every other desk's, shown in its tray and never counted. A
+ *  count reads the list as it is (`rows`), not a row answered here whose
+ *  Undo still stands. */
+function oyPart(desk, part, rows = oyRows()) {
+  return (rows || []).filter(r => part === "here" ? r.desk === desk && r.kind !== "card" && r.kind !== "suggested" : r.desk !== desk);
+}
+
 /** The sentence, the rows (seven in the tray, all on Home), the fold, the
- *  two grey lines. `skip` is a desk whose own tray draws its cards and its
- *  lines to keep: the rest of the list is what is on the reader elsewhere. */
-function onyouHtml(all = false, skip = 0) {
+ *  two grey lines. On a desk (`desk`), `part` says which share: `here`, its
+ *  own rows, whole; `others`, the rest of the list, with the fold and the
+ *  grey lines, which are every desk's. */
+function onyouHtml(all = false, desk = 0, part = "") {
   const o = L.onyou, { esc } = c;
   if (!o || !c.capability) return "";
-  // A row answered here keeps its place while its words and Undo stand,
-  // after the read that no longer has it (undo where the click was).
-  const ghosts = [...L.said].filter(([k, v]) => v.item && !o.rows.some(r => oyKey(r) === k)).map(([, v]) => v.item);
-  const rows = ghosts.concat(o.rows).filter(r => !(skip && r.desk === skip && (r.kind === "card" || r.kind === "suggested")));
+  const rows = desk ? oyPart(desk, part) : oyRows();
+  if (part === "here") return rows.length ? oyGroups(rows, false) : "";
   const shown = all ? rows : rows.slice(0, 7);
   const more = rows.length - shown.length;
   const desks = new Set(rows.slice(shown.length).map(r => r.desk)).size;
   const fold = more ? `<p class="oy-fold"><button type="button" data-a="cn-home">and ${more} more, on ${desks} desk${desks === 1 ? "" : "s"}</button></p>` : "";
   const grey = (o.ran_quiet ? `<p class="oy-grey">${o.ran_quiet} routine${o.ran_quiet === 1 ? "" : "s"} ran today with nothing for you.</p>` : "") +
     (o.older ? `<p class="oy-grey">${o.older} thread${o.older === 1 ? "" : "s"} on ${o.older_desks} desk${o.older_desks === 1 ? "" : "s"} still for two weeks: Sunday's week has them.</p>` : "");
-  const sent = skip ? "" : `<p class="oy-sent">${esc(o.sentence)}</p>`;
+  const sent = desk ? "" : `<p class="oy-sent">${esc(o.sentence)}</p>`;
   return sent + oyGroups(shown, all) + fold + grey;
 }
 
