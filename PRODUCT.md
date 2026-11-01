@@ -34,7 +34,8 @@ Desks with up to four panels; documents (Markdown with Mermaid, HTML, images, di
 
 - Name always lowercase: snyvi. Mascot face from `icons/icon.svg`, never redrawn freehand.
 - Headline: "All your passion projects, in one calm place." Answer line: "Agents make it easy to start. snyvi helps you finish."
-- Who we work for is passionate people and their passion projects; Claude Code is how, never who (2026-10-12). The hero names Claude Code only in the lede ("where your Claude Code sessions work"), never as a "For Claude Code" label or in the title. Other agents get one line lower down, under "Any agent".
+- Who we work for is passionate people and their passion projects; Claude Code is how, never who (2026-10-12). The hero names Claude Code only in the lede ("where your Claude Code sessions run side by side"), never as a "For Claude Code" label or in the title. Other agents get one line lower down, under "Any agent".
+- What snyvi is comes before how it feels (2026-11-02, stranger test): the home page opens with a category kicker, "A free desktop app for your AI coding agents", which names what it is, not who it's for. The title, description and share picture say "where your coding agents work". Under the headline come the reader's problem in their words (terminal tabs, scrollback, your head, every switch), what a desk is, and what they bring (their own agent; snyvi is free, local, no account).
 - The passion-projects story leads: more projects than hours; work scatters (scrollback, your head, every switch); story-beat headers (Nothing scrolls away / Out of your head / Just as you left it).
 - Persona: a calm workshop, warm, dry and quick, precise like an instrument, on your side; never streaks, badges, confetti, hype. Voice and look rules in `docs/DESIGN.md`; the film's web-facing rendition (dark ground, Passion red, Archivo) in `film/DESIGN.md`.
 

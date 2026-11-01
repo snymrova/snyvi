@@ -1,19 +1,23 @@
 <!--{
   "path": "/",
-  "title": "snyvi · All your passion projects, in one calm place",
-  "description": "A desktop app where your Claude Code sessions work, one desk for each project, and everything they write is kept as a page you can read. Free, open source, on your machine.",
+  "title": "snyvi · Where your coding agents work, one desk per project",
+  "description": "A free desktop app where your coding agents work: one desk per project, every plan they write kept as a page you can read, and what's left as notes. Claude Code, Codex, Gemini or any shell. On your machine, no account.",
   "nav": "story",
   "head": "The story",
+  "kicker": "A free desktop app for your AI coding agents",
   "arrive": true,
   "rail": "story"
 }-->
 <h1 class="display">All your passion projects, in one calm place.</h1>
 <p class="answer">Agents make it easy to start. <b>snyvi helps you finish.</b></p>
-<p class="lede">A desktop app where your Claude Code sessions work, one desk for each project, and everything they write is kept as a page you can read.</p>
+<p class="problem">Running agents on several projects in terminal tabs? Their plans scroll away, what's left lives in your head, and every switch loses the thread.</p>
+<p class="lede">snyvi gives each project a <b>desk</b>: one window where your Claude Code sessions run side by side, in real terminals, just as they do now. Every plan they write is kept as a page you can read, and what's left stays as notes.</p>
+<p class="needs">snyvi doesn't come with an AI. You bring your own: Claude Code with your Claude plan, Codex, Gemini, or any shell. snyvi itself is free, runs on your machine, and needs no account.</p>
+<p class="cta"><button class="see" type="button" data-film><svg class="ic" viewBox="0 0 16 16"><path d="M5 3.5v9l7-4.5z"/></svg>See it work <span class="fact">1:57</span></button></p>
 
 {{install}}
 
-<p class="facts"><span>v{{version}}</span><span>MIT</span><span>Linux</span><span>macOS</span><span>Windows</span><span>up in 11 ms</span></p>
+<p class="facts"><span>v{{version}}</span><span>MIT</span><span>Linux</span><span>macOS</span><span>Windows</span></p>
 
 <div class="wide hero-shot">
 {{shot:desk|The ledger desk in snyvi: four Claude Code sessions side by side in their own panels, the projects in the sidebar, and the desk's panels, documents and notes in the rail|eager}}
@@ -27,18 +31,18 @@
   <a href="#out-of-your-head"><span>What's left to do lives in your head.</span><b>Out of your head {{icon:arrow}}</b></a>
   <a href="#just-as-you-left-it"><span>Every project pulls you away from the last.</span><b>Just as you left it {{icon:arrow}}</b></a>
 </div>
-<p class="verdict">Agents make it easy to start. <b>snyvi helps you finish.</b></p>
+<p class="verdict">Instead of a wall of terminal tabs and a notes file, <b>each project gets one desk that remembers.</b></p>
 
 <h2 id="one-desk-for-each-project">One desk for each project</h2>
-<p>A project's folder with up to four agents in it, side by side: Claude Code, Codex, Gemini, any shell. Each panel says whether its agent is working, done, or waiting on you.</p>
+<p>A desk is one window for one project folder, with up to four agents in it, side by side: Claude Code, Codex, Gemini, any shell. Each panel says whether its agent is working, done, or waiting on you.</p>
 <div class="wide">{{clip:desk|Switching from the atlas desk to ledger, where two Claude Code sessions work side by side, one working and one done}}</div>
 
 <h2 id="nothing-scrolls-away">Nothing scrolls away</h2>
-<p>Every plan and review an agent writes lands on its desk as a clean page, filed under its project, every version kept. <kbd>c</kbd> shows what changed.</p>
+<p>When an agent writes a plan or a review, it doesn't vanish up the terminal. It lands on the desk as a clean page you can read, filed under its project, every version kept. <kbd>c</kbd> shows what changed.</p>
 <div class="wide">{{clip:plan|A plan Claude wrote, opened from the desk's rail as a clean page, filed under its project}}</div>
 
 <h2 id="out-of-your-head">Out of your head</h2>
-<p>Each desk keeps its own notes. The agents read them, say how far they've got, and tick one off with the commit it went into. When one needs a decision from you, it asks in the desk's corner and waits.</p>
+<p>Each desk keeps a to-do list of its own. The agents read it, say how far they've got, and tick an item off with the commit that did it. When one needs a decision from you, it asks in the desk's corner and waits.</p>
 <div class="wide">{{clip:notes|A desk's notes beside its panel: a new one typed in, under one the agent has already ticked off}}</div>
 
 <h2 id="just-as-you-left-it">Just as you left it</h2>
@@ -57,12 +61,16 @@
 <p>Nothing of yours leaves your machine unless you send a page to a friend you paired with, sealed to their key. <a href="/privacy">What does, and when</a>.</p>
 
 <h2 id="questions">Questions</h2>
+<details><summary>{{icon:chev}}What do I need first?</summary>
+<p>The coding agent you already use: Claude Code with your own Claude account, or Codex, Gemini, or any shell. snyvi doesn't include an agent or an AI subscription; it's where they work. Installing is one line in a terminal, on macOS, Linux or Windows.</p></details>
+<details><summary>{{icon:chev}}Does it replace my terminal?</summary>
+<p>No, it sits beside it. Each panel is a real terminal running your shell and your config, so your agents run exactly as they do now. What tabs can't do: keep every plan an agent writes as a page you can read and search later, keep each project's to-do list with the project, and show you which agent is waiting on you.</p></details>
 <details><summary>{{icon:chev}}Is it free?</summary>
 <p>Yes, and open source under the MIT licence. There is no paid tier.</p></details>
 <details><summary>{{icon:chev}}Which agents?</summary>
 <p>Claude Code, connected from the window on first run. Codex, Cursor, Gemini, Windsurf, VS Code, Zed and Claude Desktop with one line each: <code>snyvi init codex</code>. Any shell in a panel.</p></details>
 <details><summary>{{icon:chev}}Does it work on a Mac?</summary>
-<p>Yes: the Mac build is signed and notarized, and <code>brew install --cask snymrova/snyvi/snyvi</code> is the way in. We don't own a Mac, so we'd love to hear how your first minute went, <a href="https://github.com/snymrova/snyvi/issues">on GitHub</a>.</p></details>
+<p>Yes: the Mac build is signed and notarized, and <code>brew install --cask snymrova/snyvi/snyvi</code> is the way in. Tell us how your first minute went, <a href="https://github.com/snymrova/snyvi/issues">on GitHub</a>.</p></details>
 <details><summary>{{icon:chev}}Windows says it "protected your PC".</summary>
 <p>The Windows installer isn't signed yet, so SmartScreen asks once: <i>More info</i>, then <i>Run anyway</i>. Scoop installs without the prompt, and winget will once Microsoft's review is through. <a href="https://github.com/snymrova/snyvi/blob/main/CODE-SIGNING.md">What will be signed, and how</a>.</p></details>
 

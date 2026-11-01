@@ -325,7 +325,7 @@ const PC_KEYS = { "⌘K": "Ctrl K", "⌃⌥Z": "Ctrl Alt Z" };
 // page says, as data.
 const LD = JSON.stringify({
   "@context": "https://schema.org", "@type": "SoftwareApplication", name: "snyvi", url: ORIGIN,
-  description: "All your passion projects, in one calm place. A desktop app where your Claude Code sessions work, one desk for each project.",
+  description: "A free desktop app where your coding agents work: one desk per project, every plan they write kept as a page you can read, and what's left as notes. Claude Code, Codex, Gemini or any shell. On your machine, no account.",
   applicationCategory: "DeveloperApplication", operatingSystem: "Linux, macOS, Windows",
   softwareVersion: VERSION, license: "https://opensource.org/licenses/MIT",
   downloadUrl: `${ORIGIN}/install`, codeRepository: `https://github.com/${REPO}`,
@@ -334,6 +334,9 @@ const LD = JSON.stringify({
 const pcKeys = html => html.replace(/<kbd>(⌘K|⌃⌥Z)<\/kbd>/g, (_, k) => `<kbd data-pc="${PC_KEYS[k]}">${k}</kbd>`);
 
 let CSS_V = "", JS_V = "";
+// A page's `kicker` replaces the row above its title with one plain line.
+// The home page uses it to say what snyvi is before the headline says how it
+// feels: strangers read the first five seconds there (stranger test, Nov 2026).
 function frame(page) {
   const url = ORIGIN + (page.path === "/404" ? "/" : page.path);
   const head = page.nav === "story" ? "From the snyvi desk" : "snyvi.com";
@@ -367,7 +370,7 @@ ${sidebar(page)}
 <div class="pop theme-menu" id="theme-menu" role="menu" aria-label="Theme" hidden><div class="menu-label">Theme</div><div class="theme-list"></div><div class="accents" aria-label="Accent"></div></div>
 <main id="doc">
 <article class="doc">
-<div class="doc-head"><span class="led${page.arrive ? " info" : ""}"></span><span>${head}</span><span class="sep">·</span><span>${esc(page.head)}</span><span class="sep">·</span><span class="fact">v${VERSION}</span></div>
+<div class="doc-head"><span class="led${page.arrive ? " info" : ""}"></span>${page.kicker ? `<span>${esc(page.kicker)}</span>` : `<span>${head}</span><span class="sep">·</span><span>${esc(page.head)}</span><span class="sep">·</span><span class="fact">v${VERSION}</span>`}</div>
 ${page.body}
 </article>
 </main>
