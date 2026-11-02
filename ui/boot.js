@@ -18,6 +18,10 @@ try {
     localStorage.removeItem("snyvi.theme");
   }
   var d = document.documentElement;
+  // The window, which holds the capability (app.js, 07-nav.js): what only it
+  // can do -- Music (#204) -- is drawn from the first frame
+  // there, and never in a browser tab, so nothing comes in late and moves.
+  if (/^#cap=/.test(location.hash) || sessionStorage.getItem("snyvi.cap")) d.dataset.win = "1";
   var ac = localStorage.getItem("snyvi.accent");
   if (ac) d.dataset.accent = ac;
   var f = localStorage.getItem("snyvi.font");

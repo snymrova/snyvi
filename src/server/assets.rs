@@ -97,6 +97,8 @@ pub(crate) const GALLERY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/gall
 /// A song's own controls (audit 3c6958c2a8), fetched on the first press of
 /// one: a document with no song in it never pays for them.
 pub(crate) const PLAYER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/player.js"));
+/// Music while you work (#204), fetched on the first press of ♪.
+pub(crate) const MUSIC_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/music.js"));
 
 /// Approve on a plan's head (1.47), fetched on its first press.
 pub(crate) const PLAN_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/plan.js"));
@@ -1044,6 +1046,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("sidebars.js", SIDEBARS_JS, JS),
     ("gallery.js", GALLERY_JS, JS),
     ("player.js", PLAYER_JS, JS),
+    ("music.js", MUSIC_JS, JS),
     ("plan.js", PLAN_JS, JS),
     ("friend.js", FRIEND_JS, JS),
     ("guide.js", GUIDE_JS, JS),

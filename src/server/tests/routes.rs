@@ -200,6 +200,18 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/browse/pick", None, Gate::Desk, false),
+    ("GET", "/api/music", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/music/mine",
+        Some(r#"{"url":"nope"}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("POST", "/api/music/folder", None, Gate::Desk, false),
+    ("GET", "/api/music/files", None, Gate::Desk, true),
+    ("GET", "/api/music/file/999999", None, Gate::Open, true),
+    ("GET", "/api/music/play/999999", None, Gate::Open, true),
     // With no dialog open, a cancel wakes nothing: safe to let through.
     ("POST", "/api/browse/pick/cancel", None, Gate::Desk, true),
     // A root that is no root: 404 before anything is made.

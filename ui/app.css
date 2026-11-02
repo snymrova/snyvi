@@ -368,6 +368,9 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    openPop): nothing is drawn twice, and every listener on #trees still
    hears it, since #pop is inside #trees. */
 #rail-nav, #pop[hidden] { display: none; }
+/* Music (#204): the window's alone (boot.js data-win); in
+   the head while the sidebar is open, in the rail while it is folded. */
+:root:not([data-win]) .md-btn, :root[data-side="0"] .side-head .md-btn { display: none; }
 :root[data-side="0"] #rail-nav { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; min-height: 0; padding: 6px 0; }
 :root[data-side="0"] :is(.brand-name, #live, #btn-search, #btn-lately, #side .gutter, #trees > :not(#pop)) { display: none; }
 :root[data-side="0"] .side-head { flex-direction: column; gap: 10px; padding: 14px 0 4px; }

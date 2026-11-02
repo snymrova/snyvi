@@ -25,6 +25,13 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "music"
+since = "1.55.0"
+title = "Music while you work"
+line = "Press ♪ beside Search for focus, lo-fi, calm, Indian classical and bhajan stations, a stream of your own, or the music folder you already have. It plays on as you move between documents and desks."
+show = "home [data-media=music]"
+
+[[feature]]
 id = "inbox-list"
 since = "1.55.0"
 title = "The Inbox is one list"

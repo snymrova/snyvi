@@ -18,6 +18,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | pipelines: rows (`src/pipeline.rs`), planner, transcript reader; the runner (`src/server/pipeline_run.rs`); the window's routes (`src/server/api_pipeline.rs`) | | start one from a token route; put a step through a shell |
 | routines (1.50; the field and the draft, 1.53): rows, runs, drafts (`src/routine.rs`), where a `/name` lives in Claude Code's order (`src/routine/places.rs`), the Waits suggested and matched (`src/routine/waits.rs`), the cadence (`src/due/every.rs`); the runner (`src/server/routine_run.rs`); the window's routes (`src/server/api_routine.rs`); the rail's section and field (`ui/desk/19-routine.js`), the sheet (`ui/desk/21-routine-sheet.js`) | | start, save or widen one from a token route; run a file the reader has not allowed; take an agent's words as a prompt |
 | a friend's snyvi: pairing, Send to…, offers, the link | `src/server/api_peer.rs`, `src/server/peer_link.rs` (the socket to the relay), `src/peer.rs` (keys, code, frame, relay client, tables), `relay/` (the Worker) | send on an agent's word; parse a frame before its key is pinned; wait at the relay with anything but the one socket |
+| Music: stations, the reader's streams and folder | `src/server/api_media.rs`, `src/music.rs` (the station list, the relay, the folder), `ui/music.js` | play on an agent's word; relay a URL that isn't on the list or the reader's own |
 | the desk socket · SSE · browse mode · restart, update, reset | `src/server/{ws,events,api_browse,lifecycle}.rs` | — |
 | the route table test | `src/server/tests.rs` | lag the router: the count must match |
 | documents on disk + SQLite index + FTS | `src/store.rs` | know about HTTP or panes |
@@ -46,7 +47,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 
 ## Invariants (do not move them)
 
-- Local only. Bind 127.0.0.1; every route checks `Host`/`Origin`; no accounts, no telemetry. The one thing that leaves the machine is a frame the reader pressed Send on, sealed to a friend's pinned key (`docs/PEER.md`); the relay reads none of it.
+- Local only. Bind 127.0.0.1; every route checks `Host`/`Origin`; no accounts, no telemetry. The one thing that leaves the machine is a frame the reader pressed Send on, sealed to a friend's pinned key (`docs/PEER.md`); the relay reads none of it. The one thing fetched on the reader's press is the station they pressed Play on in Music, relayed by the daemon (`src/music.rs`), never a URL a request names.
 - **Capability ≠ token.** The capability is the window's (desk routes, reader actions). The token is the agent's (`send`, `aside`, `panes/{id}/*`). A token never mints a capability and never starts a command.
 - snyvi never makes input from content it received. Agents send, snyvi shows. No command runner. A pipeline (1.40) is the one place a model's text becomes a prompt: made and started only from the window, each step one argv entry of a new session in a worktree, never keystrokes (`docs/TERMINAL.md` §9a). A routine (1.50) starts the reader's own allowed slash command, skill or words at the reader's hour, once they pressed Start, and its next prompt is the reader's answers (§9b).
 - Nothing is deleted. A ✕ removes from view and stays recoverable. Documents are immutable; a resend is a new version.

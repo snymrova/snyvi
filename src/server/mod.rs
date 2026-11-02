@@ -16,6 +16,7 @@ mod api_desk;
 mod api_docs;
 mod api_friend;
 mod api_gallery;
+mod api_media;
 mod api_peer;
 mod api_pipeline;
 mod api_routine;
@@ -41,6 +42,7 @@ use api_desk::*;
 use api_docs::*;
 use api_friend::*;
 use api_gallery::*;
+use api_media::*;
 use api_peer::*;
 use api_pipeline::*;
 use api_routine::*;
@@ -473,6 +475,19 @@ fn note_routes() -> Router<Arc<App>> {
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
 }
 
+/// Music, in the left rail (`api_media`, #204). The plays and the tracks are
+/// reads a media element makes,
+/// which carries no capability: they hold to `same_origin_read` instead.
+fn media_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/music", get(music))
+        .route("/api/music/mine", post(music_mine))
+        .route("/api/music/folder", post(music_folder))
+        .route("/api/music/files", get(music_files))
+        .route("/api/music/file/{n}", get(music_file))
+        .route("/api/music/play/{n}", get(music_play))
+}
+
 /// The sidebars' layout and their widgets (`api_widget`).
 fn widget_routes() -> Router<Arc<App>> {
     Router::new()
@@ -686,6 +701,7 @@ fn router(app: Arc<App>) -> Router {
         .merge(account_routes())
         .merge(thread_routes())
         .merge(widget_routes())
+        .merge(media_routes())
         .merge(pipeline_routes())
         .merge(peer_routes())
         .route("/desks", get(shell_desk_list))

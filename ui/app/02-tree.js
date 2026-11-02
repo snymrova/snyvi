@@ -125,6 +125,8 @@
     // The Inbox's filter and its find box (#206).
     funnel: '<path d="M3.5 5h17l-6.5 8v6l-4-2v-4z"/>',
     find: '<circle cx="11" cy="11" r="6.5"/><path d="m20.5 20.5-4.9-4.9"/>',
+    // Music (#204).
+    music: '<path d="M9 18V5.5l11-2V16"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
   };
   /** An icon at any size with the same 1.5 px line on screen: the drawings
    *  are on a 24 grid, so the stroke is scaled to the size asked for. */
