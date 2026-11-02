@@ -300,15 +300,11 @@ async function goInbox() {
   return there();
 }
 
-/** Every row the churn will click, in the sidebar. A document opened from
- *  outside the tree leaves its project folded (only a click unfolds one), so
- *  the three projects are unfolded here, once, the way a reader would. */
+/** Every row the churn will click, in the sidebar: the Inbox's list (#206)
+ *  shows the newest, and these are, once they are drawn. */
 async function unfold(ids) {
   const all = () => ids.every(id => document.querySelector(`#tree a[data-id="${id}"]`));
-  for (let i = 0; i < 300 && !all(); i++) {
-    for (const s of document.querySelectorAll("#tree details.t-proj:not([open]) > summary, #tree details.t-proj[open] details:not([open]) > summary")) s.click();
-    await new Promise(r => setTimeout(r, 10));
-  }
+  for (let i = 0; i < 300 && !all(); i++) await new Promise(r => setTimeout(r, 10));
   return all();
 }
 

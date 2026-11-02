@@ -60,6 +60,8 @@
     deleteDoc: d => deleteDoc(d),
     knownDocs,
     putAway: pid => putAway(String(pid)),
+    // The Inbox's filter (#206): its menu reads it and changes it.
+    see, away, seeInbox: ch => seeInbox(ch),
     applyRename: (what, id) => applyRename(what, id),
     places: () => deskPlaces(),
     // The desks moved in the reader's order (menu.js, `moveDesk`).
@@ -190,14 +192,6 @@
     // row and let go on the new one would not be a click. So what changed
     // is written, and only that -- the mark column, the head -- and the list
     // is drawn whole only when a row itself is different.
-    // The desk glyph on each project's row follows its desk's state here,
-    // where the dots change, rather than by drawing the tree again.
-    for (const b of treeEl.querySelectorAll("[data-deskof]")) {
-      const d = list.find(x => String(x.id) === b.dataset.deskof);
-      if (!d) continue;
-      const next = "b-new has" + deskState(d);
-      if (b.className !== next) { b.className = next; b.dataset.tipSub = deskSay(d); }
-    }
     const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
     if (!same) {
       deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + `</ul>`;
@@ -352,7 +346,7 @@
    * browser's menu -- paste, spelling -- and so does a selection in a
    * document, for its Copy. Anywhere else in the window, WebKit's Back,
    * Forward and Reload are not snyvi's, and do not show. */
-  const MENU_AT = ".brand-mark, .b-root > summary, .b-dir > details > summary, a[data-browse], .t-proj > summary, a[data-id], a[data-desk], " +
+  const MENU_AT = ".brand-mark, .b-root > summary, .b-dir > details > summary, a[data-browse], [data-only], a[data-id], a[data-desk], " +
     ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone), .dk-pth, .nv-b, #side .sec-head, #rail .sec-head";
   const menuFor = (el, x, y, byKey) => act("open", el, x, y, byKey);
   document.addEventListener("contextmenu", e => {
@@ -383,9 +377,8 @@
       e.preventDefault(); e.stopPropagation();
       act("moveDesk", +el.dataset.desk, e.key === "ArrowUp" ? -1 : 1, true);
     } else if (e.key === "F2" && !inPane && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      const p = el.closest(".t-proj > summary"), d = el.closest("a[data-desk]");
-      if (p) { e.preventDefault(); startRename(p, "project", +p.parentElement.dataset.pid); }
-      else if (d && capability) { e.preventDefault(); startRename(d, "desk", +d.dataset.desk); }
+      const d = el.closest("a[data-desk]");
+      if (d && capability) { e.preventDefault(); startRename(d, "desk", +d.dataset.desk); }
     }
   }, true);
 
@@ -513,6 +506,8 @@
     if (!opens) wash([d.id]);
     holdQueue();   // a burst's events carry counts ahead of the rows this page holds
     state.cache.delete(d.id);
+    // Its row now, at the top of the list, washing; the refresh below fills in.
+    listPut(d);
     renderTree(); markActive();
     // On a desk, one from elsewhere rises in its corner (#122).
     if (state.view === "desk" && desk) desk.elsewhere(d);

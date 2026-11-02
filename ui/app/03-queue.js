@@ -175,7 +175,7 @@
         `<button type="button" class="icon qb-step" data-q="step" data-tip="Open the next one" aria-label="Open the next one waiting">${glyph("next", 14)}</button><span class="qb-next">${next}</span>` +
         `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd class="lk">n</kbd></button><a href="/inbox?recent" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button>` +
-        `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay first in Recent" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
+        `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay lit in the Inbox" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
       qbFeel("whoa");
       qbWas = total;
       return;
@@ -312,291 +312,191 @@
     else if (b.dataset.q === "shut") { qbShut = arrivals; qbBatch = null; renderQueue(); }
   });
 
-  /** The rows inside one project: its sessions, their documents, and — where a
-   *  cap left something out — what it would take to see the rest. A project
-   *  this tab has not fetched yet is a single row saying so, which is the only
-   *  state this can be in that is neither empty nor complete. */
-  /* What a project shows before a reader asks for more: up to five documents
-   * a session, and sessions until about eight rows are on screen -- a budget
-   * of rows rather than of sessions, since a session of one is one row and
-   * three of those would hide the busy session under them. The server sends
-   * ten of each, which kept the wire short but drew nine rows under one
-   * session and thirty under a project: a list, not a sidebar. The rest sits
-   * behind "N more", which shows what the page already holds at once and
-   * fetches only past the server's own cap; "less" folds it again. The
-   * session the open document is in is always whole, since `[` and `]` step
-   * through it. */
-  const SHOW_DOCS = 5, SHOW_ROWS = 8;
-  const wholeWf = w => liftedWorkflows.has(w.id);
-  /** The document on screen, when it is in `w` and past the session's cap:
-   *  its own row rides under the capped ones, so the mark has a row to be on
-   *  without the whole session unfolding around it. */
-  const pastCap = (w, docs) => state.doc && state.deskBehind == null && state.doc.workflow_id === w.id && !docs.some(d => d.id === state.doc.id)
-    ? w.docs.find(d => d.id === state.doc.id) : null;
-  function projectRows(p) {
-    const pid = String(p.id);
-    let wfs = state.sub.get(pid);
-    if (!wfs) return skRows;
-    const allWfs = liftedCaps.has(pid);
-    // A removed document's row stands in its session until the offer goes.
-    // Its session may have gone with it, when it was the only document there:
-    // then the row stands alone where the session was.
-    const g = gone && gone.where === "proj" && gone.pid === pid ? gone : null;
-    // And the sessions keep the order they were drawn in: a session that lost
-    // its newest document can sort below another, and move the Undo with it.
-    // One that came since goes on top, where it would have anyway.
-    let fresh = 0;
-    if (g && g.order) {
-      const was = new Map(g.order.map((id, i) => [id, i]));
-      const kept = wfs.filter(w => was.has(w.id)).sort((a, b) => was.get(a.id) - was.get(b.id));
-      fresh = wfs.length - kept.length;
-      wfs = [...wfs.filter(w => !was.has(w.id)), ...kept];
-    }
-    const lostWf = g && !wfs.some(w => w.id === g.wf), lostAt = g ? g.wfAt + fresh : -1;
-    const lone = () => `<li class="t-wf solo"><ul>${ghostRow()}</ul></li>`;
-    let h = "", shownWfs = 0, rows = 0;
-    for (const [wi, w] of wfs.entries()) {
-      if (lostWf && wi === lostAt) h += lone();
-      // Past the budget, only the session being read is drawn.
-      if (!allWfs && rows >= SHOW_ROWS && !(state.doc && state.doc.workflow_id === w.id)) continue;
-      shownWfs++;
-      // A group of one is not a group. `receive.rs` titles a session-keyed
-      // workflow with its first document's title, so the header above a lone
-      // row is a truncated copy of it -- 4 of 17 sessions in live data. The
-      // row stands alone instead, which holds however sessions get named.
-      // While a removed row stands in it, a session keeps the shape it had,
-      // so its head does not come or go above the row.
-      const ghostHere = g && g.wf === w.id && !w.docs.some(d => d.id === g.id);
-      const solo = ghostHere ? g.solo : w.total === 1 && w.docs.length === 1;
-      const whole = wholeWf(w), docs = whole ? w.docs : w.docs.slice(0, SHOW_DOCS);
-      h += `<li class="t-wf${solo ? " solo" : ""}">${solo ? "" : `<div class="wf-name" data-tip="${esc(w.key)}" data-tip-mono><span class="nm">${esc(w.title)}</span>${renameBtn("workflow", w.id)}</div>`}<ul>`;
-      const extra = pastCap(w, docs), drawn = (extra ? [...docs, extra] : docs).map(docRow);
-      if (ghostHere) drawn.splice(Math.min(g.at, drawn.length), 0, ghostRow());
-      h += drawn.join("");
-      rows += docs.length;
-      if (w.total > docs.length) h += `<li class="t-more"><button type="button" data-more-docs="${w.id}">${w.total - docs.length} more</button></li>`;
-      else if (liftedWorkflows.has(w.id) && w.total > SHOW_DOCS) h += `<li class="t-more"><button type="button" data-less-docs="${w.id}">less</button></li>`;
-      h += `</ul></li>`;
-    }
-    if (lostWf && lostAt >= wfs.length) h += lone();
-    if (p.workflows > shownWfs) h += `<li class="t-more"><button type="button" data-more-wf="${p.id}">${p.workflows - shownWfs} more sessions</button></li>`;
-    else if (allWfs && wfs.length > 1 && liftedCaps.has(pid)) h += `<li class="t-more"><button type="button" data-less-wf="${p.id}">fewer sessions</button></li>`;
-    return h;
+  /* ---------- the Inbox: one list ----------
+   * The Inbox is every document in one list, newest first, each row saying
+   * its project under its title (#206; mockups 6e193a899f). It was a tree of
+   * projects, and a document was two clicks under its project -- after a
+   * project row that said only when it last heard. Live data had 60
+   * documents from 11 projects in 28 hours, in 43 runs, so the list names
+   * the project on every row rather than once above a run.
+   *
+   * What it shows is the reader's: what waits or everything, and one project
+   * or all of them (`see`, 02-tree.js), with a find box over the list that
+   * narrows it by title and project as they type. Ctrl K is still the search
+   * inside documents; the find box hands its words there when they find
+   * nothing here. One row a title in a project: a file sent again is one row
+   * already (`head_docs`), and two documents with one title in one project
+   * are the same thing to a reader -- the older is on the All page. */
+  const LIST_HELD = 100;   // what the page holds and the find box looks through
+  let listOff = false;
+  /** The newest documents, from the daemon, for the list and the find box. */
+  async function refreshList() {
+    const j = await getJson(`/api/inbox?limit=${LIST_HELD}`);
+    listOff = !Array.isArray(j) && !state.list;
+    if (Array.isArray(j)) state.list = j;
+  }
+  /** A document the stream says is in, put in the list where it belongs: a
+   *  save in place, a draft, an arrival -- one row a file, the newest. */
+  function listPut(d) {
+    if (!state.list || !d) return;
+    const same = x => x.id === d.id || (!!d.source_path && x.project_id === d.project_id && x.source_path === d.source_path);
+    state.list = [d, ...state.list.filter(x => !same(x))].sort((a, b) => b.received_at - a.received_at);
+  }
+  /** The project `see` names, while there is one. */
+  const seenProj = () => see.proj && state.tree.find(p => String(p.id) === see.proj);
+  /** Where the rows come from, before the find box: what waits, the one
+   *  project's own (fetched as the tree's were), or the newest of all. Null
+   *  while they are on their way. */
+  function listSource() {
+    const p = seenProj();
+    if (see.wait) return p ? state.queue.filter(d => String(d.project_id) === see.proj) : state.queue;
+    if (!p) return state.list && state.list.filter(d => !away.has(String(d.project_id)));
+    const wfs = state.sub.get(see.proj);
+    // A fill that failed once is not asked again by a draw: its list is empty.
+    if (!wfs) { fillProject(see.proj); return filling.has(see.proj) ? null : []; }
+    return wfs.flatMap(w => w.docs).map(d => ({ ...d, project_id: p.id, project: p.name })).sort((a, b) => b.received_at - a.received_at);
+  }
+  function listRows() {
+    let ds = listSource();
+    if (!ds) return null;
+    const q = see.q.trim().toLowerCase();
+    if (q) ds = ds.filter(d => String(d.title).toLowerCase().includes(q) || String(d.project || "").toLowerCase().includes(q));
+    const seen = new Set();
+    ds = ds.filter(d => { const k = `${d.project_id}\n${d.title}`; return !seen.has(k) && seen.add(k); });
+    // Under the reader's pointer the rows keep the order they had and take
+    // no newcomer: an arrival moved every row down one while the reader
+    // reached for one, and the click landed on its neighbour (audit
+    // 67d008cb6f). The rest come in when the pointer leaves (`sideEl`).
+    if (frozen && frozen.size && sideEl.matches(":hover")) ds = ds.filter(d => frozen.has(d.id)).sort((a, b) => frozen.get(a.id) - frozen.get(b.id));
+    return ds;
+  }
+  let frozen = null;
+  const sideEl = $("#side");
+  /** The rows' order, held while the pointer is over the sidebar: taken
+   *  when it comes in, and again after the reader changes what the list
+   *  shows -- their click is what moved it, and the next arrival must not. */
+  const freeze = () => { frozen = sideEl.matches(":hover") ? new Map((listSource() || []).map((d, i) => [d.id, i])) : null; };
+  sideEl.addEventListener("pointerenter", () => freeze());
+  sideEl.addEventListener("pointerleave", () => { frozen = null; drawnTree = null; renderTree(); markActive(); });
+  /** A change of what the list shows: the reader's, so kept, and the
+   *  pointer's hold on the old order let go -- it is their click that moved it. */
+  function seeInbox(ch) {
+    Object.assign(see, ch);
+    if (see.proj && !liftedCaps.has(see.proj)) { liftedCaps.add(see.proj); if (state.sub.has(see.proj)) fillProject(see.proj, true); }
+    store.set("snyvi.see", see.proj); store.set("snyvi.seeWait", see.wait ? "1" : "");
+    freeze();
+    renderTree(); markActive();
+  }
+  /** The find box's words, as a search inside every document (Ctrl K). */
+  function searchFor(q) {
+    openPalette();
+    const i = $("#palette-input");
+    i.value = q; i.dispatchEvent(new Event("input"));
   }
 
-  /** The sidebar, which is a list of projects and the rows of the ones that are
-   *  open. A closed project contributes nothing to the page: this used to carry
-   *  every document in the library on every page open — 13,000 rows and a
-   *  718 ms task at 3000 documents — and what is behind a row is now two
-   *  numbers until a reader asks for it. */
-  let drawnTree = null, drawnInbox = null, recutDone = true;
+  let drawnTree = null, drawnInbox = null, drawnTok = null, recutDone = true;
   const treeTouched = new MutationObserver(() => { drawnTree = null; });
-  treeTouched.observe(treeEl, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
-  /** The daemon's projects, and the one whose last document was just removed:
-   *  it has left the daemon's tree, but it stands, open, until the ghost in it
-   *  ends, so the Undo has a row to be in. */
-  function heldTree() {
-    const g = gone;
-    let t = state.tree;
-    if (g && g.where === "proj" && g.proj && !state.tree.some(p => String(p.id) === g.pid)) {
-      t = t.slice();
-      t.splice(Math.min(g.projAt, t.length), 0, g.proj);
-    }
-    // Newest first, except under the reader's pointer: a document landing
-    // moved its project to the top while the reader reached for another, and
-    // the row they aimed at was a different one when the click came (audit
-    // 67d008cb6f). While the pointer is over the sidebar the projects keep
-    // the order they were drawn in, a new one going in at the top as before;
-    // they settle into newest first when it leaves (`sideEl`'s pointerleave).
-    if (orderShown && sideEl.matches(":hover")) {
-      const at = new Map(orderShown.map((id, i) => [id, i])), i = p => at.has(p.id) ? at.get(p.id) : -1;
-      t = t.slice().sort((a, b) => i(a) - i(b));
-    }
-    orderShown = t.map(p => p.id);
-    return t;
-  }
-  let orderShown = null;
-  const sideEl = $("#side");
-  sideEl.addEventListener("pointerleave", () => {
-    if (!orderShown || orderShown.join() === heldTree().map(p => p.id).join()) return;
-    drawnTree = null; renderTree(); markActive();
-  });
-  /** How many projects the Inbox shows before its "more" row: the ones heard
-   *  from this week, between USED_MIN and USED_MAX, and no more than fit
-   *  between what stands above the projects (the head and Recent) and what
-   *  must stay on screen below them (all of Desks,
-   *  and the Folders head). Measured, because each of those changes it;
-   *  never fewer than three. The whole list while the Inbox is folded or the
-   *  sidebar is its rail, where there is no column to fit. */
-  const ROW_H = 28, MIN_CAP = 3, QUIET_S = 7 * 86400, USED_MIN = 5, USED_MAX = 8;
-  function inboxCap(awayRow) {
+  treeTouched.observe(treeEl, { childList: true, subtree: true });
+  /** How many rows the list shows: no more than fit between what stands
+   *  above it (the head and the find box) and what must stay on screen
+   *  below it (every section after the Inbox, down to the last one's head),
+   *  less the foot row. Measured, because each of those changes it; never
+   *  fewer than three. A row is two lines, 40 px (app.css .t-doc a). */
+  const ROW_H = 40, FOOT_H = 26, MIN_CAP = 3, CAP_MAX = 30;
+  function inboxCap() {
     const room = treesEl.clientHeight;
-    if (!room || root.dataset.side === "0" || folded.has("inbox")) return Infinity;
-    const now = Date.now() / 1000;
-    const used = Math.min(USED_MAX, Math.max(USED_MIN, state.tree.filter(p => p.latest && now - p.latest <= QUIET_S).length));
-    // What must stay on screen under the projects: every section after the
-    // Inbox, down to the head of the last one shown -- in the reader's order,
-    // and none that is hidden, so hiding Folders gives the Inbox its room.
+    if (!room || root.dataset.side === "0" || folded.has("inbox")) return CAP_MAX;
     const after = layout.left.slice(layout.left.indexOf("inbox") + 1).filter(id => !offLeft(id));
     const fh = after.map(id => LEFT_NODES[id][0].querySelector(".sec-head")).filter(Boolean).pop();
     const port = treesEl.getBoundingClientRect(), at = treeEl.getBoundingClientRect();
     const above = at.top - port.top + treesEl.scrollTop;
     const below = fh ? fh.getBoundingClientRect().bottom - at.bottom : 0;
-    // 8: #trees' own padding at the foot; the "more" row; the removed row.
-    const left = room - above - below - 8 - ROW_H - (awayRow ? 26 : 0);
-    return Math.min(used, Math.max(MIN_CAP, Math.floor(left / ROW_H)));
+    return Math.min(CAP_MAX, Math.max(MIN_CAP, Math.floor((room - above - below - 8 - FOOT_H) / ROW_H)));
   }
-  /** Subfolder projects under the project whose folder holds them (audit
-   *  7c0fc42885: 17 of 32 were, four of them called "reel"). A folder with
-   *  no git of its own is a project of its own (project.rs `resolve`), so a
-   *  studio's every job folder was a row. Each is drawn under the nearest
-   *  project that holds it, newest first; a group stands where its newest
-   *  member would, so nothing is re-sorted. Nothing is re-filed either: the
-   *  same projects, documents and URLs, one level down. The home folder
-   *  holds no one. `parentOf` is kept for `markActive`. */
-  function nest(drawn) {
-    const home = pathKey(state.desks && state.desks.home);
-    const keyed = drawn.filter(p => p.root).map(p => [p, pathKey(p.root)]).filter(([, k]) => k && k !== home);
-    const sep = k => /^[a-z]:/.test(k) ? "\\" : "/";
-    const kids = new Map();
-    parentOf = new Map();
-    for (const [p, k] of keyed) {
-      let best = null, bl = -1;
-      for (const [q, qk] of keyed) if (q !== p && qk.length > bl && k.startsWith(qk.endsWith(sep(qk)) ? qk : qk + sep(qk))) { best = q; bl = qk.length; }
-      if (!best) continue;
-      parentOf.set(String(p.id), String(best.id));
-      if (!kids.has(best)) kids.set(best, []);
-      kids.get(best).push(p);
-    }
-    const byId = new Map(drawn.map(p => [String(p.id), p]));
-    const topOf = p => { let id = String(p.id); while (parentOf.has(id)) id = parentOf.get(id); return id; };
-    return { top: [...new Set(drawn.map(topOf))].map(id => byId.get(id)), kids };
-  }
-  /** Every project under `p`, at any depth. */
-  const family = (p, kids) => (kids.get(p) || []).flatMap(c => [c, ...family(c, kids)]);
-  /** The row that holds the projects past the cap. It says how many, and how
-   *  long they have been quiet -- or, when one has something waiting, that.
-   *  Shown, it is "Show less", at the end of what it let out. */
-  function moreRow(hidden) {
-    if (moreOpen) return `<button type="button" class="t-quiet" data-quiet aria-expanded="true">${icon("more")}<span class="nm">Show less</span>${chev}</button>`;
-    const waiting = state.queue.filter(d => moreHidden.has(String(d.project_id))).length;
-    // Quiet only past QUIET_S, as the rows' own fading says: these are held
-    // by the cap, and "quiet 2d" read as if nothing had come for two days.
-    const q = hidden[0].latest && Date.now() / 1000 - hidden[0].latest > QUIET_S ? relShort(hidden[0].latest) : "";
-    const say = waiting ? `${waiting} waiting` : !q ? "" : /^\d/.test(q) ? `quiet ${q}` : `quiet since ${q}`;
-    const names = hidden.slice(0, 8).map(p => p.name).join(", ") + (hidden.length > 8 ? ` and ${hidden.length - 8} more` : "");
-    return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">Show ${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
-  }
-  /** The Inbox's head, with All and the library's size at its right edge,
-   *  and Recent under it: the newest first, saying how long ago the last one
-   *  came -- or, while any is unread, how many, in the accent, until the
-   *  last of them is read. Its page lists those first. The count stands
-   *  where the time did, so the row is the same whatever arrives. The head
-   *  says how many wait only while the Inbox is folded. Written only when it
-   *  changed, as every section is. */
+  /* The head and the find box are made once and written into, so a count
+   * changing never takes the field out from under a reader typing in it. */
+  inboxRowEl.innerHTML = `<div class="ib-head"></div><label class="ib-find">${icon("find", 14)}<span class="ib-tok"></span><input type="search" placeholder="Find a document" aria-label="Find a document in the Inbox" spellcheck="false" autocomplete="off"></label>`;
+  const ibHead = inboxRowEl.firstElementChild, ibTok = inboxRowEl.querySelector(".ib-tok"), ibIn = inboxRowEl.querySelector("input");
+  ibIn.addEventListener("input", () => { see.q = ibIn.value; renderTree(); markActive(); });
+  ibIn.addEventListener("keydown", e => {
+    const first = () => treeEl.querySelector("a[data-id]");
+    if (e.key === "Escape" && ibIn.value) { e.preventDefault(); e.stopPropagation(); ibIn.value = see.q = ""; renderTree(); markActive(); }
+    else if (e.key === "Enter" && first()) { e.preventDefault(); first().click(); }
+    else if (e.key === "ArrowDown" && first()) { e.preventDefault(); first().focus(); }
+  });
+  /** The Inbox's head: how many wait, in the accent; the filter, lit while
+   *  it holds anything back; and All, the whole library on its own page.
+   *  And in the find box, what the filter holds the list to, each with its
+   *  ✕. Written only when it changed, as every section is. */
   function drawInbox(waiting = state.waiting) {
-    const total = state.tree.reduce((k, p) => k + p.docs, 0);
-    const last = state.tree.reduce((k, p) => Math.max(k, p.latest || 0), 0);
-    // All, without the library's size: 620 is the biggest figure in the
-    // head and says nothing about today (audit 7c0fc42885). It is the tip.
+    const total = state.tree.reduce((k, p) => k + p.docs, 0), p = seenProj(), on = !!p || see.wait;
     const all = `<a class="sec-all" href="/inbox" data-nav="inbox" data-tip="All documents" data-tip-sub="${plural(total, "document")} · what waits, then every project, newest first">All</a>`;
-    const tip = waiting ? ` data-tip="${plural(waiting, "document")} waiting" data-tip-sub="Recent lists them first"` : "";
-    const inbox = secHead("inbox", "Inbox", { count: waiting || "", tone: "accent", foldOnly: true, countTip: waiting ? `${waiting} waiting to be read` : "", end: all }) +
-      `<a class="t-inbox s-row${waiting ? " new" : ""}" href="/inbox?recent" data-nav="inbox"${tip}>${icon("clock")}<span class="title">Recent</span><span class="n">${waiting || (last ? relShort(last) : "")}</span></a>`;
-    if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;
+    const ibf = `<button type="button" class="ib-f${on ? " on" : ""}" data-ibf data-tip="Show" data-tip-sub="what waits or everything · one project or all" aria-label="Filter the Inbox">${glyph("funnel", 14)}</button>`;
+    const inbox = secHead("inbox", "Inbox", { count: waiting || "", tone: "accent", countTip: waiting ? `${waiting} waiting to be read` : "", acts: ibf, end: all });
+    if (inbox !== drawnInbox) ibHead.innerHTML = drawnInbox = inbox;
+    const x = (k, say) => `<button type="button" data-unsee="${k}" aria-label="${say}">${glyph("x", 10)}</button>`;
+    const tok = (see.wait ? `<span class="tok">Waiting${x("wait", "Show everything")}</span>` : "") +
+      (p ? `<span class="tok" data-only="${p.id}"><span class="nm">${esc(p.name)}</span>${x("proj", "Show every project")}</span>` : "");
+    if (tok !== drawnTok) { ibTok.innerHTML = drawnTok = tok; ibIn.placeholder = on ? "Find in these" : "Find a document"; }
+  }
+  /** The row under the list: the way to the rest of what it shows, when
+   *  there is more than fits or the find box found nothing here -- and the
+   *  projects taken out of it, one click from coming back. It is always
+   *  there, at one height, so nothing under it moves when what it says
+   *  changes; a project just hidden holds its Undo in it. */
+  function listFoot(more, none) {
+    if (awayJust) {
+      const p = state.tree.find(x => String(x.id) === awayJust);
+      return `<div class="t-back" role="status" style="--undo-left:${awayClock?.left() ?? 1}"><span class="nm">${esc(p ? p.name : "Project")} hidden</span><button type="button" class="t-undo" data-back="${awayJust}">Undo</button></div>`;
+    }
+    const q = see.q.trim(), p = seenProj(), put = state.tree.filter(x => away.has(String(x.id))).length;
+    const go = q && (none || more) ? `<button type="button" class="t-all" data-findall="${esc(q)}">Search inside for “${esc(q)}”</button>`
+      : !more ? ""
+      : p ? `<button type="button" class="t-all" data-findall="p:${esc(p.name)} ">All in ${esc(p.name)}</button>`
+      : `<a class="t-all" href="${see.wait ? "/inbox?recent" : "/inbox"}" data-nav="inbox">${see.wait ? "All waiting" : "All documents"}</a>`;
+    return `<div class="t-foot">${go}${put && !p ? `<button type="button" class="t-away" data-back="">${plural(put, "project")} hidden · Show</button>` : ""}</div>`;
   }
   function renderTree() {
     // One more draw, for bench/ui.mjs to count; nothing when it is not watching.
     window.__perf && window.__perf.renders++;
     pageGhost();
-    const projects = heldTree();
-    const drawn = projects.filter(p => !away.has(String(p.id)) || awayJust === String(p.id));
-    const put = projects.length - drawn.length;
     // A read of the page's layout that follows a write lays the sidebar out
-    // again on the spot, so a draw reads as little as it can after it writes:
-    // the title width before anything is written, the room the Inbox has
-    // once the sections above it stand (one layout, and none when they did
-    // not change), and the width the rows ended at not at all -- the
-    // observer below says. This used to read between its writes two to four
-    // times a draw, on every save of a file an agent was editing.
-    // The title width is measured rather than assumed, because the gutter
-    // resizes the sidebar, and once per draw rather than once per row.
+    // again on the spot, so a draw reads first: the title width, then the
+    // room the list has once the sections above it stand. The title width is
+    // measured rather than assumed, because the gutter resizes the sidebar,
+    // and once per draw rather than once per row.
     if (fitCtx && treeEl.clientWidth) {
       // At a document row's size, a Sub-row's (app.css .t-doc a), not the tree's.
       const cs = getComputedStyle(treeEl);
       const f = `550 ${cs.getPropertyValue("--fs-small").trim() || "12px"} ${cs.fontFamily}`;
-      if (f !== fitFont) {
-        fitCtx.font = fitFont = f;
-        if (timeCtx) timeCtx.font = `10px ${getComputedStyle(document.documentElement).getPropertyValue("--mono")}`;
-      }
+      if (f !== fitFont) fitCtx.font = fitFont = f;
       titleRoom = roomIn(treeEl.clientWidth);
     }
     renderQueue();
     renderBrowse();
     renderDesks();
-    awayRowSeen = put > 0;
-    const cap = projects.length ? (capSeen = inboxCap(awayRowSeen)) : 0;
-    if (!projects.length) {
-      const h = treeOff ? noReach("tree") : state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, filed by project.</div>`;
-      if (h !== drawnTree) { treeEl.innerHTML = drawnTree = h; treeTouched.takeRecords(); }
-      return;
+    const cap = capSeen = inboxCap();
+    let h = treeOff || listOff ? noReach("tree") : "";
+    const rows = treeOff || listOff ? [] : listRows();
+    if (!state.tree.length && rows && !rows.length && !see.q) {
+      h += state.browse.length ? "" : `<div class="t-empty">What your agents write lands here, newest first.</div>`;
+    } else if (!rows) {
+      // On its way: the rows' room, held, so Desks does not move when they land.
+      h += `<ul class="t-list">${`<li class="t-wait"><span class="sk-bar" style="width:62%"></span></li>`.repeat(cap)}</ul>` + listFoot(false, false);
+    } else {
+      // A removed row's ghost stands where the row was, at its height, and
+      // the list under it gives up a row so nothing below moves (`gone`).
+      const g = gone && gone.where === "list" && !rows.some(d => d.id === gone.id) ? gone : null;
+      const shown = rows.slice(0, g ? cap - 1 : cap), lis = shown.map(docRow);
+      if (g) lis.splice(Math.min(g.at, lis.length), 0, ghostRow(g.h));
+      const none = !lis.length ? `<li class="t-none">${see.q.trim() ? `No title here has “${esc(see.q.trim())}”` : see.wait ? "Nothing waiting" : "Nothing here yet"}</li>` : "";
+      // Narrowed by the reader -- a filter, the find box -- the list keeps
+      // the room it had, so what is under it stays where it was.
+      const hold = see.proj || see.wait || see.q.trim() ? ` style="min-height:${cap * ROW_H}px"` : "";
+      h += `<ul class="t-list"${hold}>${lis.join("") || none}</ul>` + listFoot(rows.length > shown.length, !rows.length);
     }
-    // What the page has open, before it is taken apart. `toggle` is queued
-    // rather than dispatched where the click happens, so a reader can have a
-    // project open in the DOM while `openProjects` has not heard yet -- and a
-    // draw that lands in that gap rebuilds the row from the stale answer,
-    // closed, and the rows the handler then injects go into a <details> that
-    // is no longer in the page. The project stays shut and nothing draws it
-    // again. Asking the DOM first costs one query and closes the gap; a
-    // project the reader closed is removed by the handler, so this only ever
-    // adds what is open on screen right now.
-    for (const d of treeEl.querySelectorAll(".t-proj[open]")) {
-      if (d.dataset.pid) openProjects.add(d.dataset.pid);
-    }
-    // No label: the projects hang under Inbox, which is what they are.
-    let h = treeOff ? noReach("tree") : "";
-    const waitingIn = new Set(state.queue.map(d => String(d.project_id)));
-    const { top, kids } = nest(drawn);
-    const row = p => {
-      // In its own place, at its own height, so nothing below it moves while
-      // the offer stands and nothing moves again when it is taken.
-      if (awayJust === String(p.id)) return `<div class="t-back" role="status" style="--undo-left:${awayClock?.left() ?? 1}"><span class="nm">${esc(p.name)} removed</span><button type="button" class="t-undo" data-back="${p.id}">Undo</button></div>`;
-      const open = projOpen(p);
-      // The one held for a ghost closes with it.
-      const out = gone && gone.closing && gone.proj === p && !state.tree.includes(p);
-      // A week with nothing from it steps the name back; something waiting
-      // in it lights the icon, as a waiting row's does. Colour only.
-      // A project holding subfolder projects speaks for them while folded:
-      // the newest of them keeps it from fading, one waiting lights it.
-      const fam = [p, ...family(p, kids)], subs = fam.length - 1, latest = Math.max(...fam.map(x => x.latest || 0));
-      const quiet = latest && Date.now() / 1000 - latest > QUIET_S ? " quiet" : "", lit = fam.some(x => waitingIn.has(String(x.id))) ? " new" : "";
-      // A friend's own row wears the friend, as their documents do.
-      const ico = p.friend ? whoIco(p.name.replace(/^From /, "")) : icon("project");
-      return `<details class="t-proj${out ? " leaving" : ""}${quiet}" data-pid="${p.id}" ${open ? "open" : ""}><summary class="${lit.trim()}" data-tip="${esc(shown(p.root) || p.name)}"${p.root ? " data-tip-mono" : ""}>${ico}<span class="nm">${esc(p.name)}</span>${chev}${subs ? `<span class="t-subs" data-tip="${esc(plural(subs, "folder"))} inside it" data-tip-sub="each was filed as a project of its own">${subs}</span>` : ""}${projDeskBtn(p)}${awayBtn(p)}</summary><ul>` +
-        (open ? (kids.get(p) || []).map(c => `<li class="t-sub">${row(c)}</li>`).join("") + projectRows(p) : "") + `</ul></details>`;
-    };
-    // Past the cap, "more" holds what the reader is not using. A project they
-    // have open, or whose row is offering an Undo, stays in view under it: a
-    // row never goes away from under a reading. One project past the cap is
-    // drawn rather than said, since "1 more" would take the same room.
-    // Counted in top-level rows: a project's subfolders are under it.
-    const upto = top.length > cap + 1 ? cap : top.length;
-    const past = top.slice(upto);
-    const hidden = past.filter(p => !projOpen(p) && awayJust !== String(p.id) && !(gone && gone.proj === p));
-    moreHidden = new Set(hidden.flatMap(p => [p, ...family(p, kids)]).map(p => String(p.id)));
-    for (const p of top.slice(0, upto)) h += row(p);
-    if (hidden.length && !moreOpen) h += moreRow(hidden);
-    for (const p of past) if (moreOpen || !moreHidden.has(String(p.id))) h += row(p);
-    if (hidden.length && moreOpen) h += moreRow(hidden);
-    // Counted from the tree rather than from the set, so a project that is
-    // gone for some other reason is not offered back. While this row is here
-    // nothing is stranded: whatever was put away is one click from returning.
-    if (put) h += `<button type="button" class="t-away" data-back="">${plural(put, "project")} removed · Show</button>`;
-    // The same rows as last time are left alone. Every open used to throw the
-    // tree away and build it again, and measure it, before the document could
-    // paint. Anything else that touches the rows -- a project toggled, a name
-    // being edited -- clears `drawnTree`, so what is on screen is always what
-    // this string describes when it is skipped.
+    // The same rows as last time are left alone: the string says what is on
+    // screen, and anything else that touches the rows clears `drawnTree`.
     if (h !== drawnTree) {
       // A keyboard on a ghost's Undo, or on a row, stays on it through the redraw.
       const a = document.activeElement, onUndo = a?.matches(".t-gone .t-undo"), onRow = treeEl.contains(a) && a.dataset.id;
@@ -610,9 +510,6 @@
     // desk list that brought the scrollbar in -- so the recut is armed. It
     // runs only if the width it was cut for is not the width there is.
     if (!recut) recutDone = false;
-    // A project the reader has open that this tab has never filled: the "…" is
-    // on screen, so fetching it now is what turns it into rows.
-    for (const p of projects) if (projOpen(p) && !state.sub.has(String(p.id))) fillProject(p.id);
   }
 
   /* The scrollbar exists only once the rows do, and takes width from the
@@ -639,13 +536,12 @@
     document.fonts.ready.then(() => { fitFont = ""; renderTree(); markActive(); });
   } catch {}
 
-  /* The cap follows the room: the window's height, the waiting list growing
-   * or going, a desk made or closed. Only a change in the cap draws the tree,
-   * and what changes then is which quiet projects "more" holds -- Desks stays
-   * where it was, which is the point of the cap. */
+  /* The cap follows the room: the window's height, a desk made or closed.
+   * Only a change in the cap draws the list, and what changes then is how
+   * many rows it shows -- Desks stays where it was, which is the point. */
   try {
     let queued = false;
-    const recap = () => { queued = false; if (capSeen != null && inboxCap(awayRowSeen) !== capSeen) { renderTree(); markActive(); } };
+    const recap = () => { queued = false; if (capSeen != null && inboxCap() !== capSeen) { renderTree(); markActive(); } };
     const watch = new ResizeObserver(() => { if (!queued) { queued = true; requestAnimationFrame(recap); } });
     for (const el of [treesEl, inboxRowEl, $("#desk-nav")]) watch.observe(el);
   } catch {}
@@ -714,6 +610,7 @@
    *  fetch it was, for a daemon that sends no rows or a cap the reader
    *  lifted. An arrival still fetches: it moves rows between versions. */
   function patchTree(j) {
+    listPut(j.doc);
     const p = j.project, rows = j.rows;
     if (!p || !Array.isArray(rows)) return false;
     const pid = String(p.id), had = state.sub.get(pid);
@@ -734,12 +631,13 @@
     return true;
   }
 
-  /** The library moved: refetch the project rows, and the subtrees this tab has
-   *  already filled. Dropping them instead would collapse an expanded project
-   *  to a "…" under the reader. `only` narrows it to one project, which is what
-   *  an arrival needs — nothing else in the library moved.  */
+  /** The library moved: refetch the project rows, the list, and the
+   *  projects this tab has already filled -- the one the list may be showing
+   *  and the one the open document is in. `only` narrows those to one
+   *  project, which is what an arrival needs — nothing else in the library
+   *  moved.  */
   async function refreshTree(only) {
-    const j = await getJson("/api/tree");
+    const [j] = await Promise.all([getJson("/api/tree"), refreshList()]);
     treeOff = !Array.isArray(j);
     if (!treeOff) state.tree = j;
     const pids = only != null ? [String(only)] : [...state.sub.keys()];
@@ -759,71 +657,22 @@
     const d = e.target;
     if (d.dataset && d.dataset.root && d.open) {
       fillTree(d.querySelector(":scope > .b-tree"));
-      return;
-    }
-    if (!d.classList || !d.classList.contains("t-proj")) return;
-    const pid = d.dataset.pid;
-    d.open ? openProjects.add(pid) : openProjects.delete(pid);
-    save("snyvi.open", openProjects);
-    // Opening draws what this tab already holds and fetches what it does not;
-    // closing takes the rows back out of the page, which is the bound.
-    //
-    // The rows go straight into this project's list rather than through
-    // renderTree, and that is not a shortcut: an element created with `open`
-    // fires `toggle` in Chrome, so rebuilding the whole sidebar from here
-    // creates the <details open> that called us and the two render each other
-    // for as long as the tab is open. Measured before this was written: the
-    // page never fired its load event at all, and the browser bench, which
-    // waits for it, hung rather than failed.
-    const ul = d.querySelector(":scope > ul");
-    if (!ul) return;
-    if (!d.open) {
-      ul.innerHTML = "";
-      return;
-    }
-    // Already drawn -- this is the event that a render fires at itself.
-    if (ul.firstChild) return;
-    // A project with subfolder projects under it (`nest`) has them drawn by
-    // the tree's own draw. That fires this again on the <details open> it
-    // makes, whose list is not empty then, so the two do not draw each other.
-    if ([...parentOf.values()].includes(pid)) { drawnTree = null; renderTree(); markActive(); return; }
-    const p = state.tree.find(x => String(x.id) === pid);
-    if (!p) return;
-    if (state.sub.has(pid)) {
-      ul.innerHTML = projectRows(p);
-      markActive();
-    } else {
-      // Asked for by hand, so a project whose fill failed earlier is tried again.
-      fillProject(pid, true);
     }
   }, true);
 
   treesEl.addEventListener("click", async e => {
-    // Past a cap, and the answer to "show me the rest" is the rest: a whole
-    // session's documents, or every session in the project.
-    const more = e.target.closest("[data-more-docs], [data-more-wf], [data-less-docs], [data-less-wf]");
-    if (more) {
-      e.preventDefault(); e.stopPropagation();
-      more.disabled = true;
-      const { moreWf, moreDocs, lessWf, lessDocs } = more.dataset;
-      if (lessWf != null) { liftedCaps.delete(String(lessWf)); }
-      else if (lessDocs != null) { liftedWorkflows.delete(Number(lessDocs)); }
-      else if (moreWf != null) {
-        const pid = String(moreWf), p = state.tree.find(x => String(x.id) === pid), wfs = state.sub.get(pid) || [];
-        liftedCaps.add(pid);
-        // What the page holds is shown at once; only past the server's cap
-        // is there anything to fetch.
-        if (p && p.workflows > wfs.length) { await fillProject(pid, true); return; }
-      } else {
-        const wid = Number(moreDocs);
-        const pid = [...state.sub.keys()].find(k => state.sub.get(k).some(w => w.id === wid));
-        const w = (state.sub.get(pid) || []).find(x => x.id === wid);
-        liftedWorkflows.add(wid);
-        if (w && w.docs.length < w.total) await fillWorkflow(wid, pid);
-      }
-      renderTree(); markActive();
-      return;
-    }
+    // The Inbox's own: a filter's ✕ in the find box, a project's name on a
+    // row (the list shows that project alone), the filter's menu, and the
+    // find box's words handed to the search inside documents. The ✕ and the
+    // name are inside the row's link and the box's label: not a click on them.
+    const un = e.target.closest("[data-unsee]");
+    if (un) { e.preventDefault(); e.stopPropagation(); seeInbox(un.dataset.unsee === "wait" ? { wait: false } : { proj: "" }); return; }
+    const only = e.target.closest("[data-only]");
+    if (only) { e.preventDefault(); e.stopPropagation(); if (!only.closest(".ib-tok")) seeInbox({ proj: only.dataset.only }); return; }
+    const ibf = e.target.closest("[data-ibf]");
+    if (ibf) { e.preventDefault(); e.stopPropagation(); askWhere(ibf, e.detail === 0); return; }
+    const fa = e.target.closest("[data-findall]");
+    if (fa) { e.preventDefault(); searchFor(fa.dataset.findall); return; }
     const fold = e.target.closest("[data-fold]");
     if (fold) { e.preventDefault(); toggleFold(fold.dataset.fold); return; }
     const wa = e.target.closest("[data-wallow]");
@@ -849,18 +698,12 @@
       if (f) act("make", f); else askWhere(nd, e.detail === 0);
       return;
     }
-    const pd = e.target.closest("[data-projdesk]");
-    if (pd) {
-      e.preventDefault(); e.stopPropagation();
-      act("projectDesk", +pd.dataset.projdesk);
-      return;
-    }
     const dx = e.target.closest("[data-deldoc]");
     if (dx) {
       // Inside the document's link: a click on the ✕ is not a click on the row.
       e.preventDefault(); e.stopPropagation();
-      const id = dx.dataset.deldoc, proj = dx.closest(".t-proj");
-      const d = state.queue.find(x => x.id === id) || { id, title: dx.closest("a").querySelector(".title").textContent, project_id: proj ? +proj.dataset.pid : null };
+      const id = dx.dataset.deldoc, a = dx.closest("a");
+      const d = state.queue.find(x => x.id === id) || (state.list || []).find(x => x.id === id) || { id, title: a.querySelector(".title").textContent, project_id: +a.querySelector("[data-only]")?.dataset.only || null };
       deleteDoc(d, dx, !e.detail);
       return;
     }
@@ -881,23 +724,6 @@
       // Inside the desk's link: a click on the ✕ is not a click on the desk.
       e.preventDefault(); e.stopPropagation();
       act("drop", dd);
-      return;
-    }
-    const ax = e.target.closest("[data-away]");
-    if (ax) {
-      // Inside a <summary>, the default action is toggling the project open.
-      e.preventDefault(); e.stopPropagation();
-      putAway(ax.dataset.away);
-      return;
-    }
-    if (e.target.closest("[data-quiet]")) {
-      e.preventDefault();
-      moreOpen = !moreOpen;
-      store.set("snyvi.more", moreOpen ? "1" : "0");
-      const kb = document.activeElement?.matches("[data-quiet]");
-      renderTree(); markActive();
-      // The row moved to the other end of the list: a keyboard goes with it.
-      if (kb) treeEl.querySelector("[data-quiet]")?.focus({ preventScroll: true });
       return;
     }
     const bk = e.target.closest("[data-back]");

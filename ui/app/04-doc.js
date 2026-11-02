@@ -534,17 +534,13 @@
   /** A removal a key made leaves the hand on its Undo, as an aside's does. */
   const toUndo = () => treesEl.querySelector(".t-gone .t-undo")?.focus({ preventScroll: true });
 
-  /** Where a document's row stands, as a place that outlives the row: the
-   *  row that was clicked, or -- for the meta pane and Del, which have none --
-   *  the tree's. Null when it is not drawn. */
-  function rowOf(id, from) {
-    const sel = `a[data-id="${id}"]`;
-    if (!from && !treeEl.querySelector(sel)) return null;
-    for (const [pid, wfs] of state.sub) for (const [wfAt, w] of wfs.entries()) {
-      const at = w.docs.findIndex(x => x.id === id);
-      if (at >= 0) return { where: "proj", pid, wf: w.id, wfAt, at, solo: w.total === 1 && w.docs.length === 1, doc: w.docs[at], order: wfs.map(x => x.id) };
-    }
-    return null;
+  /** Where a document's row stands in the Inbox's list, as a place that
+   *  outlives the row: its place among the rows drawn, and its height, for
+   *  the ghost that stands there. Null when it is not drawn. */
+  function rowOf(id) {
+    const li = treeEl.querySelector(`a[data-id="${id}"]`)?.parentElement;
+    if (!li) return null;
+    return { where: "list", at: [...li.parentElement.children].indexOf(li), h: li.offsetHeight, doc: (state.list || []).find(x => x.id === id) };
   }
 
   /** The clock on an Undo, the same in both motion modes. It stops while a
@@ -588,7 +584,7 @@
    *  already holds, and the daemon is told after. */
   async function deleteDoc(d, from = null, byKey = false) {
     const here = !!state.doc && state.doc.id === d.id;
-    const place = rowOf(d.id, from);
+    const place = rowOf(d.id);
     if (place && place.doc) d = { ...place.doc, ...d, title: place.doc.title };
     // Only the newest offer stands: two rows both saying Undo cannot both mean
     // the last thing that happened.
@@ -601,14 +597,8 @@
     const pr = state.view === "inbox" && docEl.querySelector(`.inbox a[data-id="${d.id}"]`)?.parentElement;
     docEl.querySelector(".inbox > .t-gone")?.remove();
     if (pr) { const ul = pr.parentElement; g.page = { sec: ul.classList.contains("waiting") ? "waiting" : "rest", at: [...ul.children].indexOf(pr), h: pr.offsetHeight }; pr.className = "t-gone"; }
-    // What stands around the ghost stands with it until the offer ends, so
-    // nothing above it moves the row out from under the pointer either: the
-    // project, which leaves the daemon's tree with its last document.
-    if (g.where === "proj") {
-      g.projAt = state.tree.findIndex(p => String(p.id) === g.pid);
-      g.proj = g.projAt >= 0 ? state.tree[g.projAt] : null;
-    }
     state.queue = state.queue.filter(x => x.id !== d.id);
+    if (state.list) state.list = state.list.filter(x => x.id !== d.id);
     state.waiting = Math.max(0, state.waiting - (g.waiting ? 1 : 0));
     for (const wfs of state.sub.values()) for (const w of wfs) {
       const n = w.docs.length;
@@ -682,6 +672,9 @@
     } finally {
       g.clock.stop();
       if (gone === g) gone = null;
+      // The row is the reader's to have back, under the pointer or not: the
+      // hold on the list's order (`freeze`) is for what arrives, not this.
+      freeze();
       renderTree(); markActive();
     }
   }
@@ -693,7 +686,8 @@
   function putAway(id) {
     const key = String(id);
     away.add(key); saveAway();
-    openProjects.delete(key);
+    // The list was showing it alone: it shows every project again.
+    if (see.proj === key) { see.proj = ""; store.set("snyvi.see", ""); }
     // Only the newest offer stands: two rows both saying Undo cannot both mean
     // the last thing that happened.
     awayClock?.stop();
@@ -702,6 +696,7 @@
     offer(awayUndo = undo, settle);
     // The same clock as every ghost: it waits while the hand is on the row.
     awayClock = undoClock("#tree .t-back", settle);
+    freeze();
     renderTree(); markActive();
   }
 
@@ -713,6 +708,7 @@
     awayJust = null;
     if (id) away.delete(String(id)); else away.clear();
     saveAway();
+    freeze();
     renderTree(); markActive();
   }
 

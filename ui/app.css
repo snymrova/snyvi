@@ -716,20 +716,16 @@ button.sec-fold:hover { color: var(--fg-2); }
 #widgets-nav > .sec { display: flow-root; }
 :is(#trees > :is(#desk-nav, #browse-nav), #widgets-nav > .sec) > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
 .s-chev { width: 5px; height: 5px; margin-left: 4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-1.5px) rotate(45deg); opacity: 0; transition: transform var(--t), opacity var(--t); }
-:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
+:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .ib-find, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
 .s-empty { padding: 5px 8px 5px 8px; font-size: var(--fs-small); color: var(--fg-3); }
 
 /* The row. */
-.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg); font-weight: var(--fw-row); white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
-.s-row:hover, .t-proj > summary:hover, .b-root > summary:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
+.s-row, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg); font-weight: var(--fw-row); white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
+.s-row:hover, .b-root > summary:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 /* The current row: a tint and a 2 px bar in the accent, the text staying
    ink. Solid accent text on a tint read as an alert, not as "you are here". */
 .s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
-/* A folded project that holds the document on screen: the bar and the icon,
-   no tint, a quieter "in here". Colour only, so nothing moves. */
-.t-proj > summary.holds-current { box-shadow: inset 2px 0 0 var(--accent); }
-.t-proj > summary.holds-current > .r-ico { color: var(--accent); }
 .r-ico { flex: none; color: var(--fg-3); transition: color var(--t); }
 .s-row.active .r-ico, .t-desk > a.active .r-ico { color: var(--accent); }
 .s-row .title, .t-desks .title { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -740,28 +736,32 @@ button.sec-fold:hover { color: var(--fg-2); }
 summary > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
 summary:is(:hover, :focus-visible) > .s-chev, details:not([open]) > summary > .s-chev { opacity: 1; }
 details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
-/* Recent, while anything is unread: its icon and count in the accent, the
-   count where the time stands, so the row is the same width and height. */
-.t-inbox.new > :is(.r-ico, .n) { color: var(--accent); font-weight: 600; }
 /* All, at the Inbox head's right edge: the whole library, and its size. */
 .sec-all { flex: none; display: flex; align-items: baseline; gap: 5px; height: 22px; padding: 0 6px; border-radius: var(--r-sm); font-size: var(--fs-micro); font-weight: 600; line-height: 22px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .sec-all .n { font-weight: 400; font-variant-numeric: tabular-nums; }
 .sec-all:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .sec-all.active { color: var(--accent); }
-/* The ladder: each level's icons hang under its parent's name, 32px in,
-   as .b-tree next door compounds it. It was once six a level -- and the
-   font grew with depth, so the deepest rows were the largest and the least
-   indented at once. */
-.t-wf { margin: 2px 0 6px 24px; }
-.t-wf > .wf-name { font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); padding: 4px 8px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.t-doc a { display: flex; align-items: baseline; gap: 6px; min-height: var(--sub-row-h); box-sizing: border-box; padding: 3px 8px; font-size: var(--fs-small); line-height: 18px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; transition: background var(--t), color var(--t); }
+/* The Inbox is one list (#206): a document a row, two lines at 40 px --
+   03-queue.js's ROW_H, which its cap counts in. The title has the first line
+   to itself; under it, its project and when it came, quieter. */
+.t-list { list-style: none; margin: 0; padding: 0; }
+.t-doc a { display: flex; align-items: flex-start; gap: 8px; height: 40px; box-sizing: border-box; padding: 4px 8px; font-size: var(--fs-small); line-height: 18px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; position: relative; transition: background var(--t), color var(--t); }
+.t-doc .t2 { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.t-doc .sub { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: var(--fs-micro); line-height: 14px; color: var(--fg-3); }
+/* The project is a way in: under the pointer it says so, and takes the list
+   to that project alone (`data-only`). */
+.t-doc .p { min-width: 0; overflow: hidden; text-overflow: ellipsis; border-radius: var(--r-xs); }
+.t-doc .p:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; }
+.t-doc .p > .nm { pointer-events: none; }
+.t-doc mark, .t-ghost mark { background: color-mix(in srgb, var(--accent) 20%, transparent); color: inherit; border-radius: var(--r-xs); }
 .t-doc a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .t-doc a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 /* No mark in front of a row: its icon is the mark. A read row's glyph is
    quiet, and centred on the line rather than sat on its baseline; a row
    waiting to be read has it in the accent, with its title in ink -- gone
    once the document is opened -- and the open row is lit whole. */
-:is(.t-doc a, .b-file a) > .r-ico { align-self: center; opacity: .75; }
+.b-file a > .r-ico { align-self: center; opacity: .75; }
+.t-doc a > :is(.r-ico, .r-who) { margin-top: 2px; opacity: .75; }
 :is(.t-doc a.new, .t-doc a.active, .b-file a.active) > .r-ico { color: var(--accent); opacity: 1; }
 .t-doc a.new .title { color: var(--fg); font-weight: 600; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
@@ -787,6 +787,9 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    a redraw never plays it again. */
 .t-ghost { display: flex; align-items: baseline; gap: 6px; min-height: var(--sub-row-h); box-sizing: border-box; padding: 3px 8px; font-size: var(--fs-small); line-height: 18px; border-radius: var(--r-sm); color: var(--fg-3); white-space: nowrap; overflow: hidden; position: relative; }
 .t-gone:not(.leaving) > .t-ghost { animation: ghost-in var(--dur-quick) ease-out both; animation-delay: var(--t, 0ms); }
+/* A document's row is two lines since the Inbox became a list (#206): its
+   ghost fills the height the row held, not one line of it. */
+.t-doc.t-gone > .t-ghost { height: 100%; align-items: center; }
 @keyframes ghost-in { from { color: var(--fg-2); } }
 .t-ghost > .r-ico { align-self: center; opacity: .4; }
 .t-ghost > .title { min-width: 0; }
@@ -794,22 +797,17 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-ghost > .t-undo { margin-left: auto; align-self: center; padding: 2px 7px; }
 :is(.t-ghost, .t-back)::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; transform: scaleX(var(--undo-left, 1)); transition: transform var(--dur-instant) linear; }
 .t-gone.leaving { animation-delay: var(--t, 0ms); }
-/* A project that left with its last document stands around its ghost only
-   for its sake, and closes when the ghost does. */
-.t-proj.leaving > summary { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
-.t-doc .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-2); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
+.t-doc .k { font-size: var(--fs-micro); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
 .t-doc .pin { color: var(--fg-2); flex: none; display: inline-flex; align-self: center; }
 /* Both names in the tree are guesses, so each carries the means to correct it,
    kept out of the way until the row is under the cursor. The name takes the free
    space so the badge and the control sit at the edge. */
-.t-wf > .wf-name > .nm, .t-back > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-back > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A project's name and a folder's give way to their chevron, so they size
    to themselves, and the first control after it takes the free space. */
-:is(.t-proj, .b-root) > summary > .nm, .b-dir > details > summary > .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.t-proj > summary > .ren { margin-left: auto; }
-.t-wf > .wf-name { display: flex; align-items: baseline; gap: 4px; }
+:is(.b-root) > summary > .nm, .b-dir > details > summary > .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ren { color: var(--fg-3); font-size: var(--fs-micro); line-height: 1; padding: 2px 4px; border-radius: var(--r-xs); opacity: 0; flex: none; letter-spacing: 0; }
-.t-proj > summary:hover .ren, .t-wf > .wf-name:hover .ren, .t-desk > a:hover .ren, .ren:focus-visible { opacity: 1; }
+.t-desk > a:hover .ren, .ren:focus-visible { opacity: 1; }
 .ren:hover { background: var(--rule-2); color: var(--fg); }
 /* The field shows the name as stored, not as the summary styles it. */
 .ren-in { flex: 1; min-width: 0; font: inherit; text-transform: none; letter-spacing: normal; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: var(--r-xs); padding: 1px 4px; }
@@ -820,15 +818,36 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* A list the daemon did not send, in its own place, with its Retry. */
 .no-reach { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px; color: var(--fg-2); font-size: var(--fs-small); list-style: none; }
 .no-reach button { color: var(--accent); font: inherit; font-weight: 500; }
-/* Past a cap, and while a project's rows are on their way. Both sit where a
-   document row would, and neither should read as one: what is behind a row the
-   tree has not drawn is an offer, not a document. */
-.t-more { margin: 1px 0 2px 14px; }
-.t-more button { font: inherit; font-size: var(--fs-micro); color: var(--fg-2); background: none; border: 0; padding: 3px 6px; border-radius: var(--r-sm); cursor: pointer; }
-.t-more button:hover { background: var(--rule); color: var(--fg-2); }
-.t-more button:disabled { cursor: default; opacity: .5; }
-.t-wait { padding: 4px 8px 4px 14px; font-size: var(--fs-small); color: var(--fg-3); }
+/* Rows on their way, each at a row's height, so the list's room is held
+   and Desks does not move when they land; and the list's own empty line. */
+.t-wait { height: 40px; padding: 4px 8px 4px 30px; }
 .t-wait .sk-bar { height: 8px; margin: 6px 0; }
+.t-none { padding: 6px 8px; font-size: var(--fs-small); color: var(--fg-3); white-space: normal; }
+/* The row under the list, always there at one height: the way to the rest
+   of what it shows, and the projects hidden from it. */
+.t-foot { display: flex; align-items: center; gap: 4px; height: 26px; min-width: 0; }
+.t-foot > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-all { padding: 4px 8px; font-size: var(--fs-micro); color: var(--fg-2); border-radius: var(--r-sm); text-align: left; }
+.t-all:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
+#tree .t-foot > .t-away { width: auto; margin: 0 0 0 auto; padding: 4px 8px; }
+#tree > .t-back { height: 26px; }
+/* The find box under the Inbox's head: always there, so finding moves
+   nothing (#206). What the filter holds the list to stands in it, each with
+   its ✕, rather than on a row of its own. */
+.ib-find { display: flex; align-items: center; gap: 6px; height: 28px; margin: 2px 0 4px; padding: 0 6px 0 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); color: var(--fg-3); cursor: text; }
+.ib-find:focus-within { border-color: var(--fg-3); }
+.ib-find input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: none; background: none; font: inherit; font-size: var(--fs-small); color: var(--fg); }
+.ib-find input::placeholder { color: var(--fg-3); }
+.ib-find input::-webkit-search-cancel-button { display: none; }
+.ib-tok { display: contents; }
+.ib-tok .tok { flex: none; display: inline-flex; align-items: center; gap: 2px; max-width: 110px; height: 20px; padding: 0 2px 0 7px; border-radius: var(--r-pill); background: var(--accent-bg); color: var(--fg); font-size: var(--fs-micro); font-weight: 600; cursor: default; }
+.ib-tok .tok > .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ib-tok .tok > button { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; color: var(--fg-3); }
+.ib-tok .tok > button:hover { background: var(--rule-2); color: var(--fg); }
+/* The filter is always there, as the + in front of Desks is: what the list
+   holds back is not something to find by hovering. Lit while it holds any. */
+.sec-head[data-sec="inbox"] > .sec-acts { opacity: 1; }
+.ib-f.on { color: var(--accent); }
 .t-empty { padding: 24px 12px; color: var(--fg-3); font-size: var(--fs-ui); line-height: 1.6; }
 .t-empty code { font-family: var(--mono); font-size: var(--fs-small); background: var(--rule); padding: 1px 5px; border-radius: var(--r-xs); }
 
@@ -872,12 +891,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    two auto margins in a row split the slack between them, which put the
    dot and the count halfway along the row and a different halfway on each. */
 .row-x { flex: none; margin-left: 0; width: 0; padding: 0; overflow: hidden; font: inherit; font-size: var(--fs-micro); line-height: 1; color: var(--fg-3); background: none; border-radius: var(--r-xs); cursor: pointer; }
-/* A project row's tools each own a 22 px slot at the row's end, there at
-   rest and on hover alike: showing one is its opacity, never its width, so
-   the desk glyph beside the ✕ does not jump left when the pointer arrives. */
-.t-proj > summary > :is(.b-new, .row-x) { flex: none; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; overflow: visible; }
-.t-proj > summary > .row-x { margin-left: auto; opacity: 0; }
-.t-proj > summary:is(:hover, :focus-within) > .row-x, .row-x:focus-visible, .arming .row-x { opacity: 1; }
+.row-x:focus-visible, .arming .row-x { opacity: 1; }
 /* On a desk's row and a document's, the tools stand over the row's end
    rather than in the row: coming out, they move nothing, and the title's
    ellipsis stays where it was. The end they cover keeps its place, unseen.
@@ -890,7 +904,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desk > a > .ren { right: 30px; }
 :is(.t-doc, .t-desk) > a:is(:hover, :focus-visible, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x):hover { background: linear-gradient(var(--rule-2) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
-.t-doc > a:is(:hover, :has(:focus-visible)) :is(.k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
+.arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
 /* A desk's ✕ has a slot of its own at the row's end, as a project's does:
    hovering shows it and hides nothing, so the dot and the count beside it
    stay where they are. Armed, "Close?" lays over the end as before. Inside
@@ -899,34 +913,13 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0; display: grid; place-items: center; background: none; }
 .t-desk > a > .row-x[data-armed] { position: absolute; right: 6px; width: auto; height: auto; padding: 2px 4px; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 /* A row lights the moment the pointer is on it, and only lets go slowly. */
-:is(.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
+:is(.s-row, .b-root > summary, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
 .row-x:hover { background: var(--rule-2); color: var(--fg); }
 /* The way back, under the tree while anything is out of it: quiet, because it
    is a state of the list rather than something to do, and always there, so
    nothing a reader put away can be lost by forgetting it was put away. */
 .t-away { display: block; width: 100%; text-align: left; padding: 4px 8px 4px 18px; margin-top: 2px; font-size: var(--fs-micro); color: var(--fg-3); border-radius: var(--r-sm); }
 .t-away:hover { background: var(--rule); color: var(--fg-2); }
-/* The quiet projects past the Inbox's cap (app.js, `inboxCap`), said in one
-   row on the rows' own grid: the icon column, "N more", the chevron that
-   folds it, and at the end how long they have been quiet. A step dimmer than
-   a project: it is the list's edge, not one of its things. */
-.t-quiet { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg-2); font-weight: var(--fw-row); white-space: nowrap; text-align: left; position: relative; transition: background var(--t), color var(--t); }
-.t-quiet:hover { background: var(--rule); color: var(--fg); transition-duration: 0s; }
-.t-quiet > .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.t-quiet > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); opacity: 1; }
-.t-quiet[aria-expanded="false"] > .s-chev { transform: rotate(-45deg); }
-/* "Show less" ends the list it let out, so its chevron points back up it. */
-.t-quiet[aria-expanded="true"] > .s-chev { transform: translateY(1.5px) rotate(-135deg); }
-.t-quiet > .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3); flex: none; }
-/* Something waiting in there, or the document on screen: the mark a folded
-   project gets, and "more" stays shut until it is clicked. */
-.t-quiet.new > .k, .t-quiet.new > .r-ico, .t-quiet.holds-current > .r-ico { color: var(--accent); }
-.t-quiet.holds-current { box-shadow: inset 2px 0 0 var(--accent); }
-/* A project nothing has come from in a week steps its name back, and one
-   with something waiting lights its icon, as a waiting row does. Colour
-   only: the list keeps its order and every row its place. */
-.t-proj.quiet > summary > .nm { color: var(--fg-2); }
-.t-proj > summary.new > .r-ico { color: var(--accent); }
 /* A friend where a row's icon stands: the first letter of their name in a
    circle the icon's size, so the column stays one column (02-tree.js
    `whoIco`). */
@@ -935,10 +928,6 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    (`whoIco`), at one lightness so every friend's reads on every theme. */
 .r-who { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: oklch(54% .12 var(--h, 250)); color: #fff; font-size: var(--fs-micro); font-weight: 650; line-height: 1; }
 .t-doc .r-who { width: 14px; height: 14px; letter-spacing: -.04em; }
-/* How many subfolder projects a project holds, after its chevron, as a
-   section's count is; they hang under it, one step in (03-queue.js `nest`). */
-.t-subs { flex: none; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: var(--fg-3); }
-.t-sub { list-style: none; margin-left: 14px; }
 /* An idle desk's name steps back, so the live ones -- the dot, "needs you"
    -- are what the eye finds. The desk on screen keeps its ink. */
 .t-desk > a:not(.active):not(:has(.dot)) > .title { color: var(--fg-2); }
@@ -963,18 +952,6 @@ summary:is(:hover, :focus-visible) > .s-chev { color: var(--fg-2); }
 summary:is(:hover, :focus-within) > .b-new, .b-new:focus-visible { opacity: 1; }
 .b-new:hover { background: var(--rule-2); color: var(--fg); }
 .b-new + .b-close { margin-left: 0; }
-/* A project's glyph stays while the project has a desk: that is the row
-   saying so, and the way to it. Its ✕ follows it rather than splitting the
-   slack with it. */
-.b-new.has { opacity: 1; color: var(--fg-3); }
-/* …green while an agent at its desk is working, amber while a panel waits
-   on the reader (02-tree.js `deskState`). Otherwise quiet, a shell open
-   included, so it does not read as a second desk row. */
-.b-new.has.on { color: var(--ok); }
-.b-new.has.blk { color: var(--warn); }
-/* A project with no desk yet keeps the slot, empty until the row is hovered,
-   and then says "New desk": half-lit at rest read as a fault, not a state. */
-.t-proj > summary > .b-new + .row-x { margin-left: 0; }
 /* browse: folders read straight from disk */
 .t-label { padding: 8px 10px 2px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; }
 .b-root > summary:hover { background: var(--rule); color: var(--fg); }
@@ -1155,7 +1132,6 @@ pre.code .copy:focus-visible { opacity: 1; }
    the way the diagram tools already are. */
 @media (hover: none) {
   .ren, .b-close, .b-new, pre.code .copy, pre.code::before { opacity: 1; }
-  .t-proj > summary > .row-x { width: auto; padding: 2px 4px; margin-left: auto; }
   pre.code:has(.copy)::before { opacity: 0; }
   .prose a.anchor { opacity: .5; }
 }

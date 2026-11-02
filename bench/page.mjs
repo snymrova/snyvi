@@ -421,25 +421,29 @@ export async function sidebar() {
     }
     return false;
   };
+  // The Inbox is one list (#206): its rows are the newest documents, as
+  // many as fit and never more than its cap, whatever the library holds.
   const tree = document.querySelector("#tree");
-  const rows = el => el.querySelectorAll(".t-doc").length;
-  const closed = rows(tree);
-  const projects = tree.querySelectorAll(".t-proj").length;
+  const rows = () => tree.querySelectorAll(".t-doc").length;
+  await until(() => rows() > 0);
+  const closed = rows();
+  const projects = new Set([...tree.querySelectorAll(".t-doc [data-only]")].map(x => x.dataset.only)).size;
 
-  // One project, expanded the way a reader expands it. Found again by its id
-  // on every look: a fill rebuilds the sidebar, so the element clicked is not
-  // the element the rows arrive in.
-  const first = [...tree.querySelectorAll(".t-proj")].find(d => !d.open);
-  const pid = first ? first.dataset.pid : null;
-  const proj = () => document.querySelector(`#tree .t-proj[data-pid="${pid}"]`);
-  let opened = null, sessions = null, offers = null, filled = false;
+  // One project shown alone, the way a reader asks for it: its name on a
+  // row. Its documents are fetched whole, and the list still shows only
+  // what fits, with the way to the rest under it.
+  const name = tree.querySelector(".t-doc [data-only]");
+  const pid = name ? name.dataset.only : null;
+  let opened = null, offers = null, filled = false;
   if (pid) {
-    first.querySelector("summary").click();
-    filled = await until(() => proj() && rows(proj()) > 0);
-    const p = proj();
-    opened = p ? rows(p) : 0;
-    sessions = p ? p.querySelectorAll(".t-wf").length : 0;
-    offers = p ? p.querySelectorAll("[data-more-docs], [data-more-wf]").length : 0;
+    name.click();
+    const only = () => [...tree.querySelectorAll(".t-doc [data-only]")];
+    filled = await until(() => only().length > 0 && only().every(x => x.dataset.only === pid) && !!document.querySelector("#inbox-row .ib-tok [data-only]"));
+    opened = rows();
+    offers = tree.querySelectorAll(".t-foot .t-all").length;
+    document.querySelector('#inbox-row [data-unsee="proj"]')?.click();
+    await until(() => !document.querySelector("#inbox-row .ib-tok [data-only]"));
+    await new Promise(r => setTimeout(r, 300));
   }
 
   // And then it should stop. Counted over a window with nothing happening in
@@ -452,7 +456,7 @@ export async function sidebar() {
 
   const nav = performance.getEntriesByType("navigation")[0] || {};
   return {
-    closed, projects, opened, sessions, offers, filled, mutations,
+    closed, projects, opened, offers, filled, mutations,
     shell: Math.round(nav.transferSize || 0),
     nodes: tree.querySelectorAll("*").length,
   };

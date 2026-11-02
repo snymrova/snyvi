@@ -82,6 +82,9 @@
     if (!a || state.cache.has(a.dataset.id) || +a.dataset.size > 256 * 1024) return;
     dwell = setTimeout(() => { if (dwellOn === a) fetchDoc(a.dataset.id).catch(() => {}); }, 150);
   });
+  // A pointer that leaves the window has rested nowhere: coming back onto
+  // the row it left is a new rest.
+  document.addEventListener("pointerout", e => { if (!e.relatedTarget) { clearTimeout(dwell); dwellOn = null; } });
   // ---------- back and forward ----------
   /* Every place the page goes is a history entry already -- a document, a
    * desk's panels, a folder -- and Alt+←/→ walk them; ‹ › in the head show
