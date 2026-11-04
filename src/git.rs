@@ -399,6 +399,80 @@ fn remote_print(web: &str) -> String {
     h.to_hex()[..32].to_string()
 }
 
+/// What is changed under `dir`, by path relative to it, for the folder
+/// page's marks (#214): `A` for a file git does not know yet, `M` for one it
+/// knows that differs, staged or not. A folder git does not know yet is one
+/// path, `A`, as `git status` gives it; a deleted file has no row to mark
+/// and is left out. Empty outside a repository, in the home directory's, or
+/// when git does not answer -- the same care `read` takes.
+pub fn changes(dir: &Path) -> Vec<(String, char)> {
+    let Some(top) = repository(dir) else {
+        return Vec::new();
+    };
+    if dirs::home_dir().is_some_and(|h| same(&h, &top)) {
+        return Vec::new();
+    }
+    let Some(under) = dir.canonicalize().ok().and_then(|d| {
+        d.strip_prefix(&top).ok().map(|r| {
+            r.components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+    }) else {
+        return Vec::new();
+    };
+    let Some(out) = run(
+        dir,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=normal"],
+    ) else {
+        return Vec::new();
+    };
+    parse_changes(&out, &under)
+}
+
+/// At most this many marks: a folder of build output nobody ignored is not
+/// worth a page of dots.
+const MARKS: usize = 2000;
+
+/// `git status --porcelain=v1 -z`: `XY path` per entry, paths from the top of
+/// the repository, a rename's old name as an entry of its own after it.
+/// Kept: the paths under `under`, made relative to it.
+fn parse_changes(out: &str, under: &str) -> Vec<(String, char)> {
+    let mut v = Vec::new();
+    let mut it = out.split('\0');
+    while let Some(e) = it.next() {
+        if e.len() < 4 || !e.is_char_boundary(3) {
+            continue;
+        }
+        let (xy, path) = (&e[..2], &e[3..]);
+        if xy.starts_with('R') || xy.starts_with('C') {
+            it.next();
+        }
+        if xy == "!!" || xy.contains('D') {
+            continue;
+        }
+        let mark = if xy == "??" || xy.contains('A') {
+            'A'
+        } else {
+            'M'
+        };
+        let path = path.trim_end_matches('/');
+        let rel = if under.is_empty() {
+            Some(path)
+        } else {
+            path.strip_prefix(under).and_then(|r| r.strip_prefix('/'))
+        };
+        if let Some(rel) = rel.filter(|r| !r.is_empty()) {
+            v.push((rel.to_string(), mark));
+            if v.len() >= MARKS {
+                break;
+            }
+        }
+    }
+    v
+}
+
 /// The top of the repository `dir` is in, found by looking for `.git` on the
 /// way up -- no process for a folder that is in none.
 fn repository(dir: &Path) -> Option<PathBuf> {
@@ -516,6 +590,36 @@ fn parse_log(out: &str) -> Vec<Commit> {
 
 #[cfg(test)]
 mod tests {
+    /// The folder page's marks: a change, a new file, a new folder, a
+    /// rename (whose old name is not a row), a deletion (no row to mark),
+    /// read from a folder inside the repository.
+    #[test]
+    fn changes_are_marked_relative_to_the_folder() {
+        use super::parse_changes;
+        let out = " M ui/browse.js\0M  src/git.rs\0?? ui/desk/new.js\0?? ui/fresh/\0R  ui/b.js\0ui/a.js\0 D ui/gone.js\0A  docs/x.md\0";
+        assert_eq!(
+            parse_changes(out, ""),
+            [
+                ("ui/browse.js".to_string(), 'M'),
+                ("src/git.rs".to_string(), 'M'),
+                ("ui/desk/new.js".to_string(), 'A'),
+                ("ui/fresh".to_string(), 'A'),
+                ("ui/b.js".to_string(), 'M'),
+                ("docs/x.md".to_string(), 'A'),
+            ]
+        );
+        assert_eq!(
+            parse_changes(out, "ui"),
+            [
+                ("browse.js".to_string(), 'M'),
+                ("desk/new.js".to_string(), 'A'),
+                ("fresh".to_string(), 'A'),
+                ("b.js".to_string(), 'M'),
+            ]
+        );
+        assert!(parse_changes(out, "u").is_empty(), "ui/ is not under u/");
+    }
+
     /// Today's own subjects: the 1.35 commit that finished five notes, a
     /// release's merge, a PR named in passing, a trailer.
     #[test]

@@ -597,8 +597,9 @@
     es.addEventListener("changed", ev => {
       const j = parse(ev); if (!j) return;
       if (j.dir) {
-        // A folder on the folder's page: that level listed again in place.
-        if (browseMod && browsing() && !state.browsePath) browseMod.changed(browseCtx(), j);
+        // A folder in the tree, on the folder's page or beside a file read
+        // from it: that level listed again in place.
+        if (browseMod && browsing()) browseMod.changed(browseCtx(), j);
         return;
       }
       if (browsing() && state.browseRoot.id === j.root && state.browsePath === j.path) refreshBrowsed();

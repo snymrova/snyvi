@@ -4308,6 +4308,16 @@ async function deskFolderRows(cdp, base, token, env, tmp) {
     rows.push(["the folder comes back as it was left", opened && kept && mem,
       !opened ? "sub/ did not unfold" : !kept ? "sub/ came back folded" : !mem ? "nothing was kept for it" : "sub/ unfolded again, kept per folder"]);
 
+    // A file read from the tree reads beside it: the same column, still
+    // unfolded, with the file marked; git says nothing outside a repository.
+    if (kept) await p.ev(`document.querySelector(".fp-l").dataset.probe = "1"`);
+    if (kept) await p.clickOn(`.fp-l a[data-path="top.md"]`);
+    const beside = kept && await until(`!!document.querySelector('.fp-split.fp-file .fp-r article') && !!document.querySelector('.fp-l .b-file.fp-cur a[data-path="top.md"]')`);
+    const same = await p.ev(`!!document.querySelector(".fp-l[data-probe]") && !!document.querySelector('${sub}[open]')`);
+    const marks = await (await fetch(`${base}/api/browse/${rid}/changes`)).json().catch(() => null);
+    rows.push(["a file reads beside the tree, which stays as it was", beside && same && !!marks && !Object.keys(marks).length,
+      !beside ? "top.md did not open beside the tree" : !same ? "the tree was drawn again, folded" : !marks || Object.keys(marks).length ? `changes said ${JSON.stringify(marks)} outside a repository` : "top.md marked, sub/ still unfolded, no marks"]);
+
     // A layout saved before 1.56, naming Folders shown and hidden.
     const laid = await p.ev(`fetch("/api/layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ left: ["folders", "inbox", "desks", "widgets"], right: [], hidden: ["folders"] }) }).then(r => r.json())`);
     rows.push(["a layout saved with Folders keeps the rest without it", !!laid && laid.left.join(" ") === "inbox desks widgets" && !laid.hidden.includes("folders"),

@@ -279,6 +279,26 @@ pub(crate) async fn browse_tree(
     }
 }
 
+/// What git says is changed in an open folder, for the folder page's marks
+/// (#214): `{"path": "M" | "A"}`, relative to the folder. Empty outside a
+/// repository and in the home directory's. Off the runtime: git may take
+/// its two seconds.
+pub(crate) async fn browse_changes(State(app): S, Path(id): Path<String>) -> Response {
+    let Some(root) = app.browse.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let dir = std::path::PathBuf::from(root.path);
+    match tokio::task::spawn_blocking(move || crate::git::changes(&dir)).await {
+        Ok(v) => Json(
+            v.into_iter()
+                .map(|(p, m)| (p, m.to_string()))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        )
+        .into_response(),
+        Err(e) => err(anyhow::anyhow!(e)),
+    }
+}
+
 pub(crate) async fn browse_file(
     State(app): S,
     Path(id): Path<String>,

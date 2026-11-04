@@ -1733,16 +1733,26 @@ notes you already have, not an import.
 
 A desk is its folder, so the desk opens it: the path in the desk's head is
 a button. It shows the folder's page over the desk, with the desk's rail
-beside it and a ✕ back to the panels. The page is the folder as a tree:
-click a folder to unfold it in place, a file to read it, and Find (at the
-top) to look for a file by name anywhere in it. Find is off on a desk at
+beside it and a ✕ back to the panels. The folder is a tree in a column
+on the left, and what you read is on the right: the folder's README at
+first, then each file you click. The tree stays as it was while you go
+from file to file, so a run of files is a run of clicks. Click a folder to
+unfold it in place, and use Find (at the top of the column) to look for a
+file by name anywhere in it. The arrow keys walk the tree: up and down,
+right to unfold, left to fold, Enter to read. Find is off on a desk at
 your home folder, which snyvi never searches.
 
+In a git repository the tree shows where the work is: **M** beside a file
+that is changed and not committed, **A** beside one git does not know
+yet, and a dot on every folder above them, so it shows folded too.
+
 The folder's page remembers how you left it, per folder, in this window:
-the folders you unfolded, where the page was scrolled, and the last file
-you read from it, marked "last read". A file you come back to opens where
-you stopped reading it, however you get there. Clicking the folder's name
-folds everything and goes back to the top. Find's words are never kept.
+the folders you unfolded, where the tree was scrolled, and the last file
+you read from it, marked "last read", with a "Pick up where you left off"
+line over the README. A file you come back to opens where you stopped
+reading it, however you get there. Clicking the folder's name folds
+everything and goes back to the top. Find's words are never kept. In a
+narrow window the tree is over the README, and a file reads alone.
 
 Until 1.56 the sidebar had a **Folders** section for this; it went, since
 nearly every folder in it was a desk's own (#214). The folders it listed

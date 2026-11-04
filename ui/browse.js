@@ -7,7 +7,14 @@
  * Since 1.56 (#214) the sidebar has no Folders: a folder is read through
  * its desk, over the desk, with the desk's rail kept and the ✕ going back to
  * the panels -- or to the panel whose path was clicked. The page is one tree
- * that unfolds in place, with Find, and it remembers how it was left. */
+ * that unfolds in place, with Find, and it remembers how it was left.
+ *
+ * The tree is a column of its own, beside what is read: the folder's README
+ * on the folder's page, the file on a file's. Going from file to file keeps
+ * the column on the page as it was -- unfolded, scrolled, the Find words in
+ * it -- so reading a run of files is a run of clicks, never back and forth.
+ * What git says is changed is marked on it: M on a changed file, A on a new
+ * one, and a dot on every folder above them, so the work shows folded. */
 
 /* A folder's entries were the Inbox's rows until 1.56; that look stays for
    the pages that still draw one (`.inbox`), and the tree's is here, off
@@ -20,7 +27,7 @@
 .inbox .time { grid-area: time; font-size: var(--fs-small); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .fp-crumb { margin: 0 0 6px; font-size: var(--fs-small); color: var(--fg-3); }
 .fp-crumb b { color: var(--fg-2); font-weight: 600; }
-.fp-head h1 { margin: 0; }
+.fp-name { margin: 0; font-size: var(--fs-h3); font-weight: 650; letter-spacing: -.01em; }
 .fp-top { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
 .fp-top:hover { color: var(--accent); }
 .fp-path { font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-3); overflow-wrap: anywhere; }
@@ -45,7 +52,31 @@
 .fp .b-file .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3); font-family: var(--mono); flex: none; }
 .fp .fp-last { flex: none; font-size: var(--fs-micro); color: var(--accent); }
 .fp .b-file.fp-was a { color: var(--fg); }
-.fp .b-file.fp-was a > .r-ico { color: var(--accent); opacity: 1; }`; document.head.append(st); }
+.fp .b-file.fp-was a > .r-ico { color: var(--accent); opacity: 1; }
+#doc:where(:has(.fp-split):not(:has(.kind-code, .kind-text, .kind-diff, .kind-table, .kind-image, article.preview, .hm))) { max-width: calc(var(--measure) + 96px + 292px); }
+#doc:has(.fp-split) { container-type: inline-size; }
+.fp-split { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 0 32px; align-items: start; }
+.fp-l { position: sticky; top: calc(var(--head-h) + 8px); max-height: calc(100vh - var(--head-h) - 24px); overflow: auto; overscroll-behavior: contain; padding: 0 4px 16px 0; scrollbar-width: thin; }
+.fp-l .fp-find { margin: 10px 0 8px; }
+.fp-r { min-width: 0; }
+.fp-pick { margin: 0 0 18px; padding: 8px 12px; border: 1px solid var(--rule); border-radius: var(--r-sm); font-size: var(--fs-small); color: var(--fg-3); }
+.fp-pick a { font-weight: 600; }
+.fp .b-file.fp-cur a { background: var(--accent-bg); color: var(--fg); }
+.fp .b-file.fp-cur a > .r-ico { color: var(--accent); opacity: 1; }
+.fp-mk { flex: none; font-family: var(--mono); font-size: var(--fs-micro); font-weight: 700; }
+.fp-mk[data-m="M"] { color: var(--warn); }
+.fp-mk[data-m="A"] { color: var(--ok); }
+.fp-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; }
+.fp-dot[data-m="M"] { background: var(--warn); }
+.fp-dot[data-m="A"] { background: var(--ok); }
+#doc:has(article.preview) .fp-split { flex: 1 1 auto; min-height: 0; grid-template-rows: 100%; align-items: stretch; }
+#doc:has(article.preview) .fp-l { max-height: 100%; }
+#doc:has(article.preview) .fp-r { display: flex; flex-direction: column; min-height: 0; }
+@container (max-width: 720px) {
+  .fp-split { display: block; }
+  .fp-split > .fp-l { position: static; max-height: none; margin-bottom: 24px; }
+  .fp-split.fp-file > .fp-l { display: none; }
+}`; document.head.append(st); }
 
 function browseHtml(c, f, root) {
   const { esc, fmtSize, rel } = c;
@@ -71,17 +102,104 @@ function keepFolder(path, patch) {
   try { localStorage.setItem(KEY, JSON.stringify(m)); } catch {}
 }
 
-/** The folder page on screen: its root, the last file marked, the folder
- *  asked for by name. Null on any other page. */
+/** The folder page on screen, or a file read from it: its root, the file
+ *  open (none on the folder's own page), the last file read, the folder
+ *  asked for by name, and what git says is changed in it. Null on any other
+ *  page. */
 let page = null;
-/** Every unfolded level, top first, as the memory keeps them. */
+/** The column both pages share -- the folder's name, its path, Find and the
+ *  tree -- kept while the reader goes from file to file in one folder, so it
+ *  does not fold, scroll or flicker under them. */
+let held = null;
+/** Every unfolded level in `el`, top first, as the memory keeps them. */
 const openNow = el => [...el.querySelectorAll(".b-dir > details[open]")].map(d => d.dataset.path);
 /** A path's folders, outermost first: `a/b/c` is `a`, `a/b`. */
 const ups = p => p.split("/").slice(0, -1).map((_, i, xs) => xs.slice(0, i + 1).join("/"));
 const trim = p => (p || "").replace(/\\/g, "/").replace(/(.)\/+$/, "$1");
+const depth = (a, b) => a.split("/").length - b.split("/").length;
+const column = c => c.docEl.querySelector(".fp-l");
+
+/** Whether this folder's column is on the page now, to be kept for the next. */
+const keepable = rootId => !!held && held.rootId === rootId && held.el.isConnected;
+/** This folder's column taken off the page, with where it was scrolled, to
+ *  be put on the next; null when there is none to keep. */
+function take(rootId) {
+  if (!keepable(rootId)) return null;
+  const el = held.el;
+  el._top = el.scrollTop;
+  el.remove();
+  return el;
+}
+
+/* ---------- what git says ----------
+ * `/api/browse/{id}/changes`: each changed path, `M` or `A`, relative to the
+ * folder; nothing outside a repository. Each folder above a changed path is
+ * marked too, M over A, so a folded folder says there is work in it. */
+function marksOf(j) {
+  const marks = new Map(), dirs = new Map();
+  if (j && typeof j === "object" && !Array.isArray(j) && !j.error) {
+    for (const [p, m] of Object.entries(j)) {
+      marks.set(p, m);
+      for (const u of ups(p)) if (dirs.get(u) !== "M") dirs.set(u, m);
+    }
+  }
+  return { marks, dirs };
+}
+/** A path's mark: its own, or A inside a folder git does not know yet. */
+const markOf = p => page.marks.get(p) || (ups(p).some(u => page.marks.get(u) === "A") ? "A" : "");
+const TIPS = { M: ["Changed", "not committed yet"], A: ["New", "not in git yet"] };
+
+/** One small span in a row, after `after`, kept in step with `m`. */
+function badge(el, cls, after, m, text, tip) {
+  if (!el) return;
+  let s = el.querySelector(`:scope > .${cls}`);
+  if (!m) { s?.remove(); return; }
+  if (!s) {
+    s = document.createElement("span");
+    s.className = cls;
+    const at = el.querySelector(`:scope > ${after}`);
+    if (at) at.after(s); else el.append(s);
+  }
+  s.dataset.m = m;
+  s.textContent = text;
+  s.dataset.tip = tip[0];
+  s.dataset.tipSub = tip[1];
+}
+
+/** The rows in `scope` as the page says: the file open, the last one read,
+ *  and git's marks. Run on every level as it is filled, so a row is drawn
+ *  with them rather than given them after. */
+function markRows(scope) {
+  if (!page || !scope) return;
+  for (const a of scope.querySelectorAll(".b-file > a[data-path]")) {
+    const p = a.dataset.path, li = a.parentElement;
+    const was = !!page.last && p === page.last && p !== page.file;
+    li.classList.toggle("fp-cur", p === page.file);
+    li.classList.toggle("fp-was", was);
+    badge(a, "fp-last", ".title", was ? "last" : "", "last read", ["The last file you read here", ""]);
+    const m = markOf(p);
+    badge(a, "fp-mk", ".title", m, m, TIPS[m] || []);
+  }
+  for (const d of scope.querySelectorAll(".b-dir > details[data-path]")) {
+    const m = page.dirs.get(d.dataset.path) || markOf(d.dataset.path);
+    badge(d.querySelector(":scope > summary"), "fp-dot", ".nm", m, "", ["Changes inside", m === "A" ? "new, not in git yet" : "not committed yet"]);
+  }
+}
+
+/** Ask git again, and mark the column with what it says now. */
+async function remark(c) {
+  const turn = page;
+  if (!turn) return;
+  const j = await c.getJson(`/api/browse/${turn.rootId}/changes`);
+  if (page !== turn) return;
+  Object.assign(page, marksOf(j));
+  markRows(column(c));
+}
+let remarkT = 0;
+const remarkSoon = c => { clearTimeout(remarkT); remarkT = setTimeout(() => remark(c), 800); };
 
 /** Wired once, the first time a folder's page is drawn: the unfold, the
- *  scroll and the Find box, on the page's own element. */
+ *  column's scroll, the Find box and the keys, on the page's own element. */
 let wired = false;
 function wire(c) {
   if (wired) return;
@@ -90,26 +208,60 @@ function wire(c) {
     const d = e.target;
     if (!page || !d.dataset || d.dataset.root !== page.rootId) return;
     if (d.open) fill(c, d.querySelector(":scope > .b-tree"));
-    keepFolder(page.path, { open: openNow(c.docEl) });
+    const col = column(c);
+    if (col) keepFolder(page.path, { open: openNow(col) });
   }, true);
   c.docEl.addEventListener("click", e => {
-    if (!page || !e.target.closest("[data-fp-top]")) return;
+    const col = column(c);
+    if (!page || !col || !e.target.closest("[data-fp-top]")) return;
     // The folder's name: back to the top, everything folded.
-    for (const d of c.docEl.querySelectorAll(".b-dir > details[open]")) d.open = false;
+    for (const d of col.querySelectorAll(".b-dir > details[open]")) d.open = false;
     keepFolder(page.path, { open: [], top: 0 });
-    c.main.scrollTo({ top: 0, behavior: "instant" });
+    col.scrollTo({ top: 0, behavior: "instant" });
   });
+  // The column scrolls on its own; a scroll does not bubble, so it is
+  // heard on the way down.
   let t = 0;
-  c.main.addEventListener("scroll", () => {
+  c.docEl.addEventListener("scroll", e => {
+    const col = e.target;
+    if (!page || !(col instanceof Element) || !col.matches(".fp-l")) return;
     clearTimeout(t);
-    t = setTimeout(() => { if (page && c.state.view === "browse" && !c.state.browsePath) keepFolder(page.path, { top: Math.round(c.main.scrollTop) }); }, 400);
-  }, { passive: true });
+    t = setTimeout(() => { if (page && col.isConnected) keepFolder(page.path, { top: Math.round(col.scrollTop) }); }, 400);
+  }, { capture: true, passive: true });
   let f = 0;
   c.docEl.addEventListener("input", e => {
     if (!page || !e.target.matches(".fp-find input")) return;
     clearTimeout(f);
     f = setTimeout(() => find(c, e.target.value), 150);
   });
+  c.docEl.addEventListener("keydown", e => walk(e));
+}
+
+/** The arrows in the column, as in any file tree: up and down from row to
+ *  row, right unfolds a folder (then steps into it), left folds it (then
+ *  steps out to the folder above). Enter opens, as a link does. Down from
+ *  Find steps into the rows. */
+function walk(e) {
+  const col = e.target.closest?.(".fp-l");
+  if (!col || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const rows = [...col.querySelectorAll(".b-dir > details > summary, .b-file > a")].filter(r => r.getClientRects().length);
+  if (e.target.matches(".fp-find input")) {
+    if (e.key !== "ArrowDown" || !rows.length) return;
+    rows[0].focus();
+  } else {
+    const at = e.target.closest("summary, a"), i = rows.indexOf(at);
+    if (i < 0) return;
+    const d = at.matches("summary") ? at.parentElement : null;
+    if (e.key === "ArrowDown") rows[i + 1]?.focus();
+    else if (e.key === "ArrowUp") (rows[i - 1] || col.querySelector(".fp-find input:not(:disabled)"))?.focus();
+    else if (e.key === "ArrowRight" && d) { if (d.open) rows[i + 1]?.focus(); else d.open = true; }
+    else if (e.key === "ArrowLeft") {
+      if (d && d.open) d.open = false;
+      else at.closest(".b-tree")?.closest("details")?.querySelector(":scope > summary")?.focus();
+    } else return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 /** Find, by name, through the whole folder (`/api/browse/{id}/find`): the
@@ -126,8 +278,9 @@ async function find(c, q) {
   if (!Array.isArray(j)) { hits.innerHTML = `<li class="b-empty">${c.esc(j?.error || "Could not search this folder")}</li>`; return; }
   hits.innerHTML = j.length ? j.map(p => {
     const up = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
-    return `<li class="b-file"><a href="/b/${rootId}/${p}" data-browse="${rootId}" data-path="${c.esc(p)}">${c.docIco()}<span class="title">${c.esc(p.split("/").pop())}</span><span class="k">${c.esc(up)}</span></a></li>`;
+    return `<li class="b-file"><a href="/b/${rootId}/${c.esc(p)}" data-browse="${rootId}" data-path="${c.esc(p)}">${c.docIco()}<span class="title">${c.esc(p.split("/").pop())}</span><span class="k">${c.esc(up)}</span></a></li>`;
   }).join("") : `<li class="b-empty">No file by that name</li>`;
+  markRows(hits);
 }
 
 /** The desk the page is read over, the line that says so, and whether the
@@ -154,12 +307,87 @@ async function unfold(c, paths) {
   }
 }
 
+/** The column's html: the folder's name (back to the top), its path, Find,
+ *  and the tree's first level. */
+function columnHtml(c, root, o, top) {
+  const { state, esc, tilde } = c;
+  const { line, out } = crumb(c, root, o);
+  const home = trim(state.desks && state.desks.home), atHome = !!home && trim(root.path) === home;
+  return `${line}<div class="fp-head"><p class="fp-name"><button type="button" class="fp-top" data-fp-top data-tip="Back to the top" data-tip-sub="everything folded">${esc(root.name)}</button></p>` +
+    `<p class="fp-path">${esc(tilde(root.path))}${out ? `<span class="fp-out">outside this desk</span>` : ""}</p></div>` +
+    `<label class="fp-find">${c.icon("find", 14)}<input type="search" spellcheck="false" autocomplete="off" ${atHome ? `disabled placeholder="Find is off in your home folder: snyvi never searches it"` : `placeholder="Find a file in ${esc(root.name)}"`} aria-label="Find a file in ${esc(root.name)}"></label>` +
+    `<ul class="fp-hits b-tree" hidden></ul>` +
+    `<ul class="b-tree" data-root="${root.id}" data-path="" data-loaded="1">${top.length ? top.map(e => entryHtml(c, root.id, e)).join("") : NONE}</ul>`;
+}
+
+/** The column into its place on a page just drawn: the one kept, as it was
+ *  scrolled, or a new one from `top`. Null when there is neither. */
+function mount(c, root, o, keep, top) {
+  const slot = column(c);
+  if (!slot) return null;
+  if (keep) {
+    slot.replaceWith(keep);
+    keep.scrollTop = keep._top || 0;
+    held = { rootId: root.id, el: keep };
+  } else if (Array.isArray(top)) {
+    slot.innerHTML = columnHtml(c, root, o, top);
+    held = { rootId: root.id, el: slot };
+  } else { held = null; return null; }
+  markRows(held.el);
+  return held.el;
+}
+
+/** The column as it was left, once it is on the page: the unfolded levels
+ *  (a new column only), the way down to `also` -- the folder asked for, the
+ *  file open -- and the scroll; the folder asked for, or the file open,
+ *  brought into view when it is out of it. */
+async function settle(c, col, fresh, was, also, dir) {
+  const turn = page;
+  const want = [...new Set([...(fresh ? was.open : []), ...also, ...(fresh && page.last ? ups(page.last) : [])])].sort(depth);
+  await unfold(c, want);
+  if (page !== turn || !col.isConnected) return;
+  markRows(col);
+  keepFolder(page.path, { open: openNow(col) });
+  for (const h of col.querySelectorAll(".fp-here")) h.classList.remove("fp-here");
+  const here = dir && col.querySelector(`.b-dir > details[data-path="${CSS.escape(dir)}"]`);
+  if (here) here.parentElement.classList.add("fp-here");
+  const to = here || col.querySelector(".b-file.fp-cur");
+  if (to) {
+    const r = to.getBoundingClientRect(), b = col.getBoundingClientRect();
+    if (r.top < b.top || r.bottom > b.bottom) col.scrollTo({ top: col.scrollTop + r.top - b.top - 80, behavior: "instant" });
+  } else if (fresh && was.top) col.scrollTo({ top: was.top, behavior: "instant" });
+}
+
+/** The line over the folder's page that goes back to the last file read. */
+function pickHtml(c, rootId, last) {
+  if (!last) return "";
+  const i = last.lastIndexOf("/");
+  return `<p class="fp-pick">Pick up where you left off: <a href="/b/${rootId}/${c.esc(last)}" data-browse="${rootId}" data-path="${c.esc(last)}">${c.esc(last.slice(i + 1))}</a>${i > 0 ? ` in ${c.esc(last.slice(0, i))}` : ""}</p>`;
+}
+
+/** The folder page's own side: the README of the folder asked for, read as
+ *  a file is, or a line saying what the side is for. */
+async function readme(c, col, dir) {
+  const slot = c.docEl.querySelector(".fp-readme");
+  if (!slot) return;
+  const lvl = dir ? col.querySelector(`.b-tree[data-path="${CSS.escape(dir)}"]`) : col.querySelector(":scope > .b-tree[data-path='']");
+  const a = lvl && [...lvl.querySelectorAll(":scope > .b-file > a[data-path]")].find(x => /^readme(\.|$)/i.test(x.dataset.path.split("/").pop()));
+  if (!a) { slot.innerHTML = `<p class="fp-says">Pick a file on the left, and it reads here.</p>`; return; }
+  const turn = page;
+  const j = await c.getJson(`/api/browse/${turn.rootId}/file?path=${encodeURIComponent(a.dataset.path)}`);
+  if (page !== turn || !slot.isConnected || !j || !j.file) return;
+  slot.innerHTML = browseHtml(c, j.file, j.root);
+  c.afterRefresh();
+}
+
 async function showFolder(c, root, dir, push, o) {
-  const { state, docEl, main, esc, leave, behindDesk, setPreview, swapIn, afterRender, getJson, tilde } = c;
-  const rootId = root.id;
-  const top = await getJson(`/api/browse/${rootId}/tree?path=`);
-  if (!Array.isArray(top)) { c.toast("Could not open the folder", { sub: top?.error }); return; }
+  const { state, docEl, main, leave, behindDesk, setPreview, swapIn, afterRender, getJson } = c;
+  const rootId = root.id, tree = `/api/browse/${rootId}/tree?path=`;
+  let [top, marks] = await Promise.all([keepable(rootId) ? null : getJson(tree), getJson(`/api/browse/${rootId}/changes`)]);
+  if (!keepable(rootId) && !Array.isArray(top)) top = await getJson(tree);
+  if (!keepable(rootId) && !Array.isArray(top)) { c.toast("Could not open the folder", { sub: top?.error }); return; }
   if (push) leave();
+  const keep = take(rootId);
   behindDesk(`b:${rootId}:`, o.over, o.pane);
   state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
   state.browseRoot = root; state.browsePath = ""; state.browseIn = dir;
@@ -167,32 +395,20 @@ async function showFolder(c, root, dir, push, o) {
   document.title = dir ? dir.split("/").pop() : root.name;
   if (push) history.pushState({ browse: rootId, path: dir && dir + "/", over: state.deskBehind }, "", `/b/${rootId}${dir ? `/${dir}/` : ""}`);
   const was = folderState(root.path) || { open: [] };
-  page = { rootId, path: root.path, last: was.last || "", here: dir };
+  page = { rootId, path: root.path, last: was.last || "", here: dir, file: "", ...marksOf(marks) };
   wire(c);
-  const { line, out } = crumb(c, root, o);
-  const home = trim(state.desks && state.desks.home), atHome = !!home && trim(root.path) === home;
-  docEl.innerHTML = `<div class="fp">${line}<div class="inbox-head fp-head"><h1><button type="button" class="fp-top" data-fp-top data-tip="Back to the top" data-tip-sub="everything folded">${esc(root.name)}</button></h1>` +
-    `<p class="fp-path">${esc(tilde(root.path))}${out ? `<span class="fp-out">outside this desk</span>` : ""}</p></div>` +
-    `<label class="fp-find">${c.icon("find", 14)}<input type="search" spellcheck="false" autocomplete="off" ${atHome ? `disabled placeholder="Find is off in your home folder: snyvi never searches it"` : `placeholder="Find a file in ${esc(root.name)}"`} aria-label="Find a file in ${esc(root.name)}"></label>` +
-    `<ul class="fp-hits b-tree" hidden></ul>` +
-    `<ul class="b-tree" data-root="${rootId}" data-path="" data-loaded="1">${top.length ? top.map(e => entryHtml(c, rootId, e)).join("") : NONE}</ul></div>`;
+  docEl.innerHTML = `<div class="fp-split"><aside class="fp fp-l"></aside><div class="fp-r">${pickHtml(c, rootId, page.last)}<div class="fp-readme"></div></div></div>`;
+  const col = mount(c, root, o, keep, top);
   swapIn();
   main.scrollTo({ top: 0, behavior: "instant" });
   afterRender();
+  if (!col) return;
   // As it was left: the unfolded levels, then the way down to the folder
-  // asked for and to the last file read, then the scroll. A folder asked for
-  // by name wins over the scroll: it is what the click was for.
-  const want = [...new Set([...was.open, ...(dir ? [...ups(dir), dir] : []), ...(page.last ? ups(page.last) : [])])].sort((a, b) => a.split("/").length - b.split("/").length);
-  const turn = page;
-  await unfold(c, want);
-  if (page !== turn) return;
-  keepFolder(root.path, { open: openNow(docEl) });
-  const here = dir && docEl.querySelector(`.fp .b-dir > details[data-path="${CSS.escape(dir)}"]`);
-  if (here) {
-    here.parentElement.classList.add("fp-here");
-    const r = here.getBoundingClientRect(), m = main.getBoundingClientRect();
-    main.scrollTo({ top: main.scrollTop + r.top - m.top - 80, behavior: "instant" });
-  } else if (was.top) main.scrollTo({ top: was.top, behavior: "instant" });
+  // asked for and to the last file read, then the column's scroll. A folder
+  // asked for by name wins over the scroll: it is what the click was for.
+  if (!dir) readme(c, col, "");
+  await settle(c, col, !keep, was, dir ? [...ups(dir), dir] : [], dir);
+  if (dir && page && page.here === dir) readme(c, col, dir);
 }
 
 /** `o`: `over`, the desk to read it over, `pane`, the panel it was asked
@@ -212,21 +428,32 @@ export async function show(c, rootId, path, push = true, fromHistory = false, o 
     : state.deskBehind != null ? state.deskBehind : state.view === "desk" ? state.deskId : null;
   o = { ...o, over };
   if (!path || path.endsWith("/")) return showFolder(c, root, path.slice(0, -1), push, o);
-  let j;
+  // The file, and the tree beside it: kept from the page before when that
+  // was this folder's, fetched with the file when it was not. Git's marks
+  // come along from this folder's page before; asked for when there was none.
+  const tree = `/api/browse/${rootId}/tree?path=`;
+  const carry = page && page.rootId === rootId ? { marks: page.marks, dirs: page.dirs } : null;
+  let j, top = null;
   try {
-    const r = await fetch(`/api/browse/${rootId}/file?path=${encodeURIComponent(path)}`);
+    const [r, t] = await Promise.all([fetch(`/api/browse/${rootId}/file?path=${encodeURIComponent(path)}`), keepable(rootId) ? null : c.getJson(tree)]);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     j = await r.json();
+    top = t;
   } catch (e) { toast("Could not open file", { sub: e }); return; }
+  if (!keepable(rootId) && !Array.isArray(top)) top = await c.getJson(tree);
   const back = push ? cameFrom() : null;
   if (push) leave();
+  const keep = take(rootId);
   behindDesk(`b:${rootId}:${path}`, over, o.pane);
-  page = null;
+  const was = folderState(j.root.path) || { open: [] };
+  page = { rootId, path: j.root.path, last: path, here: "", file: path, ...(carry || marksOf(null)) };
+  wire(c);
   state.view = "browse"; state.doc = null; state.previous = null; state.comparing = null;
   state.browseRoot = j.root; state.browsePath = path;
   keepFolder(j.root.path, { last: path });
   setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
-  docEl.innerHTML = browseHtml(c, j.file, j.root);
+  docEl.innerHTML = `<div class="fp-split fp-file"><aside class="fp fp-l"></aside><div class="fp-r">${browseHtml(c, j.file, j.root)}</div></div>`;
+  const col = mount(c, root, o, keep, top);
   swapIn();
   applyPreview();
   document.title = j.file.name;
@@ -235,9 +462,9 @@ export async function show(c, rootId, path, push = true, fromHistory = false, o 
   // file was last left (`keepPlace`, 04-doc.js), unless a line or a section
   // was asked for.
   const restored = fromHistory && history.state.browse === rootId && kept("path", path);
-  const was = !fromHistory && !location.hash && places()[`b:${j.root.path}/${path}`];
+  const left = !fromHistory && !location.hash && places()[`b:${j.root.path}/${path}`];
   if (restored) placeAt(history.state.place);
-  else if (was && !was.end && was.i >= 0) placeAt(was);
+  else if (left && !left.end && left.i >= 0) placeAt(left);
   else main.scrollTo({ top: 0, behavior: "instant" });
   afterRender();
   // A link into a file: `#L120` is marked and landed by afterRender, and a
@@ -246,7 +473,10 @@ export async function show(c, rootId, path, push = true, fromHistory = false, o 
   // it aims at blocks that are still placeholders. Nothing to land when the
   // reader's own place has just been put back, or on a navigation inside the
   // page, which carries no fragment.
-  if (!restored && !was && location.hash.length > 1 && !lineHash()) jumpToHash();
+  if (!restored && !left && location.hash.length > 1 && !lineHash()) jumpToHash();
+  if (!col) return;
+  settle(c, col, !keep, was, ups(path), "");
+  if (!carry) remark(c);
 }
 
 
@@ -267,7 +497,10 @@ export async function refresh(c) {
   if (!browsing() || state.browseRoot.id !== rootId || state.browsePath !== path) return;
   const place = placeOf();
   setPreview(j.file.preview, j.file.preview_url, `b:${rootId}:${path}`);
-  docEl.innerHTML = browseHtml(c, j.file, j.root);
+  // The reading side only: the tree beside it stays as it is.
+  const side = docEl.querySelector(".fp-r");
+  (side || docEl).innerHTML = browseHtml(c, j.file, j.root);
+  remarkSoon(c);
   applyPreview();
   placeAt(place);
   afterRefresh();
@@ -278,6 +511,7 @@ export async function refresh(c) {
 export function changed(c, j) {
   if (!page || page.rootId !== j.root) return;
   reload(c, c.docEl.querySelector(`.fp .b-tree[data-root="${j.root}"][data-path="${CSS.escape(j.path)}"]`));
+  remarkSoon(c);
 }
 
 
@@ -304,7 +538,7 @@ export function meta(c) {
 
 const entryHtml = (c, rootId, e) => e.dir
   ? `<li class="b-dir"><details data-root="${rootId}" data-path="${c.esc(e.path)}"><summary>${c.icon("folder", 14)}<span class="nm">${c.esc(e.name)}</span>${c.chev}</summary><ul class="b-tree" data-root="${rootId}" data-path="${c.esc(e.path)}"></ul></details></li>`
-  : `<li class="b-file${page && page.last === e.path ? " fp-was" : ""}"><a href="/b/${rootId}/${e.path}" data-browse="${rootId}" data-path="${c.esc(e.path)}">${c.docIco()}<span class="title">${c.esc(e.name)}</span>${page && page.last === e.path ? `<span class="fp-last">last read</span>` : ""}<span class="k">${c.fmtSize(e.size)}</span></a></li>`;
+  : `<li class="b-file"><a href="/b/${rootId}/${c.esc(e.path)}" data-browse="${rootId}" data-path="${c.esc(e.path)}">${c.docIco()}<span class="title">${c.esc(e.name)}</span><span class="k">${c.fmtSize(e.size)}</span></a></li>`;
 
 const NONE = `<li class="b-empty">No files here</li>`;
 
@@ -318,6 +552,7 @@ export async function fill(c, ul) {
   if (!Array.isArray(entries)) { ul.dataset.loaded = ""; ul.innerHTML = c.noReach("dir", "li"); return; }
   if (!entries.length) { ul.innerHTML = NONE; return; }
   ul.innerHTML = entries.map(e => entryHtml(c, rootId, e)).join("");
+  markRows(ul);
 }
 
 /** The folder changed on disk: re-list it, keeping the nodes that are still there
@@ -340,4 +575,5 @@ export async function reload(c, ul) {
   });
   if (!nodes.length) { ul.innerHTML = NONE; return; }
   ul.replaceChildren(...nodes);
+  markRows(ul);
 }

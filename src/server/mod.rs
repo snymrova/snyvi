@@ -449,6 +449,7 @@ fn browse_routes() -> Router<Arc<App>> {
         .route("/api/browse/{id}/raw", get(browse_raw))
         .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
         .route("/api/browse/{id}/find", get(browse_find))
+        .route("/api/browse/{id}/changes", get(browse_changes))
         .route("/api/browse/{id}/outline", get(browse_outline))
 }
 

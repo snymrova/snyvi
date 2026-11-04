@@ -241,6 +241,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ),
     ("GET", "/api/browse/nope/raw/x.md", None, Gate::Open, true),
     ("GET", "/api/browse/nope/find?q=x", None, Gate::Open, true),
+    ("GET", "/api/browse/nope/changes", None, Gate::Open, true),
     (
         "GET",
         "/api/browse/nope/outline?path=x.md",
