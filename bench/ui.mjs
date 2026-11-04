@@ -833,7 +833,8 @@ async function sideRailRows(p, url, arrive) {
   await p.ev(`document.querySelector('#rail-nav [data-pop="inbox"]').focus()`);
   await p.press("ArrowDown");
   const walked = await p.ev(`document.activeElement?.dataset.pop || ""`);
-  const want = ["inbox", "desks", "browse", "rail-live", "rail-search"];
+  // No folder icon since 1.56 (#214): a folder is read through its desk.
+  const want = ["inbox", "desks", "rail-live", "rail-search"];
   const missed = want.filter(k => !tabbed.has(k));
   rows.push(["Tab reaches every icon, the arrows walk them", missed.length === 0 && walked === "desks",
     missed.length ? `never reached ${missed.join(", ")}` : walked !== "desks" ? `↓ from the inbox went to ${walked || "nothing"}` : "every icon a stop, ↓ to the next"]);
@@ -1789,7 +1790,7 @@ async function backRows(p, browsed) {
   const root = browsed.replace(/^.*\/b\//, "/b/").replace(/\/$/, "");
   await p.goto(browsed);
   await p.pointerAway();
-  await p.clickOn(`.inbox a[data-path="notes.md"]`);
+  await p.clickOn(`.fp-l a[data-path="notes.md"]`);
   await until(`location.pathname.endsWith("/notes.md")`);
   const b2 = await bar();
   await p.clickOn("#chrome .over-x");
@@ -2714,8 +2715,9 @@ async function deskRows(cdp, base, token) {
 
     // #202: a desk's hand counts that desk. 1.54 counted On you across every
     // desk, so each one said 18 or 19 "on this desk" with none of it its own.
-    // A card asked on still-b is in still-a's tray, under On other desks, and
-    // its tip says so; still-a's number does not move.
+    // A card asked on still-b leaves still-a's number where it was, and its
+    // tip says it is on another desk. Since 1.56 the tray is this desk's
+    // own: still-b's card is not in it (Home has every desk's).
     const handN = `document.querySelector("#meta .oy-foot .n, #onyou .oy-pill .n")?.textContent || ""`;
     const nBefore = await p.ev(handN);
     // Only a running panel is an agent's to ask from (`agent_pane`); a
@@ -2729,10 +2731,11 @@ async function deskRows(cdp, base, token) {
     const nAfter = await p.ev(handN);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     if (tipped) await p.clickOn("#meta .oy-foot");
-    const listed202 = tipped && await until(`(() => { const t = document.querySelector("#onyou .oy-tray"); const h = [...(t?.querySelectorAll(".oy-h") || [])].find(e => /On other desks/.test(e.textContent)); return !!h && /bench: a card on still-b/.test(t.textContent.slice(t.textContent.indexOf(h.textContent))); })()`, 30);
-    rows.push(["a desk's hand counts that desk; another desk's card waits in its tray under On other desks", tipped && nAfter === nBefore && listed202,
+    const trayOpen = tipped && await until(`!!document.querySelector("#onyou .oy-tray")`, 30);
+    const listed202 = trayOpen && await p.ev(`!/bench: a card on still-b/.test(document.querySelector("#onyou .oy-tray").textContent)`);
+    rows.push(["a desk's hand counts that desk, and its tray holds that desk's own", tipped && nAfter === nBefore && listed202,
       !t202 ? `the hand-over answered ${JSON.stringify(asked202).slice(0, 120)}, its panel's start ${JSON.stringify(started202).slice(0, 120)}` : !tipped ? "the hand's tip never said what is on other desks" : nAfter !== nBefore ? `still-a's hand went from "${nBefore}" to "${nAfter}" for still-b's card` :
-        !listed202 ? "the tray has no On other desks with still-b's card" : `still-a's hand stayed at "${nBefore}", and the card is under On other desks`]);
+        !trayOpen ? "the hand opened no tray" : !listed202 ? "still-b's card is in still-a's tray" : `still-a's hand stayed at "${nBefore}", and still-b's card is not in its tray`]);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     if (t202) await post(`/api/desks/${db}/turns/${t202}/remove`, {}).catch(() => {});
     await p.pointerAway();
@@ -3572,7 +3575,8 @@ async function deskLossRows(cdp, base, token) {
     await sleep(400);
     const ghost = await p.ev(`(() => { const g = document.querySelector("#toc .dk-note.gone"); return g ? { text: g.querySelector(".nm").textContent, undo: !!g.querySelector("[data-a=note-back]") } : null; })()`);
     if (ghost?.undo) await p.clickOn("#toc .dk-note.gone [data-a=note-back]");
-    const back = ghost?.undo && await until(`document.querySelector("#toc [data-a=note-edit]")?.textContent === "a line to tick"`);
+    // The words are the line's name; the pen beside it (1.56) has none.
+    const back = ghost?.undo && await until(`[...document.querySelectorAll("#toc .dk-note:not(.gone) .nm .nm-t")].some(t => t.textContent === "a line to tick")`);
     rows.push(["empty edit → ghost with Undo; Undo brings the text back", !!back,
       !ghost ? "the line went with no ghost" : !ghost.undo ? `the ghost "${ghost.text}" offers no Undo` : back ? `"${ghost.text} · Undo", and the Undo put the words back` : "the Undo did not bring the line back"]);
 
