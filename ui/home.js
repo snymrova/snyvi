@@ -46,6 +46,10 @@ const CSS = `
 .hm-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 4px; }
 .hm-head h1 { margin: 0; font-size: var(--fs-h2); font-weight: 650; letter-spacing: -.02em; }
 .hm-head .hm-v { color: var(--fg-3); font-size: var(--fs-small); }
+/* This week, in the head (1.56, audit B8): the only evidence log was a
+   fold at the foot of a long page. One line after the date opens it. */
+.hm-wkl { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
+.hm-wkl:hover { color: var(--fg); text-decoration: underline; }
 .hm-status { margin: 0 0 24px; height: 20px; line-height: 20px; font-size: var(--fs-body-s); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hm-status a { color: var(--fg-2); text-decoration: none; }
 .hm-status a:hover { color: var(--fg); text-decoration: underline; }
@@ -335,6 +339,8 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-friend > .hm-ren { flex: 1; min-width: 0; font: inherit; font-weight: 500; line-height: inherit; padding: 0 4px; margin: 0 0 0 -5px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
 /* Keys, folded like the week. */
 .hm-meta { margin: 10px 0 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The quota's "As of…" line wraps: cut, it lost its own sentence (1.56, audit B9). */
+.hm-meta.wrap { white-space: normal; }
 .hm-meta a { color: inherit; text-decoration: none; }
 .hm-meta a:hover { color: var(--fg); text-decoration: underline; }
 .hm-foot { margin-top: 32px; font-size: var(--fs-small); color: var(--fg-3); line-height: 1.6; }
@@ -658,7 +664,7 @@ function draw(j) {
     (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "");
   const desks = j.desks ? w("desks", "Other desks", desksList(j)) : "";
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
-  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
+  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span>${weekLine(j)}</header>` +
     `<div class="hm-st">${status(j)}</div>` +
     `<div class="hm-grid"><div class="hm-main">${bar(j)}${yourWeek(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot"><button type="button" data-hm="check">Check for updates</button> · ` +
@@ -1148,6 +1154,21 @@ async function weekClick(k, b) {
 
 /** The log, folded at the foot of the page until it is opened, and kept
  *  open or shut as the reader left it. */
+/** This week in one line in the head, counted the way the log counts: a
+ *  commit an agent named when it ticked a line is that line's. Nothing yet
+ *  says so, so the head keeps its one line. A click opens the log. */
+function weekLine(j) {
+  if (!j.desks || !j.days) return "";
+  const { plural } = c, names = new Set((j.desks || []).map(d => d.id));
+  const rs = j.days.filter(r => names.has(r.desk));
+  const named = rs.filter(r => r.kind === "tick").map(t => t.commit).filter(Boolean);
+  const ticked = rs.filter(r => r.kind === "tick").length;
+  const commits = rs.filter(r => r.kind === "commit" && !named.some(h => h.startsWith(r.hash) || r.hash.startsWith(h))).length;
+  const sent = new Set(rs.filter(r => r.kind === "doc").map(r => r.text)).size;
+  const bits = [ticked ? `${ticked} ticked` : "", commits ? plural(commits, "commit") : "", sent ? `${sent} sent` : ""].filter(Boolean);
+  return `<button type="button" class="hm-v hm-wkl" data-hm="weekline" data-tip="This week" data-tip-sub="${bits.length ? "opens the log at the foot of the page" : "notes ticked, commits and documents on your desks, day by day"}">This week · ${bits.length ? bits.join(" · ") : "nothing yet"}</button>`;
+}
+
 function week(j) {
   if (!j.desks || !j.days) return "";
   const act = weekButton(j);
@@ -1627,7 +1648,7 @@ function claude(j) {
   const { esc, plural } = c;
   const qs = quotasOf(j), out = [];
   const bar = (label, l) => { const w = windowLeft(l); return w ? `<div><span class="hm-k">${label}</span><div class="hm-bar${w.hot ? " hot" : ""}"><i style="width:${w.left}%"></i></div><span class="fact">${w.text}</span></div>` : ""; };
-  for (const q of qs) out.push(`${qs.length > 1 ? `<p class="hm-meta">${esc(q.label || "your login")}</p>` : ""}<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${ago(q.at)}, from the last Claude that answered${qs.length > 1 ? " as it" : ""}.</p>` : ""}`);
+  for (const q of qs) out.push(`${qs.length > 1 ? `<p class="hm-meta">${esc(q.label || "your login")}</p>` : ""}<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact wrap">As of ${ago(q.at)}, from the last Claude that answered${qs.length > 1 ? " as it" : ""}.</p>` : ""}`);
   if (j.desks) {
     const ps = j.desks.flatMap(d => d.panes.map(p => ({ ...p, desk: d.name, deskId: d.id })));
     const working = ps.filter(p => p.agent === "working").length, done = ps.filter(p => p.agent === "done").length;
@@ -1682,6 +1703,8 @@ function wire() {
     else if (k === "barundo") undoAdd();
     else if (k === "desks") { setDesksAll(!desksAll()); draw(last); c.docEl.querySelector("[data-hm=desks]")?.focus({ preventScroll: true }); }
     else if (k === "days") { allDays = !allDays; draw(last); c.docEl.querySelector("[data-hm=days]")?.focus({ preventScroll: true }); }
+    // The head's This week line: the log open, and in view.
+    else if (k === "weekline") { const w = c.docEl.querySelector(".hm-week"); if (w) { w.open = true; setWeekOpen(true); w.scrollIntoView({ block: "start", behavior: "smooth" }); } }
     else if (k === "more") { const key = b.dataset.k; opened.has(key) ? opened.delete(key) : opened.add(key); draw(last); }
     else if (k === "park") { parking = id; parkDraft = ""; parkFailed = false; draw(last); c.docEl.querySelector("input[data-hm=next]")?.focus(); }
     else if (k === "parkno") { parking = 0; parkFailed = false; draw(last); }

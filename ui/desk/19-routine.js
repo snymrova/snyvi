@@ -83,14 +83,27 @@ function routineSec(d) {
 const RT_HOLD = "Something to run on its own…";
 
 /** The field at the list's foot: quiet until clicked, then live, in the
- *  same room, so nothing under it moves as it opens and shuts. */
+ *  same room, so nothing under it moves as it opens and shuts. Live, it
+ *  is two fields, what and when (1.56, audit B7): one field held a
+ *  command palette and a "then when:" hint for a second language, and a
+ *  routine is two things. The when offers the cadences the sheet does. */
 function rtFieldHtml(esc) {
   const lead = `<span class="dk-lead"><span class="dk-tick dk-ring ghost" aria-hidden="true">${RT_HANDS}</span></span>`;
-  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="a /command or skill, or your own words, then when: every weekday 9" spellcheck="false"></div>`;
-  return `<div class="dk-note new rt-new">${lead}<input class="rt-in" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="rt-comp" aria-expanded="false">` +
+  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="what runs: a /command, a skill or your own words; then when" spellcheck="false"></div>`;
+  return `<div class="dk-note new rt-new">${lead}<input class="rt-in" placeholder="/command or your words" aria-label="What runs: a /command, a skill, or your own words" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="rt-comp" aria-expanded="false">` +
+    `<input class="rt-in rt-when" list="rt-whens" placeholder="every weekday 9" aria-label="When it runs" data-tip="When" data-tip-sub="every day 9 · every weekday 9 · every mon 9:00 · every 1st" spellcheck="false" autocomplete="off" value="${esc(rtField.when || "")}">` +
+    `<datalist id="rt-whens">${RT_WHENS.map(w => `<option value="${w}">`).join("")}</datalist>` +
     `<span class="dk-due-guess rt-chip" aria-hidden="true" hidden></span>` +
     (rtField.err ? `<span class="field-err" role="alert">${esc(rtField.err)}</span>` : "") + `</div>`;
 }
+
+/** The line the daemon reads: what, and when, joined as a line says it.
+ *  A when the reader wrote into the what field is left as it is. */
+const rtLine = () => {
+  if (!rtField) return "";
+  const what = rtField.text.trim(), when = (rtField.when || "").trim();
+  return !what ? "" : when ? `${what} · ${when}` : what;
+};
 
 /** What the list shows for what is typed: while the field is empty or a
  *  name is being typed (`/new`, no space yet). A name that starts with what
@@ -121,7 +134,7 @@ const rtListing = t => t === "" || /^\/[\w-]*$/.test(t);
 function rtCompDraw() {
   const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)");
   const ms = rtMatches(), e = ctx.esc;
-  const open = !!(inp && rtField && !rtField.away) && rtListing(rtField.text) && rtCmds.at === deskId;
+  const open = !!(inp && rtField && !rtField.away && rtField.at !== "when") && rtListing(rtField.text) && rtCmds.at === deskId;
   inp?.setAttribute("aria-expanded", String(open));
   let el = document.getElementById("rt-comp");
   if (!open) { el?.remove(); return; }
@@ -151,7 +164,7 @@ function rtCompDraw() {
   const none = !rtCmds.list.length ? "No commands or skills in this project or yours yet: write your own words instead."
     : "No command or skill by that name: words without a / are your own.";
   el.innerHTML = (rows || `<p class="rt-o-none">${none}</p>`) +
-    `<p class="rt-o-foot">then when: <b>every weekday 9</b> · <b>every mon 9:00</b> · <b>every 1st</b> · or your own words instead of a /command</p>`;
+    `<p class="rt-o-foot">or your own words instead of a /command · when it runs goes in the field beside</p>`;
   inp.setAttribute("aria-activedescendant", ms.length && rtField.moved ? `rt-o${rtField.pick}` : "");
   // Up, the list's foot is nearest the field: start it scrolled there.
   if (up && !rtField.moved) el.scrollTop = 0;
@@ -176,8 +189,8 @@ function rtChipDraw() {
 /** Ask the daemon what the line would become, 120 ms after the last key. */
 function rtRead(d) {
   clearTimeout(rtReadT);
-  const n = ++rtReadN, text = rtField ? rtField.text : "";
-  if (!text.trim() || /^\/[\w-]*$/.test(text)) { if (rtField) rtField.read = null; rtChipDraw(); return; }
+  const n = ++rtReadN, text = rtLine();
+  if (!text || /^\/[\w-]*$/.test(rtField.text.trim())) { if (rtField) rtField.read = null; rtChipDraw(); return; }
   rtReadT = setTimeout(async () => {
     let j;
     try { j = await ctx.api(`/api/desks/${d.id}/routines/read?text=${encodeURIComponent(text)}`); } catch { return; }
@@ -189,8 +202,11 @@ function rtRead(d) {
 /** Enter: the line made a draft, and its sheet open with the same reply.
  *  A no keeps the field open with every character and the reason. */
 async function rtAdd(d) {
-  const text = rtField ? rtField.text.trim() : "";
+  const text = rtLine();
   if (!text) return;
+  // No when yet, and the daemon's read asked for one: the when field is
+  // the answer, so the hand goes there instead of a no.
+  if (!(rtField.when || "").trim() && rtField.read && rtField.read.when) { rtField.at = "when"; ctx.tocEl.querySelector(".rt-when")?.focus(); return; }
   let j;
   try { j = await ctx.api(`/api/desks/${d.id}/routines`, { text }); }
   catch (e) { if (rtField) { rtField.err = ctx.sayErr(e).why; rail(); } return; }
@@ -211,9 +227,25 @@ function rtFocus() {
     if (d && rtCmds.at !== d.id) rtCmdsGet(d.id);
     rail();
   }, { once: true });
-  const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)");
+  const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)"), whenIn = ctx.tocEl.querySelector(".rt-when");
   if (!inp || !rtField || !d) return;
   inp.value = rtField.text;
+  // Leaving both fields empty shuts them; a Tab from one to the other is
+  // not leaving, so the check waits for the focus to land.
+  const left = () => { const was = drawing; setTimeout(() => {
+    if (was || !rtField || ctx.tocEl.querySelector(".rt-new")?.contains(document.activeElement)) return;
+    if (!rtField.text.trim() && !(rtField.when || "").trim()) { rtField = null; rail(); } else { rtField.away = true; rtCompDraw(); }
+  }, 0); };
+  if (whenIn) {
+    whenIn.addEventListener("input", () => { rtField.when = whenIn.value; if (rtField.err) { rtField.err = ""; whenIn.parentElement?.querySelector(".field-err")?.remove(); } rtRead(d); });
+    whenIn.addEventListener("keydown", e => {
+      e.stopPropagation();
+      if (e.key === "Enter") { e.preventDefault(); rtAdd(d); }
+      else if (e.key === "Escape") { e.preventDefault(); rtField = null; rail(); }
+    });
+    whenIn.addEventListener("focus", () => { if (rtField) { rtField.away = false; rtField.at = "when"; rtCompDraw(); } });
+    whenIn.addEventListener("blur", left);
+  }
   const typed = () => {
     rtField.text = inp.value; rtField.caret = inp.selectionStart; rtField.pick = 0; rtField.moved = false;
     if (rtField.err) { rtField.err = ""; inp.parentElement?.querySelector(".field-err")?.remove(); }
@@ -243,15 +275,13 @@ function rtFocus() {
       rtField = null; rail();
     }
   });
-  // Leaving an empty field shuts it; one with words keeps them for later.
-  inp.addEventListener("blur", () => {
-    if (drawing || !rtField) return;
-    if (!rtField.text.trim()) { rtField = null; rail(); } else { rtField.away = true; rtCompDraw(); }
-  });
-  inp.addEventListener("focus", () => { if (rtField) { rtField.away = false; rtCompDraw(); } });
+  inp.addEventListener("blur", left);
+  inp.addEventListener("focus", () => { if (rtField) { rtField.away = false; rtField.at = "what"; rtCompDraw(); } });
   rtCompDraw(); rtChipDraw();
   if (rtField.read == null && rtField.text) rtRead(d);
   if (rtField.away) return;
+  // The hand goes back to the field it was in.
+  if (rtField.at === "when" && whenIn) { whenIn.focus(); return; }
   inp.focus();
   const at = Math.min(rtField.caret, inp.value.length);
   inp.setSelectionRange(at, at);
@@ -410,6 +440,8 @@ const RT_CSS = `
 .rt-in::placeholder { color: var(--fg-3); }
 .rt-in.idle { border-color: var(--rule-2); background: transparent; cursor: text; }
 .rt-in.idle:hover { border-color: var(--fg-3); }
+/* When, beside what: narrow, since a cadence is a few words. */
+.rt-in.rt-when { flex: 0 1 7.5em; }
 .rt-new .rt-chip { top: calc(100% + 1px); left: 27px; right: 8px; transform: none; width: fit-content; max-width: calc(100% - 35px); z-index: var(--z-pop, 30); line-height: 15px; padding: 1px 6px; white-space: normal; box-shadow: var(--shadow); border-radius: var(--r-xs); }
 .rt-chip.warn { background: color-mix(in srgb, var(--warn) 16%, var(--bg)); }
 .rt-comp { position: fixed; z-index: var(--z-pop, 30); max-height: 300px; overflow: auto; box-sizing: border-box; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-xs); box-shadow: var(--shadow); padding: 3px 0; }

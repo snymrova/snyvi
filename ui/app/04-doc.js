@@ -476,10 +476,17 @@
   const verEl = $("#foot-ver");
   if (boot.version) { verEl.textContent = `v${boot.version}`; verEl.hidden = false; }
   verEl.addEventListener("click", () => panel("about"));
+  /** A check that failed, in a few words: the foot's tip says it, and
+   *  About says the rest (about.js `updWhy`, the same tests). The window
+   *  sat a release behind with "failed to lookup address" in its health
+   *  and nothing amber anywhere (1.56, audit A3). */
+  const updOff = e => /HTTP 404/.test(e) ? "the release is not there yet" : /HTTP|dns|resolve|lookup|connect|timed? ?out|network/i.test(e) ? "no network" : e.split(/[:(]/)[0].trim();
   function setUpd(u) {
     u = u && typeof u === "object" ? u : null;
+    const off = !!(u && u.error && !u.show && !u.restart && !u.restarting);
     verEl.classList.toggle("upd", !!(u && u.show));
-    verEl.dataset.tipSub = u && u.show ? "an update is waiting" : "";
+    verEl.classList.toggle("off", off);
+    verEl.dataset.tipSub = u && u.show ? "an update is waiting" : off ? `Couldn't check for updates · ${updOff(u.error)}` : "";
     if (!verEl.dataset.tipSub) delete verEl.dataset.tipSub;
     if ((u && (u.show || u.restart || u.restarting || Date.now() / 1e3 - (u.last_applied || 0) < 86400)) || !updEl.hidden)
       panelMod().then(m => m.pill(updEl, u, updCtx()), () => { panelLoading = null; });

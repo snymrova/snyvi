@@ -498,7 +498,8 @@ function entries(ctx, el, byKey = false) {
       // Where it is in the list; what cannot move it is not offered.
       ...(here ? [] : moves(ctx, id, byKey)),
       files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
-      { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
+      // Not red: red reads as delete, and a closed desk comes back (1.56, audit B9).
+      { label: "Close desk", sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };
   }
   if (el.matches("[data-desksort]")) return sorts(ctx);

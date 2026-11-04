@@ -205,6 +205,10 @@
   /** The desk view. A tab gets the sentence and not the grid: it could never
    *  start anything, and a grid of dead panes would say it might. */
   async function showDesk(id, push = true, slot = 0) {
+    // /desks is Home (1.56, audit B5): Home's cards already say of every
+    // desk what a list here said less of -- name, a count and a path with
+    // nothing between them (A1) -- and a second board would drift from it.
+    if (id == null) return showHome(push);
     if (push) leave();
     const was = state.view === "desk";
     state.view = "desk"; state.deskId = id; state.deskBehind = null; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;

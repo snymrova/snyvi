@@ -181,8 +181,13 @@
   const historyBox = () => {
     const h = state.history, d = state.doc;
     // Numbered, oldest v1, and who sent each in its tip: two sent in one
-    // minute read as one date twice (the audit of 1.46.2).
-    return h && d ? `<div id="history"><h4>Versions · ${h.length}</h4>` + h.map((v, i) => `<a href="/d/${v.id}" data-id="${v.id}" class="${v.id === d.id ? "cur" : ""}" data-tip="${esc(v.workflow_title)}"${v.desk || v.sender ? ` data-tip-sub="from ${esc(v.desk ? (v.desk.slot ? `panel ${v.desk.slot} on ` : "") + v.desk.name : v.sender)}"` : ""}>v${h.length - i} · ${fmt(v.received_at)}${v.pinned ? " " + glyph("pin", 10) : ""}</a>`).join("") + `</div>` : "";
+    // minute read as one date twice (the audit of 1.46.2). Its size, and
+    // how much it grew on the one before: two in one minute were still
+    // the same label (1.56, audit A2), and the size is what tells a resend
+    // with a paragraph more from one with nothing new.
+    const kb = n => n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
+    const grew = (v, i) => { const p = h[i + 1]; if (!p) return ""; const n = v.size - p.size; return `<span class="fact">${n ? `${n > 0 ? "+" : "−"}${kb(Math.abs(n))}` : "same size"}</span>`; };
+    return h && d ? `<div id="history"><h4>Versions · ${h.length}</h4>` + h.map((v, i) => `<a href="/d/${v.id}" data-id="${v.id}" class="${v.id === d.id ? "cur" : ""}" data-tip="${esc(v.workflow_title)} · ${kb(v.size)}"${v.desk || v.sender ? ` data-tip-sub="from ${esc(v.desk ? (v.desk.slot ? `panel ${v.desk.slot} on ` : "") + v.desk.name : v.sender)}"` : ""}>v${h.length - i} · ${fmt(v.received_at)}${grew(v, i)}${v.pinned ? " " + glyph("pin", 10) : ""}</a>`).join("") + `</div>` : "";
   };
   async function renderHistory() {
     const d = state.doc;

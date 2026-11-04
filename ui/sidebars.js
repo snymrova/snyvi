@@ -75,7 +75,7 @@ const SECS = {
   folders: ["Folders", "folders opened to read"],
   widgets: ["Widgets", "global widgets"],
   panels: ["Panels", "this desk's panels"],
-  points: ["Points", "passages kept for a panel"],
+  points: ["Points", "passages a panel kept for you; drawn when one does"],
   docs: ["Documents", "what this desk's panels sent"],
   notes: ["Notes", "this desk's list"],
 };
