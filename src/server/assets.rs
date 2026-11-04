@@ -609,8 +609,7 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         if friends > 0 || !talk.sent.is_empty() {
             sub.push_str(&send_button(doc, talk, " · "));
         }
-        sub.push_str(&approve_button(doc, talk));
-        return head(doc, body, &sub, "", talk);
+        return head(doc, body, &sub, &approve_block(doc, talk), talk);
     }
     // A friend's document: what can be done with it, in a row of its own
     // under who sent it. The row is there whichever buttons it holds, so
@@ -682,22 +681,54 @@ fn send_button(doc: &Doc, talk: &Talk, sep: &str) -> String {
     )
 }
 
-/// A plan for desk notes: Approve, the go-ahead its panel reads at its
-/// next prompt (`crate::waiting`), in the sub line so the head keeps its
-/// height; the page wires the click (`ui/plan.js`). Nothing for any other
+/// A plan for desk notes: the gate, a block under the head's sub line
+/// (1.56, audit B2) that says which notes it plans, which panel hears the
+/// Approve, and what happens next -- drawn with the page, so the head is
+/// one height from its first paint. It was a seven-letter link in the sub
+/// line that said none of that. The page wires the click (`ui/plan.js`),
+/// which rewrites the button and the line under it. Nothing for any other
 /// document.
-fn approve_button(doc: &Doc, talk: &Talk) -> String {
+fn approve_block(doc: &Doc, talk: &Talk) -> String {
     let Some(p) = &talk.plan else {
         return String::new();
     };
+    let e = html_escape::encode_text;
     let ok = p.ok_at > 0;
+    let notes = p
+        .notes
+        .iter()
+        .map(|n| format!("#{n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let panel = if p.panel.is_empty() {
+        "its panel".to_string()
+    } else {
+        format!("panel <b>{}</b>", e(&p.panel))
+    };
+    let (label, tip, said) = if ok {
+        (
+            "Approved ✓",
+            "Approved by you: its panel goes ahead. Click to take it back",
+            format!(
+                "Approved by you <time data-ts=\"{}\">{}</time> · {panel} goes ahead at its next prompt · press again to take it back",
+                p.ok_at,
+                fmt_time(p.ok_at)
+            ),
+        )
+    } else {
+        (
+            "Approve",
+            "The go-ahead for this plan: its panel hears it at its next prompt",
+            format!("Approve, and {panel} hears it at its next prompt. snyvi starts nothing."),
+        )
+    };
     format!(
-        " · <button type=\"button\" class=\"doc-send uc-link\" data-w=\"plan\" data-desk=\"{}\" data-doc=\"{}\" data-ok=\"{}\" data-tip=\"{}\">{}</button>",
+        "<div class=\"doc-gate\" data-part=\"doc.gate\"><p class=\"doc-gate-l\">Plans <b>{notes}</b> · {panel}</p>\
+         <button type=\"button\" class=\"doc-gate-b\" data-w=\"plan\" data-desk=\"{}\" data-doc=\"{}\" data-ok=\"{}\" data-tip=\"{tip}\">{label}</button>\
+         <p class=\"doc-gate-s\">{said}</p></div>",
         p.desk,
         html_escape::encode_double_quoted_attribute(&doc.id),
         u8::from(ok),
-        if ok { "Approved by you: its panel goes ahead. Click to take it back" } else { "The go-ahead for this plan: its panel hears it at its next prompt" },
-        if ok { "Approved ✓" } else { "Approve" }
     )
 }
 

@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await routineAct(a, b, d))) return;
+    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -174,6 +174,28 @@ async function act(b, byKey) {
         () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))))) await getNotes(d.id, true);
     }
   } catch (e) { ctx.toast(`Could not ${VERB[a] || "do it"}`, e); }
+}
+
+/** A line's gate (1.56): a click on the text opens it under the row, and
+ *  Approve there is the plan's own Approve (`/plans/{doc}/approve`); any
+ *  other press closes it and goes on to what it was. */
+async function gateAct(a, b, d) {
+  if (a !== "note-gate" && a !== "note-ok") { gateOpen = 0; return false; }
+  const x = noteList.find(y => y.id === +b.dataset.n);
+  if (a === "note-gate") {
+    gateOpen = gateOpen === x?.id ? 0 : x?.id || 0;
+    rail();
+    if (gateOpen) ctx.tocEl.querySelector(".dk-gate button")?.focus();
+    return true;
+  }
+  gateOpen = 0;
+  if (!x) return true;
+  const undo = b.dataset.undo === "1", was = x.ok_at;
+  x.ok_at = undo ? 0 : Date.now() / 1000;
+  rail();
+  if (await told(b.dataset, `n${x.id}`, undo ? "Could not take it back" : "Could not approve it", () => { x.ok_at = was; },
+    () => ctx.api(`/api/desks/${d.id}/plans/${encodeURIComponent(b.dataset.doc)}/approve`, { undo }))) await getNotes(d.id, true);
+  return true;
 }
 
 /** A line's date (1.47): its chip opens a few times to move it to, and one

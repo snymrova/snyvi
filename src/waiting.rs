@@ -111,27 +111,53 @@ pub struct PlanFor {
     pub desk: i64,
     pub notes: Vec<i64>,
     pub ok_at: i64,
+    /// The panel that planned it, by the name the rail gives it, while that
+    /// panel still holds the session that planned (1.56): the head's gate
+    /// says which panel hears the Approve. Empty when it is gone.
+    pub panel: String,
 }
 
 /// Whether a document is some open line's plan, on the desk it was made for.
 pub fn plan_for(conn: &Connection, doc: &str) -> Result<Option<PlanFor>> {
     let mut st = conn.prepare(
-        "SELECT n.desk_id, n.id, n.ok_at FROM desk_notes n JOIN desks d ON d.id = n.desk_id
+        "SELECT n.desk_id, n.id, n.ok_at, n.stage_pane, n.stage_session FROM desk_notes n
+         JOIN desks d ON d.id = n.desk_id
          WHERE n.stage_doc = ?1 AND n.stage != '' AND n.done_at = 0 AND n.removed_at = 0
            AND d.closed_at = 0 ORDER BY n.desk_id, n.id",
     )?;
-    let rows: Vec<(i64, i64, i64)> = st
-        .query_map(params![doc], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    let rows: Vec<(i64, i64, i64, String, String)> = st
+        .query_map(params![doc], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
         .collect::<rusqlite::Result<_>>()?;
-    let Some(&(desk, _, _)) = rows.first() else {
+    let Some((desk, _, _, pane, session)) = rows.first() else {
         return Ok(None);
     };
-    let mine: Vec<&(i64, i64, i64)> = rows.iter().filter(|r| r.0 == desk).collect();
+    let desk = *desk;
+    let panel = if session.is_empty() {
+        String::new()
+    } else {
+        conn.query_row(
+            "SELECT name, slot FROM panes WHERE id = ?1 AND agent_session = ?2",
+            params![pane, session],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        )
+        .map(|(name, slot)| {
+            if name.is_empty() {
+                format!("panel {slot}")
+            } else {
+                name
+            }
+        })
+        .unwrap_or_default()
+    };
+    let mine: Vec<_> = rows.iter().filter(|r| r.0 == desk).collect();
     Ok(Some(PlanFor {
         desk,
         notes: mine.iter().map(|r| r.1).collect(),
         // Approved once every line is: a line added to the plan since is not.
         ok_at: mine.iter().map(|r| r.2).min().unwrap_or(0),
+        panel,
     }))
 }
 

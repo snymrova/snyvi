@@ -703,9 +703,11 @@ function oyRow(r) {
   const thing = r.doc ? `<button type="button" class="cn-link cn-doc" data-a="cn-oy-open" data-k="${esc(r.doc)}" data-tip="Open" data-tip-sub="${esc(r.doc_title)}">${esc(r.doc_title || "its document")}</button>`
     : r.no_doc ? `<span class="cn-nodoc">no document</span>` : "";
   const [step, a] = OY_STEP[r.kind] || [];
+  // A plan's Approve names the notes it approves (1.56, audit B2).
+  const label = r.kind === "plan" && r.notes?.length ? `Approve ${r.notes.map(n => `#${n}`).join(", ")}` : step;
   const acts = s ? `<span class="cn-acts"><span class="cn-said" role="status">${esc(s.text)}</span>${s.undo ? `<button type="button" class="cn-undo" data-a="cn-oy-undo" data-k="${esc(key)}">Undo</button>` : ""}</span>`
     : L.pop === key ? popHtml(key, r.kind === "due")
-    : `<span class="cn-acts">${step ? `<button type="button" class="cn-opt rec" data-a="${a}" data-k="${esc(key)}" data-tip="${step}" data-tip-sub="${OY_TIP[a]}">${step}</button>` : ""}` +
+    : `<span class="cn-acts">${step ? `<button type="button" class="cn-opt rec" data-a="${a}" data-k="${esc(key)}" data-tip="${step}" data-tip-sub="${OY_TIP[a]}">${label}</button>` : ""}` +
       (r.doc ? `<button type="button" class="cn-opt" data-a="cn-oy-copy" data-k="${esc(r.doc)}" data-tip="Copy" data-tip-sub="the document's text">Copy</button>` : "") +
       `<button type="button" class="cn-link" data-a="cn-desk" data-k="${r.desk}" data-v="0">Go to desk</button></span>`;
   const x = s || r.kind === "plan" || r.kind === "suggested" ? "" : oyX(key, r.text);

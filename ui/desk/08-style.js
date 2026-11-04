@@ -602,6 +602,20 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-meta .dk-marks > .dk-due.now { color: var(--accent); font-weight: 600; }
 .dk-meta .dk-marks > .dk-due.late { color: var(--warn); font-weight: 600; }
 .dk-meta .dk-marks > .dk-stage.planned.ok { color: var(--ok); }
+/* The stage in words (1.56): last in the row, and the one mark that gives
+   way, so the date and the number before it never do. */
+.dk-meta .dk-marks > .dk-stage.words { flex: 0 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-meta .dk-marks > .dk-stage.words svg { vertical-align: -2px; margin-right: 2px; }
+.dk-meta .dk-marks > .dk-stage.planned.words:not(.ok) { color: var(--accent); }
+/* A line's gate (1.56): under the row, over the rows below. */
+.dk-note > .dk-gate { position: absolute; z-index: var(--z-pop, 30); top: calc(100% - 2px); left: 27px; right: 8px; display: grid; gap: 6px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); font-size: var(--fs-micro); color: var(--fg-2); }
+.dk-gate p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.dk-gate-w { color: var(--fg); font-weight: 600; }
+.dk-gate-t { color: var(--fg-3); }
+.dk-gate-acts { display: flex; flex-wrap: wrap; gap: 4px; }
+.dk-gate-acts > button { height: 22px; padding: 0 8px; border-radius: var(--r-xs); background: var(--rule); font-size: var(--fs-micro); color: var(--fg); }
+.dk-gate-acts > button:hover { background: var(--rule-2); }
+.dk-gate-acts > button.pri { background: var(--accent); color: var(--on-accent); }
 .dk-note > .dk-due-pop { position: absolute; z-index: var(--z-pop, 30); top: calc(100% - 2px); left: 27px; display: grid; gap: 1px; min-width: 140px; padding: 4px; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
 .dk-due-pop > button { height: 24px; padding: 0 8px; border-radius: var(--r-xs); text-align: left; font-size: var(--fs-micro); color: var(--fg-2); }
 .dk-due-pop > button:hover, .dk-due-pop > button:focus-visible { background: var(--rule); color: var(--fg); }

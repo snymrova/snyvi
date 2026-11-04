@@ -191,6 +191,11 @@ const CSS = `
    breathing dot while a panel's agent is at it. */
 .hm-stage { position: relative; flex: none; display: grid; place-items: center; width: 10px; height: 10px; margin: 0 -3px 0 -4px; color: var(--fg-3); }
 .hm-stage.read::before { content: ""; width: 6px; height: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.25px var(--fg-3); }
+/* The stage's word after its glyph (1.56): quiet, the accent for what waits on you. */
+.hm-sw { flex: none; margin-left: 6px; font-size: var(--fs-micro); color: var(--fg-3); white-space: nowrap; }
+.hm-sw.hot { color: var(--accent); font-weight: 600; }
+.hm-sw.ok { color: var(--ok); }
+.hm-sw.warn { color: var(--warn); }
 .hm-stage.planned::before { content: ""; position: absolute; inset: -4px; }
 .hm-stage.planned:hover { color: var(--accent); }
 .hm-stage svg { width: 10px; height: 10px; }
@@ -877,20 +882,24 @@ function notesOf(d, max) {
 function stageMark(r) {
   const { esc } = c, by = esc(r.stage_by || "an agent");
   const st = r.done ? "" : r.stage || "";
+  // The glyph, and a word or two after it (1.56, audit B4): the same words
+  // the desk's rail says under the line, shorter, since the card is narrow.
+  // The glyphs alone were never explained.
+  const w = (text, tone = "") => `<span class="hm-sw${tone}">${text}</span>`;
   // Out on main by a commit that names it, waiting for the reader's check
   // on its desk; or reopened, the reader having said it is still broken.
   if (!r.done && r.landed_commit)
-    return `<span class="hm-stage landed" role="img" data-tip="Shipped in ${esc(r.landed_commit.slice(0, 7))}" data-tip-sub="check it on its desk: works, or not yet" aria-label="Shipped, waiting for your check"></span>`;
-  if (st === "reopened") return `<span class="hm-stage reopened" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken" aria-label="Reopened"></span>`;
+    return `<span class="hm-stage landed" role="img" data-tip="Shipped in ${esc(r.landed_commit.slice(0, 7))}" data-tip-sub="check it on its desk: works, or not yet" aria-label="Shipped, waiting for your check"></span>${w("shipped · check it", " hot")}`;
+  if (st === "reopened") return `<span class="hm-stage reopened" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken" aria-label="Reopened"></span>${w("reopened", " warn")}`;
   if (st === "planned" && r.stage_doc)
-    return `<a class="hm-stage planned${r.ok_at ? " ok" : ""}" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}${r.ok_at ? ", approved by you" : ""}" data-tip-sub="${r.ok_at ? "its panel goes ahead · " : ""}click to open the plan${r.ok_at ? "" : ", and Approve it there"}" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>`;
+    return `<a class="hm-stage planned${r.ok_at ? " ok" : ""}" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}${r.ok_at ? ", approved by you" : ""}" data-tip-sub="${r.ok_at ? "its panel goes ahead · " : ""}click to open the plan${r.ok_at ? "" : ", and Approve it there"}" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>${r.ok_at ? w("approved", " ok") : w("planned · Approve", " hot")}`;
   if (st === "working") {
     // Breathing only while the agent is at it, as on the desk's rail.
     const at = r.stage_panel ? ` in ${esc(r.stage_panel)}` : "";
     const say = r.stage_busy ? `${by} is working on it${at}` : `${by} has it${at}`;
-    return `<span class="hm-stage working${r.stage_busy ? " busy" : ""}" role="img" data-tip="${say}"${r.stage_busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"></span>`;
+    return `<span class="hm-stage working${r.stage_busy ? " busy" : ""}" role="img" data-tip="${say}"${r.stage_busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"></span>${w(r.stage_busy ? "on it" : "has it")}`;
   }
-  if (st === "read" || st === "planned") return `<span class="hm-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>`;
+  if (st === "read" || st === "planned") return `<span class="hm-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"></span>${w("read")}`;
   return `<span class="hm-stage" aria-hidden="true"></span>`;
 }
 const DOC = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 1.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.5v3h3M6 8h4M6 10.5h4"/></svg>`;
@@ -1419,7 +1428,7 @@ function waitBox(j) {
       : `<span class="hm-t">${esc(x.text)}</span>`;
     const park = `<button type="button" class="hm-link" data-hm="wpark" data-k="${x.desk}" data-tip="Park it" data-tip-sub="the desk goes on the shelf; nothing on it is closed">Park it</button>`;
     const acts = x.kind === "quiet" ? park : x.kind === "plan"
-      ? `<button type="button" class="hm-link hm-ok" data-hm="wplan" data-k="${x.desk}" data-n="${esc(x.doc)}" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt">Approve</button>`
+      ? `<button type="button" class="hm-link hm-ok" data-hm="wplan" data-k="${x.desk}" data-n="${esc(x.doc)}" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt">Approve ${x.notes.map(n => `#${n}`).join(", ")}</button>`
       : `<button type="button" class="hm-link hm-ok" data-hm="wok" data-k="${x.desk}" data-tip="Approve" data-tip-sub="the next step is the agent's now; its panel hears it at its next prompt">Approve</button>` +
         `<button type="button" class="hm-link" data-hm="wlater" data-k="${x.desk}" data-tip="Tomorrow" data-tip-sub="a note on its desk, due tomorrow at 9; the left-off stays">Tomorrow</button>` +
         `<button type="button" class="hm-link" data-hm="wdrop" data-k="${x.desk}" data-tip="Drop it" data-tip-sub="clears the left-off; Undo brings it back">Drop</button>` + park;

@@ -996,6 +996,15 @@ article.preview iframe { width: 100%; height: 100%; border: 1px solid var(--rule
 .doc-title { font-size: var(--fs-h1); line-height: 1.15; letter-spacing: -.022em; font-weight: 650; margin: 0 0 10px; text-wrap: balance; font-family: var(--head, var(--sans)); }
 .doc-sub { color: var(--fg-3); font-size: var(--fs-ui); margin: 0; }
 .doc-sub .branch { font-family: var(--mono); font-size: var(--fs-small); }
+/* The gate on a plan (1.56): which notes, which panel, Approve, and what
+   happens next. Drawn with the page (assets.rs), so it never arrives. */
+.doc-gate { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--rule); border-left: 2px solid var(--accent); border-radius: var(--r-sm); font-size: var(--fs-ui); color: var(--fg-2); }
+.doc-gate p { margin: 0; }
+.doc-gate b { color: var(--fg); font-weight: 600; }
+.doc-gate-s { grid-column: 1 / -1; color: var(--fg-3); font-size: var(--fs-small); }
+.doc-gate-b { grid-row: 1; grid-column: 2; padding: 3px 10px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: none; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
+.doc-gate-b:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.doc-gate-b[data-ok="1"] { border-color: var(--ok); color: var(--ok); }
 /* What a friend said back about a document you sent them, under its head. */
 .doc-replies { list-style: none; margin: 10px 0 0; padding: 6px 12px; border-left: 2px solid var(--accent); font-size: var(--fs-ui); color: var(--fg-2); }
 .doc-replies li + li { margin-top: 3px; }
