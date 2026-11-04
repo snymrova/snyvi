@@ -35,7 +35,11 @@ fn refused(code: StatusCode, error: impl Into<String>) -> Response {
 /// Run. Home's card said "Run on the desk" for every run card and led the
 /// reader to a shell with no Run. Nothing for a card whose pane is gone.
 pub(crate) fn place_turn(app: &App, v: &mut serde_json::Value) {
-    let Some(pane) = v.get("pane").and_then(serde_json::Value::as_str).map(str::to_string) else {
+    let Some(pane) = v
+        .get("pane")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+    else {
         return;
     };
     let Some(p) = app.store.pane(&pane).ok().flatten() else {

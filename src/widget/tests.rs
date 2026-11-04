@@ -59,14 +59,7 @@ fn normalize_keeps_the_readers_order_and_mends_the_rest() {
     let l = Layout {
         left: ids(&["widgets", "nope", "inbox", "inbox"]),
         right: ids(&["notes", "turn", "docs"]),
-        hidden: ids(&[
-            "desks",
-            "turn",
-            "widgets",
-            "left:widgets",
-            "bogus",
-            "desks",
-        ]),
+        hidden: ids(&["desks", "turn", "widgets", "left:widgets", "bogus", "desks"]),
     }
     .normalize();
     // Unknown and repeated ids go; the missing ones come back after the
