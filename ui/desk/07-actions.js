@@ -556,7 +556,9 @@ async function folderAct(a, b, d) {
     return true;
   }
   b.classList.remove("gone");
-  await ctx.browse(j.root, "", { over: d.id });
+  // The root by its id, and the root itself: the `browse` event that lists
+  // it may not be in yet.
+  await ctx.browse(j.root.id, "", { over: d.id, root: j.root });
   return true;
 }
 

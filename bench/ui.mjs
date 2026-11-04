@@ -2070,9 +2070,10 @@ async function revealRows(p, browsed, folder, tmp) {
 }
 
 /** #91: a folder Ctrl-clicked in what is being read opens on snyvi's folder
- *  page, never the file manager; a ▸ row there opens the folder it names, ▴ ..
- *  goes back up, and an address ending in `/` is that folder's listing. In a
- *  tab of its own, with the capability Ctrl-click asks the daemon with. */
+ *  page, never the file manager. Since 1.56 (#214) the page is a tree: a
+ *  folder unfolds in place, the folder's name folds it all, and an address
+ *  ending in `/` is that folder, unfolded and marked. In a tab of its own,
+ *  with the capability Ctrl-click asks the daemon with. */
 async function folderRows(cdp, base, browsed) {
   const rows = [];
   const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
@@ -2083,24 +2084,24 @@ async function folderRows(cdp, base, browsed) {
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
   const mouse = async (type, x, y, extra = {}) => cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra }, sessionId);
   const ctrl = type => cdp.send("Input.dispatchKeyEvent", { type, key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17, modifiers: type === "keyUp" ? 0 : 2 }, sessionId);
-  const listed = `[...document.querySelectorAll("#doc .inbox .title")].map(t => t.textContent).join(" · ")`;
+  const listed = `[...document.querySelectorAll(".fp-l .b-tree:not([hidden]) :is(.b-file .title, .b-dir .nm)")].filter(t => t.getClientRects().length).map(t => t.textContent).join(" · ")`;
+  const shown = path => `!!document.querySelector('.fp-l [data-path="${path}"]')?.getClientRects().length`;
   const at = path => `location.pathname === ${JSON.stringify(path)}`;
   const said = () => q.ev(`[...document.querySelectorAll("#toasts .toast")].map(t => t.textContent).join(" | ")`);
   try {
     await q.goto(`${root}#cap=${cap}`);
-    await until(`/▸ sub/.test(${listed})`);
-    await q.clickOn(`#doc .inbox a[data-path="sub/"]`);
-    const into = await until(`${at(`/b/${id}/sub/`)} && /inner/.test(${listed})`);
-    const list = await q.ev(listed);
-    rows.push(["a ▸ folder on the folder page opens it", into && /▴ \.\./.test(list),
-      into ? `/b/…/sub/: ${list}` : `at ${await q.ev("location.pathname")}, and the page said "${await said()}"`]);
-    await q.clickOn(`#doc .inbox a[data-path=""]`);
-    const up = await until(`${at(`/b/${id}`)} && /▸ sub/.test(${listed})`);
-    rows.push(["and ▴ .. goes back up", up, up ? "the folder's own listing again" : `at ${await q.ev("location.pathname")}`]);
+    await until(shown("sub"));
+    await q.clickOn(`.fp-l details[data-path="sub"] > summary`);
+    const into = await until(shown("sub/inner"));
+    rows.push(["a folder in the tree unfolds in place", into,
+      into ? `sub/ unfolded: ${await q.ev(listed)}` : `at ${await q.ev("location.pathname")}, and the page said "${await said()}"`]);
+    await q.clickOn(`.fp-l [data-fp-top]`);
+    const up = await until(`!document.querySelector(".fp-l details[open]")`);
+    rows.push(["and the folder's name folds it all", up, up ? "everything folded, at the top" : `still open: ${await q.ev(`[...document.querySelectorAll(".fp-l details[open]")].map(d => d.dataset.path).join(" ")`)}`]);
 
     await q.goto(`${root}/sub/inner/`);
-    const loaded = await until(`/deep\\.md/.test(${listed})`);
-    rows.push(["an address ending in / is that folder's listing", loaded, loaded ? await q.ev(listed) : `the page shows "${await q.ev(listed)}"`]);
+    const loaded = await until(`${shown("sub/inner/deep.md")} && !!document.querySelector('.fp-l .fp-here > details[data-path="sub/inner"]')`);
+    rows.push(["an address ending in / is that folder, unfolded and marked", loaded, loaded ? await q.ev(listed) : `the tree shows "${await q.ev(listed)}"`]);
 
     // A path in a file being read, Ctrl-clicked: `inner/` is a folder beside it.
     await q.goto(`${root}/sub/where.md`);
@@ -2116,7 +2117,7 @@ async function folderRows(cdp, base, browsed) {
       const lined = await until(`!!document.querySelector(".path-ul i")`, 30);
       for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, word.x, word.y, { button: "left", clickCount: 1, modifiers: 2 });
       await ctrl("keyUp");
-      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && /deep\\.md/.test(${listed})`);
+      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && ${shown("sub/inner/deep.md")}`);
       const toast = await said();
       rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", lined && opened && !/file manager/.test(toast),
         !lined ? "Ctrl never underlined inner/" : !opened ? `at ${await q.ev("location.pathname")}, and the page said "${toast}"` : /file manager/.test(toast) ? `it still says "${toast}"` : "inner/ listed in snyvi, with deep.md in it"]);
@@ -4293,7 +4294,7 @@ async function deskFolderRows(cdp, base, token, env, tmp) {
     rows.push(["the sidebar has no Folders, and its rail no folder icon", !left.folders && !left.icon,
       left.folders ? "#browse-nav is still in the sidebar" : left.icon ? "the rail still has the folder icon" : "Inbox, Desks, Widgets"]);
     if (door) await p.clickOn(".dk-root-b");
-    const over = door && await until(`location.pathname.startsWith("/b/") && !!document.querySelector("${sub}")`);
+    const over = door && await until(`location.pathname.startsWith("/b/") && !!document.querySelector('${sub}')`);
     const seen = await p.ev(`({ x: !document.querySelector("#chrome .over").hidden, tip: document.querySelector("#chrome .over")?.lastChild?.dataset.tip || "", rail: !!document.querySelector('#toc [data-sec="panels"]') })`);
     rows.push(["the head's path opens the desk's folder over the desk", over && seen.x && seen.rail,
       !door ? "no folder button in the desk's head" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "no ✕ in the head" : `the tree, the desk's rail, and "${seen.tip}"`]);
