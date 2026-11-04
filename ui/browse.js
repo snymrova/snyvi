@@ -81,7 +81,27 @@
 function browseHtml(c, f, root) {
   const { esc, fmtSize, rel } = c;
   const sub = `${esc(root.name)} · ${esc(f.path)} · ${fmtSize(f.size)} · ${rel(f.modified)}`;
-  return `<header class="doc-head"><h1 class="doc-title">${esc(f.name)}</h1><p class="doc-sub">${sub}</p></header><article class="prose kind-${f.kind}">${f.html}</article>`;
+  return `<header class="doc-head"><h1 class="doc-title">${esc(f.name)}</h1><p class="doc-sub">${sub}</p></header><article class="prose kind-${f.kind}">${pictures(c, f.html, root.id, f.path)}</article>`;
+}
+
+/** A file's relative pictures, pointed at the folder's raw route. As written
+ *  they resolve against the page's address, which is not the file's folder
+ *  -- `/b/<id>` on the folder's page -- and `/b/...` is the page, not the
+ *  bytes: a README's own screenshots came out broken. Parsed in a template,
+ *  whose pictures do not load, so a wrong address is never asked for. */
+function pictures(c, html, rootId, file) {
+  if (!/<(img|video|audio|source)\b/i.test(html)) return html;
+  const t = document.createElement("template");
+  t.innerHTML = html;
+  const base = "http://x/" + (file.includes("/") ? file.slice(0, file.lastIndexOf("/") + 1) : "");
+  for (const m of t.content.querySelectorAll("img[src], video[src], video[poster], audio[src], source[src]")) {
+    for (const at of ["src", "poster"]) {
+      const v = m.getAttribute(at);
+      if (!v || /^([a-z][a-z0-9+.-]*:|\/|#)/i.test(v)) continue;
+      try { m.setAttribute(at, c.rawUrl(rootId, decodeURIComponent(new URL(v, base).pathname.slice(1)))); } catch {}
+    }
+  }
+  return t.innerHTML;
 }
 
 /* ---------- what a folder remembers ----------
@@ -373,6 +393,8 @@ async function readme(c, col, dir) {
   const lvl = dir ? col.querySelector(`.b-tree[data-path="${CSS.escape(dir)}"]`) : col.querySelector(":scope > .b-tree[data-path='']");
   const a = lvl && [...lvl.querySelectorAll(":scope > .b-file > a[data-path]")].find(x => /^readme(\.|$)/i.test(x.dataset.path.split("/").pop()));
   if (!a) { slot.innerHTML = `<p class="fp-says">Pick a file on the left, and it reads here.</p>`; return; }
+  // The pick-up line has nothing to add when the last file read is this one.
+  if (a.dataset.path === page.last) c.docEl.querySelector(".fp-pick")?.remove();
   const turn = page;
   const j = await c.getJson(`/api/browse/${turn.rootId}/file?path=${encodeURIComponent(a.dataset.path)}`);
   if (page !== turn || !slot.isConnected || !j || !j.file) return;
