@@ -170,7 +170,10 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 /* On you, off a desk: a turn or an offer with its buttons in the row. */
 .cn-ask .cn-acts { margin-top: 4px; }
 .cn-opt { padding: 2px 9px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); font-size: var(--fs-small); color: var(--fg); cursor: pointer; }
+/* The recommended answer: the star and the outline together, here and in
+   the desk's tray alike (1.56, audit B3). */
 .cn-opt.rec { border-color: var(--accent); }
+.cn-opt.rec::before { content: "★ "; color: var(--accent); font-size: .85em; }
 .cn-opt:hover { background: var(--bg-side); }
 .cn-link { padding: 2px 4px; border: 0; background: none; font-size: var(--fs-small); color: var(--fg-3); text-decoration: underline dotted; cursor: pointer; }
 .cn-link:hover { color: var(--fg); }
@@ -612,15 +615,27 @@ const whoOf = w => /^claude\b/.test(w.by || "") ? "Claude" : w.slot ? `Panel ${w
 function turnRow(w) {
   const { esc } = c;
   const opts = w.kind === "decide" || w.kind === "tell" ? w.options || [] : w.kind === "run" ? [] : TURN_ANSWERS[w.kind] || ["Done"];
-  const where = `${esc(w.desk_name || "a desk")}${w.slot ? ` · panel ${w.slot}` : ""}`;
+  // One meta line wherever a card is drawn (1.56, audit B3): who asked,
+  // the panel by its name, the desk, how long ago. The desk's tray says
+  // the same without the desk (09-thread.js `byHtml`).
+  const who = /^claude/i.test(w.by || "") ? "Claude" : w.by || whoOf(w);
+  const panel = w.panel || (w.slot ? `panel ${w.slot}` : "");
+  const where = [panel, w.desk_name || "a desk"].filter(Boolean).map(esc).join(" · ");
+  // A run card offers what the desk will (A4): Run in the panel that asked
+  // while a Claude session is in it, else a new panel there; Copy is for
+  // anywhere. It said "Run on the desk" to a shell, where nothing ran.
+  const run = w.kind === "run" && !(w.options && w.options.length)
+    ? `<button type="button" class="cn-opt rec" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}" data-tip="${w.runs_here ? `Typed into ${esc(panel)}'s prompt, on its desk` : "Run in a new panel on its desk"}">${w.runs_here ? `Run in ${esc(panel)} ›` : "New panel on the desk ›"}</button>` +
+      (w.cmd ? `<button type="button" class="cn-opt" data-a="cn-copy" data-c="${esc(w.cmd)}">Copy</button>` : "")
+    : "";
   return `<li class="cn-row cn-ask"><span class="cn-ico">${c.glyph("aside", 12)}</span><span class="cn-b">` +
-    `<span class="cn-by"><b>${esc(w.by || whoOf(w))}</b> · ${where} · ${c.relShort(w.created_at)}</span>` +
+    `<span class="cn-by"><b>${esc(who)}</b> · ${where} · ${c.relShort(w.created_at)}</span>` +
     `<span class="cn-t">${code(w.text)}</span>${w.kind === "run" && w.options && w.options.length ? `<span class="cn-by">${w.options.filter(o => !o.startsWith("# ")).length} steps, run one at a time on the desk</span>` : w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>` : ""}` +
     (L.pop === `t${w.id}` ? popHtml(`t${w.id}`, false) :
-    `<span class="cn-acts">${opts.map((o, i) => `<button type="button" class="cn-opt${i === w.recommended ? " rec" : ""}" data-a="cn-answer" data-k="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
+    `<span class="cn-acts">${run}${opts.map((o, i) => `<button type="button" class="cn-opt${i === w.recommended ? " rec" : ""}" data-a="cn-answer" data-k="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
     // A dated line's card carries the line's document (1.54): Open, Copy.
     (w.kind === "due" && /^[0-9a-f]{6,64}$/.test(w.link || "") ? `<button type="button" class="cn-opt" data-a="cn-oy-open" data-k="${esc(w.link)}">Open</button><button type="button" class="cn-opt" data-a="cn-oy-copy" data-k="${esc(w.link)}">Copy</button>` : "") +
-    `<button type="button" class="cn-link" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}">${w.kind === "run" ? "Run on the desk" : "Go to desk"}</button></span>`) + `</span>` +
+    `<button type="button" class="cn-link" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}">${w.kind === "run" && w.options && w.options.length ? "Run them on the desk" : "Go to desk"}</button></span>`) + `</span>` +
     (L.onyou ? oyX(`t${w.id}`, w.text) : `<button type="button" class="cn-rx" data-a="cn-notnow" data-k="${w.id}" aria-label="Not now: ${esc(w.text)}" data-tip="Not now" data-tip-sub="nothing is deleted">${c.glyph("x", 10)}</button>`) + `</li>`;
 }
 
@@ -1035,6 +1050,8 @@ function act(a, b) {
     "cn-answer": () => answer(+k, b.dataset.v),
     "cn-notnow": () => notNow(+k),
     "cn-desk": () => { settle(); closeTray(false); c.showDesk(+k, true, +b.dataset.v || 0); },
+    // A run card's command, for anywhere else (1.56).
+    "cn-copy": () => { navigator.clipboard?.writeText(b.dataset.c || ""); c.toast("Copied", { sub: b.dataset.c }); },
     "cn-send": () => offerAnswer(+k, true),
     "cn-notsend": () => offerAnswer(+k, false),
     "cn-offer-undo": () => offerUndo(+k),

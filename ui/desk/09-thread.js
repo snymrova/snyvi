@@ -167,14 +167,18 @@ function qHtml(w, esc, text = w.text) {
   return `<div class="tn-q${open ? " open" : ""}"${attrs}>` + (head ? `<b class="tn-qh">${inlineCode(head, esc)}</b>` : "") +
     (body ? `<span class="tn-qb">${inlineCode(body, esc)}</span>` : "") + `</div>`;
 }
-/** The line under a turn: which panel and how long ago -- "panel 1 · 4m" --
- *  with what kind of turn it is and who asked in its tip. The desk's own
- *  name and the program said it again on every row and cut the age off. */
+/** The line under a turn: who asked, the panel by its name, how long ago
+ *  -- "Claude · Plan vs code · 4m" -- the one meta line a card has wherever
+ *  it is drawn (1.56, audit B3; corner.js `turnRow` adds the desk off it),
+ *  with what kind of turn it is in its tip. It was "panel 1 · 4m", a
+ *  number, while the rail named that panel. */
 function byHtml(w, d, esc, extra = "") {
-  const n = slotOf(d, w.pane);
+  const n = slotOf(d, w.pane), v = views.get(w.pane);
+  const panel = (v?.pane?.name) || (n ? `panel ${n}` : "");
+  const who = /^claude/i.test(w.by || "") ? "Claude" : w.by || "an agent";
   // A tell card is snyvi's own, after a merge (src/told.rs): on no panel.
-  const where = w.kind === "tell" ? "snyvi, after the merge" : w.via === "dialog" ? `Claude asks in panel ${n || "?"}` : n ? `panel ${n}` : "panel closed";
-  const tip = `${w.kind === "decide" ? "A decision" : w.kind} · ${fromOf(d, w)}${w.by ? ` · ${w.by}` : ""}`;
+  const where = w.kind === "tell" ? "snyvi · after the merge" : w.via === "dialog" ? `Claude asks in ${panel || "a panel"}` : `${who} · ${panel || "panel closed"}`;
+  const tip = `${w.kind === "decide" ? "A decision" : w.kind} · ${fromOf(d, w)}${n ? ` · panel ${n}` : ""}`;
   return `<p class="tn-by"><span data-tip="${esc(tip)}">${esc(where)} · ${esc(ctx.relShort(w.created_at))}</span>${extra}</p>`;
 }
 
@@ -396,6 +400,9 @@ function saidRow(d, w, esc) {
 /** What the reader picked on a widget's or a box's card: how long it
  *  lasts, by card id; what Try once printed; whose script is open. */
 const sgFor = new Map(), sgTry = new Map(), sgScript = new Set();
+/** Whose card shows every duration (1.56): one default is said, and
+ *  "change" opens the four. One yes had seven controls (audit B3). */
+const sgForOpen = new Set();
 /** How long a widget lasts, in the card's words. `panel` only for one an
  *  agent in a panel still open asked for. */
 const LASTS = [["", "Until I turn it off"], ["today", "For today"], ["week", "For a week"], ["panel", "While panel"]];
@@ -427,8 +434,13 @@ function sugRows(f, d) {
     : esc(s.name || "A panel");
   const lastsRow = s => {
     const n = slotOf(d, s.pane), pick = sgFor.has(s.id) ? sgFor.get(s.id) : s.lasts || "";
+    const say = ([k, l]) => `${l}${k === "panel" ? ` ${n} is open` : ""}`;
+    if (!sgForOpen.has(s.id)) {
+      const cur = LASTS.find(([k]) => k === pick) || LASTS[0];
+      return `<p class="sg-for" role="group" aria-label="How long"><span class="tn-by">${esc(say(cur).toLowerCase())}</span><button type="button" class="tn-opt quiet" data-a="sg-for-open" data-s="${s.id}" data-tip="How long it stays" data-tip-sub="today, a week, while its panel is open, or until you turn it off">change</button></p>`;
+    }
     return `<p class="sg-for" role="group" aria-label="How long">` + LASTS.filter(([k]) => k !== "panel" || n).map(([k, l]) =>
-      `<button type="button" class="sg-chip" data-a="sg-for" data-s="${s.id}" data-v="${k}" aria-pressed="${pick === k}">${l}${k === "panel" ? ` ${n} is open` : ""}</button>`).join("") + `</p>`;
+      `<button type="button" class="sg-chip" data-a="sg-for" data-s="${s.id}" data-v="${k}" aria-pressed="${pick === k}">${say([k, l])}</button>`).join("") + `</p>`;
   };
   const widgetBits = s => {
     // A card from before 1.32 may say every desk, or global; an agent's
@@ -748,7 +760,8 @@ async function filedAct(a, b, d) {
       filedAway(() => ctx.api(`/api/desks/${d.id}/suggestions/${s.id}/dismiss`, {})));
   } else if (a === "sg-open" && s) await openSuggested(d, s);
   else if (a === "sg-try" && s) await trySuggested(d, s);
-  else if (a === "sg-for" && s) { sgFor.set(s.id, b.dataset.v); rail(); }
+  else if (a === "sg-for" && s) { sgFor.set(s.id, b.dataset.v); sgForOpen.delete(s.id); rail(); }
+  else if (a === "sg-for-open" && s) { sgForOpen.add(s.id); rail(); }
   else if (a === "sg-script" && s) { const k = b.dataset.f ? `${s.id}/${b.dataset.f}` : s.id; if (!sgScript.delete(k)) sgScript.add(k); rail(); }
   else if (a === "fd-back") {
     const k = b.dataset.k, id = +b.dataset.i;
@@ -862,6 +875,8 @@ const THREAD_CSS = `
 .tn-opt { padding: 1px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
 .tn-opt:hover { color: var(--fg); border-color: var(--accent); }
 .tn-opt.rec { border-color: var(--accent); color: var(--fg); }
+/* The recommended answer: the star and the outline, as off the desk (1.56). */
+.tn-opt.rec::before { content: "★ "; color: var(--accent); font-size: .85em; }
 .tn-opt.quiet { border-style: dashed; }
 .tn-x { margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
 .tn-x:hover { background: var(--rule-2); color: var(--fg); }

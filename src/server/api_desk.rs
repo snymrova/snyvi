@@ -54,7 +54,13 @@ pub(crate) async fn home(
                     crate::onyou::gather(c, now)?,
                 ))
             })
-            .map(|(t, th, du, w, o)| (json!(t), json!(th), json!(du), json!(w), json!(o)))
+            .map(|(t, th, du, w, o)| {
+                // Each card's panel and whether Run can type into it (1.56).
+                let (mut t, mut o) = (json!(t), json!(o));
+                super::api_thread::place_turns(&app, &mut t);
+                super::api_thread::place_turns(&app, &mut o);
+                (t, json!(th), json!(du), json!(w), o)
+            })
             .unwrap_or((null.clone(), null.clone(), null.clone(), null.clone(), null))
     } else {
         (null.clone(), null.clone(), null.clone(), null.clone(), null)

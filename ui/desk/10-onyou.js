@@ -133,8 +133,9 @@ function oyFoot(d) {
 }
 
 /** The tip's word on the other desks, so a desk at nought does not read as
- *  nothing anywhere. */
-const oyOthers = n => n.others ? ` · ${n.others} on other desks` : "";
+ *  nothing anywhere: the one place the rail names them (1.56), and it
+ *  points at Home, which holds them. */
+const oyOthers = n => n.others ? ` · ${n.others} on other desks, on Home` : "";
 
 /** On you's mark, the hand, drawn by the corner (ui/corner.js `hand`),
  *  which the window loads with the desk. */
@@ -178,14 +179,13 @@ function trayHtml(d, f, esc) {
   const K = ctx.corner?.(), offers = K ? K.offersHtml() : "", lines = K?.linesHtml?.() || "";
   const away = awayRows(f, esc);
   // This desk's own rest of On you (1.54): its dated line, routine's line,
-  // plan and left-off. Then the other desks', under their own head with
-  // their count in grey: there to answer, never in this desk's number (#202).
+  // plan and left-off. The other desks' are not here (1.56): the rail is
+  // the desk's, always; what is on the reader across desks is Home's
+  // column and the Inbox pill's. 1.54 listed them under their own head.
   const here = K?.onyouHtml?.(false, d.id, "here") || "";
-  const rest = K?.onyouHtml?.(false, d.id, "others") || "";
   const n = oyCounts(d, f), count = n.now + n.old;
   const all = said + older + here + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
-    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d) +
-    (rest ? `<p class="oy-h">On other desks <span class="sec-n">${n.others}</span></p>${rest}` : "");
+    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d);
   oy.empty = !all;
   const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +
     (count ? `<span class="sec-n${n.now ? " warn" : ""}">${count}</span>` : "");

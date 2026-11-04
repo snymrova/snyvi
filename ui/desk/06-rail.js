@@ -236,11 +236,7 @@ function rail() {
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>` +
     `<div class="dk-foot">${backRow(d, esc)}</div>`),
-    // The order, until the reader arranges it (/sidebars): the panels, then
-    // the change and its notes, then the documents, then what is empty
-    // until something arrives (1.56, audit B6). Points and Widgets draw
-    // nothing while they have nothing, so the builder's list is in reach.
-    // A desk's routines under its notes, as one section (19-routine.js).
+    // Notes before Documents, Points after (1.56, B6; src/widget.rs RIGHT); routines under the notes (19-routine.js).
     notes: () => noteSec(d) + routineSec(d),
     // The documents. The count is how many, in the accent while some wait
     // to be read; the row's [n] says which panel sent it.
