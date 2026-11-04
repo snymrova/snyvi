@@ -25,6 +25,13 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "deskfolder"
+since = "1.56.0"
+title = "A desk opens its own folder"
+line = "The path in a desk's head is a button: it shows the folder over the desk as a tree, with Find, and remembers what you unfolded, where you were and the last file you read. Folders left the sidebar: a folder is read through its desk."
+show = "desk .dk-root-b"
+
+[[feature]]
 id = "change"
 since = "1.56.0"
 title = "The change on the desk"

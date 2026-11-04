@@ -144,7 +144,6 @@ const COMMANDS = [
   { cmd: "corner", t: "On you", s: `What waits on you, across your desks: ${/Mac/.test(navigator.platform) ? "⌃⌥Y" : "Ctrl Alt Y"}`, k: "notifications messages asides" },
   { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
   { cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell", window: true },
-  { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
   { cmd: "welcome", t: "Welcome", s: "Which project first: the page a new window opens on" },
   { cmd: "connect", t: "Agents", s: "Claude Code, and any other agent" },
   { cmd: "pair", t: "Pair with a friend…", s: "Make a code to say to them", k: "code friends" },
@@ -203,12 +202,6 @@ async function fileItems(q, limit, mine) {
   return [];
 }
 
-/** The keyboard's way to the `+` beside Folders. */
-function folderItems(q) {
-  const l = q.trim().toLowerCase();
-  if (!d.capability || !l || !("open folder".startsWith(l) || "folder".startsWith(l) || "browse".startsWith(l))) return [];
-  return [{ pick: true, t: "Open folder…", s: "The desktop's folder dialog" }];
-}
 const row = (it, i) => { const { esc, rel } = d; return `<li role="option" id="pal-${i}" aria-selected="${i === 0}" class="${i === 0 ? "sel" : ""}${it.theme ? " theme" : ""}" data-i="${i}"${it.theme ? ` data-theme="${it.theme}"` : ""}>` + (
   it.t ? `<span class="t">${esc(it.t)}${it.key ? `<kbd>${esc(it.key)}</kbd>` : ""}</span><span class="s">${esc(it.s)}</span>`
     : it.file ? `<span class="t">${esc(it.file.split("/").pop())}</span><span class="s">${esc(it.file)}</span>`
@@ -259,7 +252,7 @@ async function search(q) {
   if (themeItems(q).length) await d.loadThemes();
   const friends = fm ? [] : await friendItems(q);
   if (mine !== seq || pal.hidden) return;
-  items = fm ? [] : themeItems(q).concat(deskItems(q), folderItems(q), friends, pairItems(q), found); sel = 0;
+  items = fm ? [] : themeItems(q).concat(deskItems(q), friends, pairItems(q), found); sel = 0;
   const reach = off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : "";
   // While files are still coming, an empty list says nothing yet: "Nothing
   // for" and then a file in its place would be a line that came and went.
@@ -294,18 +287,19 @@ function pick(it) {
   if (it.cmd === "pair" || it.cmd === "join") { const p = d.peerCtx, m = it.cmd === "join" ? "join" : ""; p.peer().then(x => x.pair(p, "", m), () => p.toast("Could not open the pairing sheet")); return; }
   if (it.cmd) {
     const c = it.cmd;
-    c === "home" ? d.showHome(true) : c === "corner" ? d.openCorner() : c === "inbox" ? d.showInbox(true) : c === "quiet" ? d.toggleQuiet() : c === "updates" ? d.checkUpdates() : c === "about" ? d.panel("about") : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
+    c === "home" ? d.showHome(true) : c === "corner" ? d.openCorner() : c === "inbox" ? d.showInbox(true) : c === "quiet" ? d.toggleQuiet() : c === "updates" ? d.checkUpdates() : c === "about" ? d.panel("about") : c === "connect" ? d.showConnect(true)
       : c === "sidebars" ? d.showSidebars(true) : c === "start" ? d.showStart(true, "") : c === "welcome" ? d.showWelcome(true) : d.openHelp();
     return;
   }
   const { state } = d;
-  it.theme ? d.setTheme(it.theme) : it.pick ? d.act("pick") : it.line ? d.gotoLine(it.line)
+  it.theme ? d.setTheme(it.theme) : it.line ? d.gotoLine(it.line)
     : it.newdesk ? d.act("make", it.newdesk === "home" ? null : it.newdesk) : it.desk ? d.showDesk(it.desk, true)
       : it.file ? d.showBrowse(state.browseRoot.id, it.file, true) : it.found ? openFound(it.found) : d.showDoc(it.id, true);
 }
 
 /** A file in an open folder shows at once. One in a desk's folder opens
- *  that folder under Folders first, as a Ctrl-click on its path would. */
+ *  that folder for reading first, as a Ctrl-click on its path would, and
+ *  is read over the desk when the desk is the page (#214). */
 async function openFound(f) {
   if (f.root) return d.showBrowse(f.root, f.rel, true);
   try {

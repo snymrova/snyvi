@@ -57,7 +57,7 @@ let ctx = null, R = null;
 
 /** Wire the reader, once, and hand back what a desk's panels share with it.
  *  `c` is the page's: `api` (the capability's route), `state`, `docEl`,
- *  `browse(root, rel)`, `landLine(n)`, `toast`. */
+ *  `browse(root, rel, o)`, `landLine(n)`, `toast`. */
 export function init(c) {
   if (R) return R;
   ctx = c;
@@ -74,8 +74,11 @@ async function open(from, word) {
   let j;
   try { j = await ctx.api("/api/resolve", { ...from, word, open: true }); }
   catch (e) { ctx.toast(`Could not open ${word}`, { sub: e }); return; }
-  if (j.kind === "dir") return ctx.browse(j.root, j.rel && j.rel + "/");
-  await ctx.browse(j.root, j.rel);
+  // From a panel, the page is read over its desk and its ✕ goes back to
+  // that panel (#214); from a page, the page's own desk, if any, is kept.
+  const o = from.pane ? { over: from.desk, pane: from.pane } : {};
+  if (j.kind === "dir") return ctx.browse(j.root, j.rel && j.rel + "/", o);
+  await ctx.browse(j.root, j.rel, o);
   if (j.line) ctx.landLine(j.line);
 }
 

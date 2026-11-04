@@ -163,6 +163,15 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-ev { padding: 0 4px; border: 0; background: none; font: inherit; font-size: var(--fs-micro); color: var(--accent); cursor: pointer; }
 .dk-ev:hover { text-decoration: underline; }
 .dk-root { color: var(--fg-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The path as the door to the desk's folder (#214): framed in the rule, the
+ * accent on hover and while the folder is the page. A folder gone from disk
+ * is struck through, the tip saying why; nothing about it changes size. */
+.dk-root-b { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 40ch; padding: 1px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; cursor: pointer; transition: color var(--t), border-color var(--t); }
+.dk-root-b svg { flex: none; }
+.dk-root-t { overflow: hidden; text-overflow: ellipsis; }
+.dk-root-b:hover, .dk-root-b:focus-visible { color: var(--fg); border-color: var(--accent); }
+.dk-root-b.gone .dk-root-t { text-decoration: line-through; }
+.dk-root-b.gone { color: var(--warn); }
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
 .dk-tabs button { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 2px 5px; border-radius: var(--r-xs); }
 .dk-tabs button.on { color: var(--accent); background: var(--accent-bg); }

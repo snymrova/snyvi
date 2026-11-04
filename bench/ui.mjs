@@ -302,6 +302,7 @@ async function main() {
     await section("panels in the back: a chip, a drawer, one that dies", () => backPanelRows(cdp, base));
     await section("#187: back from a page is back to the panel that sent it", () => senderRows(cdp, base, token));
     await section("#188: files by name in ⌘K", () => findRows(cdp, base, token, env, tmp));
+    await section("#214: a desk opens its own folder", () => deskFolderRows(cdp, base, token, env, tmp));
     await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -777,7 +778,7 @@ async function sideRailRows(p, url, arrive) {
   const rows = [];
   await p.goto(url);
   await p.pointerAway();
-  const HOME = ["inbox-row", "tree", "desk-nav", "browse-nav", "widgets-nav", "pop"];
+  const HOME = ["inbox-row", "tree", "desk-nav", "widgets-nav", "pop"];
   // The fold eases over 160 ms; the widths below are read where it lands.
   const eased = () => p.ev(`Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => 0))).then(() => 1)`);
   await p.press("\\");
@@ -789,7 +790,8 @@ async function sideRailRows(p, url, arrive) {
   const opened = [], broke = [];
   // The Inbox's icon brings its list as well: there is no Projects icon
   // since the Inbox became one list of documents (#206).
-  for (const [sec, id] of [["inbox", "inbox-row"], ["desks", "desk-nav"], ["browse", "browse-nav"]]) {
+  // Folders left the sidebar in 1.56 (#214), and its icon with it.
+  for (const [sec, id] of [["inbox", "inbox-row"], ["desks", "desk-nav"]]) {
     if (!(await p.ui("vis", `#rail-nav [data-pop="${sec}"]`))) { broke.push(`${sec}: no icon`); continue; }
     await p.clickOn(`#rail-nav [data-pop="${sec}"]`);
     const m = await p.ev(`({ in: !!document.querySelector("#pop > #${id}"), list: !!document.querySelector("#pop > #tree"), shown: window.__ui.vis("#pop"), left: Math.round(document.querySelector("#pop").getBoundingClientRect().left), focus: window.__ui.focus() })`);
@@ -802,16 +804,16 @@ async function sideRailRows(p, url, arrive) {
     else if (back.pop || back.on !== sec) broke.push(`${sec}: Escape left ${back.pop ? "it open" : `focus on ${back.on}`}`);
     else opened.push(sec);
   }
-  rows.push(["each icon opens its section", broke.length === 0 && opened.length >= 3, broke.length ? broke.join("; ") : `${opened.join(", ")}: beside the rail, focus in, Escape back to the icon`]);
+  rows.push(["each icon opens its section", broke.length === 0 && opened.length >= 2 && !(await p.ui("vis", '#rail-nav [data-pop="browse"]')), broke.length ? broke.join("; ") : `${opened.join(", ")}: beside the rail, focus in, Escape back to the icon`]);
 
   // One at a time: a second icon closes the first.
   await p.clickOn('#rail-nav [data-pop="inbox"]');
-  await p.clickOn('#rail-nav [data-pop="browse"]');
-  const one = await p.ev(`({ pop: document.documentElement.dataset.pop, tree: document.querySelector("#tree").parentElement.id, browse: document.querySelector("#browse-nav").parentElement.id })`);
+  await p.clickOn('#rail-nav [data-pop="desks"]');
+  const one = await p.ev(`({ pop: document.documentElement.dataset.pop, tree: document.querySelector("#tree").parentElement.id, desks: document.querySelector("#desk-nav").parentElement.id })`);
   await p.click(640, 400);
   const outside = await p.ev(`document.documentElement.dataset.pop || ""`);
-  rows.push(["one popover at a time, a click outside closes it", one.pop === "browse" && one.tree === "trees" && one.browse === "pop" && outside === "",
-    one.pop !== "browse" || one.browse !== "pop" ? "the second icon opened nothing" : one.tree !== "trees" ? "the first section stayed in the popover" : outside ? "a click outside left it open" : "the second replaces the first; a click beside it closes it"]);
+  rows.push(["one popover at a time, a click outside closes it", one.pop === "desks" && one.tree === "trees" && one.desks === "pop" && outside === "",
+    one.pop !== "desks" || one.desks !== "pop" ? "the second icon opened nothing" : one.tree !== "trees" ? "the first section stayed in the popover" : outside ? "a click outside left it open" : "the second replaces the first; a click beside it closes it"]);
 
   // The number on the inbox is the number waiting.
   await arrive();
@@ -1622,32 +1624,7 @@ async function lossRows(p, base, token, arrive, browsed) {
     !(await refused(p)) ? "the button never asked the daemon" : pinned.btn !== "Pin" ? `the button reads "${pinned.btn}"` : pinned.dot ? "the row has its ● anyway" : !pinned.err ? "nothing said it failed" : `still "Pin", no ●, and "${pinned.err}"`]);
   await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
 
-  // Close folder: a ghost with its Undo where the row was, and the Undo
-  // opens the same folder again. Refused, the row stays and says so.
-  const root = browsed.replace(/^.*\/b\//, "").replace(/\/.*$/, "");
-  const open = () => p.ev(`fetch("/api/browse").then(r => r.text()).then(t => t.includes(${JSON.stringify(root)}))`);
-  const rowOf = `#browse-nav .b-root[data-root="${root}"]`;
-  await p.goto(`${origin}/`);
-  await p.pointerAway();
-  await until(`!!document.querySelector(${JSON.stringify(rowOf)})`);
-  await p.hoverOn(`${rowOf} > summary`);
-  await p.clickOn(`${rowOf} [data-close]`);
-  await sleep(500);
-  const shut = await p.ev(`(() => { const g = document.querySelector("#browse-nav .b-ghost"); return g ? g.textContent : null; })()`), closed = !(await open());
-  if (shut) await p.clickOn("#browse-nav .b-ghost [data-reopen]");
-  const reopened = !!shut && await until(`!!document.querySelector(${JSON.stringify(rowOf)})`) && await open();
-  rows.push(["close folder → ghost; Undo reopens it", closed && !!shut && reopened,
-    !closed ? "the daemon still has the folder open" : !shut ? "the row went with no ghost" : reopened ? `"${shut}", and the Undo opened the same folder again` : "the Undo did not bring the folder back"]);
-  await p.pointerAway();
-  await sleep(300);
-  await refuse(p, "POST", /\/close$/);
-  await p.hoverOn(`${rowOf} > summary`);
-  await p.clickOn(`${rowOf} [data-close]`);
-  await sleep(400);
-  const kept = await p.ev(`!!document.querySelector(${JSON.stringify(rowOf)})`), no = await p.ev(`document.querySelector("#toasts .toast[role=alert] .t")?.textContent || null`);
-  rows.push(["close folder refused → row stays, with the error", await refused(p) && kept && /^Could not close/.test(no || ""),
-    !(await refused(p)) ? "the ✕ never asked the daemon" : !kept ? "the row went anyway" : !no ? "nothing said it failed" : `the row is there, and beside its ✕: "${no}"`]);
-  await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
+  // Close folder and its Undo went with the sidebar's Folders in 1.56 (#214).
 
   // The Inbox, not sent: a line that says so, with its Retry -- not Welcome,
   // which is what an empty library looks like.
@@ -1916,7 +1893,8 @@ async function sidebarsRows(p, token) {
   const kept = async () => (await (await fetch(`${origin}/api/widgets`, { headers: { authorization: `Bearer ${token}` } })).json()).layout;
   const cap = (await (await fetch(`${origin}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const listed = () => p.ev(`[...document.querySelectorAll('.sb-list[data-side="left"] .sb-row')].map(r => r.dataset.sb.split(":")[1]).join(" ")`);
-  const onLeft = () => p.ev(`[...document.querySelectorAll("#trees > #inbox-row, #trees > #desk-nav, #trees > #browse-nav")].map(n => ({ "inbox-row": "inbox", "desk-nav": "desks", "browse-nav": "folders" })[n.id]).join(" ")`);
+  // Folders left the sidebar in 1.56 (#214): the left is Inbox, Desks, Widgets.
+  const onLeft = () => p.ev(`[...document.querySelectorAll("#trees > #inbox-row, #trees > #desk-nav, #trees > #widgets-nav")].map(n => ({ "inbox-row": "inbox", "desk-nav": "desks", "widgets-nav": "widgets" })[n.id]).join(" ")`);
   const errs = [];
   await p.goto(`${origin}/sidebars#cap=${cap}`);
   await until(`!!document.querySelector('.sb-row[data-sb="left:inbox"]')`);
@@ -1927,35 +1905,35 @@ async function sidebarsRows(p, token) {
   await sleep(500);
   const k1 = await kept();
   errs.push(...await p.ev("window.__sbErr"));
-  rows.push(["Alt+↓ on /sidebars moves Inbox down, and the daemon keeps it", k1.left.join(" ") === "desks inbox folders widgets",
+  rows.push(["Alt+↓ on /sidebars moves Inbox down, and the daemon keeps it", k1.left.join(" ") === "desks inbox widgets",
     `listed "${before}" → "${await listed()}", the daemon kept "${k1.left.join(" ")}"${errs.length ? `; threw: ${errs[0]}` : ""}`]);
   const focus = await p.ev(`document.activeElement?.dataset?.sb || document.activeElement?.tagName`);
   rows.push(["the focus stays on the row that moved", focus === "left:inbox", `on ${focus}`]);
-  rows.push(["the left sidebar follows at once", (await onLeft()) === "desks inbox folders", `"${await onLeft()}"`]);
+  rows.push(["the left sidebar follows at once", (await onLeft()) === "desks inbox widgets", `"${await onLeft()}"`]);
 
-  // A drag, as the page receives one: Folders dropped on Desks.
+  // A drag, as the page receives one: Widgets dropped on Inbox.
   await p.ev(`(() => {
     const dt = new DataTransfer(), at = s => document.querySelector('.sb-row[data-sb="left:' + s + '"]');
-    at("folders").focus();   // the press that starts a drag focuses the row
-    at("folders").dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
-    at("desks").dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
-    at("desks").dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
-    at("folders")?.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt }));
+    at("widgets").focus();   // the press that starts a drag focuses the row
+    at("widgets").dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+    at("inbox").dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    at("inbox").dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    at("widgets")?.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt }));
     return 1;
   })()`);
   await sleep(500);
   const k2 = await kept();
-  rows.push(["a drag saves too", k2.left.join(" ") === "folders desks inbox widgets", `the daemon kept "${k2.left.join(" ")}"`]);
+  rows.push(["a drag saves too", k2.left.join(" ") === "desks widgets inbox", `the daemon kept "${k2.left.join(" ")}"`]);
 
   await p.goto(`${origin}/sidebars`);
   await until(`!!document.querySelector('.sb-row[data-sb="left:inbox"]')`);
-  rows.push(["/sidebars read again shows the order it was left in", (await listed()) === "folders desks inbox widgets", `"${await listed()}"`]);
+  rows.push(["/sidebars read again shows the order it was left in", (await listed()) === "desks widgets inbox", `"${await listed()}"`]);
 
   const under = await p.ev(`(() => { const b = document.querySelector("[data-reset]"); b.scrollIntoView({ block: "nearest" }); const r = b.getBoundingClientRect(), t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return t === b ? "" : (t?.id || t?.className || t?.tagName || "nothing"); })()`);
   await p.clickOn("[data-reset]");
   await sleep(500);
   const k3 = await kept();
-  rows.push(["Reset to default puts today's order back", k3.left.join(" ") === "inbox desks folders widgets" && (await onLeft()) === "inbox desks folders",
+  rows.push(["Reset to default puts today's order back", k3.left.join(" ") === "inbox desks widgets" && (await onLeft()) === "inbox desks widgets",
     `the daemon kept "${k3.left.join(" ")}", the left reads "${await onLeft()}"${under ? `; over the button: ${under}` : ""}`]);
   await p.ev(`sessionStorage.removeItem("snyvi.cap"), 1`);
   return rows;
@@ -4218,7 +4196,7 @@ async function backPanelRows(cdp, base) {
  *  lands where the reader was. */
 /** #188: ⌘K finds files by name in the desks' folders, under the documents,
  *  and a file picked opens in the folder reader, its desk's folder opened
- *  under Folders on the way. The folder is a desk's and nothing more: it is
+ *  for reading on the way. The folder is a desk's and nothing more: it is
  *  opened for reading only to make the desk on it, and closed again. */
 async function findRows(cdp, base, token, env, tmp) {
   const rows = [];
@@ -4272,7 +4250,7 @@ async function findRows(cdp, base, token, env, tmp) {
     const roots = await (await fetch(`${base}/api/browse`)).json().catch(() => []);
     const folder = roots.find(r => r.path && r.path.endsWith("find-188"));
     rows.push(["picked, it opens in the folder reader", opened && !!folder,
-      !opened ? `the page is on ${await p.ev("location.pathname")}` : !folder ? "its desk's folder is not under Folders" : "the file, under its desk's folder, now a row under Folders"]);
+      !opened ? `the page is on ${await p.ev("location.pathname")}` : !folder ? "its desk's folder was not opened for reading" : "the file, under its desk's folder"]);
 
     const tabAsks = (await fetch(`${base}/api/find?q=planxy188`)).status;
     rows.push(["a tab without the window's key lists no files", tabAsks === 403, `the route answered ${tabAsks}`]);
@@ -4280,6 +4258,64 @@ async function findRows(cdp, base, token, env, tmp) {
     await post(`/api/desks/${desk}/delete`).catch(() => {});
     const roots = await (await fetch(`${base}/api/browse`)).json().catch(() => []);
     for (const r of roots.filter(r => r.path && r.path.endsWith("find-188"))) await post(`/api/browse/${r.id}/close`, {}, TK).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** #214: the path in a desk's head opens the desk's folder over the desk,
+ *  as a tree, and the ✕ goes back to the panels; the folder comes back as
+ *  it was left. The sidebar has no Folders, and a layout saved with it
+ *  draws without it. The desk's folder is closed for reading first, so the
+ *  button is what opens it. */
+async function deskFolderRows(cdp, base, token, env, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const TK = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const dir = join(tmp, "folder-214");
+  mkdirSync(join(dir, "sub", "inner"), { recursive: true });
+  writeFileSync(join(dir, "top.md"), "# Top\n");
+  writeFileSync(join(dir, "sub", "inner", "deep.md"), "# Deep\n");
+  const rid = execFileSync(BIN, ["browse", dir, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop().match(/\/b\/([^/?#]+)/)[1];
+  const made = await post("/api/desks", { root: rid, path: "" }), desk = made.desk ? made.desk.id : made.id;
+  await post(`/api/browse/${rid}/close`, {}, TK);
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const sub = `.fp .b-dir > details[data-path="sub"]`;
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    const door = await until(`!!document.querySelector(".dk-root-b")`);
+    const left = await p.ev(`({ folders: !!document.querySelector("#browse-nav"), icon: !!document.querySelector('#rail-nav [data-pop="browse"]') })`);
+    rows.push(["the sidebar has no Folders, and its rail no folder icon", !left.folders && !left.icon,
+      left.folders ? "#browse-nav is still in the sidebar" : left.icon ? "the rail still has the folder icon" : "Inbox, Desks, Widgets"]);
+    if (door) await p.clickOn(".dk-root-b");
+    const over = door && await until(`location.pathname.startsWith("/b/") && !!document.querySelector("${sub}")`);
+    const seen = await p.ev(`({ x: !document.querySelector("#chrome .over").hidden, tip: document.querySelector("#chrome .over")?.lastChild?.dataset.tip || "", rail: !!document.querySelector('#toc [data-sec="panels"]') })`);
+    rows.push(["the head's path opens the desk's folder over the desk", over && seen.x && seen.rail,
+      !door ? "no folder button in the desk's head" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "no ✕ in the head" : `the tree, the desk's rail, and "${seen.tip}"`]);
+    if (over) await p.clickOn(`${sub} > summary`);
+    const opened = over && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
+    if (over) await p.clickOn("#chrome .over > :last-child");
+    const back = over && await until(`location.pathname === "/desk/${desk}" && !!document.querySelector(".dk-root-b")`);
+    rows.push(["its ✕ goes back to the panels", back, back ? "the desk, as it was" : `the page is on ${await p.ev("location.pathname")}`]);
+    if (back) await p.clickOn(".dk-root-b");
+    const kept = back && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
+    const mem = await p.ev(`(() => { try { return Object.values(JSON.parse(localStorage.getItem("snyvi.folders") || "{}")).some(m => (m.open || []).includes("sub")); } catch { return false; } })()`);
+    rows.push(["the folder comes back as it was left", opened && kept && mem,
+      !opened ? "sub/ did not unfold" : !kept ? "sub/ came back folded" : !mem ? "nothing was kept for it" : "sub/ unfolded again, kept per folder"]);
+
+    // A layout saved before 1.56, naming Folders shown and hidden.
+    const laid = await p.ev(`fetch("/api/layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ left: ["folders", "inbox", "desks", "widgets"], right: [], hidden: ["folders"] }) }).then(r => r.json())`);
+    rows.push(["a layout saved with Folders keeps the rest without it", !!laid && laid.left.join(" ") === "inbox desks widgets" && !laid.hidden.includes("folders"),
+      `the daemon kept "${laid ? laid.left.join(" ") : "nothing"}"`]);
+  } finally {
+    await post("/api/layout", { left: ["inbox", "desks", "widgets"], right: [], hidden: [] }, TK).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await post(`/api/browse/${rid}/close`, {}, TK).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
   return rows;

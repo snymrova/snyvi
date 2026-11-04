@@ -292,7 +292,7 @@
     if (rt) {
       e.preventDefault(); e.stopPropagation();
       const w = rt.dataset.retry;
-      if (w === "dir") fillTree(rt.closest(".b-tree")); else if (w === "inbox") showInbox(false); else if (w === "home") showHome(false); else if (w === "tree") refreshTree(); else if (w === "desks") loadDesks();
+      if (w === "dir") browseMod?.fill(browseCtx(), rt.closest(".b-tree")); else if (w === "inbox") showInbox(false); else if (w === "home") showHome(false); else if (w === "tree") refreshTree(); else if (w === "desks") loadDesks();
       return;
     }
     // The Inbox page's ghost answers as the sidebar's does (treesEl's click).
@@ -473,7 +473,6 @@
       titleRoom = roomIn(treeEl.clientWidth);
     }
     renderQueue();
-    renderBrowse();
     renderDesks();
     const cap = capSeen = inboxCap();
     let h = treeOff || listOff ? noReach("tree") : "";
@@ -646,20 +645,6 @@
     markActive();
   }
 
-  /* The sidebar's folder rows are browse.js's since 1.17: the fetch, the
-   * rows and the re-list on a change on disk went out of first paint with
-   * the page they open, paid when a folder is first unfolded. A filled tree
-   * implies the chunk, so a reload with none loaded has nothing to re-list. */
-  const treeCtx = () => ({ esc, icon, chev, plusDesk, docIco, fmtSize, skRows, noReach, markActive, getJson });
-  const fillTree = ul => { if (ul && !ul.dataset.loaded) browseUse().then(m => m.fill(treeCtx(), ul), () => { ul.innerHTML = noReach("dir", "li"); }); };
-  const reloadTree = ul => { if (browseMod) browseMod.reload(treeCtx(), ul); };
-  treesEl.addEventListener("toggle", e => {
-    const d = e.target;
-    if (d.dataset && d.dataset.root && d.open) {
-      fillTree(d.querySelector(":scope > .b-tree"));
-    }
-  }, true);
-
   treesEl.addEventListener("click", async e => {
     // The Inbox's own: a filter's ✕ in the find box, a project's name on a
     // row (the list shows that project alone), the filter's menu, and the
@@ -683,7 +668,6 @@
     // closes again.
     const wb = !e.target.closest("a") && e.target.closest(".wg-body, .wg-why");
     if (wb) { seatOpen(wb); return; }
-    if (e.target.closest("[data-pick]")) { e.preventDefault(); e.stopPropagation(); act("pick"); return; }
     const so = e.target.closest("[data-desksort]");
     if (so) { e.preventDefault(); e.stopPropagation(); askWhere(so, e.detail === 0); return; }
     const nd = e.target.closest("[data-newdesk]");
@@ -705,11 +689,6 @@
       const id = dx.dataset.deldoc, a = dx.closest("a");
       const d = state.queue.find(x => x.id === id) || (state.list || []).find(x => x.id === id) || { id, title: a.querySelector(".title").textContent, project_id: +a.querySelector("[data-only]")?.dataset.only || null };
       deleteDoc(d, dx, !e.detail);
-      return;
-    }
-    if (e.target.closest("[data-reopen]")) {
-      e.preventDefault(); e.stopPropagation();
-      if (shut && Date.now() - shut.made > 350) shut.undo();
       return;
     }
     if (e.target.closest("[data-undoc]")) {
@@ -737,54 +716,8 @@
       // Inside a <summary>, the default action is toggling the project open.
       e.preventDefault(); e.stopPropagation();
       startRename(r.parentElement, r.dataset.rename, +r.dataset.id);
-      return;
     }
-    const b = e.target.closest("[data-close]");
-    if (!b) return;
-    e.preventDefault(); e.stopPropagation();
-    closeRoot(b.dataset.close);
   });
-
-  /** A folder off the Folders list: the ✕ on its row, its menu's Close
-   *  folder, the meta pane's. Nothing on disk is touched. The daemon is
-   *  asked first, and a no is said beside the ✕ with a Retry; a yes leaves
-   *  the row's ghost with the Undo, which the daemon's reopen takes back. */
-  async function closeRoot(id) {
-    const at = state.browse.findIndex(r => r.id === id), r = state.browse[at];
-    if (!r) return;
-    if (!(await post(`/api/browse/${id}/close`))?.ok) return toast(`Could not close ${r.name}`, { retry: () => closeRoot(id) });
-    shutSettle();
-    const s = shut = { r, at, made: Date.now(), clock: undoClock("#browse-nav .b-ghost", () => shutSettle()) };
-    offer(s.undo = () => reopenRoot(s), shutSettle);
-    state.browse = state.browse.filter(x => x.id !== id);
-    if (state.browseRoot && state.browseRoot.id === id) showInbox(true); else { renderTree(); markActive(); }
-  }
-  async function reopenRoot(s) {
-    if (shut !== s || s.asking) return;
-    s.clock.hold = true;
-    unoffer(s.undo);
-    s.asking = true;
-    const r = await post(`/api/browse/${s.r.id}/reopen`);
-    s.asking = false;
-    if (shut !== s) return;
-    if (!r?.ok) {
-      // Gone (410): the folder is not there to reopen, and the row closes.
-      s.dead = r?.status === 410;
-      s.err = s.dead ? "Could not reopen it · it is gone" : "Could not reopen it";
-      if (s.dead) { s.clock.hold = false; s.clock.again(); } else offer(s.undo, shutSettle);
-      return renderBrowse();
-    }
-    shut = null; s.clock.stop();
-    if (!state.browse.some(x => x.id === s.r.id)) state.browse.splice(s.at, 0, s.r);
-    renderBrowse();
-  }
-  function shutSettle() {
-    if (!shut) return;
-    shut.clock.stop();
-    unoffer(shut.undo);
-    shut = null;
-    renderBrowse();
-  }
 
   /** Turn a name in the tree into a field, in place (menu.js, `rename`). */
   const startRename = (holder, what, id) => act("rename", holder, what, id);

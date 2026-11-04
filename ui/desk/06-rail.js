@@ -1436,6 +1436,7 @@ export function docSaved(d) {
  *  the page's bar name it while it is read. */
 function sentFrom() {
   if (reading == null) return null;
+  if (readFrom && views.get(readFrom)) return views.get(readFrom);
   const d = current();
   const x = d && docList.find(y => String(y.id) === String(reading));
   const p = x && x.slot && d.panes.find(q => q.slot === x.slot);

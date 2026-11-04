@@ -715,19 +715,19 @@ button.sec-fold:hover { color: var(--fg-2); }
    leaves #trees, so nothing outside it is covered. Not on the rail, where
    #pop has to stand over the page. */
 :root:not([data-side="0"]):not([data-pop]) #trees { isolation: isolate; }
-#trees > :is(#inbox-row, #desk-nav, #browse-nav, #widgets-nav) { display: flow-root; background: var(--bg-side); }
+#trees > :is(#inbox-row, #desk-nav, #widgets-nav) { display: flow-root; background: var(--bg-side); }
 #trees > #inbox-row { position: sticky; top: 0; z-index: 1; }
-#trees > :is(#desk-nav, #browse-nav, #widgets-nav) { position: relative; z-index: 2; }
+#trees > :is(#desk-nav, #widgets-nav) { position: relative; z-index: 2; }
 #widgets-nav > .sec { display: flow-root; }
-:is(#trees > :is(#desk-nav, #browse-nav), #widgets-nav > .sec) > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
+:is(#trees > #desk-nav, #widgets-nav > .sec) > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
 .s-chev { width: 5px; height: 5px; margin-left: 4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-1.5px) rotate(45deg); opacity: 0; transition: transform var(--t), opacity var(--t); }
-:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .ib-find, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
+:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .ib-find, #tree), #trees.fold-desks .t-desks) { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
 .s-empty { padding: 5px 8px 5px 8px; font-size: var(--fs-small); color: var(--fg-3); }
 
 /* The row. */
-.s-row, .b-root > summary, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg); font-weight: var(--fw-row); white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
-.s-row:hover, .b-root > summary:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
+.s-row, .t-desk > a, .t-back { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: var(--r-sm); color: var(--fg); font-weight: var(--fw-row); white-space: nowrap; cursor: pointer; list-style: none; position: relative; transition: background var(--t), color var(--t); }
+.s-row:hover, .t-desk > a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 /* The current row: a tint and a 2 px bar in the accent, the text staying
    ink. Solid accent text on a tint read as an alert, not as "you are here". */
 .s-row.active, .t-desk > a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
@@ -765,9 +765,8 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    quiet, and centred on the line rather than sat on its baseline; a row
    waiting to be read has it in the accent, with its title in ink -- gone
    once the document is opened -- and the open row is lit whole. */
-.b-file a > .r-ico { align-self: center; opacity: .75; }
 .t-doc a > :is(.r-ico, .r-who) { margin-top: 2px; opacity: .75; }
-:is(.t-doc a.new, .t-doc a.active, .b-file a.active) > .r-ico { color: var(--accent); opacity: 1; }
+:is(.t-doc a.new, .t-doc a.active) > .r-ico { color: var(--accent); opacity: 1; }
 .t-doc a.new .title { color: var(--fg); font-weight: 600; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
 /* What moved in the sidebar, said once. An arrival's row, or one an undo put
@@ -808,9 +807,6 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    kept out of the way until the row is under the cursor. The name takes the free
    space so the badge and the control sit at the edge. */
 .t-back > .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* A project's name and a folder's give way to their chevron, so they size
-   to themselves, and the first control after it takes the free space. */
-:is(.b-root) > summary > .nm, .b-dir > details > summary > .nm { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ren { color: var(--fg-3); font-size: var(--fs-micro); line-height: 1; padding: 2px 4px; border-radius: var(--r-xs); opacity: 0; flex: none; letter-spacing: 0; }
 .t-desk > a:hover .ren, .ren:focus-visible { opacity: 1; }
 .ren:hover { background: var(--rule-2); color: var(--fg); }
@@ -918,7 +914,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0; display: grid; place-items: center; background: none; }
 .t-desk > a > .row-x[data-armed] { position: absolute; right: 6px; width: auto; height: auto; padding: 2px 4px; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 /* A row lights the moment the pointer is on it, and only lets go slowly. */
-:is(.s-row, .b-root > summary, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
+:is(.s-row, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
 .row-x:hover { background: var(--rule-2); color: var(--fg); }
 /* The way back, under the tree while anything is out of it: quiet, because it
    is a state of the list rather than something to do, and always there, so
@@ -950,31 +946,7 @@ summary:is(:hover, :focus-visible) > .s-chev { color: var(--fg-2); }
 .row-x[data-armed] { color: var(--danger); font-weight: 600; }
 .row-x[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 :is(.t-doc, .t-desk) > a > .row-x[data-armed]:hover { background: linear-gradient(color-mix(in srgb, var(--danger) 12%, transparent) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
-.b-new { margin-left: auto; display: inline-flex; align-items: center; color: var(--fg-3); line-height: 1; padding: 2px 4px; border-radius: var(--r-xs); opacity: 0; flex: none; }
-/* The glyph is the one the Desks section uses, so what the button makes is
-   named by its shape rather than by a plus that could mean any addition. */
-.b-new .r-ico { color: inherit; }
-summary:is(:hover, :focus-within) > .b-new, .b-new:focus-visible { opacity: 1; }
-.b-new:hover { background: var(--rule-2); color: var(--fg); }
-.b-new + .b-close { margin-left: 0; }
-/* browse: folders read straight from disk */
 .t-label { padding: 8px 10px 2px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; }
-.b-root > summary:hover { background: var(--rule); color: var(--fg); }
-.b-close { margin-left: auto; color: var(--fg-3); font-size: var(--fs-micro); line-height: 1; padding: 2px 4px; border-radius: var(--r-xs); opacity: 0; }
-.b-root > summary:is(:hover, :focus-visible) .b-close { opacity: 1; }
-.b-close:hover { background: var(--rule-2); color: var(--fg); }
-.b-close:focus-visible { opacity: 1; }
-/* Each level hangs its icons under its parent's name. */
-.b-tree { list-style: none; margin: 0; padding: 0 0 0 20px; }
-.b-root > .b-tree { padding-left: 24px; }   /* under a 16px glyph and its 8px gap; deeper, a 14px one and 6 */
-.b-tree .b-empty { padding: 3px 10px; color: var(--fg-3); font-size: var(--fs-small); font-style: italic; }
-.b-dir > details > summary { list-style: none; cursor: pointer; padding: 3px 8px; border-radius: var(--r-sm); color: var(--fg-2); display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.b-dir > details > summary:hover { background: var(--rule); color: var(--fg); }
-.b-file a { display: flex; align-items: baseline; gap: 6px; padding: 3px 8px; border-radius: var(--r-sm); color: var(--fg-2); white-space: nowrap; overflow: hidden; transition: background var(--t), color var(--t); }
-.b-file a:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
-.b-file a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
-.b-file .title { overflow: hidden; text-overflow: ellipsis; }
-.b-file .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-2); font-family: var(--mono); flex: none; }
 /* A previewed page is somebody else's design; give it the pane and no styling of ours. */
 /* One scroll region: the frame fills what is left of the pane, so the page itself
    does not also scroll behind it. */
@@ -1145,7 +1117,7 @@ pre.code .copy:focus-visible { opacity: 1; }
 /* No pointer to hover with: everything that waits for one is simply there,
    the way the diagram tools already are. */
 @media (hover: none) {
-  .ren, .b-close, .b-new, pre.code .copy, pre.code::before { opacity: 1; }
+  .ren, pre.code .copy, pre.code::before { opacity: 1; }
   pre.code:has(.copy)::before { opacity: 0; }
   .prose a.anchor { opacity: .5; }
 }
@@ -1433,8 +1405,7 @@ pre.code .ln::before { cursor: pointer; }
    block axis: a width guess would become the code's scrollable width. */
 pre.code .lc { display: block; content-visibility: auto; contain-intrinsic-block-size: auto 320em; }
 
-/* Folders is always in the sidebar, with its + for the desktop's folder dialog. */
-.picking .b-empty { color: var(--accent); cursor: progress; }
+/* The quiet row an empty section ends in: the Desks' Give a project a desk. */
 .b-empty { display: block; width: 100%; height: 28px; text-align: left; padding: 0 8px 0 18px; font-size: var(--fs-small); color: var(--fg-3); border-radius: var(--r-sm); }
 .b-empty:hover { background: var(--rule); color: var(--fg-2); }
 

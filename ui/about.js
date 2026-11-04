@@ -1207,8 +1207,8 @@ export async function welcomeAct(c, b, made) {
   else if (w === "w-back" && ask) askAgain(ask);
   else if (w === "w-under") {
     // The desktop's own dialog, as Choose its folder… opens; what it answers
-    // is opened as a folder (it shows under Folders), and named here only by
-    // its id, so the page never names a path to the daemon.
+    // is opened as a folder, and named here only by its id, so the page
+    // never names a path to the daemon.
     const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": c.capability } }).catch(() => null);
     if (!r || r.status === 204) return;
     const j = await r.json().catch(() => ({}));

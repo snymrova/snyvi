@@ -481,7 +481,7 @@
   }
 
   /* What the letters act on, handed to keys.js with each one. */
-  const keyCtx = { state, browsing, browseEl, showBrowse, order, siblings, showDoc, showCompare, togglePin, toggleSplit, togglePreview,
+  const keyCtx = { state, browsing, docEl, showBrowse, order, siblings, showDoc, showCompare, togglePin, toggleSplit, togglePreview,
     openFind, deleteCurrent, openNext, showInbox, showHome, rawUrl, mmd: () => mmd,
     noteBar: () => state.view === "home" && !!homeMod?.focusBar(),
     wide: () => control("wide", toggleWide)(), wrap: () => control("wrap", toggleWrap)(),

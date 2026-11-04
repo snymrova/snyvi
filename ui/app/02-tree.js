@@ -20,7 +20,7 @@
   const tried = new Set();
 
   // ---------- sections ----------
-  /* Inbox, Desks and Folders are one kind of thing, so one hand draws their
+  /* Inbox and Desks are one kind of thing, so one hand draws their
    * heads: a chevron that folds the section, an icon, the name and a count.
    * What each holds hangs under it on one guide line at one indent. A fold is
    * a class on #trees rather than a redraw, so it survives every render and
@@ -75,9 +75,7 @@
   /** Whether the ghost can be seen: drawn, on the Inbox page or in a
    *  sidebar that is not folded. */
   const inView = g => g.drawn && (g.page && state.view === "inbox" || root.dataset.side !== "0");
-  /** A folder just closed, whose ghost holds the Undo (`closeRoot`). */
-  let shut = null;
-  const LEFT_SECS = ["inbox", "desks", "folders"];
+  const LEFT_SECS = ["inbox", "desks"];
   const applyFolds = () => { for (const k of LEFT_SECS) treesEl.classList.toggle(`fold-${k}`, folded.has(k)); };
   applyFolds();
   /** Fold a section or open it, on either side: one set, one key a section,
@@ -185,9 +183,10 @@
    * rail icons; a hidden one is out of the page, and every renderer still
    * writes to it by id, so showing it again draws nothing. */
   const widgetsEl = $("#widgets-nav");
-  let layout = boot.layout || { left: ["inbox", "desks", "folders", "widgets"], right: [], hidden: [] };
-  const LEFT_NODES = { inbox: [inboxRowEl, treeEl], desks: [$("#desk-nav")], folders: [browseEl], widgets: [widgetsEl] };
-  const LEFT_ICONS = { inbox: ['[data-pop="inbox"]'], desks: ['[data-pop="desks"]'], folders: ['[data-pop="browse"]'], widgets: ['[data-pop="widgets"]'] };
+  // Folders left the sidebar in 1.56 (#214): a folder is read through its desk.
+  let layout = boot.layout || { left: ["inbox", "desks", "widgets"], right: [], hidden: [] };
+  const LEFT_NODES = { inbox: [inboxRowEl, treeEl], desks: [$("#desk-nav")], widgets: [widgetsEl] };
+  const LEFT_ICONS = { inbox: ['[data-pop="inbox"]'], desks: ['[data-pop="desks"]'], widgets: ['[data-pop="widgets"]'] };
   /** The global widgets the reader has not switched off, in their order. */
   const globalSeats = () => (state.widgets || []).filter(w => !w.hidden);
   const offLeft = id => layout.hidden.includes(id) || (id === "widgets" && (layout.hidden.includes("left:widgets") || !globalSeats().length));
@@ -333,25 +332,6 @@
    *  unchanged body is left as it is (`$inner`), so nothing flickers. */
   setInterval(() => document.querySelectorAll("section.wg").forEach(el => el.$w && patchSeat(el, el.$w)), 60000);
 
-  /** The browse section keeps its own DOM across navigations so expanded folders stay open.
-   *  Its body always ends in a quiet "open a folder" row, so reading a folder is
-   *  something the sidebar offers rather than a command a reader has to have heard of. */
-  function renderBrowse() {
-    const ids = state.browse.map(r => r.id).join(",") + (shut ? `|${shut.r.id}${shut.err || ""}` : "");
-    if (browseEl.dataset.ids === ids) return;
-    browseEl.dataset.ids = ids;
-    const head = secHead("folders", "Folders");
-    const rows = state.browse.filter(r => r.id !== shut?.r.id).map(r => {
-      const active = state.browseRoot && state.browseRoot.id === r.id;
-      return `<details class="b-root" data-root="${r.id}" ${active ? "open" : ""}><summary data-tip="${esc(r.path)}" data-tip-mono>${icon("folder")}<span class="nm">${esc(r.name)}</span>${chev}${plusDesk()}<button class="b-close" data-close="${r.id}" data-tip="Close folder" data-tip-sub="nothing on disk is touched" aria-label="Close folder ${esc(r.name)}">${glyph("x")}</button></summary><ul class="b-tree" data-root="${r.id}" data-path=""></ul></details>`;
-    });
-    // A folder just closed stands where it was, holding its Undo, as a
-    // removed document's row does. A refused Undo says so in it.
-    if (shut) rows.splice(Math.min(shut.at, rows.length), 0, `<div class="t-gone"><div class="t-ghost b-ghost" role="status" style="--undo-left:${shut.clock.left()}">${icon("folder")}<span class="title">${esc(shut.err || shut.r.name)}</span>${shut.err ? "" : `<span class="k">closed</span>`}${shut.dead ? "" : `<button type="button" class="t-undo" data-reopen>${shut.err ? "Retry" : "Undo"}</button>`}</div></div>`);
-    browseEl.innerHTML = head + `<div class="b-body s-body">` + rows.join("") + `<button type="button" class="b-empty" data-pick>${state.browse.length ? "Open another folder…" : "Open a folder to read"}</button></div>`;
-    for (const ul of browseEl.querySelectorAll(".b-root[open] > .b-tree")) fillTree(ul);
-  }
-
   /** Highlight whatever is on screen, without rebuilding either tree. */
   /** Told whenever the page may have moved (`markActive`): the focus beacon
    *  (05-notes.js) says which desk the page shows, for the widgets that run
@@ -370,7 +350,6 @@
       // A document read over a desk is still the desk: the desk keeps the
       // mark, and the rail marks the document.
       : state.deskBehind != null ? $("#desk-nav").querySelector(`a[data-desk="${state.deskBehind}"]`)
-      : state.view === "browse" && state.browseRoot ? browseEl.querySelector(`.b-file a[data-browse="${state.browseRoot.id}"][data-path="${CSS.escape(state.browsePath)}"]`)
         // The one being opened outranks the one being left: a redraw that lands
         // while a document is on its way must not put the mark back on the row
         // the reader has already moved off.

@@ -841,8 +841,8 @@ opacity and colour only.
 ### 8.4 Sections and rows
 
 Both sidebars are made of **sections**, and there is one: `secHead()` in
-`ui/app/02-tree.js` draws every head on both sides, the sidebar's Inbox,
-Desks and Folders and a desk's rail alike (desk.js has it as
+`ui/app/02-tree.js` draws every head on both sides, the sidebar's Inbox
+and Desks and a desk's rail alike (desk.js has it as
 `ctx.secHead`). A section is the frame a widget sits in too, so whatever
 is added later folds and spaces itself the same way for nothing.
 

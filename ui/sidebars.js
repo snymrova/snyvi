@@ -72,7 +72,6 @@ const STYLE = `
 const SECS = {
   inbox: ["Inbox", "projects, and what waits"],
   desks: ["Desks", "your desks"],
-  folders: ["Folders", "folders opened to read"],
   widgets: ["Widgets", "global widgets"],
   panels: ["Panels", "this desk's panels"],
   points: ["Points", "passages a panel kept for you; drawn when one does"],
@@ -80,8 +79,9 @@ const SECS = {
   notes: ["Notes", "this desk's list"],
 };
 // The rail's order (1.56, audit B6): panels, the change and its notes, the
-// documents, then what is empty until something arrives.
-const DEFAULT = { left: ["inbox", "desks", "folders", "widgets"], right: ["panels", "notes", "docs", "points", "widgets"], hidden: [] };
+// documents, then what is empty until something arrives. Folders left the
+// left side in 1.56 too (#214): a folder is read through its desk.
+const DEFAULT = { left: ["inbox", "desks", "widgets"], right: ["panels", "notes", "docs", "points", "widgets"], hidden: [] };
 
 let c = null, data = null, styled = false;
 

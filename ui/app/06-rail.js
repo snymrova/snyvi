@@ -430,7 +430,6 @@
       copied(full, b);
     }
     if (b.dataset.act === "reveal") openFolder();
-    if (b.dataset.act === "closebrowse") closeRoot(state.browseRoot.id);
   });
 
   /** Where the file manager opens when nothing is named: the folder or the

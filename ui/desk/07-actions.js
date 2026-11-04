@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
+    if (d && (changeAct(a, b, d) || await folderAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -542,11 +542,34 @@ function keys(e) {
 
 const onResize = () => { if (current()) layout(); };
 
+/** The head's folder button (#214): the desk's own folder, read over the
+ *  desk. A folder moved or deleted on disk says so on the button itself,
+ *  where the click was, and the next click asks again. */
+async function folderAct(a, b, d) {
+  if (a !== "folder") return false;
+  let j;
+  try { j = await ctx.api(`/api/desks/${d.id}/folder`, {}); }
+  catch (e) {
+    b.classList.add("gone");
+    b.dataset.tip = ctx.sayErr(e).why;
+    b.dataset.tipSub = "moved or deleted on disk · the desk is kept";
+    return true;
+  }
+  b.classList.remove("gone");
+  await ctx.browse(j.root, "", { over: d.id });
+  return true;
+}
+
 // ---------- the seam ----------
 
 /** The document the desk stepped aside for, or null while the desk is the
- *  page. */
+ *  page. A folder or a file read over the desk (#214) is `b:<root>:<path>`,
+ *  which names no row on the rail. */
 let reading = null;
+/** The panel a page read over the desk was opened from when it is no
+ *  document that panel sent: a path Ctrl-clicked in it (#214). Its ✕ goes
+ *  back there, as a sent document's does (`sentFrom`). */
+let readFrom = null;
 
 function detach() {
   clearTimeout(retry);
@@ -598,7 +621,7 @@ export function open(c) {
     docList = []; docsAt = null; docsAll = false; claudeAsk = null; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
     focused = null; full = false; keysClose(); drawerOn = null; backField = false;
   }
-  deskId = c.id; reading = null;
+  deskId = c.id; reading = null; readFrom = null;
   fromBar();
   // Home's "last touched" and the desk it offers to pick up start here.
   if (c.id != null) c.api(`/api/desks/${c.id}/visit`, {}).catch(() => {});
@@ -898,8 +921,10 @@ export function update(desks) {
  *  and the rail stays the desk's, with the document's row marked. The panes
  *  keep their socket and their scrollback -- a frame lands on a pane that is
  *  simply not in the page -- so coming back is a redraw, not a reconnect. */
-export function aside(docId) {
+export function aside(docId, from = null) {
   if (!ctx || deskId == null) return;
+  // A page opened from the one before it keeps the panel that one came from.
+  if (from || reading == null) readFrom = from;
   reading = docId;
   pace();
   delete ctx.root.dataset.full;
@@ -913,7 +938,7 @@ export function close() {
   firstStop();
   say({ t: "watch", panes: [] });
   delete ctx.root.dataset.full;
-  deskId = null; reading = null;
+  deskId = null; reading = null; readFrom = null;
   fromBar();
   for (const v of [...views.values()]) dropView(v);
   focused = null;

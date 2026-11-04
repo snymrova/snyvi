@@ -864,10 +864,11 @@ A path works the same way, in a panel and in what you are reading: hold
 **Ctrl** over `src/app.js:120`, `~/.claude/settings.json` or `../notes/`
 and it is underlined only if it is there. Ctrl-click opens a file in
 snyvi's reader, at the line when one follows it, and a folder on snyvi's
-folder page, under Folders: under the desk's own row when the folder is
-inside the desk, so `src/` opens as the desk's `src`, not as a new row.
-**▸** goes into a folder there, **▴ ..** back up, and **Open in file
-manager** beside it opens it in Files, Finder or Explorer. A relative path is looked for where it was printed: in a panel,
+folder page, over the desk: inside the desk's own folder when it is in it,
+so `src/` opens as the desk's tree unfolded down to `src`, and marked
+"outside this desk" when it is not. The ✕ goes back to the panel you
+clicked in. **Open in file manager** beside it opens it in Files, Finder
+or Explorer. A relative path is looked for where it was printed: in a panel,
 the folder its program is in, then the desk's; in a document, the folder of
 the file it was sent from, then its desk's, then its project's; in the
 folder reader, the file's own folder. Nothing is ever run. This needs the
@@ -1046,7 +1047,7 @@ the source underneath it, exactly as the agent wrote it.
 
 ## Pages and PDFs
 
-An `.html` file you browse in Folders opens as source, because in a
+An `.html` file you read from a folder opens as source, because in a
 repository the markup is usually what you want; `v` shows the page itself.
 A page an agent *sent* opens as the page, since that is what it was made to
 be seen as -- by `path`, or inline with `lang: "html"` -- and `v` shows its
@@ -1728,31 +1729,42 @@ files as you click them. Nothing of it is stored, nothing joins the
 library, and nothing appears in the inbox. It is a reader for code and
 notes you already have, not an import.
 
-The folder itself stays open. It is in the sidebar until you close it,
-across restarts and upgrades of the daemon, so the repositories you read
-in are there each morning without being opened again. A folder that has
-gone from disk in the meantime is dropped quietly. Closing one (its ✕,
-or Close folder in its menu) leaves its row as "closed · Undo" for a
-few seconds, and the Undo opens it again in its place.
+### A desk's folder
+
+A desk is its folder, so the desk opens it: the path in the desk's head is
+a button. It shows the folder's page over the desk, with the desk's rail
+beside it and a ✕ back to the panels. The page is the folder as a tree:
+click a folder to unfold it in place, a file to read it, and Find (at the
+top) to look for a file by name anywhere in it. Find is off on a desk at
+your home folder, which snyvi never searches.
+
+The folder's page remembers how you left it, per folder, in this window:
+the folders you unfolded, where the page was scrolled, and the last file
+you read from it, marked "last read". A file you come back to opens where
+you stopped reading it, however you get there. Clicking the folder's name
+folds everything and goes back to the top. Find's words are never kept.
+
+Until 1.56 the sidebar had a **Folders** section for this; it went, since
+nearly every folder in it was a desk's own (#214). The folders it listed
+are still known to snyvi, and their links still open.
 
 ```
 snyvi browse            # the current folder
 snyvi browse ~/code/foo
 ```
 
-Or from the window: **Folders** is always in the sidebar, and the `+`
-beside it (or "Open folder…" in ⌘K) shows your desktop's own folder
-dialog — zenity or kdialog on Linux, the Finder's on macOS, Explorer's on
-Windows — and opens what you choose. The dialog is the desktop's, asked
-for by the daemon, so the page never names a path; it sits behind the
-same window-only gate as the desks, and a browser tab is told to use the
-window or `snyvi browse` instead.
+From the window, a folder is read through its desk. New desk's
+*Another folder…* shows your desktop's own folder dialog — zenity or
+kdialog on Linux, the Finder's on macOS, Explorer's on Windows — and makes
+a desk on what you choose. The dialog is the desktop's, asked for by the
+daemon, so the page never names a path; it sits behind the same
+window-only gate as the desks.
 
 It honours `.gitignore` and skips hidden files, so `node_modules` and
 `target` stay out of the way. Files render on first open and are cached
 by modification time, so revisiting one is instant. ⌘K finds a file by
-name inside the folder, `j` and `k` step through files, and the folder
-closes from the sidebar or the rail. Images display, binaries and very
+name inside the folder, and `j` and `k` step through the files the
+folder's page shows. Images display, binaries and very
 large files are described rather than dumped.
 
 The folder is live. Save the file you are reading and the page updates
