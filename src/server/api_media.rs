@@ -150,7 +150,7 @@ static PICK_CANCEL: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 /// The reader picks their music folder in the desktop's own dialog. Only
 /// that folder is read, two levels down (`crate::music::list_folder`); it
-/// is not added to Folders, which is for reading documents.
+/// is not opened for reading, which is for documents.
 pub(crate) async fn music_folder(State(app): S, headers: HeaderMap, Query(q): Q) -> Response {
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;

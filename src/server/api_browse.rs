@@ -50,8 +50,9 @@ pub(crate) async fn browse_open(
     }
 }
 
-/// The sidebar's `+` beside Folders: the desktop's own folder dialog, and the
-/// folder it answers with opened for browsing.
+/// New desk's Another folder… and Welcome's Choose its folder…: the
+/// desktop's own folder dialog, and the folder it answers with opened, for a
+/// desk to be made on (the sidebar's Folders and its `+` went in 1.56, #214).
 ///
 /// Behind the same gate as the desks, because it is the same kind of act: a
 /// page reaching the filesystem. The page names nothing -- it asks, and the
@@ -600,7 +601,7 @@ pub(crate) struct FindOpenBody {
 
 /// A file ⌘K found in a desk's folder, opened in the folder reader: under a
 /// folder already open for reading when it is in one, or else the desk's
-/// folder opens as a row under Folders, the way a Ctrl-click opens one. The
+/// folder is opened for reading, the way a Ctrl-click opens one. The
 /// page names the desk and the path inside its folder, never a folder, and a
 /// path that leaves the folder is refused. A file in an open folder needs no
 /// call: the page shows it.

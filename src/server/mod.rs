@@ -684,6 +684,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/move", post(move_pane))
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/reopen", post(reopen_desk))
+        .route("/api/desks/{id}/folder", post(desk_folder))
         .route("/api/desks/{id}/panes", post(open_pane))
         .route("/api/desks/{id}/docs", get(desk_docs))
         .route("/api/desks/{id}/docs/{doc}/remove", post(remove_desk_doc))

@@ -1061,7 +1061,7 @@ async fn an_aside_from_a_panel_says_which_and_one_from_nowhere_is_still_taken() 
 
 /// A Ctrl-clicked folder opens in the folder reader, never the file manager:
 /// under the panel's desk when it is inside it, at its path there, or else as
-/// a row of its own under Folders. A folder that is not there is a 404.
+/// a root of its own. A folder that is not there is a 404.
 #[tokio::test]
 async fn a_ctrl_clicked_folder_opens_in_the_reader() {
     let desk_dir = crate::store::tempdir::Dir::new("snyvi-resolve-desk");
@@ -1112,6 +1112,55 @@ async fn a_ctrl_clicked_folder_opens_in_the_reader() {
         .await
         .unwrap();
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+}
+
+/// The desk head's folder button (#214): the folder reader at the desk's own
+/// folder, opened once however often it is asked, and words when the folder
+/// has gone. A desk that is not there is a 404.
+#[tokio::test]
+async fn a_desk_opens_its_own_folder() {
+    let desk_dir = crate::store::tempdir::Dir::new("snyvi-desk-folder");
+    let gone_dir = crate::store::tempdir::Dir::new("snyvi-desk-folder-gone");
+    let root = desk_dir.path.to_string_lossy().into_owned();
+    let gone_root = gone_dir.path.to_string_lossy().into_owned();
+    let ids = std::sync::Mutex::new((0, 0));
+    let (_tmp, router, leaves) = gated_router_with("snyvi-desk-folder-app", |store| {
+        let a = store.create_desk(&root, Some("ledger")).unwrap();
+        let b = store.create_desk(&gone_root, Some("moved")).unwrap();
+        *ids.lock().unwrap() = (a.id, b.id);
+    });
+    let (desk, moved) = ids.into_inner().unwrap();
+    std::fs::remove_dir_all(&gone_dir.path).unwrap();
+    let ask = |id: i64| {
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/api/desks/{id}/folder"))
+            .header("host", &leaves.host)
+            .header("origin", &leaves.origin)
+            .header(CAPABILITY_HEADER, &leaves.cap)
+            .body(Body::empty())
+            .unwrap();
+        router.clone().oneshot(req)
+    };
+    async fn body(resp: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    let first = ask(desk).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let first = body(first).await;
+    let real = desk_dir.path.canonicalize().unwrap();
+    assert_eq!(first["root"]["path"], real.to_string_lossy().as_ref());
+    let again = body(ask(desk).await.unwrap()).await;
+    assert_eq!(again["root"]["id"], first["root"]["id"], "opened once");
+
+    let moved = ask(moved).await.unwrap();
+    assert_eq!(moved.status(), StatusCode::NOT_FOUND);
+    let why = body(moved).await;
+    let words = why["error"].as_str().unwrap_or_default();
+    assert!(words.contains("is not there any more"), "{why}");
+    assert_eq!(ask(9999).await.unwrap().status(), StatusCode::NOT_FOUND);
 }
 
 /// Asides turned off in About: an agent's aside is refused with words it can
@@ -1651,15 +1700,15 @@ async fn a_layout_is_kept_normalized_and_reaches_the_next_page() {
         .header("origin", &leaves.origin)
         .header("content-type", "application/json")
         .body(Body::from(
-            r#"{"left":["folders","inbox","nope"],"right":["notes","turn"],"hidden":["folders","turn"]}"#,
+            r#"{"left":["widgets","inbox","nope"],"right":["notes","turn"],"hidden":["desks","turn"]}"#,
         ))
         .unwrap();
     let resp = router.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
     let kept: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(kept["left"][0], "folders");
-    assert_eq!(kept["left"].as_array().unwrap().len(), 4);
+    assert_eq!(kept["left"][0], "widgets");
+    assert_eq!(kept["left"].as_array().unwrap().len(), 3);
     // Your turn is the desk corner's since 1.32, not a section: dropped.
     assert_eq!(kept["right"][0], "panels");
     assert!(!kept["right"]
@@ -1667,7 +1716,7 @@ async fn a_layout_is_kept_normalized_and_reaches_the_next_page() {
         .unwrap()
         .iter()
         .any(|x| x == "turn"));
-    assert_eq!(kept["hidden"], serde_json::json!(["folders"]));
+    assert_eq!(kept["hidden"], serde_json::json!(["desks"]));
 
     let req = axum::http::Request::builder()
         .uri("/inbox")
@@ -1680,7 +1729,7 @@ async fn a_layout_is_kept_normalized_and_reaches_the_next_page() {
         .unwrap();
     let page = String::from_utf8_lossy(&page);
     assert!(
-        page.contains(r#""layout":{"left":["folders","#),
+        page.contains(r#""layout":{"left":["widgets","#),
         "the first paint has the layout"
     );
 }
