@@ -17,6 +17,7 @@ const ICO = {
   stop: '<rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor" stroke="none"/>',
   play: '<path d="M5 3.5v9l7.5-4.5z" fill="currentColor" stroke="none"/>',
   x: '<path d="M4 4l8 8M12 4l-8 8"/>',
+  branch: '<circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5.5" r="1.8"/><path d="M4 5.3v5.4M12 7.3c0 3-4 2.5-7.2 4"/>',
   doc: '<path d="M9.5 1.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.5v3h3M6 8h4M6 10.5h4"/>',
   pen: '<path d="M11.2 2.8a1.5 1.5 0 0 1 2 2L6 12l-3 1 1-3z"/>',
   back: '<path d="M6.5 3L3 8l3.5 5M3 8h10"/>',
@@ -235,7 +236,12 @@ function rail() {
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>` +
     `<div class="dk-foot">${backRow(d, esc)}</div>`),
-    points: () => pointSec(vs),
+    // The order, until the reader arranges it (/sidebars): the panels, then
+    // the change and its notes, then the documents, then what is empty
+    // until something arrives (1.56, audit B6). Points and Widgets draw
+    // nothing while they have nothing, so the builder's list is in reach.
+    // A desk's routines under its notes, as one section (19-routine.js).
+    notes: () => noteSec(d) + routineSec(d),
     // The documents. The count is how many, in the accent while some wait
     // to be read; the row's [n] says which panel sent it.
     docs: () => sec("docs", "rail.docs", "Documents", {
@@ -257,8 +263,7 @@ function rail() {
     (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
       (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
         `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "")),
-    // A desk's routines under its notes, as one section (19-routine.js).
-    notes: () => noteSec(d) + routineSec(d),
+    points: () => pointSec(vs),
     widgets: () => widgetSec(d),
   };
   const lay = ctx.layout ? ctx.layout() : null, off = new Set(lay ? lay.hidden : []);
@@ -547,6 +552,8 @@ function noteSec(d) {
     tip: "Notes", sub: "A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.",
     count: left || "", countTip: left ? `${left} open` : "", acts,
   }, errLine("clear", esc, "p") +
+    // The changes first (1.56, 22-change.js): the rows above the lines they carry.
+    changeRows(d, esc) +
     (rows ? `<ul class="dk-list">${rows}</ul>` : notesOff === d.id ? noReach("notes") : "") +
     // The bar for a new line, always at the end of the list, where the line
     // will land: a quiet field until it is clicked, or the head's + is, and

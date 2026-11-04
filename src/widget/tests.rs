@@ -75,10 +75,11 @@ fn normalize_keeps_the_readers_order_and_mends_the_rest() {
     assert_eq!(l.left, ids(&["folders", "widgets", "inbox", "desks"]));
     // Your turn left the rail in 1.32: a stored `turn` is dropped wherever
     // it was; notes stays before docs as the reader had it, and the missing
-    // ones come back after the section they follow by default.
+    // ones come back after the section they follow by default (1.56: panels
+    // first, points after docs, widgets after points).
     assert_eq!(
         l.right,
-        ids(&["panels", "points", "notes", "widgets", "docs"])
+        ids(&["panels", "notes", "docs", "points", "widgets"])
     );
     // A hidden `turn` goes with it; a bare `widgets` names no side.
     assert_eq!(l.hidden, ids(&["folders", "left:widgets"]));
@@ -95,9 +96,11 @@ fn a_section_from_a_later_version_lands_in_its_place() {
         hidden: vec![],
     }
     .normalize();
+    // `points` follows docs by default (1.56), so it lands after the docs
+    // the reader put first.
     assert_eq!(
         l.right,
-        ids(&["docs", "panels", "points", "notes", "widgets"])
+        ids(&["docs", "points", "panels", "notes", "widgets"])
     );
 }
 

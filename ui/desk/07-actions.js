@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
+    if (d && (changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -761,7 +761,8 @@ async function switchPanel(v, account, label, renewed) {
 export function actions(el) {
   const R = "rule", d = current();
   if (!d) return null;
-  const card = el.closest(".dk-pth");
+  // The chip on a panel's row, or the change's own row (22-change.js).
+  const card = el.closest(".dk-pth, .dk-change");
   if (card) return threadMenu(card);
   const lk = el.closest(".dk-lk-more, .dk-lk");
   if (lk) return linksMenu(lk);

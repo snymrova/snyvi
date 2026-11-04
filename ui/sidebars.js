@@ -79,7 +79,9 @@ const SECS = {
   docs: ["Documents", "what this desk's panels sent"],
   notes: ["Notes", "this desk's list"],
 };
-const DEFAULT = { left: ["inbox", "desks", "folders", "widgets"], right: ["panels", "points", "docs", "notes", "widgets"], hidden: [] };
+// The rail's order (1.56, audit B6): panels, the change and its notes, the
+// documents, then what is empty until something arrives.
+const DEFAULT = { left: ["inbox", "desks", "folders", "widgets"], right: ["panels", "notes", "docs", "points", "widgets"], hidden: [] };
 
 let c = null, data = null, styled = false;
 

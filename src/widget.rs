@@ -185,8 +185,10 @@ pub const LEFT: [&str; 4] = ["inbox", "desks", "folders", "widgets"];
 /// The right's, on a desk. `widgets` is the slot the desk's widgets sit in.
 /// Your turn was `turn`, fixed first, until 1.32: it waits in the desk's
 /// corner now, so a stored layout that names it loses it here (`order`
-/// drops an id it does not know).
-pub const RIGHT: [&str; 5] = ["panels", "points", "docs", "notes", "widgets"];
+/// drops an id it does not know). Since 1.56 the notes -- the change and
+/// the lines it carries -- come before the documents, and Points after
+/// (the builder's audit, B6): a reader who arranged the rail keeps theirs.
+pub const RIGHT: [&str; 5] = ["panels", "notes", "docs", "points", "widgets"];
 
 /// Which sections each side has, in order, and which of them are hidden. A
 /// section's id is unique on its side; `widgets` is on both, so a hidden
