@@ -9,7 +9,6 @@
    * trips differently from its neighbours loses whatever was in it. */
   const saved = k => new Set((store.get(k) || "").split(",").filter(Boolean));
   const save = (k, set) => store.set(k, [...set].join(","));
-  const openProjects = saved("snyvi.open");
   /** Caps a reader has lifted, by project and by workflow, so a refetch does not
    *  put the rest back out of reach while they are still reading it. */
   const liftedCaps = new Set();
@@ -51,24 +50,17 @@
    * reader, as the folds are: it is a view, not a fact about the library. */
   const away = saved("snyvi.away");
   const saveAway = () => save("snyvi.away", away);
-  /* The Inbox holds the projects in use -- heard from this week, five to
-   * eight of them, and never more than the window has room for with Desks
-   * and the Folders head still on screen under it -- and says the rest in one
-   * "Show N more" row. Projects are newest first, so the cut is the quiet
-   * ones and nothing is re-sorted. The Inbox is then the same height whatever
-   * arrives: a new project pushes the oldest into "more", not Desks down the
-   * page. Shown, the rest take the row's place and "Show less" ends the list;
-   * either stays as it was left until it is clicked again, per reader, as
-   * the folds are. */
-  let moreOpen = store.get("snyvi.more") === "1";
-  /** The projects "more" holds right now, for the mark on it (`markActive`). */
-  let moreHidden = new Set();
-  /** A subfolder project's parent, by id, as the last draw nested them
-   *  (03-queue.js `nest`): a folded parent holds its children's mark. */
-  let parentOf = new Map();
-  /** The cap the last draw used, and whether it made room for the removed row,
-   *  so a resize that leaves the cap where it was draws nothing. */
-  let capSeen = null, awayRowSeen = false;
+  /* What the Inbox's list shows (#206, 03-queue.js): what waits or
+   * everything, one project (by id) or every one, and what the find box
+   * holds. The first two are the reader's and kept, as the folds are; the
+   * words are not. */
+  const see = { proj: store.get("snyvi.see") || "", wait: store.get("snyvi.seeWait") === "1", q: "" };
+  // A project shown alone is fetched whole: the tree's caps (ten a session)
+  // are for a project among others, and the list is its every document.
+  if (see.proj) liftedCaps.add(see.proj);
+  /** The cap the last draw used, so a resize that leaves it where it was
+   *  draws nothing. */
+  let capSeen = null;
   /** The one just put away, while the offer to undo it is still standing. It
    *  keeps the row's place in the tree so the offer is where the click was --
    *  a toast in the far corner asks the eye to leave the sidebar to find out
@@ -101,7 +93,7 @@
     gapsLeft();
     if (!LEFT_SECS.includes(key)) return;
     applyFolds();
-    // A folded Desks leaves the Inbox room for more projects; the reader's
+    // A folded Desks leaves the Inbox room for more rows; the reader's
     // click is what moves the page, so the cap follows it at once.
     if (capSeen != null) { renderTree(); markActive(); }
   }
@@ -130,6 +122,11 @@
     more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
     prev: '<path d="m15 6-6 6 6 6"/>',
     next: '<path d="m9 6 6 6-6 6"/>',
+    // The Inbox's filter and its find box (#206).
+    funnel: '<path d="M3.5 5h17l-6.5 8v6l-4-2v-4z"/>',
+    find: '<circle cx="11" cy="11" r="6.5"/><path d="m20.5 20.5-4.9-4.9"/>',
+    // Music (#204).
+    music: '<path d="M9 18V5.5l11-2V16"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
   };
   /** An icon at any size with the same 1.5 px line on screen: the drawings
    *  are on a 24 grid, so the stroke is scaled to the size asked for. */
@@ -190,7 +187,7 @@
   const widgetsEl = $("#widgets-nav");
   let layout = boot.layout || { left: ["inbox", "desks", "folders", "widgets"], right: [], hidden: [] };
   const LEFT_NODES = { inbox: [inboxRowEl, treeEl], desks: [$("#desk-nav")], folders: [browseEl], widgets: [widgetsEl] };
-  const LEFT_ICONS = { inbox: ['[data-pop="inbox"]', '[data-pop="tree"]'], desks: ['[data-pop="desks"]'], folders: ['[data-pop="browse"]'], widgets: ['[data-pop="widgets"]'] };
+  const LEFT_ICONS = { inbox: ['[data-pop="inbox"]'], desks: ['[data-pop="desks"]'], folders: ['[data-pop="browse"]'], widgets: ['[data-pop="widgets"]'] };
   /** The global widgets the reader has not switched off, in their order. */
   const globalSeats = () => (state.widgets || []).filter(w => !w.hidden);
   const offLeft = id => layout.hidden.includes(id) || (id === "widgets" && (layout.hidden.includes("left:widgets") || !globalSeats().length));
@@ -362,13 +359,13 @@
   let onPlace = () => {};
   function markActive() {
     onPlace();
-    for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
+    for (const a of treesEl.querySelectorAll("a.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
     // Home has no row: the mark is its way, so on Home the mark is where the
     // reader is, as any current row is (audit 67d008cb6f).
     const brand = $(".side-head .brand"), home = state.view === "home";
     brand.classList.toggle("active", home);
     if (home) brand.setAttribute("aria-current", "page"); else brand.removeAttribute("aria-current");
-    const on = state.view === "inbox" ? inboxRowEl.querySelector(state.recent ? ".t-inbox" : ".sec-all")
+    const on = state.view === "inbox" ? inboxRowEl.querySelector(".sec-all")
       : state.view === "desk" && state.deskId != null ? $("#desk-nav").querySelector(`a[data-desk="${state.deskId}"]`)
       // A document read over a desk is still the desk: the desk keeps the
       // mark, and the rail marks the document.
@@ -380,23 +377,9 @@
         : state.opening ? treeEl.querySelector(`a[data-id="${state.opening}"]`)
           : state.doc ? treeEl.querySelector(`a[data-id="${state.doc.id}"]`) : null;
     if (on) { on.classList.add("active"); on.setAttribute("aria-current", "page"); }
-    // The document on screen is in a project the reader has folded: the
-    // project's row says so, quieter than the row itself would, and the
-    // project stays folded until they click it.
-    for (const s of treeEl.querySelectorAll(".holds-current")) { s.classList.remove("holds-current"); s.removeAttribute("aria-current"); delete s.dataset.tipSub; }
-    let held = null;
-    if (!on && state.doc && state.deskBehind == null && state.view !== "desk" && state.view !== "inbox") {
-      // The nearest folded row that holds it: its own, or, inside a folded
-      // parent, the parent's.
-      for (let pid = String(state.doc.project_id); pid && !held; pid = parentOf.get(pid)) held = treeEl.querySelector(`.t-proj[data-pid="${pid}"]:not([open]) > summary`);
-      held = held ||
-        // Past the cap, "more" is the row that holds it, and it stays shut.
-        (moreHidden.has(String(state.doc.project_id)) && !moreOpen ? treeEl.querySelector(".t-quiet") : null);
-      if (held) { held.classList.add("holds-current"); held.setAttribute("aria-current", "location"); held.dataset.tipSub = `${state.doc.title || "the open document"} is in here · click to show it`; }
-    }
     // Brought into the sidebar's view only when it is out of it, and only as
     // far as it takes: moved by hand, since WebKitGTK may decline to scroll.
-    const mark = on && treeEl.contains(on) ? on : held;
+    const mark = on && treeEl.contains(on) ? on : null;
     if (mark && mark !== lastMark) {
       const port = treesEl.getBoundingClientRect(), box = mark.getBoundingClientRect();
       // The section's head stands over the top of the column (sticky), so a
@@ -408,29 +391,6 @@
   }
   let lastMark = null;
 
-  /** Both names are guesses — a directory name and a session's first document — so
-   *  each carries the means to correct it, shown when the row is under the cursor. */
-  const renameBtn = (what, id) =>
-    `<button class="ren" data-rename="${what}" data-id="${id}" data-tip="Rename" data-key="F2" aria-label="Rename ${what}">${glyph("pen")}</button>`;
-
-  /** The ✕ on a project's row: the same glyph a folder's row carries, meaning
-   *  the same thing -- this list stops showing it. Nothing on disk or in the
-   *  library changes; the ghost row it leaves behind holds the Undo, and the
-   *  row under the tree is the way back after that. */
-  const awayBtn = p =>
-    `<button type="button" class="row-x" data-away="${p.id}" data-tip="Remove from the sidebar" data-tip-sub="the documents stay" aria-label="Remove ${esc(p.name)} from the sidebar">${glyph("x")}</button>`;
-  /** A project's desk, from its row: the glyph stays lit while the project
-   *  has one and goes to it, and waits for the pointer, as a folder's does,
-   *  while it has none. The Inbox's project and the desk on its folder are
-   *  the same project, and this is where the sidebar says so. */
-  /** The desk's live state on its project's row, in the Desks rows' colours:
-   *  a panel running, or one waiting on the reader. Idle says nothing. */
-  /** The desk glyph on a project's row says one thing at a time: amber while
-   *  a panel waits on the reader, green while an agent is working, quiet
-   *  otherwise. It was green for any panel running -- a shell is one -- so
-   *  four rows in eight were always green (audit 7c0fc42885). */
-  const deskState = d => d.panes.some(p => p.status && p.status.blocked) ? " blk" : d.panes.some(p => p.status && p.status.agent === "working") ? " on" : "";
-  const deskSay = d => ({ " blk": "a panel needs you", " on": "an agent is working" })[deskState(d)] || "no agent working";
   /** A folder's key, for comparing and never for showing. On Windows the
    *  daemon has spelled roots with `\\?\`, and a drive path is one place in
    *  either slash and any case; elsewhere only a trailing slash is not
@@ -451,34 +411,28 @@
   };
   /** One folder however it was spelled. */
   const sameRoot = (a, b) => !!a && !!b && pathKey(a) === pathKey(b);
-  const projDeskBtn = p => {
-    if (!capability || !p.root) return "";
-    const d = state.desks && state.desks.desks.find(x => sameRoot(x.root, p.root));
-    return d ? `<button type="button" class="b-new has${deskState(d)}" data-projdesk="${p.id}" data-deskof="${d.id}" data-tip="Show its desk" data-tip-sub="${deskSay(d)}" aria-label="Show desk ${esc(d.name)}">${icon("desk", 14)}</button>`
-      : `<button type="button" class="b-new" data-projdesk="${p.id}" data-tip="New desk" aria-label="New desk for ${esc(p.name)}">${icon("desk", 14)}</button>`;
-  };
-
-  /** A project is drawn expanded when the reader left it that way, or when it
-   *  is the only one there is. Only the reader's own click unfolds one: a
-   *  document opened from anywhere else -- the waiting bar, n, the Inbox,
-   *  Ctrl K -- marks its folded project (`markActive`) and moves nothing. */
-  const projOpen = p => openProjects.has(String(p.id)) || state.tree.length === 1 ||
-    // The document on screen was removed and the page went to the inbox: its
-    // project stays open while its row offers Undo.
-    (gone && gone.where === "proj" && gone.pid === String(p.id));
-
   /** What a row says its document weighs, when the daemon said: the hover
    *  prefetch in 07-nav.js leaves a long one for the click. */
   const sizeOf = d => d.size ? ` data-size="${d.size}"` : "";
+  /** A document's row in the Inbox's list (#206): its title on the first
+   *  line, whole where it fits and cut in the middle where it does not, and
+   *  under it its project and when it came. The project is a way in: a
+   *  click shows that project alone, and its menu is the project's. */
   const docRow = d => {
     noteKnown(d);
-    const ago = relShort(d.received_at);
+    const t = mid(d.title, titleRoom), who = d.friend || (d.origin === "peer" ? d.sender : "");
     // Not "active": markActive puts that on, so the rows a reader moves between
     // draw the same and a move between two of them costs no redraw.
     const cls = waitingRow(d) ? "new" : "";
     // A friend's, in a project of the reader's or their own, wears the
     // friend where the page glyph stands, and says so in its tip.
-    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}"${sizeOf(d)}${cut(d, mid(d.title, roomFor(ago)))}>${d.friend ? whoIco(d.friend, `From ${d.friend}`) : docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" data-tip="Pinned" data-tip-sub="kept by prune">${glyph("pin", 11)}</span>` : ""}<span class="k">${ago}</span>${removeBtn(d)}</a></li>`;
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}"${sizeOf(d)}${cut(d, t)}>${who ? whoIco(who, `From ${who}`) : docIco()}<span class="t2"><span class="title">${lit(t)}</span>` +
+      `<span class="sub"><span class="p" data-only="${d.project_id}" data-tip="Only ${esc(d.project || "")}"><span class="nm">${esc(d.project || "")}</span></span><span class="k">${relShort(d.received_at)}</span>${d.pinned ? `<span class="pin" data-tip="Pinned" data-tip-sub="kept by prune">${glyph("pin", 11)}</span>` : ""}</span></span>${removeBtn(d)}</a></li>`;
+  };
+  /** A title with what the find box holds marked in it. */
+  const lit = t => {
+    const q = see.q.trim(), i = q ? t.toLowerCase().indexOf(q.toLowerCase()) : -1;
+    return i < 0 ? esc(t) : esc(t.slice(0, i)) + `<mark>${esc(t.slice(i, i + q.length))}</mark>` + esc(t.slice(i + q.length));
   };
   /** The ✕ on a document's row takes it out of the inbox. It is said as a
    *  removal because that is what it is: the daemon keeps the document, and

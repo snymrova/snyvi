@@ -13,6 +13,7 @@
   const state = {
     tree: boot.tree || [],          // one row per project; what it holds is fetched when it is expanded
     sub: new Map(Object.entries(boot.sub || {})),   // project id -> its workflows, once filled
+    list: boot.inbox || null,   // the newest documents, for the Inbox's list (03-queue.js); null until fetched
     view: boot.view || "inbox",
     doc: boot.doc || null,
     opening: null,              // the id of a document asked for and not here yet
@@ -72,17 +73,14 @@
    * plan" and "snyvi launch post" are 29 and 17 characters, 192 and 109
    * pixels. A canvas measures text without touching layout. */
   const ctx2d = () => { try { return document.createElement("canvas").getContext("2d"); } catch { return null; } };
-  const fitCtx = ctx2d(), timeCtx = ctx2d();
+  const fitCtx = ctx2d();
   let fitFont = "", titleRoom = 154, recut = false;
-  /* 12px of session indent, 20 + 8 of the row's padding, 6 of gap. */
-  const roomIn = w => Math.max(60, w - 60);
+  /* A row's padding, 8 a side, its 14px icon and the 8 after it: the title
+   * has its line to itself (#206), the time and the project under it. */
+  const roomIn = w => Math.max(60, w - 40);
   // Titles are measured at 550, the weight an unread row is set in
   // (`.t-doc a.new .title`), so a row does not change length when it is read.
   const wide = t => fitCtx.measureText(t).width;
-  /** What is left for the title after the row's indent, padding, gap and the
-   *  time at its end -- measured too, because "5m" and "Sep 12" are 24px
-   *  apart, which is two words of a title. */
-  const roomFor = ts => titleRoom - (timeCtx ? timeCtx.measureText(ts).width : 38);
   /** Cut in the middle, not the end: what tells one agent's document from
    *  the next is usually the end of its title, and four rows reading
    *  "Session panes: the…" tell a reader nothing. The head takes the word

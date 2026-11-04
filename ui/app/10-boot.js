@@ -29,6 +29,9 @@
   else { const recent = location.pathname === "/inbox" && location.search === "?recent"; showInbox(false, recent); history.replaceState({ inbox: true }, "", location.pathname === "/" ? "/" : recent ? "/inbox?recent" : "/inbox"); }
   connect();
   loadDesks();
+  // The Inbox's list (#206): the page came with the projects, not their
+  // documents, and the rows' room is held until they are here.
+  refreshList().then(() => { renderTree(); markActive(); });
   // The corner, when the boot payload says it has something to show:
   // something waiting on the reader (a tab has no desks). Lately unseen is
   // the sidebar's dot now, which first paint draws (09-answers.js).

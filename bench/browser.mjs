@@ -507,14 +507,14 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
    * snyvi at any library size, and it is enforced on every machine. */
   console.log(`\nthe sidebar, on a library of ${seeded.documents} documents`);
   const sideChecks = [
-    ["rows, first visit", seeded.closed, 20,
-      `${seeded.projects} projects, and a closed one costs the page nothing`],
-    ["rows, one project open", seeded.opened, 130,
-      `ten sessions of ten, ${seeded.sessions} drawn with ${seeded.offers} offering the rest`],
+    ["rows, first visit", seeded.closed, 30,
+      `the newest, from ${seeded.projects} projects: as many as fit, never the library`],
+    ["rows, one project shown", seeded.opened, 30,
+      `the project alone, fetched whole, ${seeded.offers ? "and the way to the rest under it" : "all of it"}`],
     ["shell page, KB", Math.round(seeded.shell / 1024), 48,
-      "the tree is a row per project, not the library"],
+      "the page carries the projects, not the library"],
     ["renders after it settled", seeded.mutations, 8,
-      "a tree that answers its own render never stops"],
+      "a list that answers its own render never stops"],
   ];
   for (const [name, value, budget, why] of sideChecks) {
     const ok = value !== null && value <= budget;
@@ -523,7 +523,7 @@ function report({ perf, diagrams, viewport, onDemand, find, findChrome, revisit,
   }
   if (!seeded.filled) {
     failed = true;
-    console.log(`  ${"expanding a project".padEnd(26)}${"".padStart(15)} FAIL it drew no documents at all`);
+    console.log(`  ${"showing one project".padEnd(26)}${"".padStart(15)} FAIL it drew none of that project's documents`);
   }
 
   console.log(`\nviewport ${viewport}px; ${diagrams.length} diagrams`);

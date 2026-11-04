@@ -294,7 +294,7 @@ async function main() {
     await section("what a save, and a hover, cost", () => costRows(p, url, base, token, tmp, arrive));
     await section("desks that hold still", () => deskRows(cdp, base, token));
     await section("a desk for each project", () => projectDeskRows(cdp, base, token, tmp));
-    await section("subfolder projects under their parent", () => nestRows(cdp, base, token, tmp));
+    await section("two projects of one name, told apart", () => nestRows(cdp, base, token, tmp));
     await section("nothing lost on a desk when snyvi says no", () => deskLossRows(cdp, base, token));
     await section("a widget's box, failing and long", () => widgetBoxRows(cdp, base, tmp));
     await section("the keys sheet: Claude as, then keys", () => keysSheetRows(cdp, base));
@@ -449,7 +449,10 @@ class Driver {
     await sleep(200);
   }
   /** Park the pointer where it hovers nothing that matters. */
-  async pointerAway() { await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1, y: 1 }, this.s); }
+  /** Off the page: (1, 1) is the sidebar's corner, and since the Inbox is
+   *  one list (#206) a pointer resting over the sidebar holds its order and
+   *  keeps an arrival out of it, as a reader's hand would. */
+  async pointerAway() { await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: -1, y: -1 }, this.s); }
   async width(w, h = 800) {
     await this.cdp.send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false }, this.s);
     await this.settled(w);
@@ -695,21 +698,21 @@ async function narrowRows(p, url) {
   const narrow = await p.ev(`({ side: window.__ui.vis("#side"), width: Math.round(document.querySelector("#side").getBoundingClientRect().width), icons: window.__ui.vis("#rail-nav"), fold: window.__ui.vis("#btn-side-hide") })`);
   await p.press("\\");
   const still = await p.ev(`({ side: document.documentElement.dataset.side, pop: document.documentElement.dataset.pop })`);
-  await p.clickOn('#rail-nav [data-pop="tree"]');
+  await p.clickOn('#rail-nav [data-pop="inbox"]');
   const popped = await p.ev(`(() => { const r = document.querySelector("#pop").getBoundingClientRect();
     return { pop: document.documentElement.dataset.pop, tree: !!document.querySelector("#pop > #tree"), top: Math.round(r.top), h: Math.round(r.height), full: Math.round(r.height) >= innerHeight - 1, scrim: window.__ui.vis("#scrim"), focus: window.__ui.focus() }; })()`);
   await p.press("Escape");
   const unpopped = await p.ev(`({ pop: document.documentElement.dataset.pop, home: document.querySelector("#tree").parentElement.id, focus: window.__ui.focus() })`);
   rows.push(["at 700 px, the sidebar is its rail", narrow.side && narrow.width === 44 && narrow.icons && !narrow.fold && still.side === "0" && !still.pop
-    && popped.pop === "tree" && popped.tree && popped.top === 0 && popped.full && popped.scrim && popped.focus.inSide && !unpopped.pop && unpopped.home === "trees" && unpopped.focus.cls.includes("icon"),
+    && popped.pop === "inbox" && popped.tree && popped.top === 0 && popped.full && popped.scrim && popped.focus.inSide && !unpopped.pop && unpopped.home === "trees" && unpopped.focus.cls.includes("icon"),
     !narrow.side || narrow.width !== 44 || !narrow.icons ? `the sidebar is ${narrow.side ? narrow.width + " px" : "gone"}${narrow.icons ? "" : ", with no icons"}` : narrow.fold ? "it offers to open, which it cannot at this width"
-      : still.side !== "0" || still.pop ? "\\ did something where there is nothing to fold" : popped.pop !== "tree" || !popped.tree ? "the projects icon opened nothing"
+      : still.side !== "0" || still.pop ? "\\ did something where there is nothing to fold" : popped.pop !== "inbox" || !popped.tree ? "the inbox icon opened nothing, or not its list"
         : popped.top !== 0 || !popped.full ? `the popover is ${popped.h} px from ${popped.top}, not the window's height` : !popped.scrim ? "nothing behind it to tap" : !popped.focus.inSide ? "focus stayed outside it"
-          : unpopped.pop || unpopped.home !== "trees" ? "Escape did not put the projects back" : !unpopped.focus.cls.includes("icon") ? `focus went to ${unpopped.focus.tag}.${unpopped.focus.cls}, not the icon`
+          : unpopped.pop || unpopped.home !== "trees" ? "Escape did not put the list back" : !unpopped.focus.cls.includes("icon") ? `focus went to ${unpopped.focus.tag}.${unpopped.focus.cls}, not the icon`
             : "44 px of icons; a section opens full height over a scrim, Escape puts it back and focus on its icon"]);
 
   const titleBefore = await p.ev("document.title");
-  await p.clickOn('#rail-nav [data-pop="tree"]');
+  await p.clickOn('#rail-nav [data-pop="inbox"]');
   const rowsShown = await p.ev(`({ all: document.querySelectorAll("#pop .t-doc a").length, other: document.querySelectorAll("#pop .t-doc a:not([aria-current])").length })`);
   if (rowsShown.other) await p.clickOn(`#pop .t-doc a:not([aria-current])`);
   await sleep(600);
@@ -784,22 +787,25 @@ async function sideRailRows(p, url, arrive) {
     folded.side !== "0" ? "\\ did not fold it" : folded.width !== 44 ? `the rail is ${folded.width} px` : !folded.icons ? "no icons on it" : folded.tree ? "the tree is still drawn in 44 px" : "44 px, icons only"]);
 
   const opened = [], broke = [];
-  for (const [sec, id] of [["inbox", "inbox-row"], ["tree", "tree"], ["desks", "desk-nav"], ["browse", "browse-nav"]]) {
+  // The Inbox's icon brings its list as well: there is no Projects icon
+  // since the Inbox became one list of documents (#206).
+  for (const [sec, id] of [["inbox", "inbox-row"], ["desks", "desk-nav"], ["browse", "browse-nav"]]) {
     if (!(await p.ui("vis", `#rail-nav [data-pop="${sec}"]`))) { broke.push(`${sec}: no icon`); continue; }
     await p.clickOn(`#rail-nav [data-pop="${sec}"]`);
-    const m = await p.ev(`({ in: !!document.querySelector("#pop > #${id}"), shown: window.__ui.vis("#pop"), left: Math.round(document.querySelector("#pop").getBoundingClientRect().left), focus: window.__ui.focus() })`);
+    const m = await p.ev(`({ in: !!document.querySelector("#pop > #${id}"), list: !!document.querySelector("#pop > #tree"), shown: window.__ui.vis("#pop"), left: Math.round(document.querySelector("#pop").getBoundingClientRect().left), focus: window.__ui.focus() })`);
     await p.press("Escape");
     const back = await p.ev(`({ pop: document.documentElement.dataset.pop, on: document.activeElement?.dataset.pop })`);
     if (!m.in || !m.shown) broke.push(`${sec}: #${id} not in the popover`);
+    else if (sec === "inbox" && !m.list) broke.push("inbox: its list is not in the popover");
     else if (m.left < 44) broke.push(`${sec}: the popover is over the rail (${m.left} px)`);
     else if (!m.focus.inSide) broke.push(`${sec}: focus stayed outside`);
     else if (back.pop || back.on !== sec) broke.push(`${sec}: Escape left ${back.pop ? "it open" : `focus on ${back.on}`}`);
     else opened.push(sec);
   }
-  rows.push(["each icon opens its section", broke.length === 0 && opened.length >= 4, broke.length ? broke.join("; ") : `${opened.join(", ")}: beside the rail, focus in, Escape back to the icon`]);
+  rows.push(["each icon opens its section", broke.length === 0 && opened.length >= 3, broke.length ? broke.join("; ") : `${opened.join(", ")}: beside the rail, focus in, Escape back to the icon`]);
 
   // One at a time: a second icon closes the first.
-  await p.clickOn('#rail-nav [data-pop="tree"]');
+  await p.clickOn('#rail-nav [data-pop="inbox"]');
   await p.clickOn('#rail-nav [data-pop="browse"]');
   const one = await p.ev(`({ pop: document.documentElement.dataset.pop, tree: document.querySelector("#tree").parentElement.id, browse: document.querySelector("#browse-nav").parentElement.id })`);
   await p.click(640, 400);
@@ -810,9 +816,9 @@ async function sideRailRows(p, url, arrive) {
   // The number on the inbox is the number waiting.
   await arrive();
   await sleep(700);
-  const count = await p.ev(`({ badge: document.querySelector('#rail-nav [data-pop="inbox"] .badge').textContent, label: document.querySelector("#inbox-row .t-inbox.new .n")?.textContent || "" })`);
+  const count = await p.ev(`({ badge: document.querySelector('#rail-nav [data-pop="inbox"] .badge').textContent, label: document.querySelector("#inbox-row .sec-n.accent")?.textContent || "" })`);
   rows.push(["the inbox icon says how many wait", count.badge !== "" && count.badge === count.label,
-    count.badge === "" ? `nothing on the icon (Recent says ${count.label || "nothing"})` : count.badge !== count.label ? `the icon says ${count.badge}, Recent ${count.label}` : `${count.badge}, as Recent says`]);
+    count.badge === "" ? `nothing on the icon (the Inbox head says ${count.label || "nothing"})` : count.badge !== count.label ? `the icon says ${count.badge}, the Inbox head ${count.label}` : `${count.badge}, as the Inbox head says`]);
 
   // Tab reaches every icon, and the arrows walk them.
   await p.ev(`document.querySelector(".brand").focus()`);
@@ -825,10 +831,10 @@ async function sideRailRows(p, url, arrive) {
   await p.ev(`document.querySelector('#rail-nav [data-pop="inbox"]').focus()`);
   await p.press("ArrowDown");
   const walked = await p.ev(`document.activeElement?.dataset.pop || ""`);
-  const want = ["inbox", "tree", "desks", "browse", "rail-live", "rail-search"];
+  const want = ["inbox", "desks", "browse", "rail-live", "rail-search"];
   const missed = want.filter(k => !tabbed.has(k));
-  rows.push(["Tab reaches every icon, the arrows walk them", missed.length === 0 && walked === "tree",
-    missed.length ? `never reached ${missed.join(", ")}` : walked !== "tree" ? `↓ from the inbox went to ${walked || "nothing"}` : "every icon a stop, ↓ to the next"]);
+  rows.push(["Tab reaches every icon, the arrows walk them", missed.length === 0 && walked === "desks",
+    missed.length ? `never reached ${missed.join(", ")}` : walked !== "desks" ? `↓ from the inbox went to ${walked || "nothing"}` : "every icon a stop, ↓ to the next"]);
 
   // Unfolded, every section is back in #trees, in its order.
   // With one open, \\ closes it; the next one unfolds.
@@ -864,7 +870,7 @@ async function keyboardRows(p, url) {
     seen.push(f);
   }
   const required = [
-    [".brand", "the brand"], ["#btn-search", "search"], [".t-inbox", "the inbox row"], [".t-doc a", "a document row"], [".ren", "a rename"],
+    [".brand", "the brand"], ["#btn-search", "search"], [".ib-find input", "the Inbox's find box"], [".t-doc a", "a document row"],
     ["#btn-theme", "theme"], ["#btn-font", "font"], ["#btn-wide", "width"], ["#btn-wrap", "wrap"], ["#btn-help", "the keys"],
     ["#toc a", "a contents entry"], ["#meta [data-act=pin]", "pin"], ["#meta [data-act=delete]", "delete"], ["pre.code .copy", "copy code"],
   ];
@@ -926,10 +932,10 @@ async function keyboardRows(p, url) {
   // hover with, which is the case the rule exists for.
   await p.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 }, p.s);
   await sleep(400);   // the control focus had shown is fading back out
-  const touch = await p.ev(`({ none: matchMedia("(hover: none)").matches, copy: getComputedStyle(document.querySelector("pre.code .copy")).opacity, ren: getComputedStyle(document.querySelector(".ren")).opacity, lang: getComputedStyle(document.querySelector("pre.code"), "::before").opacity, anchor: getComputedStyle(document.querySelector(".prose a.anchor")).opacity })`);
+  const touch = await p.ev(`({ none: matchMedia("(hover: none)").matches, copy: getComputedStyle(document.querySelector("pre.code .copy")).opacity, lang: getComputedStyle(document.querySelector("pre.code"), "::before").opacity, anchor: getComputedStyle(document.querySelector(".prose a.anchor")).opacity })`);
   await p.cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false }, p.s);
-  rows.push(["no pointer to hover with", touch.none && touch.copy === "1" && touch.ren === "1" && Number(touch.anchor) > 0,
-    !touch.none ? "the page could not be made to believe it has no pointer" : `copy ${touch.copy}, rename ${touch.ren}, # ${touch.anchor} under (hover: none)`]);
+  rows.push(["no pointer to hover with", touch.none && touch.copy === "1" && Number(touch.anchor) > 0,
+    !touch.none ? "the page could not be made to believe it has no pointer" : `copy ${touch.copy}, # ${touch.anchor} under (hover: none)`]);
 
   return rows;
 }
@@ -1092,22 +1098,22 @@ async function draftRows(p, url, arrive) {
   const draft = await arrive({ name: "draft.md", body, origin: "hook" });
   const listed = await until(`!!document.querySelector('#tree a[data-id="${draft.id}"]')`, 30);
   await sleep(300);
-  const hushed = await p.ev(`({ bar: !document.querySelector("#queue-bar").hidden, queued: !!document.querySelector("#inbox-row .t-inbox.new"),
+  const hushed = await p.ev(`({ bar: !document.querySelector("#queue-bar").hidden, queued: !!document.querySelector("#inbox-row .sec-n.accent"),
     washed: document.querySelectorAll(".wash").length, marked: !!document.querySelector('#tree a.new[data-id="${draft.id}"]') })`);
   const counted = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.length)`);
   rows.push(["a draft is listed and says nothing", listed && !hushed.bar && !hushed.queued && !hushed.washed && !hushed.marked && counted === 0,
-    !listed ? "the draft is not in the tree" : hushed.bar ? "the bar came up" : hushed.queued ? "it lights Recent" : hushed.washed ? "something washed" : hushed.marked ? "the tree marks it new" : counted ? `the daemon counts ${counted} waiting`
-      : "in the tree, unmarked; no bar, Recent not lit, no wash, nothing counted"]);
+    !listed ? "the draft is not in the tree" : hushed.bar ? "the bar came up" : hushed.queued ? "the Inbox head counts it" : hushed.washed ? "something washed" : hushed.marked ? "the tree marks it new" : counted ? `the daemon counts ${counted} waiting`
+      : "in the list, unmarked; no bar, nothing counted, no wash"]);
 
   const sent = await arrive({ name: "draft.md", body, origin: "mcp", title: "The draft, sent" });
   // The mark comes with the event; the title with the project's rows, a read later.
-  const came = await until(`!!document.querySelector('#tree a.new[data-id="${sent.id}"]') && !!document.querySelector("#inbox-row .t-inbox.new")`, 30);
+  const came = await until(`!!document.querySelector('#tree a.new[data-id="${sent.id}"]') && !!document.querySelector("#inbox-row .sec-n.accent")`, 30);
   const washes = await p.ev(`(() => { const li = document.querySelector('#tree li.t-doc.wash:has(> a[data-id="${sent.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
   await until(`document.querySelector('#tree a[data-id="${sent.id}"] .title')?.textContent === "The draft, sent"`, 30);
   const title = await p.ev(`document.querySelector('#tree a[data-id="${sent.id}"] .title')?.textContent || ""`);
   rows.push(["the send takes the draft over, and arrives", sent.id === draft.id && came && washes === 1 && title === "The draft, sent",
-    sent.id !== draft.id ? "a second row, not the draft" : !came ? "not marked new, or Recent not lit" : washes !== 1 ? `${washes < 0 ? "no" : washes} wash on the row` : title !== "The draft, sent" ? `the row says "${title}"`
-      : "one row, marked new, Recent lit, washed once, with the agent's title"]);
+    sent.id !== draft.id ? "a second row, not the draft" : !came ? "not marked new, or the Inbox head not counting it" : washes !== 1 ? `${washes < 0 ? "no" : washes} wash on the row` : title !== "The draft, sent" ? `the row says "${title}"`
+      : "one row, marked new, counted, washed once, with the agent's title"]);
   await p.ev(`fetch("/api/queue/clear", { method: "POST" }).then(r => r.status)`);
   return rows;
 }
@@ -1119,7 +1125,7 @@ async function queueRows(p, url, arrive) {
   const read = () => p.ev(`(() => {
     const bar = document.querySelector("#queue-bar");
     return { title: document.title, path: location.pathname, bar: bar.hidden ? null : bar.textContent.trim(),
-      side: +(document.querySelector("#inbox-row .t-inbox.new .n")?.textContent || 0),
+      side: +(document.querySelector("#inbox-row .sec-n.accent")?.textContent || 0),
       marked: document.querySelectorAll("#tree a.new").length, waiting: [...document.querySelectorAll(".inbox.waiting .title")].map(a => a.textContent),
       place: window.__ui.place() };
   })()`);
@@ -1174,18 +1180,18 @@ async function queueRows(p, url, arrive) {
   await p.reload();
   const kept = await read();
   rows.push(["still waiting after a reload", /^1\/12/.test(kept.bar || "") && kept.side === 12,
-    `the bar reads "${(kept.bar || "nothing").slice(0, 20)}", Recent counts ${kept.side}`]);
+    `the bar reads "${(kept.bar || "nothing").slice(0, 20)}", the Inbox head counts ${kept.side}`]);
 
-  // 1.36.1: the Inbox head is All at its edge, then Recent alone. Waiting, the
-  // row that folded the same documents in place, is gone: Recent is lit with
-  // how many are unread, and its page lists them first, then the rest, each
-  // once. All is the whole Inbox.
-  const head = () => p.ev(`({ n: document.querySelector("#inbox-row .t-inbox.new .n")?.textContent || "", rows: document.querySelectorAll("#inbox-row .s-row").length,
-    list: !!document.querySelector("#queue, #inbox-row .t-wait"), all: document.querySelector("#inbox-row .sec-all")?.textContent.trim() || "" })`);
+  // #206: the Inbox is one list, and its head says how many wait, in the
+  // accent, over the find box -- the Recent row that said it is gone. Recent
+  // is still the page the bar's Show all opens: what waits first, then the
+  // rest, each once. All is the whole Inbox.
+  const head = () => p.ev(`({ n: document.querySelector("#inbox-row .sec-n.accent")?.textContent || "", rows: document.querySelectorAll("#inbox-row .s-row").length,
+    find: !!document.querySelector("#inbox-row .ib-find input"), all: document.querySelector("#inbox-row .sec-all")?.textContent.trim() || "" })`);
   const lit = await head();
-  rows.push(["Recent is lit with how many are unread", lit.n === "12" && lit.rows === 1 && !lit.list,
-    lit.list ? "the Waiting row or its list is still drawn" : lit.rows !== 1 ? `${lit.rows} rows under the Inbox head` : lit.n !== "12" ? `Recent reads "${lit.n}"` : "Recent 12, in the accent, the one row under the head"]);
-  await p.clickOn("#inbox-row .t-inbox");
+  rows.push(["the Inbox head counts what waits, over its find box", lit.n === "12" && lit.rows === 0 && lit.find,
+    !lit.find ? "no find box under the head" : lit.rows ? `${lit.rows} rows under the Inbox head` : lit.n !== "12" ? `the head reads "${lit.n}"` : "12, in the accent, and the find box under it"]);
+  await p.goto(new URL("/inbox?recent", url).href);
   const recent = await until(`location.search === "?recent" && document.querySelector("#doc h1")?.textContent === "Recent"`);
   const page = await p.ev(`(() => { const t = s => [...document.querySelectorAll(s)].map(a => a.textContent); const un = t("#doc .inbox.waiting .title"), all = [...document.querySelectorAll("#doc .inbox a[data-id]")].map(a => a.dataset.id);
     return { un, twice: all.length - new Set(all).size, rest: document.querySelectorAll("#doc .inbox:not(.waiting) li").length, heads: [...document.querySelectorAll("#doc h2.inbox-sec")].map(h => h.firstChild?.textContent.trim()).join(", ") }; })()`);
@@ -1259,7 +1265,7 @@ async function queueRows(p, url, arrive) {
   // What waits, as the bar says it -- the oldest, and how many -- and
   // Recent's count: an older version still held would be "1/2" and first.
   const held = `(() => { const qb = document.querySelector("#queue-bar .qb"); return { rows: qb ? [qb.querySelector(".qb-next b")?.textContent || ""].filter(t => t.startsWith("The plan")) : [],
-    one: !!qb && /^1 waiting/.test(qb.querySelector(".qb-n")?.textContent || ""), n: document.querySelector("#inbox-row .t-inbox.new .n")?.textContent }; })()`;
+    one: !!qb && /^1 waiting/.test(qb.querySelector(".qb-n")?.textContent || ""), n: document.querySelector("#inbox-row .sec-n.accent")?.textContent }; })()`;
   const onBar = t => `document.querySelector("#queue-bar .qb-next b")?.textContent === ${JSON.stringify(t)}`;
   await until(onBar("The plan"));
   await arrive({ name: plan, body: "# The plan, revised\n\nSecond draft.\n" });
@@ -1433,7 +1439,6 @@ async function designRows(p, url, arrive) {
   await p.ev(`document.activeElement?.blur()`);
 
   // A menu's answer stands where its item stood: the menu has gone.
-  await p.ev(`for (const d of document.querySelectorAll("#tree details.t-proj:not([open])")) d.open = true`);
   await until(`!!document.querySelector("#tree a[data-id]")`);
   await p.rightClickOn("#tree a[data-id]");
   await until(`!document.querySelector("#ctx").hidden`);
@@ -1452,20 +1457,23 @@ async function designRows(p, url, arrive) {
   // project -- the newest offer -- back.
   const d1 = await arrive();
   await p.goto(`${new URL(url).origin}/d/${d1.id}`);
-  await until(`!!document.querySelector("#tree .t-proj")`);
+  await until(`!!document.querySelector("#tree .t-doc [data-only]")`);
   await p.pointerAway();
   await p.press("Delete");
   await until(`!!document.querySelector("#trees .t-ghost")`);
   const drain = await p.ev(`(g => g && getComputedStyle(g, "::after").content !== "none")(document.querySelector("#trees .t-ghost"))`);
-  const pid = await p.ev(`document.querySelector("#tree .t-proj")?.dataset.pid || null`);
+  // #206: a project is hidden from its name's menu, on any of its rows.
+  const pid = await p.ev(`document.querySelector("#tree .t-doc [data-only]")?.dataset.only || null`);
   if (pid) {
-    await p.hoverOn(`#tree .t-proj[data-pid="${pid}"] > summary`);
-    await p.clickOn(`#tree .t-proj[data-pid="${pid}"] > summary [data-away]`);
+    await p.rightClickOn(`#tree .t-doc [data-only="${pid}"]`);
+    await until(`!document.querySelector("#ctx").hidden`);
+    const hide = await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.startsWith("Hide from the Inbox"))`);
+    if (hide >= 0) await p.clickOn(`#ctx button[data-i="${await p.ev(`document.querySelectorAll("#ctx button")[${hide}].dataset.i`)}"]`);
     await until(`!!document.querySelector("#tree .t-back")`);
     const backDrain = await p.ev(`(g => g && getComputedStyle(g, "::after").content !== "none" && g.getAttribute("role") === "status")(document.querySelector("#tree .t-back"))`);
     rows.push(["every ghost has a drain bar", drain && backDrain, !drain ? "the document's ghost has none" : !backDrain ? "the project's way back has none, or no status role" : "a document's and a project's"]);
     await p.press("z", { ctrl: true });
-    const projBack = await until(`!!document.querySelector('#tree .t-proj[data-pid="${pid}"]') && !document.querySelector("#tree .t-back")`);
+    const projBack = await until(`!!document.querySelector('#tree .t-doc [data-only="${pid}"]') && !document.querySelector("#tree .t-back")`);
     const docGhost = await p.ev(`!!document.querySelector("#trees .t-ghost")`);
     rows.push(["remove a doc, then a project, ⌘Z → the project comes back", projBack && !docGhost,
       !projBack ? "⌘Z did not bring the project back" : docGhost ? "and the document's offer still stands beside it" : "the newest offer, and the document's had settled"]);
@@ -1782,10 +1790,9 @@ async function backRows(p, browsed) {
   await p.goto(`${origin}/inbox`);
   await p.pointerAway();
   const onInbox = await bar();
-  // j walks the rows a reader can see: the projects are opened, as a reader
-  // would, and the Inbox entry opened is the one highest in the tree, so two
-  // j's have somewhere to go whatever the sections before this one sent.
-  await p.ev(`for (const d of document.querySelectorAll("#tree details.t-proj:not([open])")) d.open = true`);
+  // j walks the rows a reader can see, and the Inbox entry opened is the
+  // one highest in the list, so two j's have somewhere to go whatever the
+  // sections before this one sent.
   await until(`document.querySelectorAll("#tree a[data-id]").length >= 3`);
   const top = await p.ev(`[...document.querySelectorAll("#tree a[data-id]")].map(a => a.dataset.id).find(id => document.querySelector('.inbox a[data-id="' + id + '"]')) || ""`);
   await p.clickOn(top ? `.inbox a[data-id="${top}"]` : ".inbox a[data-id]");
@@ -1848,9 +1855,8 @@ async function navRows(p) {
   await p.pointerAway();
   // The tips and the list are nav.js's, fetched once the page is idle.
   await until(`!!document.querySelector("#chrome .nv-b").dataset.tipSub`);
-  // The Inbox entry highest in the tree, as the ✕'s rows pick it, so `j`
+  // The Inbox entry highest in the list, as the ✕'s rows pick it, so `j`
   // has a document after it to go to.
-  await p.ev(`for (const d of document.querySelectorAll("#tree details.t-proj:not([open])")) d.open = true`);
   await until(`document.querySelectorAll("#tree a[data-id]").length >= 3`);
   const pick = await p.ev(`[...document.querySelectorAll("#tree a[data-id]")].map(a => a.dataset.id).find(id => document.querySelector('.inbox a[data-id="' + id + '"]')) || ""`);
   const inbox = await btns();
@@ -3251,13 +3257,17 @@ async function projectDeskRows(cdp, base, token, tmp) {
       rows.push(["a project's desk, with its first panel, in three clicks or fewer", !!panel && clicks <= 3,
         !panel ? "the desk shows no panel" : `${clicks} click${clicks === 1 ? "" : "s"} from the + beside Desks to a desk with its first panel`]);
 
-      const glyph = `.t-proj[data-pid="${proj.id}"] > summary > .b-new.has`;
+      // #206: the project's row is gone with the tree; its name on any of
+      // its documents' rows has the project's menu, and Show desk is in it.
+      const named = `#tree .t-doc [data-only="${proj.id}"]`, say = `Show desk ${made ? made.name : ""}`;
       await p.clickOn(".sec-all");
-      const lit = await until(`!!document.querySelector(${JSON.stringify(glyph)})`);
-      if (lit) await p.clickOn(glyph);
-      const back = lit && made && await until(`location.pathname === "/desk/${made.id}"`), one = (await desks()).length === before + 1;
-      rows.push(["its row's glyph goes back to that desk", !!back && one,
-        !lit ? "the project's row shows no lit desk glyph" : !back ? "the glyph did not open the project's desk" : !one ? "the glyph made a second desk" : "the glyph is lit, and a click on it is the same desk"]);
+      const lit = await until(`!!document.querySelector(${JSON.stringify(named)})`);
+      if (lit) await p.rightClickOn(named);
+      const at = lit ? (await until(`!document.querySelector("#ctx").hidden`), await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.trim() === ${JSON.stringify(say)})`)) : -1;
+      if (at >= 0) await p.clickOn(`#ctx button[data-i="${await p.ev(`document.querySelectorAll("#ctx button")[${at}].dataset.i`)}"]`);
+      const back = at >= 0 && made && await until(`location.pathname === "/desk/${made.id}"`), one = (await desks()).length === before + 1;
+      rows.push(["its project's menu goes back to that desk", !!back && one,
+        !lit ? "no row in the list names the project" : at < 0 ? "the project's menu has no Show desk" : !back ? "Show desk did not open the project's desk" : !one ? "it made a second desk" : "Show desk, in the menu on the project's name, is the same desk"]);
     }
   } finally {
     if (made) await post(`/api/desks/${made.id}/delete`).catch(() => {});
@@ -3267,9 +3277,10 @@ async function projectDeskRows(cdp, base, token, tmp) {
 }
 
 /** 1.32 (audit 7c0fc42885): a folder with no git of its own is a project of
- *  its own, so two job folders both called "reel" were two top-level rows.
- *  They hang under the project whose folder holds them: the parent says how
- *  many, and opening it shows them, each still its own project. */
+ *  its own, so two job folders both called "reel" were two "reel"s. They
+ *  hung under the project that held them while the Inbox was a tree; it is
+ *  one list now (#206), and its filter says where each is, so two of one
+ *  name are two choices a reader can tell apart. */
 async function nestRows(cdp, base, token, tmp) {
   const rows = [];
   const T = { authorization: `Bearer ${token}`, "content-type": "application/json" };
@@ -3281,7 +3292,6 @@ async function nestRows(cdp, base, token, tmp) {
     ids.push((await r.json().catch(() => ({}))).id);
   }
   const tree = await (await fetch(`${base}/api/tree`)).json();
-  const parent = tree.find(x => x.root && (x.root === tmp || x.root.endsWith(basename(tmp))));
   const reels = tree.filter(x => x.name === "reel" && x.root.includes(`${basename(tmp)}/nest/`));
   const { targetId, sessionId } = await tab(cdp);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
@@ -3289,21 +3299,13 @@ async function nestRows(cdp, base, token, tmp) {
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   try {
     await p.goto(`${base}/`);
-    const row = parent && await until(`!!document.querySelector('#tree .t-proj[data-pid="${parent.id}"] > summary')`);
-    const seen = row ? await p.ev(`(() => {
-      const top = [...document.querySelectorAll("#tree > .t-proj")].map(d => d.dataset.pid);
-      return { subs: document.querySelector('#tree .t-proj[data-pid="${parent.id}"] > summary .t-subs')?.textContent || "", top };
-    })()`) : null;
-    const reelsTop = seen ? reels.filter(r => seen.top.includes(String(r.id))).length : -1;
-    rows.push(["two folders called reel hang under the project that holds them", ids.every(Boolean) && reels.length === 2 && !!seen && +seen.subs >= 2 && reelsTop === 0,
-      !ids.every(Boolean) ? "a send was refused" : reels.length !== 2 ? `${reels.length} reel projects` : !seen ? "the parent has no row" : reelsTop ? `${reelsTop} reel still a top-level row` : `the parent says ${seen.subs}, no reel at the top`]);
-    if (row) {
-      const was = await p.ev(`document.querySelector('#tree .t-proj[data-pid="${parent.id}"]').open`);
-      if (!was) await p.clickOn(`#tree .t-proj[data-pid="${parent.id}"] > summary .nm`);
-      const under = await until(`${JSON.stringify(reels.map(r => String(r.id)))}.every(id => !!document.querySelector('#tree .t-proj[data-pid="${parent.id}"] > ul > .t-sub > .t-proj[data-pid="' + id + '"]'))`);
-      rows.push(["opening the parent shows them, each its own project", under, under ? "both reels under it, one step in" : "the reels are not under the opened parent"]);
-      if (!was) await p.clickOn(`#tree .t-proj[data-pid="${parent.id}"] > summary .nm`);
-    }
+    const ready = await until(`!!document.querySelector("[data-ibf]")`);
+    if (ready) await p.clickOn("[data-ibf]");
+    const asked = ready && await until(`!!document.querySelector("#ctx:not([hidden]) button")`);
+    const said = asked ? await p.ev(`[...document.querySelectorAll("#ctx button")].map(b => b.textContent.trim()).filter(t => t.startsWith("reel"))`) : [];
+    rows.push(["two folders called reel are told apart in the Inbox's filter", ids.every(Boolean) && reels.length === 2 && said.length === 2 && said.some(t => t.endsWith("· one")) && said.some(t => t.endsWith("· two")),
+      !ids.every(Boolean) ? "a send was refused" : reels.length !== 2 ? `${reels.length} reel projects` : !asked ? "the filter opened no menu" : said.length !== 2 ? `${said.length} reels in the filter` : `they read ${said.map(t => `"${t}"`).join(" and ")}`]);
+    await p.press("Escape");
   } finally {
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
@@ -4808,9 +4810,9 @@ async function motionRows(p, url, arrive) {
   // a read row used to, is gone (1.36.1).
   await p.press("n");
   await sleep(400);
-  const after = await p.ev(`({ lit: !!document.querySelector('#tree a.new[data-id="${second.id}"]'), n: document.querySelector("#inbox-row .t-inbox.new .n")?.textContent || "" })`);
-  rows.push(["a read unlights its row, and Recent counts it", !after.lit && after.n === "1",
-    after.lit ? "the tree still marks it unread" : after.n !== "1" ? `Recent reads "${after.n}"` : "unmarked in the tree; Recent 2, then 1"]);
+  const after = await p.ev(`({ lit: !!document.querySelector('#tree a.new[data-id="${second.id}"]'), n: document.querySelector("#inbox-row .sec-n.accent")?.textContent || "" })`);
+  rows.push(["a read unlights its row, and the Inbox head counts it", !after.lit && after.n === "1",
+    after.lit ? "the list still marks it unread" : after.n !== "1" ? `the Inbox head reads "${after.n}"` : "unmarked in the list; the head 2, then 1"]);
 
   // The \`#\` beside a heading says it copied, itself, and raises no toast.
   // Back on the plan: \`n\` opened the arrival, which is one heading long.

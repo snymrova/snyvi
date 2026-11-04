@@ -424,6 +424,11 @@
    * corner.js draws; opening it is looking, so the dot goes everywhere. */
   const openLately = b => corner(m => { m.lately(); useActs().then(a => a.pop(actsCtx, "lately", b)); });
   for (const b of document.querySelectorAll(".lt-btn")) b.addEventListener("click", () => openLately(b));
+  /* Music (#204) is the reader's, on every page, so the
+   * sidebar's, like Lately: in its head, and in the rail when it is folded.
+   * A chunk, fetched on the first press; never an agent's. */
+  const media = name => chunk(name).then(m => (m.init(actsCtx), m));
+  for (const b of document.querySelectorAll("[data-media]")) b.addEventListener("click", () => media(b.dataset.media).then(m => m.toggle(b)));
   if (LATELY_SHOWN && boot.lately_unseen) root.dataset.lately = "1";
   // A toolbar: the arrows walk it, Tab leaves it.
   railNav.addEventListener("keydown", e => {

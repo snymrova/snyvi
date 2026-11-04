@@ -345,9 +345,10 @@ async function keepAll(ctx, pid, name) {
 function friendRow(ctx, el, pid, p, capability) {
   return { head: p.name, items: [
     ctx.peerCtx && { label: `Open ${p.name.replace(/^From /, "")}'s page`, run: () => openFriend(ctx, p.name) },
-    { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) },
+    ctx.see.proj !== String(pid) && { label: "Show only this project", run: () => ctx.seeInbox({ proj: String(pid) }) },
+    { label: "Rename…", moves: 1, run: () => rename(ctx, el, "project", pid) },
     capability && ctx.peerCtx && { label: "Keep all on a desk…", run: () => keepAll(ctx, pid, p.name) }, RULE,
-    { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
+    { label: "Hide from the Inbox", danger: true, run: () => ctx.putAway(pid) },
   ] };
 }
 
@@ -453,26 +454,13 @@ function entries(ctx, el, byKey = false) {
       files({ root, path }), abs && copyIt(abs, "Copy path"),
     ] };
   }
-  if (el.matches(".t-proj > summary")) {
-    const pid = +el.parentElement.dataset.pid, p = ctx.state.tree.find(x => x.id === pid);
-    if (!p) return null;
-    // A friend's own row is no folder: nothing to make a desk on, to copy or
-    // to show in the file manager (docs/PEER.md).
-    if (p.friend) return friendRow(ctx, el, pid, p, capability);
-    const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
-    return { head: p.name, items: [
-      capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }, false, true) },
-      ...here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })),
-      { label: "Rename…", key: "F2", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
-      files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
-      { label: "Remove from the sidebar", danger: true, run: () => ctx.putAway(pid) },
-    ] };
-  }
+  if (el.matches("[data-ibf]")) return shows(ctx);
+  if (el.matches("[data-only]")) return projectMenu(ctx, el, { capability, files, copyIt });
   if (el.matches("a[data-id]")) {
     const id = el.dataset.id, d = docById(ctx, id);
     // Under a friend's own row, the path is their file's name and no file
     // here: no Copy path, no file manager.
-    const pid = +el.closest(".t-proj")?.dataset.pid, theirs = !!ctx.state.tree.find(x => x.id === pid)?.friend || d?.origin === "peer";
+    const pid = +el.querySelector("[data-only]")?.dataset.only, theirs = !!ctx.state.tree.find(x => x.id === pid)?.friend || d?.origin === "peer";
     const path = d && (d.local_path || (!theirs && d.source_path));
     // On a friend's document the one friend there is sent it (D3).
     const friends = friendsOf(ctx) >= (theirs ? 2 : 1);
@@ -627,6 +615,42 @@ export function moveDesk(ctx, id, by, byKey = false) {
   ids.splice(i, 1); ids.splice(to, 0, id);
   return order(ctx, ids, id, byKey);
 }
+
+/** A project's name, on a document's row in the Inbox or in its find box
+ *  while the list shows it alone (#206): the project's own menu. */
+function projectMenu(ctx, el, { capability, files, copyIt }) {
+  const pid = +el.dataset.only, p = ctx.state.tree.find(x => x.id === pid);
+  if (!p) return null;
+  // A friend's own row is no folder: nothing to make a desk on, to copy or
+  // to show in the file manager (docs/PEER.md).
+  if (p.friend) return friendRow(ctx, el, pid, p, capability);
+  const here = capability && p.root && ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === p.root) : [];
+  return { head: p.name, items: [
+    ctx.see.proj !== String(pid) && { label: "Show only this project", run: () => ctx.seeInbox({ proj: String(pid) }) },
+    capability && p.root && { label: "New desk here", run: () => make(ctx, { project: pid, name: p.name }, false, true) },
+    ...here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })),
+    { label: "Rename…", moves: 1, run: () => rename(ctx, el, "project", pid) }, RULE,
+    files({ project: pid }), p.root && copyIt(p.root, "Copy path"), RULE,
+    { label: "Hide from the Inbox", danger: true, run: () => ctx.putAway(pid) },
+  ] };
+}
+
+/** The Inbox's filter (#206): what waits or everything, and one project or
+ *  every one -- newest first, with how many documents each holds -- the ones
+ *  in use ticked. A hidden project is still here: picking it shows it. */
+const shows = ctx => {
+  const s = ctx.see, ps = ctx.state.tree.filter(p => p.docs), n = {};
+  for (const p of ps) n[p.name] = (n[p.name] || 0) + 1;
+  // Two projects of one name (a worktree, a folder in a folder) say where
+  // each is, as New desk in… does: the last two folders of its path.
+  const where = p => n[p.name] > 1 && p.root ? ` · ${p.root.replace(/\\/g, "/").split("/").filter(Boolean).slice(-2, -1)[0] || ""}` : "";
+  return { head: "Show", items: [
+    { label: "Waiting", hint: ctx.state.waiting ? String(ctx.state.waiting) : "", on: s.wait, run: () => ctx.seeInbox({ wait: true }) },
+    { label: "Everything", on: !s.wait, run: () => ctx.seeInbox({ wait: false }) }, RULE,
+    { label: "Every project", on: !s.proj, run: () => ctx.seeInbox({ proj: "" }) },
+    ...ps.map(p => ({ label: p.name, hint: (ctx.away.has(String(p.id)) ? "hidden" : String(p.docs)) + where(p), on: s.proj === String(p.id), run: () => ctx.seeInbox({ proj: String(p.id) }) })),
+  ] };
+};
 
 /** The Desks head's sort (#175): the reader's own order, or one taken for
  *  them, the one in use checked. */
@@ -857,7 +881,8 @@ const $ = s => document.querySelector(s), root = document.documentElement;
 // Lately is no section of the tree: corner.js makes its element and keeps
 // it, out of sight, in #trees between openings (`lately`), so it opens and
 // closes as the sections do.
-const POPS = { inbox: ["#inbox-row"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], lately: ["#lately-nav"] };
+// The Inbox is its head, its find box and its list (#206): one popover.
+const POPS = { inbox: ["#inbox-row", "#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], lately: ["#lately-nav"] };
 /** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
 const home = () => ($("#trees").dataset.order || "#inbox-row #tree #desk-nav #browse-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
@@ -877,7 +902,7 @@ export function pop(ctx, sec, btn) {
   popEl.append(...POPS[sec].map(id => $(id)));
   popEl.hidden = false;
   // Drawn while folded, the titles were cut to a column that was not there.
-  if (sec === "tree") ctx.drawTree();
+  if (sec === "inbox") ctx.drawTree();
   // Level with the icon, and moved only as far as it takes to stay on the
   // window, the way a toast answers a control in the rail.
   // A section opens beside the sidebar, not over its own rows. Lately, from

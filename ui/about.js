@@ -1265,9 +1265,9 @@ const q = s => document.querySelector(s);
 const SHOW = {
   // What has arrived is the page's to say, not the tree's: on a direct load
   // the tree is not drawn yet, and nothing in it is not nothing arrived.
-  arrives: { at: () => startDocs && (folded() ? q('#rail-nav [data-pop="tree"]') : q("#tree a[data-id]") || q("#tree")),
+  arrives: { at: () => startDocs && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#tree a[data-id]") || q("#tree")),
     none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Agents</a>` },
-  waiting: { at: () => q("#inbox-row .t-inbox.new") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#inbox-row .t-inbox")), none: "Nothing is waiting right now." },
+  waiting: { at: () => q("#inbox-row .sec-n.accent") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#inbox-row .sec-n.accent")), none: "Nothing is waiting right now." },
   desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .sec-head")), none: "Desks live in the window: <code>snyvi app</code>." },
   notes: { at: () => q("#cn:not([hidden]) .oy-pill, #meta .oy-foot:not(.none), #onyou .oy-pill"), none: "Nothing on you right now. Ctrl Alt Y opens On you." },
   keys: { at: () => q("#btn-help"), none: "" },

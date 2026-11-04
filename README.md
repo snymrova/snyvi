@@ -208,8 +208,9 @@ Yes, and open source under the MIT licence. There is no paid tier.
 <summary><b>Does anything leave my machine?</b></summary>
 
 No. snyvi listens only on `127.0.0.1`, has no account and sends no
-telemetry. The one request it makes to the outside is the daily update
-check, and `snyvi update off` turns that off.
+telemetry. The one request it makes to the outside on its own is the daily
+update check, and `snyvi update off` turns that off. Music fetches a
+station's stream only while you play it.
 </details>
 
 <details>
