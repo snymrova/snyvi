@@ -25,6 +25,48 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "change"
+since = "1.56.0"
+title = "The change on the desk"
+line = "What a panel is building has a row of its own at the head of Notes: its name, its stage (click to move it), the panel at it, its PR and checks. The chip on the panel's row points to it."
+show = "desk .dk-change"
+
+[[feature]]
+id = "gate"
+since = "1.56.0"
+title = "Approve says what it starts"
+line = "A plan's Approve is a block under its title: which notes it plans, which panel hears it, and what happens next. On the desk, a click on a note opens the same: its plan, Approve, its thread, its checks."
+show = "doc .doc-gate"
+
+[[feature]]
+id = "stagewords"
+since = "1.56.0"
+title = "Notes say where they are"
+line = "Under a note, words instead of a tag: planned · waiting for your Approve, shipped in 1a2b3c4 · works?, read by Claude · not planned yet. Home says the same beside each note."
+show = "desk .dk-stage.words"
+
+[[feature]]
+id = "weekline"
+since = "1.56.0"
+title = "This week in Home's head"
+line = "Home's head says what moved this week, ticked and committed, and opens the log."
+small = "yes"
+
+[[feature]]
+id = "updatesays"
+since = "1.56.0"
+title = "The version says when the check fails"
+line = "An amber dot on the version at the sidebar's foot, and why: no network, or the release not there yet."
+small = "yes"
+
+[[feature]]
+id = "routinefields"
+since = "1.56.0"
+title = "A routine is what, and when"
+line = "A new routine is two fields: the command or your words, and when it runs."
+small = "yes"
+
+[[feature]]
 id = "music"
 since = "1.55.0"
 title = "Music while you work"
