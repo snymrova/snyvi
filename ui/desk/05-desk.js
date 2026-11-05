@@ -507,23 +507,32 @@ function tabs(d, all, shown) {
   }
 }
 
+/** The desk's folder in its head, as the door to it (#214): the folder
+ *  reader at the desk's own folder, over the desk, with the rail kept and
+ *  the ✕ coming back here. It takes the slot the path's text had, so the
+ *  head moves nothing. Folders left the sidebar with it: a folder is read
+ *  through its desk. */
+const rootButton = () => `<button type="button" class="dk-root dk-root-b" data-a="folder" data-tip="Open this desk's folder" data-tip-sub="read it here, over the desk">` +
+  `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ctx.icons.folder}</svg><span class="dk-root-t"></span></button>`;
+
 function draw() {
   const d = current();
   const { docEl } = ctx;
   if (!d) {
-    docEl.innerHTML = deskId == null ? list() : `<div class="inbox-head"><h1>No such desk</h1><p>It was closed, here or in another window.</p></div>` + list();
+    // /desks itself is Home (app.js `showDesk`): only a desk that is gone lands here.
+    docEl.innerHTML = `<div class="inbox-head"><h1>No such desk</h1><p>It was closed, here or in another window. <a href="/">Home</a> has the rest.</p></div>`;
     ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
     ctx.rail.classList.add("empty");
     document.title = "Desks · snyvi";
     return;
   }
   document.title = `${d.name} · desk`;
-  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-root"></span><span class="dk-tabs"></span>` +
+  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b>${rootButton()}<span class="dk-tabs"></span>` +
     `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div>${DRAWER}<div class="dk-live vh" aria-live="polite"></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
-  docEl.querySelector(".dk-root").textContent = tilde(d.root);
+  docEl.querySelector(".dk-root-t").textContent = tilde(d.root);
   gridWatch?.disconnect();
   let seen = 0;
   gridWatch = new ResizeObserver(([en]) => { const w = Math.round(en.contentRect.width); if (w !== seen) { seen = w; if (current()) layout(); } });
@@ -552,12 +561,6 @@ function sync(d) {
   if (!views.has(focused)) focused = d.panes[0] ? d.panes[0].id : null;
   layout();
   watch();
-}
-
-function list() {
-  const ds = ctx.desks ? ctx.desks.desks : [];
-  return `<div class="inbox-head"><h1>Desks</h1><p>A desk is one project: its folder, and up to four terminal panels side by side in it. A new one asks where: a project snyvi knows, another folder, or a shell in your home folder.</p><p><button type="button" class="dk-make" data-a="make">+ New desk</button></p></div>` +
-    (ds.length ? `<ul class="inbox">${ds.map(d => `<li><a href="/desk/${d.id}" data-desk="${d.id}"><span class="title">${ctx.esc(d.name)}</span><span class="time">${ctx.plural(d.panes.length, "panel")}</span><span class="sub">${ctx.esc(tilde(d.root))}</span></a></li>`).join("")}</ul>` : "");
 }
 
 // ---------- links ----------

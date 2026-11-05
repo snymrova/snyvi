@@ -22,16 +22,17 @@ let menu = null;
  *  two of them on the screen and the second has no window to come back to. */
 let picking = false;
 
-/** The desktop's own folder dialog, which the daemon shows, and the folder the
- *  reader chose, opened -- or, for a desk, a desk made on it. The page names
- *  no path. Only the window can ask -- the same gate the desks are behind --
- *  so a tab is told where it can be done instead. */
-export async function pick(ctx, forDesk = false) {
-  const { capability, state, toast, browseEl } = ctx;
-  if (!capability) { toast("Folders open from the snyvi window", { sub: "or from a terminal · snyvi browse <folder>", face: null }); return; }
+/** The desktop's own folder dialog, which the daemon shows, and a desk made
+ *  on the folder the reader chose -- or that folder's desk, when it has one.
+ *  The page names no path. Only the window can ask -- the same gate the
+ *  desks are behind -- so a tab is told where it can be done instead. Since
+ *  1.56 (#214) it is only for a desk: a folder is read through its desk.
+ *  `forDesk` is "welcome" from Welcome, which goes on to Got another one? */
+export async function pick(ctx, forDesk = true) {
+  const { capability, state, toast } = ctx;
+  if (!capability) { toast("Desks open in the snyvi window", { sub: "a browser tab has none", face: null }); return; }
   if (picking) { alreadyOpen(ctx); return; }
   picking = true;
-  browseEl.classList.add("picking");
   // The daemon keeps the dialog open only while this request waits: a page
   // that goes says so at once, and the dialog goes with it.
   const ac = new AbortController(), gone = () => ac.abort();
@@ -49,23 +50,14 @@ export async function pick(ctx, forDesk = false) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { toast("Could not open a folder", { sub: new Error(j.error || `${r.status}`) }); return; }
     if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
-    ctx.drawBrowse();
-    // Kept under Folders either way: it is a folder the reader works in now.
     // One that has a desk already shows it, as a project's desk glyph does;
     // a second desk on it is its own menu's New desk here.
-    if (forDesk) {
-      const trim = p => p && p.replace(/(.)\/+$/, "$1");
-      const had = state.desks && state.desks.desks.find(d => trim(d.root) === trim(j.root.path));
-      if (had) ctx.show(had.id, true);
-      else await make(ctx, { root: j.root.id, path: "" }, forDesk === "welcome");
-      return;
-    }
-    // Open in the sidebar as well as on the page; the toggle fills its tree.
-    const d = browseEl.querySelector(`.b-root[data-root="${j.root.id}"]`);
-    if (d) d.open = true;
-    ctx.browse(j.root.id, "", true);
+    const trim = p => p && p.replace(/(.)\/+$/, "$1");
+    const had = state.desks && state.desks.desks.find(d => trim(d.root) === trim(j.root.path));
+    if (had) ctx.show(had.id, true);
+    else await make(ctx, { root: j.root.id, path: "" }, forDesk === "welcome");
   } catch (e) { if (!ac.signal.aborted) toast("Could not open a folder", { sub: e }); }
-  finally { picking = false; browseEl.classList.remove("picking"); removeEventListener("pagehide", gone); }
+  finally { picking = false; removeEventListener("pagehide", gone); }
 }
 
 /** Never a click that does nothing: the dialog asked for first may be behind
@@ -99,7 +91,7 @@ async function closedDeskOn(ctx, f) {
   } catch { return null; }
 }
 
-/** A new desk on folder `f` -- a folder under Folders, or a project by its
+/** A new desk on folder `f` -- a folder from the dialog or a folder's page, or a project by its
  *  id -- or with none on no folder: it starts in the home directory, which
  *  the daemon names. `welcome`: asked from Welcome, which goes on to Got
  *  another one? rather than to the desk. A folder whose desk was closed gets
@@ -434,17 +426,16 @@ function entries(ctx, el, byKey = false) {
     { label: document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot", run: () => ctx.toggleQuiet() },
     { label: chimeOn() ? "Silence the chime" : "Chime when something waits on you", run: () => chimeFlip(ctx.toast) },
   ] };
-  if (el.matches(".b-root > summary, .b-dir > details > summary")) {
+  // A folder on a folder's page (#214).
+  if (el.matches(".b-dir > details > summary")) {
     const f = ctx.folderOf(el);
     if (!f) return null;
     const here = ctx.state.desks ? ctx.state.desks.desks.filter(d => d.root === f.abs) : [];
-    const root = el.matches(".b-root > summary");
     return { head: f.abs.split("/").pop() || f.abs, items: [
       capability && { label: "New desk here", run: () => make(ctx, f, false, true) },
       ...(capability ? here.map(d => ({ label: `Show desk ${d.name}`, moves: 1, run: () => ctx.show(d.id, true) })) : []),
       capability && RULE,
       files({ root: f.root, path: f.path }), copyIt(f.abs, "Copy path"),
-      root && RULE, root && { label: "Close folder", danger: true, run: () => ctx.closeRoot(f.root) },
     ] };
   }
   if (el.matches("a[data-browse]")) {
@@ -498,7 +489,8 @@ function entries(ctx, el, byKey = false) {
       // Where it is in the list; what cannot move it is not offered.
       ...(here ? [] : moves(ctx, id, byKey)),
       files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
-      { label: "Close desk", danger: true, sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
+      // Not red: red reads as delete, and a closed desk comes back (1.56, audit B9).
+      { label: "Close desk", sure: ends(ctx, id), run: () => dropDesk(ctx, id) },
     ] };
   }
   if (el.matches("[data-desksort]")) return sorts(ctx);
@@ -882,9 +874,9 @@ const $ = s => document.querySelector(s), root = document.documentElement;
 // it, out of sight, in #trees between openings (`lately`), so it opens and
 // closes as the sections do.
 // The Inbox is its head, its find box and its list (#206): one popover.
-const POPS = { inbox: ["#inbox-row", "#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], lately: ["#lately-nav"] };
+const POPS = { inbox: ["#inbox-row", "#tree"], desks: ["#desk-nav"], widgets: ["#widgets-nav"], lately: ["#lately-nav"] };
 /** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
-const home = () => ($("#trees").dataset.order || "#inbox-row #tree #desk-nav #browse-nav #widgets-nav").split(" ");
+const home = () => ($("#trees").dataset.order || "#inbox-row #tree #desk-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
 /** Whether the last thing the reader did was a key, for the ring. */
 let popKey = false;

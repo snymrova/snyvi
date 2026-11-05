@@ -241,6 +241,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ),
     ("GET", "/api/browse/nope/raw/x.md", None, Gate::Open, true),
     ("GET", "/api/browse/nope/find?q=x", None, Gate::Open, true),
+    ("GET", "/api/browse/nope/changes", None, Gate::Open, true),
     (
         "GET",
         "/api/browse/nope/outline?path=x.md",
@@ -281,6 +282,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ),
     ("POST", "/api/desks/1/delete", None, Gate::Desk, true),
     ("POST", "/api/desks/1/reopen", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/folder", None, Gate::Desk, true),
     ("POST", "/api/desks/1/panes", Some("{}"), Gate::Desk, true),
     ("GET", "/api/desks/1/docs", None, Gate::Desk, true),
     ("POST", "/api/desks/1/docs/d/remove", None, Gate::Desk, true),

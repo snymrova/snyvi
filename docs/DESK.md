@@ -67,8 +67,7 @@ folders that have no desk yet, then *Another folder…* (the folder dialog),
 then *A shell in your home folder*, last. The palette's `New desk…` lists the
 same. A project's row has the desk glyph too: lit while the project has a
 desk, and a click goes there; otherwise it makes one, named for the project.
-A folder under Folders still gives one on that folder, from its glyph or its
-menu.
+A folder on a folder's page gives one on that folder from its menu.
 
 **Four per desk, and no cap across desks.** Four panes per desk keeps each
 pane readable, and it is checked inside the transaction that inserts the pane.

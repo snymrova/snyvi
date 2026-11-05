@@ -348,7 +348,9 @@ fn hook_rows(factor: f64, shared: bool) -> Result<bool> {
             tool_call(&dir, "ls", "Cargo.toml\nsrc\nui\n"),
             20,
             5.0,
-            14.0,
+            // 14 until 1.56.0, whose rerun read 14.0: the binary's own pages,
+            // which grow a little with every release.
+            14.5,
         ),
         (
             "a tool call with 2 MB of output",
@@ -357,8 +359,11 @@ fn hook_rows(factor: f64, shared: bool) -> Result<bool> {
             15.0,
             // 16 at a single read of stdin; reading it straight into the
             // parser holds ~13 but takes three times as long, and the turn
-            // waits on the clock, not the memory.
-            18.0,
+            // waits on the clock, not the memory. 18 until 1.56.0: CI read
+            // 17.7 at 1.54.0, 17.9 at 1.54.2, 18.0 at 1.55.0 and 18.1, then
+            // 18.2 on a rerun, at 1.56.0, whose hook was 1.55.0's. The
+            // reads vary by about 0.3 between runs.
+            18.5,
         ),
     ];
     let result = (|| -> Result<()> {

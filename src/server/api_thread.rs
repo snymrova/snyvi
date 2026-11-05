@@ -27,6 +27,52 @@ fn refused(code: StatusCode, error: impl Into<String>) -> Response {
     (code, Json(json!({ "error": error.into() }))).into_response()
 }
 
+/// Where a card's panel is, on the card wherever it is drawn (1.56, the
+/// builder's audit A4 and B3): `slot`, `panel` -- the name the rail gives
+/// it, or "panel N" -- and `runs_here`, whether Run can type into it: the
+/// pane is running with a Claude session in it (`Status::agent_in`, and the
+/// session the desk kept), the test the desk's tray makes before it offers
+/// Run. Home's card said "Run on the desk" for every run card and led the
+/// reader to a shell with no Run. Nothing for a card whose pane is gone.
+pub(crate) fn place_turn(app: &App, v: &mut serde_json::Value) {
+    let Some(pane) = v
+        .get("pane")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+    else {
+        return;
+    };
+    let Some(p) = app.store.pane(&pane).ok().flatten() else {
+        return;
+    };
+    let s = app.panes.status(&pane);
+    v["slot"] = json!(p.pane.slot);
+    v["panel"] = json!(if p.pane.name.is_empty() {
+        format!("panel {}", p.pane.slot)
+    } else {
+        p.pane.name.clone()
+    });
+    v["runs_here"] = json!(s.running && s.agent_in && p.pane.agent_session.len() == 36);
+}
+
+/// `place_turn` on every card of a list, and on the card inside each row
+/// of the ranked On you list (`crate::onyou`), which carries the turn whole.
+pub(crate) fn place_turns(app: &App, v: &mut serde_json::Value) {
+    if let Some(rows) = v.get_mut("rows").and_then(serde_json::Value::as_array_mut) {
+        for r in rows {
+            if let Some(t) = r.get_mut("turn") {
+                place_turn(app, t);
+            }
+        }
+        return;
+    }
+    if let Some(a) = v.as_array_mut() {
+        for t in a {
+            place_turn(app, t);
+        }
+    }
+}
+
 // --- the agent's side ------------------------------------------------------
 
 #[derive(Deserialize, Default)]
@@ -1096,6 +1142,7 @@ pub(crate) async fn desk_threads(
         Ok((threads, turns, suggestions, away)) => {
             let mut turns = json!(turns);
             super::routine_run::mark_waits(&app, id, &mut turns);
+            place_turns(&app, &mut turns);
             Json(json!({
                 "threads": threads, "turns": turns, "suggestions": suggestions, "away": away,
             }))

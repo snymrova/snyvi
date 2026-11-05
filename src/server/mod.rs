@@ -449,6 +449,7 @@ fn browse_routes() -> Router<Arc<App>> {
         .route("/api/browse/{id}/raw", get(browse_raw))
         .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
         .route("/api/browse/{id}/find", get(browse_find))
+        .route("/api/browse/{id}/changes", get(browse_changes))
         .route("/api/browse/{id}/outline", get(browse_outline))
 }
 
@@ -684,6 +685,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/move", post(move_pane))
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/reopen", post(reopen_desk))
+        .route("/api/desks/{id}/folder", post(desk_folder))
         .route("/api/desks/{id}/panes", post(open_pane))
         .route("/api/desks/{id}/docs", get(desk_docs))
         .route("/api/desks/{id}/docs/{doc}/remove", post(remove_desk_doc))

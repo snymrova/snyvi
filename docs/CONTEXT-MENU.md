@@ -7,7 +7,7 @@ Branch point: `claude/desk-paint` @ 6619993 (1.5.0).
 
 ## Where it stands
 
-snyvi has **one** context menu. It opens on a folder row under Folders
+snyvi has **one** context menu. It opens on a folder row on a folder's page
 (`ui/app.js:2569` listens, `ui/menu.js:open` draws) and offers:
 
 - New desk here

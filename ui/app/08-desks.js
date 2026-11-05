@@ -8,7 +8,6 @@
    * reader who never opens one pays for this block and no more. */
   const deskNav = $("#desk-nav");
   let desk = null, deskLoading = null, lastDesk = null;
-  const plusDesk = () => capability ? `<button class="b-new" data-newdesk data-tip="New desk here" aria-label="New desk here">${icon("desk")}</button>` : "";
   /** A desk route, with the capability in the one place a page can put a
    *  secret on a request it composes: a header. */
   async function deskApi(path, body, type) {
@@ -38,7 +37,7 @@
   let acts = null, actsLoading = null;
   const useActs = () => (actsLoading ||= chunk("menu").then(m => (acts = m)));
   const actsCtx = {
-    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, browseEl, peerCtx, keepCurInView, showSidebars,
+    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, peerCtx, keepCurInView, showSidebars,
     navList: () => navMod ? navMod.list() : [],
     get capability() { return capability; },
     api: (path, body, type) => deskApi(path, body, type),
@@ -46,14 +45,12 @@
     show: (id, push, slot) => showDesk(id, push, slot),
     welcomed: id => pages().then(m => m.welcomed(id), () => showDesk(id, true)),
     browse: (root, path, push) => showBrowse(root, path, push),
-    drawBrowse: () => renderBrowse(),
     drawTree: () => renderTree(),
     forget: id => { if (lastDesk === id) lastDesk = null; },
     // What the context menu and the moves out of this file reach for: the
     // page's own functions, so the chunk runs the code a row's button runs.
     get desk() { return desk; },
     folderOf: el => folderOf(el),
-    closeRoot: id => closeRoot(id),
     open: id => showDoc(id, true),
     togglePin, pin,
     refreshTree: pid => refreshTree(pid),
@@ -97,14 +94,15 @@
    *  the row, where the reader was looking, not in a corner. */
   let deskSaid = null;
   /** Where a new desk could go besides the home folder: the folders the
-   *  Inbox's projects were written from, then the folders open under Folders,
-   *  one row a folder, less any that already has a desk -- that one is a
-   *  click on its row away, and a second desk on it is its menu's to offer. */
+   *  Inbox's projects were written from, one row a folder, less any that
+   *  already has a desk -- that one is a click on its row away, and a second
+   *  desk on it is its menu's to offer. Folders opened to read are not
+   *  offered since 1.56 (#214): most were a desk's own, the rest a path a
+   *  panel named once. */
   function deskPlaces() {
     const home = pathKey(state.desks && state.desks.home), taken = new Set(state.desks ? state.desks.desks.map(d => pathKey(d.root)) : []), out = [];
     const put = (abs, f) => { const k = pathKey(abs); if (k && k !== home && !taken.has(k)) { taken.add(k); out.push({ abs, ...f }); } };
     for (const p of state.tree) if (!away.has(String(p.id))) put(p.root, { project: p.id, name: p.name });
-    for (const r of state.browse) put(r.path, { root: r.id, path: "", name: r.name });
     return out;
   }
   /** `+ New desk` asks where, under the button that asked. */
@@ -205,6 +203,10 @@
   /** The desk view. A tab gets the sentence and not the grid: it could never
    *  start anything, and a grid of dead panes would say it might. */
   async function showDesk(id, push = true, slot = 0) {
+    // /desks is Home (1.56, audit B5): Home's cards already say of every
+    // desk what a list here said less of -- name, a count and a path with
+    // nothing between them (A1) -- and a second board would drift from it.
+    if (id == null) return showHome(push);
     if (push) leave();
     const was = state.view === "desk";
     state.view = "desk"; state.deskId = id; state.deskBehind = null; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
@@ -225,7 +227,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, push, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod, peer: peerCtx });
+    desk.open({ id, slot, push, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), browse: (r, p, o) => showBrowse(r, p, true, false, o), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod, peer: peerCtx });
     cornerMod?.draw();
   }
   /** Out of the desk view, to wherever the page is going next. */
@@ -243,11 +245,11 @@
    *  sidebar, and the sidebar's document gets the sidebar's rail. A tab,
    *  which has no desk module, and the desks list, which is no desk, leave
    *  as before too. */
-  function behindDesk(id, over) {
+  function behindDesk(id, over, pane) {
     if (!over) { offDesk(); return; }
     if (state.view === "desk" && state.deskId != null && desk) { state.deskBehind = state.deskId; delete root.dataset.view; }
     if (state.deskBehind == null) { offDesk(); return; }
-    desk.aside(id);
+    desk.aside(id, pane);
     overBar();
   }
   /** The screen a document or a file was opened from, for its ✕ to go back
@@ -274,8 +276,11 @@
    *  Inbox: a deep link, a first load and a new window have no screen
    *  behind them. */
   function backTo() {
-    if (state.deskBehind != null) return { name: desk.back() || "the panels", go: () => showDesk(state.deskBehind, true) };
     let b = history.state && history.state.back;
+    // A file opened from its folder's page goes back to the folder, over a
+    // desk too (#214); the folder's page goes back to the desk.
+    const toFolder = b && b.browse && state.view === "browse" && state.browsePath;
+    if (state.deskBehind != null && !toFolder) return { name: desk.back() || "the panels", go: () => showDesk(state.deskBehind, true) };
     if (!b && state.view === "browse" && state.browseRoot) b = { browse: state.browseRoot.id, path: "" };
     if (b && b.browse) {
       const r = state.browse.find(x => x.id === b.browse);
@@ -303,9 +308,12 @@
   const overEl = $("#chrome .over"), overX = overEl.lastChild;
   function overBar() {
     const file = state.view === "browse" && state.browseRoot && state.browsePath;
-    const on = (state.view === "doc" && (!!state.doc || !!state.opening)) || !!file;
+    // A folder's page read over a desk is something to leave, back to the
+    // desk (#214); one read on its own is where the reader goes back to.
+    const folder = state.view === "browse" && state.browseRoot && !state.browsePath && state.deskBehind != null;
+    const on = (state.view === "doc" && (!!state.doc || !!state.opening)) || !!file || folder;
     overEl.hidden = !on;
-    overEl.firstChild.textContent = !on || state.opening ? "" : file ? state.browsePath.split("/").pop() : state.doc.title;
+    overEl.firstChild.textContent = !on || state.opening ? "" : file ? state.browsePath.split("/").pop() : folder ? state.browseRoot.name : state.doc.title;
     if (!on) return;
     const to = backTo().name, label = `Back to ${to}`;
     overX.dataset.tip = label; overX.dataset.key = state.deskBehind != null ? "ctrl+`" : "esc";
@@ -328,11 +336,11 @@
    *  rather than being told: the events reach tabs, and only a window holds
    *  the capability that answers. */
   const deskDocs = () => { if (desk && ((state.view === "desk" && state.deskId != null) || state.deskBehind != null)) desk.docs(); };
-  /** The folder a row in the browse tree is, in the two shapes it is needed:
+  /** The folder a row in a folder's page is, in the two shapes it is needed:
    *  the root and path every route takes, and the absolute path a desk is
    *  compared by. */
   function folderOf(el) {
-    const d = el.closest(".b-dir > details, .b-root");
+    const d = el.closest(".b-dir > details");
     const r = d && state.browse.find(x => x.id === d.dataset.root);
     if (!r) return null;
     const path = d.dataset.path || "";
@@ -346,7 +354,7 @@
    * browser's menu -- paste, spelling -- and so does a selection in a
    * document, for its Copy. Anywhere else in the window, WebKit's Back,
    * Forward and Reload are not snyvi's, and do not show. */
-  const MENU_AT = ".brand-mark, .b-root > summary, .b-dir > details > summary, a[data-browse], [data-only], a[data-id], a[data-desk], " +
+  const MENU_AT = ".brand-mark, .b-dir > details > summary, a[data-browse], [data-only], a[data-id], a[data-desk], " +
     ".dk-pane, .pn-head, .pn-body, .dk-doc, .dk-list > .dk-note:not(.gone), .dk-pth, .nv-b, #side .sec-head, #rail .sec-head";
   const menuFor = (el, x, y, byKey) => act("open", el, x, y, byKey);
   document.addEventListener("contextmenu", e => {
@@ -589,8 +597,9 @@
     es.addEventListener("changed", ev => {
       const j = parse(ev); if (!j) return;
       if (j.dir) {
-        reloadTree(browseEl.querySelector(`.b-tree[data-root="${j.root}"][data-path="${CSS.escape(j.path)}"]`));
-        if (browsing() && state.browseRoot.id === j.root && !state.browsePath && j.path === (state.browseIn || "")) showBrowse(j.root, j.path && j.path + "/", false);
+        // A folder in the tree, on the folder's page or beside a file read
+        // from it: that level listed again in place.
+        if (browseMod && browsing()) browseMod.changed(browseCtx(), j);
         return;
       }
       if (browsing() && state.browseRoot.id === j.root && state.browsePath === j.path) refreshBrowsed();
@@ -622,7 +631,6 @@
     es.addEventListener("browse", ev => {
       const j = parse(ev); if (!j) return;
       state.browse = j.roots || [];
-      renderBrowse();
     });
     es.addEventListener("pinned", async () => { await refreshTree(); deskDocs(); });
     // A document taken off a desk's list, or put back, in another window.

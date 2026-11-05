@@ -546,6 +546,15 @@ impl Browser {
         }
         let root = self.get(id).context("no such browse root")?;
         let root_path = PathBuf::from(&root.path);
+        // A desk at the home folder reads it one level at a time and is
+        // never walked whole: snyvi does not scan ~ (#214, the folder page's
+        // Find is off there too).
+        if dirs::home_dir()
+            .and_then(|h| h.canonicalize().ok())
+            .is_some_and(|h| h == root_path)
+        {
+            bail!("snyvi does not search your home folder");
+        }
         let mut out = vec![];
         for entry in ignore::WalkBuilder::new(&root_path)
             .parents(true)

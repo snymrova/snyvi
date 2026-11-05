@@ -180,13 +180,17 @@ pub const FAILS_TO_STOP: u8 = 3;
 // --- the layout -----------------------------------------------------------
 
 /// The left's sections, in the order a new reader has them: today's.
-/// `widgets` is the slot every global widget sits in, together.
-pub const LEFT: [&str; 4] = ["inbox", "desks", "folders", "widgets"];
+/// `widgets` is the slot every global widget sits in, together. Folders was
+/// one until 1.56: a folder opens through its desk now (#214), so a stored
+/// layout that names it, shown or hidden, loses it here.
+pub const LEFT: [&str; 3] = ["inbox", "desks", "widgets"];
 /// The right's, on a desk. `widgets` is the slot the desk's widgets sit in.
 /// Your turn was `turn`, fixed first, until 1.32: it waits in the desk's
 /// corner now, so a stored layout that names it loses it here (`order`
-/// drops an id it does not know).
-pub const RIGHT: [&str; 5] = ["panels", "points", "docs", "notes", "widgets"];
+/// drops an id it does not know). Since 1.56 the notes -- the change and
+/// the lines it carries -- come before the documents, and Points after
+/// (the builder's audit, B6): a reader who arranged the rail keeps theirs.
+pub const RIGHT: [&str; 5] = ["panels", "notes", "docs", "points", "widgets"];
 
 /// Which sections each side has, in order, and which of them are hidden. A
 /// section's id is unique on its side; `widgets` is on both, so a hidden

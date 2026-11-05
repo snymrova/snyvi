@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await routineAct(a, b, d))) return;
+    if (d && (changeAct(a, b, d) || await folderAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -174,6 +174,28 @@ async function act(b, byKey) {
         () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/restore`, {}))))) await getNotes(d.id, true);
     }
   } catch (e) { ctx.toast(`Could not ${VERB[a] || "do it"}`, e); }
+}
+
+/** A line's gate (1.56): a click on the text opens it under the row, and
+ *  Approve there is the plan's own Approve (`/plans/{doc}/approve`); any
+ *  other press closes it and goes on to what it was. */
+async function gateAct(a, b, d) {
+  if (a !== "note-gate" && a !== "note-ok") { gateOpen = 0; return false; }
+  const x = noteList.find(y => y.id === +b.dataset.n);
+  if (a === "note-gate") {
+    gateOpen = gateOpen === x?.id ? 0 : x?.id || 0;
+    rail();
+    if (gateOpen) ctx.tocEl.querySelector(".dk-gate button")?.focus();
+    return true;
+  }
+  gateOpen = 0;
+  if (!x) return true;
+  const undo = b.dataset.undo === "1", was = x.ok_at;
+  x.ok_at = undo ? 0 : Date.now() / 1000;
+  rail();
+  if (await told(b.dataset, `n${x.id}`, undo ? "Could not take it back" : "Could not approve it", () => { x.ok_at = was; },
+    () => ctx.api(`/api/desks/${d.id}/plans/${encodeURIComponent(b.dataset.doc)}/approve`, { undo }))) await getNotes(d.id, true);
+  return true;
 }
 
 /** A line's date (1.47): its chip opens a few times to move it to, and one
@@ -520,11 +542,36 @@ function keys(e) {
 
 const onResize = () => { if (current()) layout(); };
 
+/** The head's folder button (#214): the desk's own folder, read over the
+ *  desk. A folder moved or deleted on disk says so on the button itself,
+ *  where the click was, and the next click asks again. */
+async function folderAct(a, b, d) {
+  if (a !== "folder") return false;
+  let j;
+  try { j = await ctx.api(`/api/desks/${d.id}/folder`, {}); }
+  catch (e) {
+    b.classList.add("gone");
+    b.dataset.tip = ctx.sayErr(e).why;
+    b.dataset.tipSub = "moved or deleted on disk · the desk is kept";
+    return true;
+  }
+  b.classList.remove("gone");
+  // The root by its id, and the root itself: the `browse` event that lists
+  // it may not be in yet.
+  await ctx.browse(j.root.id, "", { over: d.id, root: j.root });
+  return true;
+}
+
 // ---------- the seam ----------
 
 /** The document the desk stepped aside for, or null while the desk is the
- *  page. */
+ *  page. A folder or a file read over the desk (#214) is `b:<root>:<path>`,
+ *  which names no row on the rail. */
 let reading = null;
+/** The panel a page read over the desk was opened from when it is no
+ *  document that panel sent: a path Ctrl-clicked in it (#214). Its ✕ goes
+ *  back there, as a sent document's does (`sentFrom`). */
+let readFrom = null;
 
 function detach() {
   clearTimeout(retry);
@@ -576,7 +623,7 @@ export function open(c) {
     docList = []; docsAt = null; docsAll = false; claudeAsk = null; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
     focused = null; full = false; keysClose(); drawerOn = null; backField = false;
   }
-  deskId = c.id; reading = null;
+  deskId = c.id; reading = null; readFrom = null;
   fromBar();
   // Home's "last touched" and the desk it offers to pick up start here.
   if (c.id != null) c.api(`/api/desks/${c.id}/visit`, {}).catch(() => {});
@@ -739,7 +786,8 @@ async function switchPanel(v, account, label, renewed) {
 export function actions(el) {
   const R = "rule", d = current();
   if (!d) return null;
-  const card = el.closest(".dk-pth");
+  // The chip on a panel's row, or the change's own row (22-change.js).
+  const card = el.closest(".dk-pth, .dk-change");
   if (card) return threadMenu(card);
   const lk = el.closest(".dk-lk-more, .dk-lk");
   if (lk) return linksMenu(lk);
@@ -875,8 +923,10 @@ export function update(desks) {
  *  and the rail stays the desk's, with the document's row marked. The panes
  *  keep their socket and their scrollback -- a frame lands on a pane that is
  *  simply not in the page -- so coming back is a redraw, not a reconnect. */
-export function aside(docId) {
+export function aside(docId, from = null) {
   if (!ctx || deskId == null) return;
+  // A page opened from the one before it keeps the panel that one came from.
+  if (from || reading == null) readFrom = from;
   reading = docId;
   pace();
   delete ctx.root.dataset.full;
@@ -890,7 +940,7 @@ export function close() {
   firstStop();
   say({ t: "watch", panes: [] });
   delete ctx.root.dataset.full;
-  deskId = null; reading = null;
+  deskId = null; reading = null; readFrom = null;
   fromBar();
   for (const v of [...views.values()]) dropView(v);
   focused = null;

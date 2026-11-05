@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS + BACK_CSS;
+  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS + BACK_CSS + CHANGE_CSS;
   document.head.append(s);
 }
 
@@ -163,6 +163,15 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-ev { padding: 0 4px; border: 0; background: none; font: inherit; font-size: var(--fs-micro); color: var(--accent); cursor: pointer; }
 .dk-ev:hover { text-decoration: underline; }
 .dk-root { color: var(--fg-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The path as the door to the desk's folder (#214): framed in the rule, the
+ * accent on hover and while the folder is the page. A folder gone from disk
+ * is struck through, the tip saying why; nothing about it changes size. */
+.dk-root-b { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 40ch; padding: 1px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; cursor: pointer; transition: color var(--t), border-color var(--t); }
+.dk-root-b svg { flex: none; }
+.dk-root-t { overflow: hidden; text-overflow: ellipsis; }
+.dk-root-b:hover, .dk-root-b:focus-visible { color: var(--fg); border-color: var(--accent); }
+.dk-root-b.gone .dk-root-t { text-decoration: line-through; }
+.dk-root-b.gone { color: var(--warn); }
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
 .dk-tabs button { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 2px 5px; border-radius: var(--r-xs); }
 .dk-tabs button.on { color: var(--accent); background: var(--accent-bg); }
@@ -602,6 +611,20 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-meta .dk-marks > .dk-due.now { color: var(--accent); font-weight: 600; }
 .dk-meta .dk-marks > .dk-due.late { color: var(--warn); font-weight: 600; }
 .dk-meta .dk-marks > .dk-stage.planned.ok { color: var(--ok); }
+/* The stage in words (1.56): last in the row, and the one mark that gives
+   way, so the date and the number before it never do. */
+.dk-meta .dk-marks > .dk-stage.words { flex: 0 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-meta .dk-marks > .dk-stage.words svg { vertical-align: -2px; margin-right: 2px; }
+.dk-meta .dk-marks > .dk-stage.planned.words:not(.ok) { color: var(--accent); }
+/* A line's gate (1.56): under the row, over the rows below. */
+.dk-note > .dk-gate { position: absolute; z-index: var(--z-pop, 30); top: calc(100% - 2px); left: 27px; right: 8px; display: grid; gap: 6px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); font-size: var(--fs-micro); color: var(--fg-2); }
+.dk-gate p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.dk-gate-w { color: var(--fg); font-weight: 600; }
+.dk-gate-t { color: var(--fg-3); }
+.dk-gate-acts { display: flex; flex-wrap: wrap; gap: 4px; }
+.dk-gate-acts > button { height: 22px; padding: 0 8px; border-radius: var(--r-xs); background: var(--rule); font-size: var(--fs-micro); color: var(--fg); }
+.dk-gate-acts > button:hover { background: var(--rule-2); }
+.dk-gate-acts > button.pri { background: var(--accent); color: var(--on-accent); }
 .dk-note > .dk-due-pop { position: absolute; z-index: var(--z-pop, 30); top: calc(100% - 2px); left: 27px; display: grid; gap: 1px; min-width: 140px; padding: 4px; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
 .dk-due-pop > button { height: 24px; padding: 0 8px; border-radius: var(--r-xs); text-align: left; font-size: var(--fs-micro); color: var(--fg-2); }
 .dk-due-pop > button:hover, .dk-due-pop > button:focus-visible { background: var(--rule); color: var(--fg); }

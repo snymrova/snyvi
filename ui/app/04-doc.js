@@ -208,6 +208,9 @@
     const place = placeOf();
     history.replaceState({ ...(history.state || {}), place }, "", location.pathname + location.hash);
     if (state.view === "doc") keepPlace(state.doc, place);
+    // A file read from disk keeps its place the same way (#214), by its
+    // real path, so every way to it lands there and not only Back.
+    else keepPlace({ id: `b:${state.browseRoot.path}/${state.browsePath}` }, place);
   }
   /* Where each document was left, kept past this page: every way of opening
    * one -- the tree, the queue, n, Home, Ctrl K, a restart -- goes back
@@ -235,13 +238,16 @@
 
   /* A folder's page, and a file read from disk, are ui/browse.js's:
    * fetched the first time one is opened, since most readers read what their
-   * agents sent. The rows in the sidebar's Folders are this file's. */
+   * agents sent. Since 1.56 a folder is read through its desk (#214): the
+   * desk head's folder button, a path Ctrl-clicked in a panel. */
   let browseMod = null, browseLoading = null;
   const browseUse = () => (browseLoading ||= chunk("browse").then(m => (browseMod = m), e => { browseLoading = null; throw e; }));
-  const browseCtx = () => ({ state, docEl, metaEl, main, esc, rel, fmtSize, toast, leave, offDesk, setPreview, swapIn, applyPreview, afterRender, afterRefresh,
-    placeAt, placeOf, kept, cameFrom, jumpToHash, lineHash, browsing, previewButton, rawUrl });
-  function showBrowse(rootId, path, push = true, fromHistory = false) {
-    return browseUse().then(m => m.show(browseCtx(), rootId, path, push, fromHistory), e => toast("Could not open the folder", { sub: e }));
+  const browseCtx = () => ({ state, docEl, metaEl, main, esc, rel, fmtSize, toast, leave, offDesk, behindDesk, overBar, setPreview, swapIn, applyPreview, afterRender, afterRefresh,
+    placeAt, placeOf, kept, cameFrom, jumpToHash, lineHash, browsing, previewButton, rawUrl, places, icon, chev, docIco, skRows, noReach, markActive, getJson, tilde });
+  /** `o`: `over`, the desk it is read over, `pane` the panel it came from,
+   *  `root` the root when the page has it before the `browse` event. */
+  function showBrowse(rootId, path, push = true, fromHistory = false, o = {}) {
+    return browseUse().then(m => m.show(browseCtx(), rootId, path, push, fromHistory, o), e => toast("Could not open the folder", { sub: e }));
   }
 
   /* Ctrl-click on a path, in the reader and in a desk's panels, is
@@ -249,7 +255,7 @@
    * the capability, and never in a tab, which cannot ask. */
   let pathsLoading = null;
   const pathsUse = () => (pathsLoading ||= chunk("paths").then(m => m.init({ api: deskApi, state, docEl, toast,
-    browse: (r, p) => showBrowse(r, p, true),
+    browse: (r, p, o) => showBrowse(r, p, true, false, o),
     landLine: n => { history.replaceState(history.state, "", `${location.pathname}#L${n}`); jumpToHash(); } }), e => { pathsLoading = null; throw e; }));
   addEventListener("keydown", e => { if (e.key === "Control" && capability && !pathsLoading) pathsUse().catch(() => {}); });
 
@@ -476,10 +482,17 @@
   const verEl = $("#foot-ver");
   if (boot.version) { verEl.textContent = `v${boot.version}`; verEl.hidden = false; }
   verEl.addEventListener("click", () => panel("about"));
+  /** A check that failed, in a few words: the foot's tip says it, and
+   *  About says the rest (about.js `updWhy`, the same tests). The window
+   *  sat a release behind with "failed to lookup address" in its health
+   *  and nothing amber anywhere (1.56, audit A3). */
+  const updOff = e => /HTTP 404/.test(e) ? "the release is not there yet" : /HTTP|dns|resolve|lookup|connect|timed? ?out|network/i.test(e) ? "no network" : e.split(/[:(]/)[0].trim();
   function setUpd(u) {
     u = u && typeof u === "object" ? u : null;
+    const off = !!(u && u.error && !u.show && !u.restart && !u.restarting);
     verEl.classList.toggle("upd", !!(u && u.show));
-    verEl.dataset.tipSub = u && u.show ? "an update is waiting" : "";
+    verEl.classList.toggle("off", off);
+    verEl.dataset.tipSub = u && u.show ? "an update is waiting" : off ? `Couldn't check for updates · ${updOff(u.error)}` : "";
     if (!verEl.dataset.tipSub) delete verEl.dataset.tipSub;
     if ((u && (u.show || u.restart || u.restarting || Date.now() / 1e3 - (u.last_applied || 0) < 86400)) || !updEl.hidden)
       panelMod().then(m => m.pill(updEl, u, updCtx()), () => { panelLoading = null; });

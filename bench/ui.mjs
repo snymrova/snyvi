@@ -302,6 +302,7 @@ async function main() {
     await section("panels in the back: a chip, a drawer, one that dies", () => backPanelRows(cdp, base));
     await section("#187: back from a page is back to the panel that sent it", () => senderRows(cdp, base, token));
     await section("#188: files by name in ⌘K", () => findRows(cdp, base, token, env, tmp));
+    await section("#214: a desk opens its own folder", () => deskFolderRows(cdp, base, token, env, tmp));
     await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -777,7 +778,7 @@ async function sideRailRows(p, url, arrive) {
   const rows = [];
   await p.goto(url);
   await p.pointerAway();
-  const HOME = ["inbox-row", "tree", "desk-nav", "browse-nav", "widgets-nav", "pop"];
+  const HOME = ["inbox-row", "tree", "desk-nav", "widgets-nav", "pop"];
   // The fold eases over 160 ms; the widths below are read where it lands.
   const eased = () => p.ev(`Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => 0))).then(() => 1)`);
   await p.press("\\");
@@ -789,7 +790,8 @@ async function sideRailRows(p, url, arrive) {
   const opened = [], broke = [];
   // The Inbox's icon brings its list as well: there is no Projects icon
   // since the Inbox became one list of documents (#206).
-  for (const [sec, id] of [["inbox", "inbox-row"], ["desks", "desk-nav"], ["browse", "browse-nav"]]) {
+  // Folders left the sidebar in 1.56 (#214), and its icon with it.
+  for (const [sec, id] of [["inbox", "inbox-row"], ["desks", "desk-nav"]]) {
     if (!(await p.ui("vis", `#rail-nav [data-pop="${sec}"]`))) { broke.push(`${sec}: no icon`); continue; }
     await p.clickOn(`#rail-nav [data-pop="${sec}"]`);
     const m = await p.ev(`({ in: !!document.querySelector("#pop > #${id}"), list: !!document.querySelector("#pop > #tree"), shown: window.__ui.vis("#pop"), left: Math.round(document.querySelector("#pop").getBoundingClientRect().left), focus: window.__ui.focus() })`);
@@ -802,16 +804,16 @@ async function sideRailRows(p, url, arrive) {
     else if (back.pop || back.on !== sec) broke.push(`${sec}: Escape left ${back.pop ? "it open" : `focus on ${back.on}`}`);
     else opened.push(sec);
   }
-  rows.push(["each icon opens its section", broke.length === 0 && opened.length >= 3, broke.length ? broke.join("; ") : `${opened.join(", ")}: beside the rail, focus in, Escape back to the icon`]);
+  rows.push(["each icon opens its section", broke.length === 0 && opened.length >= 2 && !(await p.ui("vis", '#rail-nav [data-pop="browse"]')), broke.length ? broke.join("; ") : `${opened.join(", ")}: beside the rail, focus in, Escape back to the icon`]);
 
   // One at a time: a second icon closes the first.
   await p.clickOn('#rail-nav [data-pop="inbox"]');
-  await p.clickOn('#rail-nav [data-pop="browse"]');
-  const one = await p.ev(`({ pop: document.documentElement.dataset.pop, tree: document.querySelector("#tree").parentElement.id, browse: document.querySelector("#browse-nav").parentElement.id })`);
+  await p.clickOn('#rail-nav [data-pop="desks"]');
+  const one = await p.ev(`({ pop: document.documentElement.dataset.pop, tree: document.querySelector("#tree").parentElement.id, desks: document.querySelector("#desk-nav").parentElement.id })`);
   await p.click(640, 400);
   const outside = await p.ev(`document.documentElement.dataset.pop || ""`);
-  rows.push(["one popover at a time, a click outside closes it", one.pop === "browse" && one.tree === "trees" && one.browse === "pop" && outside === "",
-    one.pop !== "browse" || one.browse !== "pop" ? "the second icon opened nothing" : one.tree !== "trees" ? "the first section stayed in the popover" : outside ? "a click outside left it open" : "the second replaces the first; a click beside it closes it"]);
+  rows.push(["one popover at a time, a click outside closes it", one.pop === "desks" && one.tree === "trees" && one.desks === "pop" && outside === "",
+    one.pop !== "desks" || one.desks !== "pop" ? "the second icon opened nothing" : one.tree !== "trees" ? "the first section stayed in the popover" : outside ? "a click outside left it open" : "the second replaces the first; a click beside it closes it"]);
 
   // The number on the inbox is the number waiting.
   await arrive();
@@ -831,7 +833,8 @@ async function sideRailRows(p, url, arrive) {
   await p.ev(`document.querySelector('#rail-nav [data-pop="inbox"]').focus()`);
   await p.press("ArrowDown");
   const walked = await p.ev(`document.activeElement?.dataset.pop || ""`);
-  const want = ["inbox", "desks", "browse", "rail-live", "rail-search"];
+  // No folder icon since 1.56 (#214): a folder is read through its desk.
+  const want = ["inbox", "desks", "rail-live", "rail-search"];
   const missed = want.filter(k => !tabbed.has(k));
   rows.push(["Tab reaches every icon, the arrows walk them", missed.length === 0 && walked === "desks",
     missed.length ? `never reached ${missed.join(", ")}` : walked !== "desks" ? `↓ from the inbox went to ${walked || "nothing"}` : "every icon a stop, ↓ to the next"]);
@@ -1622,32 +1625,7 @@ async function lossRows(p, base, token, arrive, browsed) {
     !(await refused(p)) ? "the button never asked the daemon" : pinned.btn !== "Pin" ? `the button reads "${pinned.btn}"` : pinned.dot ? "the row has its ● anyway" : !pinned.err ? "nothing said it failed" : `still "Pin", no ●, and "${pinned.err}"`]);
   await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
 
-  // Close folder: a ghost with its Undo where the row was, and the Undo
-  // opens the same folder again. Refused, the row stays and says so.
-  const root = browsed.replace(/^.*\/b\//, "").replace(/\/.*$/, "");
-  const open = () => p.ev(`fetch("/api/browse").then(r => r.text()).then(t => t.includes(${JSON.stringify(root)}))`);
-  const rowOf = `#browse-nav .b-root[data-root="${root}"]`;
-  await p.goto(`${origin}/`);
-  await p.pointerAway();
-  await until(`!!document.querySelector(${JSON.stringify(rowOf)})`);
-  await p.hoverOn(`${rowOf} > summary`);
-  await p.clickOn(`${rowOf} [data-close]`);
-  await sleep(500);
-  const shut = await p.ev(`(() => { const g = document.querySelector("#browse-nav .b-ghost"); return g ? g.textContent : null; })()`), closed = !(await open());
-  if (shut) await p.clickOn("#browse-nav .b-ghost [data-reopen]");
-  const reopened = !!shut && await until(`!!document.querySelector(${JSON.stringify(rowOf)})`) && await open();
-  rows.push(["close folder → ghost; Undo reopens it", closed && !!shut && reopened,
-    !closed ? "the daemon still has the folder open" : !shut ? "the row went with no ghost" : reopened ? `"${shut}", and the Undo opened the same folder again` : "the Undo did not bring the folder back"]);
-  await p.pointerAway();
-  await sleep(300);
-  await refuse(p, "POST", /\/close$/);
-  await p.hoverOn(`${rowOf} > summary`);
-  await p.clickOn(`${rowOf} [data-close]`);
-  await sleep(400);
-  const kept = await p.ev(`!!document.querySelector(${JSON.stringify(rowOf)})`), no = await p.ev(`document.querySelector("#toasts .toast[role=alert] .t")?.textContent || null`);
-  rows.push(["close folder refused → row stays, with the error", await refused(p) && kept && /^Could not close/.test(no || ""),
-    !(await refused(p)) ? "the ✕ never asked the daemon" : !kept ? "the row went anyway" : !no ? "nothing said it failed" : `the row is there, and beside its ✕: "${no}"`]);
-  await p.ev(`document.querySelector("#toasts .toast .tx")?.click()`);
+  // Close folder and its Undo went with the sidebar's Folders in 1.56 (#214).
 
   // The Inbox, not sent: a line that says so, with its Retry -- not Welcome,
   // which is what an empty library looks like.
@@ -1812,7 +1790,7 @@ async function backRows(p, browsed) {
   const root = browsed.replace(/^.*\/b\//, "/b/").replace(/\/$/, "");
   await p.goto(browsed);
   await p.pointerAway();
-  await p.clickOn(`.inbox a[data-path="notes.md"]`);
+  await p.clickOn(`.fp-l a[data-path="notes.md"]`);
   await until(`location.pathname.endsWith("/notes.md")`);
   const b2 = await bar();
   await p.clickOn("#chrome .over-x");
@@ -1916,7 +1894,8 @@ async function sidebarsRows(p, token) {
   const kept = async () => (await (await fetch(`${origin}/api/widgets`, { headers: { authorization: `Bearer ${token}` } })).json()).layout;
   const cap = (await (await fetch(`${origin}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
   const listed = () => p.ev(`[...document.querySelectorAll('.sb-list[data-side="left"] .sb-row')].map(r => r.dataset.sb.split(":")[1]).join(" ")`);
-  const onLeft = () => p.ev(`[...document.querySelectorAll("#trees > #inbox-row, #trees > #desk-nav, #trees > #browse-nav")].map(n => ({ "inbox-row": "inbox", "desk-nav": "desks", "browse-nav": "folders" })[n.id]).join(" ")`);
+  // Folders left the sidebar in 1.56 (#214): the left is Inbox, Desks, Widgets.
+  const onLeft = () => p.ev(`[...document.querySelectorAll("#trees > #inbox-row, #trees > #desk-nav, #trees > #widgets-nav")].map(n => ({ "inbox-row": "inbox", "desk-nav": "desks", "widgets-nav": "widgets" })[n.id]).join(" ")`);
   const errs = [];
   await p.goto(`${origin}/sidebars#cap=${cap}`);
   await until(`!!document.querySelector('.sb-row[data-sb="left:inbox"]')`);
@@ -1927,35 +1906,35 @@ async function sidebarsRows(p, token) {
   await sleep(500);
   const k1 = await kept();
   errs.push(...await p.ev("window.__sbErr"));
-  rows.push(["Alt+↓ on /sidebars moves Inbox down, and the daemon keeps it", k1.left.join(" ") === "desks inbox folders widgets",
+  rows.push(["Alt+↓ on /sidebars moves Inbox down, and the daemon keeps it", k1.left.join(" ") === "desks inbox widgets",
     `listed "${before}" → "${await listed()}", the daemon kept "${k1.left.join(" ")}"${errs.length ? `; threw: ${errs[0]}` : ""}`]);
   const focus = await p.ev(`document.activeElement?.dataset?.sb || document.activeElement?.tagName`);
   rows.push(["the focus stays on the row that moved", focus === "left:inbox", `on ${focus}`]);
-  rows.push(["the left sidebar follows at once", (await onLeft()) === "desks inbox folders", `"${await onLeft()}"`]);
+  rows.push(["the left sidebar follows at once", (await onLeft()) === "desks inbox widgets", `"${await onLeft()}"`]);
 
-  // A drag, as the page receives one: Folders dropped on Desks.
+  // A drag, as the page receives one: Widgets dropped on Inbox.
   await p.ev(`(() => {
     const dt = new DataTransfer(), at = s => document.querySelector('.sb-row[data-sb="left:' + s + '"]');
-    at("folders").focus();   // the press that starts a drag focuses the row
-    at("folders").dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
-    at("desks").dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
-    at("desks").dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
-    at("folders")?.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt }));
+    at("widgets").focus();   // the press that starts a drag focuses the row
+    at("widgets").dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+    at("inbox").dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    at("inbox").dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+    at("widgets")?.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt }));
     return 1;
   })()`);
   await sleep(500);
   const k2 = await kept();
-  rows.push(["a drag saves too", k2.left.join(" ") === "folders desks inbox widgets", `the daemon kept "${k2.left.join(" ")}"`]);
+  rows.push(["a drag saves too", k2.left.join(" ") === "desks widgets inbox", `the daemon kept "${k2.left.join(" ")}"`]);
 
   await p.goto(`${origin}/sidebars`);
   await until(`!!document.querySelector('.sb-row[data-sb="left:inbox"]')`);
-  rows.push(["/sidebars read again shows the order it was left in", (await listed()) === "folders desks inbox widgets", `"${await listed()}"`]);
+  rows.push(["/sidebars read again shows the order it was left in", (await listed()) === "desks widgets inbox", `"${await listed()}"`]);
 
   const under = await p.ev(`(() => { const b = document.querySelector("[data-reset]"); b.scrollIntoView({ block: "nearest" }); const r = b.getBoundingClientRect(), t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return t === b ? "" : (t?.id || t?.className || t?.tagName || "nothing"); })()`);
   await p.clickOn("[data-reset]");
   await sleep(500);
   const k3 = await kept();
-  rows.push(["Reset to default puts today's order back", k3.left.join(" ") === "inbox desks folders widgets" && (await onLeft()) === "inbox desks folders",
+  rows.push(["Reset to default puts today's order back", k3.left.join(" ") === "inbox desks widgets" && (await onLeft()) === "inbox desks widgets",
     `the daemon kept "${k3.left.join(" ")}", the left reads "${await onLeft()}"${under ? `; over the button: ${under}` : ""}`]);
   await p.ev(`sessionStorage.removeItem("snyvi.cap"), 1`);
   return rows;
@@ -2092,9 +2071,10 @@ async function revealRows(p, browsed, folder, tmp) {
 }
 
 /** #91: a folder Ctrl-clicked in what is being read opens on snyvi's folder
- *  page, never the file manager; a ▸ row there opens the folder it names, ▴ ..
- *  goes back up, and an address ending in `/` is that folder's listing. In a
- *  tab of its own, with the capability Ctrl-click asks the daemon with. */
+ *  page, never the file manager. Since 1.56 (#214) the page is a tree: a
+ *  folder unfolds in place, the folder's name folds it all, and an address
+ *  ending in `/` is that folder, unfolded and marked. In a tab of its own,
+ *  with the capability Ctrl-click asks the daemon with. */
 async function folderRows(cdp, base, browsed) {
   const rows = [];
   const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
@@ -2105,24 +2085,24 @@ async function folderRows(cdp, base, browsed) {
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
   const mouse = async (type, x, y, extra = {}) => cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra }, sessionId);
   const ctrl = type => cdp.send("Input.dispatchKeyEvent", { type, key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17, modifiers: type === "keyUp" ? 0 : 2 }, sessionId);
-  const listed = `[...document.querySelectorAll("#doc .inbox .title")].map(t => t.textContent).join(" · ")`;
+  const listed = `[...document.querySelectorAll(".fp-l .b-tree:not([hidden]) :is(.b-file .title, .b-dir .nm)")].filter(t => t.getClientRects().length).map(t => t.textContent).join(" · ")`;
+  const shown = path => `!!document.querySelector('.fp-l [data-path="${path}"]')?.getClientRects().length`;
   const at = path => `location.pathname === ${JSON.stringify(path)}`;
   const said = () => q.ev(`[...document.querySelectorAll("#toasts .toast")].map(t => t.textContent).join(" | ")`);
   try {
     await q.goto(`${root}#cap=${cap}`);
-    await until(`/▸ sub/.test(${listed})`);
-    await q.clickOn(`#doc .inbox a[data-path="sub/"]`);
-    const into = await until(`${at(`/b/${id}/sub/`)} && /inner/.test(${listed})`);
-    const list = await q.ev(listed);
-    rows.push(["a ▸ folder on the folder page opens it", into && /▴ \.\./.test(list),
-      into ? `/b/…/sub/: ${list}` : `at ${await q.ev("location.pathname")}, and the page said "${await said()}"`]);
-    await q.clickOn(`#doc .inbox a[data-path=""]`);
-    const up = await until(`${at(`/b/${id}`)} && /▸ sub/.test(${listed})`);
-    rows.push(["and ▴ .. goes back up", up, up ? "the folder's own listing again" : `at ${await q.ev("location.pathname")}`]);
+    await until(shown("sub"));
+    await q.clickOn(`.fp-l details[data-path="sub"] > summary`);
+    const into = await until(shown("sub/inner"));
+    rows.push(["a folder in the tree unfolds in place", into,
+      into ? `sub/ unfolded: ${await q.ev(listed)}` : `at ${await q.ev("location.pathname")}, and the page said "${await said()}"`]);
+    await q.clickOn(`.fp-l [data-fp-top]`);
+    const up = await until(`!document.querySelector(".fp-l details[open]")`);
+    rows.push(["and the folder's name folds it all", up, up ? "everything folded, at the top" : `still open: ${await q.ev(`[...document.querySelectorAll(".fp-l details[open]")].map(d => d.dataset.path).join(" ")`)}`]);
 
     await q.goto(`${root}/sub/inner/`);
-    const loaded = await until(`/deep\\.md/.test(${listed})`);
-    rows.push(["an address ending in / is that folder's listing", loaded, loaded ? await q.ev(listed) : `the page shows "${await q.ev(listed)}"`]);
+    const loaded = await until(`${shown("sub/inner/deep.md")} && !!document.querySelector('.fp-l .fp-here > details[data-path="sub/inner"]')`);
+    rows.push(["an address ending in / is that folder, unfolded and marked", loaded, loaded ? await q.ev(listed) : `the tree shows "${await q.ev(listed)}"`]);
 
     // A path in a file being read, Ctrl-clicked: `inner/` is a folder beside it.
     await q.goto(`${root}/sub/where.md`);
@@ -2138,7 +2118,7 @@ async function folderRows(cdp, base, browsed) {
       const lined = await until(`!!document.querySelector(".path-ul i")`, 30);
       for (const type of ["mousePressed", "mouseReleased"]) await mouse(type, word.x, word.y, { button: "left", clickCount: 1, modifiers: 2 });
       await ctrl("keyUp");
-      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && /deep\\.md/.test(${listed})`);
+      const opened = await until(`${at(`/b/${id}/sub/inner/`)} && ${shown("sub/inner/deep.md")}`);
       const toast = await said();
       rows.push(["a Ctrl-clicked folder opens on the folder page, not the file manager", lined && opened && !/file manager/.test(toast),
         !lined ? "Ctrl never underlined inner/" : !opened ? `at ${await q.ev("location.pathname")}, and the page said "${toast}"` : /file manager/.test(toast) ? `it still says "${toast}"` : "inner/ listed in snyvi, with deep.md in it"]);
@@ -2735,8 +2715,9 @@ async function deskRows(cdp, base, token) {
 
     // #202: a desk's hand counts that desk. 1.54 counted On you across every
     // desk, so each one said 18 or 19 "on this desk" with none of it its own.
-    // A card asked on still-b is in still-a's tray, under On other desks, and
-    // its tip says so; still-a's number does not move.
+    // A card asked on still-b leaves still-a's number where it was, and its
+    // tip says it is on another desk. Since 1.56 the tray is this desk's
+    // own: still-b's card is not in it (Home has every desk's).
     const handN = `document.querySelector("#meta .oy-foot .n, #onyou .oy-pill .n")?.textContent || ""`;
     const nBefore = await p.ev(handN);
     // Only a running panel is an agent's to ask from (`agent_pane`); a
@@ -2750,10 +2731,11 @@ async function deskRows(cdp, base, token) {
     const nAfter = await p.ev(handN);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     if (tipped) await p.clickOn("#meta .oy-foot");
-    const listed202 = tipped && await until(`(() => { const t = document.querySelector("#onyou .oy-tray"); const h = [...(t?.querySelectorAll(".oy-h") || [])].find(e => /On other desks/.test(e.textContent)); return !!h && /bench: a card on still-b/.test(t.textContent.slice(t.textContent.indexOf(h.textContent))); })()`, 30);
-    rows.push(["a desk's hand counts that desk; another desk's card waits in its tray under On other desks", tipped && nAfter === nBefore && listed202,
+    const trayOpen = tipped && await until(`!!document.querySelector("#onyou .oy-tray")`, 30);
+    const listed202 = trayOpen && await p.ev(`!/bench: a card on still-b/.test(document.querySelector("#onyou .oy-tray").textContent)`);
+    rows.push(["a desk's hand counts that desk, and its tray holds that desk's own", tipped && nAfter === nBefore && listed202,
       !t202 ? `the hand-over answered ${JSON.stringify(asked202).slice(0, 120)}, its panel's start ${JSON.stringify(started202).slice(0, 120)}` : !tipped ? "the hand's tip never said what is on other desks" : nAfter !== nBefore ? `still-a's hand went from "${nBefore}" to "${nAfter}" for still-b's card` :
-        !listed202 ? "the tray has no On other desks with still-b's card" : `still-a's hand stayed at "${nBefore}", and the card is under On other desks`]);
+        !trayOpen ? "the hand opened no tray" : !listed202 ? "still-b's card is in still-a's tray" : `still-a's hand stayed at "${nBefore}", and still-b's card is not in its tray`]);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     if (t202) await post(`/api/desks/${db}/turns/${t202}/remove`, {}).catch(() => {});
     await p.pointerAway();
@@ -3593,7 +3575,8 @@ async function deskLossRows(cdp, base, token) {
     await sleep(400);
     const ghost = await p.ev(`(() => { const g = document.querySelector("#toc .dk-note.gone"); return g ? { text: g.querySelector(".nm").textContent, undo: !!g.querySelector("[data-a=note-back]") } : null; })()`);
     if (ghost?.undo) await p.clickOn("#toc .dk-note.gone [data-a=note-back]");
-    const back = ghost?.undo && await until(`document.querySelector("#toc [data-a=note-edit]")?.textContent === "a line to tick"`);
+    // The words are the line's name; the pen beside it (1.56) has none.
+    const back = ghost?.undo && await until(`[...document.querySelectorAll("#toc .dk-note:not(.gone) .nm .nm-t")].some(t => t.textContent === "a line to tick")`);
     rows.push(["empty edit → ghost with Undo; Undo brings the text back", !!back,
       !ghost ? "the line went with no ghost" : !ghost.undo ? `the ghost "${ghost.text}" offers no Undo` : back ? `"${ghost.text} · Undo", and the Undo put the words back` : "the Undo did not bring the line back"]);
 
@@ -4218,7 +4201,7 @@ async function backPanelRows(cdp, base) {
  *  lands where the reader was. */
 /** #188: ⌘K finds files by name in the desks' folders, under the documents,
  *  and a file picked opens in the folder reader, its desk's folder opened
- *  under Folders on the way. The folder is a desk's and nothing more: it is
+ *  for reading on the way. The folder is a desk's and nothing more: it is
  *  opened for reading only to make the desk on it, and closed again. */
 async function findRows(cdp, base, token, env, tmp) {
   const rows = [];
@@ -4272,7 +4255,7 @@ async function findRows(cdp, base, token, env, tmp) {
     const roots = await (await fetch(`${base}/api/browse`)).json().catch(() => []);
     const folder = roots.find(r => r.path && r.path.endsWith("find-188"));
     rows.push(["picked, it opens in the folder reader", opened && !!folder,
-      !opened ? `the page is on ${await p.ev("location.pathname")}` : !folder ? "its desk's folder is not under Folders" : "the file, under its desk's folder, now a row under Folders"]);
+      !opened ? `the page is on ${await p.ev("location.pathname")}` : !folder ? "its desk's folder was not opened for reading" : "the file, under its desk's folder"]);
 
     const tabAsks = (await fetch(`${base}/api/find?q=planxy188`)).status;
     rows.push(["a tab without the window's key lists no files", tabAsks === 403, `the route answered ${tabAsks}`]);
@@ -4280,6 +4263,74 @@ async function findRows(cdp, base, token, env, tmp) {
     await post(`/api/desks/${desk}/delete`).catch(() => {});
     const roots = await (await fetch(`${base}/api/browse`)).json().catch(() => []);
     for (const r of roots.filter(r => r.path && r.path.endsWith("find-188"))) await post(`/api/browse/${r.id}/close`, {}, TK).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** #214: the path in a desk's head opens the desk's folder over the desk,
+ *  as a tree, and the ✕ goes back to the panels; the folder comes back as
+ *  it was left. The sidebar has no Folders, and a layout saved with it
+ *  draws without it. The desk's folder is closed for reading first, so the
+ *  button is what opens it. */
+async function deskFolderRows(cdp, base, token, env, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const TK = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const dir = join(tmp, "folder-214");
+  mkdirSync(join(dir, "sub", "inner"), { recursive: true });
+  writeFileSync(join(dir, "top.md"), "# Top\n");
+  writeFileSync(join(dir, "sub", "inner", "deep.md"), "# Deep\n");
+  const rid = execFileSync(BIN, ["browse", dir, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop().match(/\/b\/([^/?#]+)/)[1];
+  const made = await post("/api/desks", { root: rid, path: "" }), desk = made.desk ? made.desk.id : made.id;
+  await post(`/api/browse/${rid}/close`, {}, TK);
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const sub = `.fp .b-dir > details[data-path="sub"]`;
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    const door = await until(`!!document.querySelector(".dk-root-b")`);
+    const left = await p.ev(`({ folders: !!document.querySelector("#browse-nav"), icon: !!document.querySelector('#rail-nav [data-pop="browse"]') })`);
+    rows.push(["the sidebar has no Folders, and its rail no folder icon", !left.folders && !left.icon,
+      left.folders ? "#browse-nav is still in the sidebar" : left.icon ? "the rail still has the folder icon" : "Inbox, Desks, Widgets"]);
+    if (door) await p.clickOn(".dk-root-b");
+    const over = door && await until(`location.pathname.startsWith("/b/") && !!document.querySelector('${sub}')`);
+    const seen = await p.ev(`({ x: !document.querySelector("#chrome .over").hidden, tip: document.querySelector("#chrome .over")?.lastChild?.dataset.tip || "", rail: !!document.querySelector('#toc [data-sec="panels"]') })`);
+    rows.push(["the head's path opens the desk's folder over the desk", over && seen.x && seen.rail,
+      !door ? "no folder button in the desk's head" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "no ✕ in the head" : `the tree, the desk's rail, and "${seen.tip}"`]);
+    if (over) await p.clickOn(`${sub} > summary`);
+    const opened = over && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
+    if (over) await p.clickOn("#chrome .over > :last-child");
+    const back = over && await until(`location.pathname === "/desk/${desk}" && !!document.querySelector(".dk-root-b")`);
+    rows.push(["its ✕ goes back to the panels", back, back ? "the desk, as it was" : `the page is on ${await p.ev("location.pathname")}`]);
+    if (back) await p.clickOn(".dk-root-b");
+    const kept = back && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
+    const mem = await p.ev(`(() => { try { return Object.values(JSON.parse(localStorage.getItem("snyvi.folders") || "{}")).some(m => (m.open || []).includes("sub")); } catch { return false; } })()`);
+    rows.push(["the folder comes back as it was left", opened && kept && mem,
+      !opened ? "sub/ did not unfold" : !kept ? "sub/ came back folded" : !mem ? "nothing was kept for it" : "sub/ unfolded again, kept per folder"]);
+
+    // A file read from the tree reads beside it: the same column, still
+    // unfolded, with the file marked; git says nothing outside a repository.
+    if (kept) await p.ev(`document.querySelector(".fp-l").dataset.probe = "1"`);
+    if (kept) await p.clickOn(`.fp-l a[data-path="top.md"]`);
+    const beside = kept && await until(`!!document.querySelector('.fp-split.fp-file .fp-r article') && !!document.querySelector('.fp-l .b-file.fp-cur a[data-path="top.md"]')`);
+    const same = await p.ev(`!!document.querySelector(".fp-l[data-probe]") && !!document.querySelector('${sub}[open]')`);
+    const marks = await (await fetch(`${base}/api/browse/${rid}/changes`)).json().catch(() => null);
+    rows.push(["a file reads beside the tree, which stays as it was", beside && same && !!marks && !Object.keys(marks).length,
+      !beside ? "top.md did not open beside the tree" : !same ? "the tree was drawn again, folded" : !marks || Object.keys(marks).length ? `changes said ${JSON.stringify(marks)} outside a repository` : "top.md marked, sub/ still unfolded, no marks"]);
+
+    // A layout saved before 1.56, naming Folders shown and hidden.
+    const laid = await p.ev(`fetch("/api/layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ left: ["folders", "inbox", "desks", "widgets"], right: [], hidden: ["folders"] }) }).then(r => r.json())`);
+    rows.push(["a layout saved with Folders keeps the rest without it", !!laid && laid.left.join(" ") === "inbox desks widgets" && !laid.hidden.includes("folders"),
+      `the daemon kept "${laid ? laid.left.join(" ") : "nothing"}"`]);
+  } finally {
+    await post("/api/layout", { left: ["inbox", "desks", "widgets"], right: [], hidden: [] }, TK).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await post(`/api/browse/${rid}/close`, {}, TK).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
   return rows;

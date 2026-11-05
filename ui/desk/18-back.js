@@ -144,7 +144,9 @@ async function sendBack(v, back) {
 let backField = false, backDraft = "", backCaret = 0;
 const backRow = (d, esc) => {
   const full = backViews(d).length >= ctx.desks.in_back;
-  if (backField && !full) return `<form class="dk-backnew"><input spellcheck="false" autocomplete="off" placeholder="npm run dev" aria-label="Command to run in the back" value="${esc(backDraft)}"><button type="submit" class="dk-new">Start</button><button type="button" class="dk-new" data-a="back-new-x">Cancel</button></form>`;
+  // The field says what it is for and where it runs (1.56, audit B7): a
+  // bare `npm run dev` was a mini-language in a placeholder.
+  if (backField && !full) return `<form class="dk-backnew"><input spellcheck="false" autocomplete="off" placeholder="npm run dev · runs in this desk's folder" aria-label="A command to run in the back, in this desk's folder with its keys" data-tip="A command, run in the back" data-tip-sub="in this desk's folder, with its keys, out of the grid: a dev server, a watcher" value="${esc(backDraft)}"><button type="submit" class="dk-new" data-tip="Start it in the back" data-tip-sub="a shell of its own, in this desk's folder">Start</button><button type="button" class="dk-new" data-a="back-new-x">Cancel</button></form>`;
   return `<button type="button" class="dk-new${full ? ` dim" aria-disabled="true` : ""}" data-a="back-new" data-tip="New panel in the back" data-tip-sub="${esc(full ? `The back holds ${ctx.desks.in_back}` : "a dev server, a watcher: running, out of the grid")}">+ In the back…</button>`;
 };
 

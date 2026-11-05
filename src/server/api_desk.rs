@@ -54,7 +54,13 @@ pub(crate) async fn home(
                     crate::onyou::gather(c, now)?,
                 ))
             })
-            .map(|(t, th, du, w, o)| (json!(t), json!(th), json!(du), json!(w), json!(o)))
+            .map(|(t, th, du, w, o)| {
+                // Each card's panel and whether Run can type into it (1.56).
+                let (mut t, mut o) = (json!(t), json!(o));
+                super::api_thread::place_turns(&app, &mut t);
+                super::api_thread::place_turns(&app, &mut o);
+                (t, json!(th), json!(du), json!(w), o)
+            })
             .unwrap_or((null.clone(), null.clone(), null.clone(), null.clone(), null))
     } else {
         (null.clone(), null.clone(), null.clone(), null.clone(), null)
@@ -2303,8 +2309,9 @@ pub(crate) async fn resolve_path(
     // A file or a folder opens in the folder reader: under a folder already
     // open for reading when it is in one, or else under the first of the
     // bases it is in -- the panel's desk, the document's project -- or else
-    // a file's own folder, or the folder itself. A folder opened here is a
-    // row under Folders, as any other.
+    // a file's own folder, or the folder itself. Since 1.56 the sidebar lists
+    // no open folders: one opened here is read over the panel's desk and
+    // listed nowhere (#214).
     let roots: Vec<(String, std::path::PathBuf)> = app
         .browse
         .list()
@@ -2340,4 +2347,39 @@ pub(crate) async fn resolve_path(
     };
     Json(json!({ "kind": kind, "path": shown, "line": found.line, "root": id, "rel": rel }))
         .into_response()
+}
+
+/// The desk's own folder, for the button in its head (#214): the folder
+/// reader rooted at `desk.root`, opened if it is not open yet.
+///
+/// The page names the desk, never a path: the folder is the one snyvi holds
+/// for that desk, so a page cannot reach any other folder through here. It
+/// is behind the desk's gate, as the Ctrl-click is. The sidebar no longer
+/// lists open folders (1.56), so nothing about this shows anywhere but on the
+/// page that asked. A desk whose folder is gone says so in words.
+pub(crate) async fn desk_folder(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(d)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match app.browse.open(std::path::Path::new(&d.root)) {
+        Ok(root) => {
+            emit(&app, "browse", json!({ "roots": app.browse.list() }));
+            Json(json!({ "root": root })).into_response()
+        }
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": format!("{} is not there any more", crate::agents::tilde(std::path::Path::new(&d.root)))
+            })),
+        )
+            .into_response(),
+    }
 }

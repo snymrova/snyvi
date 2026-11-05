@@ -822,9 +822,13 @@ pub(crate) async fn lately(
             v["desk_name"] = json!(at
                 .map(|o| o.name)
                 .or_else(|| { app.store.desk(t.desk_id).ok().flatten().map(|d| d.name) }));
+            // The panel's name and whether Run can type into it (1.56).
+            super::api_thread::place_turn(&app, &mut v);
             v
         })
         .collect();
+    let mut onyou = json!(onyou);
+    super::api_thread::place_turns(&app, &mut onyou);
     Json(json!({
         "rows": rows,
         "unseen": unseen,

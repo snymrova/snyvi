@@ -17,6 +17,7 @@ const ICO = {
   stop: '<rect x="3.5" y="3.5" width="9" height="9" rx="1.5" fill="currentColor" stroke="none"/>',
   play: '<path d="M5 3.5v9l7.5-4.5z" fill="currentColor" stroke="none"/>',
   x: '<path d="M4 4l8 8M12 4l-8 8"/>',
+  branch: '<circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5.5" r="1.8"/><path d="M4 5.3v5.4M12 7.3c0 3-4 2.5-7.2 4"/>',
   doc: '<path d="M9.5 1.5H4.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V4.5z"/><path d="M9.5 1.5v3h3M6 8h4M6 10.5h4"/>',
   pen: '<path d="M11.2 2.8a1.5 1.5 0 0 1 2 2L6 12l-3 1 1-3z"/>',
   back: '<path d="M6.5 3L3 8l3.5 5M3 8h10"/>',
@@ -235,7 +236,8 @@ function rail() {
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>` +
     `<div class="dk-foot">${backRow(d, esc)}</div>`),
-    points: () => pointSec(vs),
+    // Notes before Documents, Points after (1.56, B6; src/widget.rs RIGHT); routines under the notes (19-routine.js).
+    notes: () => noteSec(d) + routineSec(d),
     // The documents. The count is how many, in the accent while some wait
     // to be read; the row's [n] says which panel sent it.
     docs: () => sec("docs", "rail.docs", "Documents", {
@@ -257,8 +259,7 @@ function rail() {
     (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
       (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
         `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "")),
-    // A desk's routines under its notes, as one section (19-routine.js).
-    notes: () => noteSec(d) + routineSec(d),
+    points: () => pointSec(vs),
     widgets: () => widgetSec(d),
   };
   const lay = ctx.layout ? ctx.layout() : null, off = new Set(lay ? lay.hidden : []);
@@ -547,6 +548,8 @@ function noteSec(d) {
     tip: "Notes", sub: "A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.",
     count: left || "", countTip: left ? `${left} open` : "", acts,
   }, errLine("clear", esc, "p") +
+    // The changes first (1.56, 22-change.js): the rows above the lines they carry.
+    changeRows(d, esc) +
     (rows ? `<ul class="dk-list">${rows}</ul>` : notesOff === d.id ? noReach("notes") : "") +
     // The bar for a new line, always at the end of the list, where the line
     // will land: a quiet field until it is clicked, or the head's + is, and
@@ -652,19 +655,23 @@ function noteRow(x, esc) {
   // line is history and they were the loudest marks on it (7c0fc42885).
   // An open line's date comes first: the marks' room cuts from the end, and
   // "overdue" was the word cut to "ove" behind a long stage (N2).
-  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + stageMark(x, esc) + promiseMark(x, esc) + picMark(x, esc);
+  // The stage, in words, comes last (1.56): it is the mark that shrinks.
+  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + promiseMark(x, esc) + picMark(x, esc) + stageMark(x, esc);
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
   const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : "", bare ? "ticked without evidence: needs a look" : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<span class="dk-lead"><button type="button" class="dk-tick${bare ? " bare" : ""}" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
-    `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${linked(x.text, esc)}</span></button>` +
+    // A click on the text opens the line's gate (1.56, audit B2): its
+    // plan and Approve, its thread, its commit and the checks, where a
+    // click used to rewrite it. The pen rewrites, and so does the menu.
+    `<button type="button" class="nm" data-a="${x.done ? "note-edit" : "note-gate"}" data-n="${x.id}" aria-expanded="${gateOpen === x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, x.done ? "click to rewrite" : "click for where it is · the pen rewrites"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${linked(x.text, esc)}</span></button>` +
     `<span class="dk-tail">` +
-    `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
+    `<span class="dk-tools">${x.done ? "" : `<button type="button" data-a="note-edit" data-n="${x.id}" data-tip="Rewrite" aria-label="Rewrite ${esc(x.text)}">${ico("pen")}</button>`}<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
     replyLine(x, esc) +
     `<span class="dk-meta"><button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button>` +
-    `<span class="dk-marks">${marks}</span></span>` + duePop(x, esc) +
+    `<span class="dk-marks">${marks}</span></span>` + duePop(x, esc) + gatePop(x, esc) +
     // A friend's open line says whose it is, on a line of its own; ticked,
     // its "Tell Trapti ✓" is one of the marks above.
     // Their initial, in their colour, as everywhere a friend shows (#123).
@@ -719,13 +726,21 @@ function stageMark(x, esc) {
   // Its check is on the line itself, in the marks' own room (1.37): Works
   // ticks it as yours, Not yet... opens a field for what is still wrong and
   // reopens it. A tick from the circle still works as it always did.
+  // In words, not a tag (1.56, audit B4): "planned", "read" in nine-pixel
+  // type under the text read as a footnote, and the state the reader needs
+  // most -- planned and waiting for their Approve, landed and waiting for
+  // their check -- is what the line is. The sentence shrinks before any
+  // other mark does, and the whole of it is the tip. Home says the same in
+  // fewer words (home.js `stageMark`).
+  const who = /^claude/i.test(x.stage_by || "") ? "Claude" : by;
   const sh = !x.done ? shippedOf(x) : null;
   if (sh) {
     const where = sh.commit ? ` in ${esc(sh.commit.slice(0, 7))}` : sh.pr ? ` in PR #${esc(sh.pr)}` : "";
-    return `<button type="button" class="dk-stage dk-chk ok" data-a="note-works" data-n="${x.id}" data-tip="Shipped${where}: it works" data-tip-sub="ticks it as yours" aria-label="It works: ${esc(x.text)}">✓ works</button>` +
+    return `<span class="dk-stage shipped words" role="img" data-tip="Shipped${where}" data-tip-sub="out on main, waiting for your check" aria-label="Shipped${where}, waiting for your check">shipped${where}</span>` +
+      `<button type="button" class="dk-stage dk-chk ok" data-a="note-works" data-n="${x.id}" data-tip="Shipped${where}: it works" data-tip-sub="ticks it as yours" aria-label="It works: ${esc(x.text)}">✓ works</button>` +
       `<button type="button" class="dk-stage dk-chk" data-a="note-broken" data-n="${x.id}" data-tip="Not yet" data-tip-sub="say what is still wrong; it reopens, and the next agent's brief leads with it" aria-label="Still broken: ${esc(x.text)}">not yet…</button>`;
   }
-  if (st === "reopened") return `<span class="dk-stage reopened" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken; the next agent's brief leads with it" aria-label="Reopened"><span class="w">reopened</span></span>`;
+  if (st === "reopened") return `<span class="dk-stage reopened words" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken; the next agent's brief leads with it" aria-label="Reopened"><span class="w">reopened · you said not yet</span></span>`;
   // In review: past its plan, so the PR says where it is -- unless its agent
   // is still there, working at it. Its checks colour it and are said in the
   // tip. The merge ticks it (thread.rs `seen`).
@@ -733,7 +748,7 @@ function stageMark(x, esc) {
   if (t && t.pr && !t.merged) {
     const tone = /fail|error/i.test(t.ci) ? " fail" : /pass|success/i.test(t.ci) ? " pass" : "";
     const sub = `${t.ci ? `checks ${esc(t.ci)} · ` : ""}merging it ticks this note when its commits name it`;
-    return `<span class="dk-stage pr${tone}" role="img" data-tip="In PR #${esc(t.pr)}" data-tip-sub="${sub}" aria-label="In PR #${esc(t.pr)}${t.ci ? `, checks ${esc(t.ci)}` : ""}"><span class="w">PR #${esc(t.pr)}</span></span>`;
+    return `<span class="dk-stage pr words${tone}" role="img" data-tip="In PR #${esc(t.pr)}" data-tip-sub="${sub}" aria-label="In PR #${esc(t.pr)}${t.ci ? `, checks ${esc(t.ci)}` : ""}"><span class="w">in PR #${esc(t.pr)}${t.ci ? ` · checks ${esc(t.ci)}` : ""}</span></span>`;
   }
   // A plan or a read with nothing since, a day on: its age beside its word,
   // quieter, so a line nobody followed up does not look under way.
@@ -742,10 +757,10 @@ function stageMark(x, esc) {
   // Approved by the reader on the plan's head (1.47): a tick after the word,
   // and its panel goes ahead.
   if (st === "planned" && x.stage_doc && x.ok_at) {
-    return `<button type="button" class="dk-stage planned ok" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}, approved by you ${esc(ctx.relShort(x.ok_at))}" data-tip-sub="its panel goes ahead · click to open the plan" aria-label="Open the approved plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned ✓</span></button>`;
+    return `<button type="button" class="dk-stage planned ok words" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}, approved by you ${esc(ctx.relShort(x.ok_at))}" data-tip-sub="its panel goes ahead · click to open the plan" aria-label="Open the approved plan for ${esc(x.text)}">${ico("doc")}<span class="w">approved · ${who} goes ahead</span></button>`;
   }
   if (st === "planned" && x.stage_doc) {
-    return `<button type="button" class="dk-stage planned${dim}" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="${old ? "nothing since · " : ""}click to open the plan, and Approve it there" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned${age}</span></button>`;
+    return `<button type="button" class="dk-stage planned words${dim}" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="${old ? "nothing since · " : ""}click to open the plan, and Approve it there" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned · waiting for your Approve${age}</span></button>`;
   }
   if (st === "working") {
     // The dot breathes only while that agent is at it; between its turns
@@ -757,9 +772,9 @@ function stageMark(x, esc) {
     const sub = busy ? "" : agent ? "between turns" : "that chat has ended; the work is not out yet";
     // "on it", not "working": a panel's dot says working, and two meanings
     // of one word on one rail read as one (brainstorm b55419f304).
-    return `<span class="dk-stage working${busy ? " busy" : agent ? "" : " ended"}" role="img" data-tip="${say}"${sub ? ` data-tip-sub="${sub}"` : ""} aria-label="${say}"><span class="w">${agent ? "on it" : "in progress"}</span></span>`;
+    return `<span class="dk-stage working words${busy ? " busy" : agent ? "" : " ended"}" role="img" data-tip="${say}"${sub ? ` data-tip-sub="${sub}"` : ""} aria-label="${say}"><span class="w">${busy ? `${who} is on it${at}` : agent ? `${who} has it${at}` : "worked on it · not out yet"}</span></span>`;
   }
-  if (st === "read" || st === "planned") return `<span class="dk-stage read${dim}" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet${old ? " · nothing since" : ""}" aria-label="Read by ${by}"><span class="w">read${age}</span></span>`;
+  if (st === "read" || st === "planned") return `<span class="dk-stage read words${dim}" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet${old ? " · nothing since" : ""}" aria-label="Read by ${by}"><span class="w">read by ${who} · not planned yet${age}</span></span>`;
   return "";
 }
 
@@ -809,6 +824,33 @@ function duePop(x, esc) {
     `<button type="button" role="menuitem" data-a="note-due-set" data-n="${x.id}" data-w="" data-tip="No date" data-tip-sub="the line stays">No date</button>` +
     // Pick a time… (1.48): any date the daemon reads, typed, Enter sets it.
     `<input class="dk-due-in" data-n="${x.id}" maxlength="40" spellcheck="false" placeholder="Pick a time: fri 16" aria-label="Pick a time for ${esc(x.text)}"></span>`;
+}
+
+/* ---------- a line's gate (1.56, audit B2) ----------
+ *
+ * What a click on an open line opens, under the row where the date's menu
+ * opens, over the rows below so nothing moves: where the line is, in the
+ * same words as under it, and what the reader can do about it from here --
+ * open the plan and Approve it, or take the approval back; see its thread,
+ * its PR and its checks; the commit it landed in and the evidence, with
+ * Works and Not yet…; its document; and Rewrite. The gate on the plan's own
+ * page (assets.rs `approve_block`) is the same block, drawn larger. */
+let gateOpen = 0;
+function gatePop(x, esc) {
+  if (gateOpen !== x.id || x.done) return "";
+  const st = stageOf(x), t = !liveOn(x) ? threadOf(x) : null, sh = shippedOf(x);
+  const act = (a, label, extra = "", pri = false) => `<button type="button"${pri ? ' class="pri"' : ""} data-a="${a}" data-n="${x.id}"${extra}>${label}</button>`;
+  const where = stageWords(x) || "no agent has picked it up yet";
+  const rows = [`<p class="dk-gate-w">${esc(where)}</p>`];
+  if (st === "planned" && x.stage_doc) {
+    rows.push(`<p class="dk-gate-acts">${act("note-doc", "Open the plan", ` data-d="${esc(x.stage_doc)}"`)}` +
+      (x.ok_at ? act("note-ok", "Take the approval back", ` data-doc="${esc(x.stage_doc)}" data-undo="1"`) : act("note-ok", "Approve", ` data-doc="${esc(x.stage_doc)}" data-undo="0" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt; snyvi starts nothing"`, true)) + `</p>`);
+  }
+  if (t) rows.push(`<p class="dk-gate-t">${esc(t.name)} · ${esc(t.stage)}${t.pr ? ` · PR ${esc(t.pr)}${t.ci ? ` ${esc(t.ci)}` : ""}` : ""}</p>`);
+  if (sh) rows.push(`<p class="dk-gate-acts">${act("note-works", "✓ works", "", true)}${act("note-broken", "not yet…")}</p>`);
+  const more = [x.doc ? act("note-doc", "Its document", ` data-d="${esc(x.doc)}"`) : "", act("note-edit", "Rewrite")].filter(Boolean).join("");
+  rows.push(`<p class="dk-gate-acts">${more}</p>`);
+  return `<span class="dk-gate" role="group" aria-label="Where ${esc(x.text)} is">${rows.join("")}</span>`;
 }
 
 /** A ticked line's marks that are not history (1.53.1): an agent's tick
@@ -1394,6 +1436,7 @@ export function docSaved(d) {
  *  the page's bar name it while it is read. */
 function sentFrom() {
   if (reading == null) return null;
+  if (readFrom && views.get(readFrom)) return views.get(readFrom);
   const d = current();
   const x = d && docList.find(y => String(y.id) === String(reading));
   const p = x && x.slot && d.panes.find(q => q.slot === x.slot);

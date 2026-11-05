@@ -127,7 +127,7 @@ export function hint() {
 export function letter(e, c) {
   const { state } = c;
   if (c.browsing() && (e.key === "j" || e.key === "k")) {
-    const links = [...c.browseEl.querySelectorAll(".b-file a")];
+    const links = [...c.docEl.querySelectorAll(".fp .b-file a")];
     const at = links.findIndex(a => a.dataset.path === state.browsePath);
     const next = links[at + (e.key === "j" ? 1 : -1)] || (at < 0 ? links[0] : null);
     if (next) c.showBrowse(next.dataset.browse, next.dataset.path, true);
