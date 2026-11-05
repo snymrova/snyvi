@@ -109,6 +109,7 @@ fn row(r: &rusqlite::Row, upto: i64) -> rusqlite::Result<Row> {
             id: desk_id,
             name: r.get(6).unwrap_or_default(),
             slot: r.get(7).unwrap_or_default(),
+            grp: 0,
         }),
         doc: r.get(8)?,
         data: serde_json::from_str(&data).unwrap_or(Value::Null),
@@ -326,6 +327,7 @@ mod tests {
             id: 3,
             name: "ledger".into(),
             slot: 2,
+            grp: 0,
         };
         let r = add(
             &c,

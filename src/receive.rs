@@ -416,6 +416,7 @@ pub fn pane_origin(store: &Store, pane: Option<&str>) -> Option<crate::desk::Ori
             id: placed.desk_id,
             name: placed.desk_name,
             slot: placed.pane.slot,
+            grp: placed.pane.grp,
         })
 }
 
@@ -435,6 +436,7 @@ fn outside(store: &Store, root: &str) -> Option<crate::desk::Origin> {
             id: d.id,
             name: d.name,
             slot: 0,
+            grp: 0,
         })
 }
 
@@ -1083,6 +1085,7 @@ mod tests {
             id: 3,
             name: "Garden".into(),
             slot: 0,
+            grp: 0,
         };
         let got = receive(
             &s,
@@ -1148,7 +1151,8 @@ mod tests {
             Some(crate::desk::Origin {
                 id: desk.id,
                 name: "garden".into(),
-                slot: 0
+                slot: 0,
+                grp: 0,
             })
         );
 
@@ -1233,6 +1237,7 @@ two",
             id: desk.id,
             name: "taskflow".into(),
             slot: 0,
+            grp: 0,
         };
         for d in [&pasted, &setup_md] {
             s.move_lineage(&d.id, &above, "workspaces", &on).unwrap();
@@ -1286,6 +1291,7 @@ two",
                                 id: 9,
                                 name: "Theirs".into(),
                                 slot: 0,
+                                grp: 0,
                             },
                             theirs.path.to_string_lossy().to_string(),
                         )),

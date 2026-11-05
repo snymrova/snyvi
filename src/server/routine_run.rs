@@ -286,7 +286,7 @@ async fn panel(app: &App, r: &Routine, desk: &crate::desk::Desk) -> anyhow::Resu
     }
     let pane = match app
         .store
-        .open_pane_on(desk.id, &desk.root, "", false, true)?
+        .open_pane_on(desk.id, &desk.root, "", false, (0, true))?
     {
         crate::desk::Opened::Pane(p) => p,
         crate::desk::Opened::DeskFull => {

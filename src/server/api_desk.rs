@@ -401,12 +401,21 @@ pub(crate) struct LayoutBody {
     /// The slot in full view, 0 for the grid; left out keeps what is there.
     #[serde(default)]
     pub(crate) full: Option<i64>,
+    /// 1.57: the tab the page shows, whose layout this is; 0 for none.
+    #[serde(default)]
+    pub(crate) grp: i64,
+    /// And the panel with the keys in it, for a switch back to come to.
+    #[serde(default)]
+    pub(crate) focused: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct MoveBody {
     pub(crate) from: i64,
     pub(crate) to: i64,
+    /// 1.57: the tab both slots are in; 0 for a desk with no tabs.
+    #[serde(default)]
+    pub(crate) grp: i64,
 }
 
 #[derive(Deserialize)]
@@ -423,6 +432,9 @@ pub(crate) struct NewPaneBody {
     /// a dev server that is its own command.
     #[serde(default)]
     pub(crate) back: bool,
+    /// 1.57: the tab to open it in; 0 the one the desk reopens on.
+    #[serde(default)]
+    pub(crate) grp: i64,
 }
 
 #[derive(Deserialize)]
@@ -1628,7 +1640,10 @@ pub(crate) async fn desk_layout(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.set_desk_layout(id, b.col, b.row, b.full) {
+    if let (Some(pane), true) = (&b.focused, b.grp != 0) {
+        let _ = app.store.focus_group(id, b.grp, pane);
+    }
+    match app.store.set_desk_layout(id, b.grp, (b.col, b.row), b.full) {
         // Silent: a drag ends hundreds of times an hour and no other window
         // needs to be told where this one's divider came to rest.
         Ok(true) => Json(json!({ "ok": true })).into_response(),
@@ -1649,7 +1664,7 @@ pub(crate) async fn move_pane(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.move_pane(id, b.from, b.to) {
+    match app.store.move_pane(id, b.grp, b.from, b.to) {
         Ok(true) => {
             desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
@@ -1735,9 +1750,11 @@ pub(crate) async fn open_pane(
     };
     let cmd = b.cmd.unwrap_or_default();
     let held = b.held && !cmd.trim().is_empty();
+    // A tab's own folder, never one the page named (`api_groups::group_root`).
+    let (grp, root) = group_root(&desk, b.grp);
     match app
         .store
-        .open_pane_on(desk.id, &desk.root, cmd.trim(), held, b.back)
+        .open_pane_on(desk.id, &root, cmd.trim(), held, (grp, b.back))
     {
         Ok(crate::desk::Opened::Pane(pane)) => {
             desks_moved(&app);

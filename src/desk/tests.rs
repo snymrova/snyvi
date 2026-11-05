@@ -1,6 +1,6 @@
 use super::*;
 
-fn db() -> Connection {
+pub(crate) fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     conn.execute_batch(SCHEMA).unwrap();
@@ -26,6 +26,8 @@ fn db() -> Connection {
     {
         conn.execute_batch(c).unwrap();
     }
+    // After the accounts' columns: the rebuild copies `panes.account`.
+    conn.execute_batch(groups::COLUMNS_1_57).unwrap();
     conn
 }
 
@@ -514,7 +516,7 @@ fn closing_a_desk_keeps_its_list_and_reopening_brings_it_back() {
 }
 
 fn pane(conn: &mut Connection, desk: i64) -> Opened {
-    open_pane(conn, desk, "/p", "", false, false, 0).unwrap()
+    open_pane(conn, desk, "/p", "", false, (0, false), 0).unwrap()
 }
 
 fn slots(conn: &Connection, desk: i64) -> Vec<i64> {
@@ -623,7 +625,7 @@ fn a_new_conversation_drops_the_agents_name_and_keeps_the_readers() {
 fn a_held_panel_waits_until_its_first_start() {
     let mut conn = db();
     let d = create(&conn, "/p", None, 0).unwrap();
-    let Opened::Pane(p) = open_pane(&mut conn, d.id, "/p", "claude", true, false, 0).unwrap()
+    let Opened::Pane(p) = open_pane(&mut conn, d.id, "/p", "claude", true, (0, false), 0).unwrap()
     else {
         panic!("no pane")
     };
@@ -754,7 +756,14 @@ fn panes_fill_the_lowest_free_slot_and_the_fifth_is_refused() {
 
     let first = get(&conn, d).unwrap().unwrap().panes[0].id.clone();
     let tx = conn.transaction().unwrap();
-    assert_eq!(close_pane(&tx, &first, 1).unwrap(), Some((d, 1)));
+    assert_eq!(
+        close_pane(&tx, &first, 1).unwrap(),
+        Some(Freed {
+            desk_id: d,
+            grp: 0,
+            slot: 1
+        })
+    );
     tx.commit().unwrap();
     // The rest closed up; the next one takes the end.
     assert_eq!(slots(&conn, d), vec![1, 2, 3]);
@@ -783,10 +792,10 @@ fn a_pane_moves_to_another_slot_and_the_one_there_takes_its_place() {
             .collect()
     };
     let before = ids(&conn, d);
-    assert!(layout(&conn, d, 0.5, 0.5, Some(1)).unwrap());
-    assert!(layout(&conn, other, 0.5, 0.5, Some(1)).unwrap());
+    assert!(layout(&conn, d, 0, (0.5, 0.5), Some(1)).unwrap());
+    assert!(layout(&conn, other, 0, (0.5, 0.5), Some(1)).unwrap());
     let tx = conn.transaction().unwrap();
-    assert!(move_pane(&tx, d, 1, 3).unwrap());
+    assert!(move_pane(&tx, d, 0, (1, 3)).unwrap());
     tx.commit().unwrap();
     assert_eq!(
         ids(&conn, d),
@@ -801,15 +810,15 @@ fn a_pane_moves_to_another_slot_and_the_one_there_takes_its_place() {
 
     // Into the empty slot 4: nothing comes back the other way.
     let tx = conn.transaction().unwrap();
-    assert!(move_pane(&tx, d, 2, 4).unwrap());
+    assert!(move_pane(&tx, d, 0, (2, 4)).unwrap());
     tx.commit().unwrap();
     assert_eq!(slots(&conn, d), vec![1, 3, 4]);
 
     // No pane at the slot, a slot out of range: refused, nothing moved.
     let tx = conn.transaction().unwrap();
-    assert!(!move_pane(&tx, d, 2, 1).unwrap());
-    assert!(!move_pane(&tx, d, 1, 5).unwrap());
-    assert!(!move_pane(&tx, d, 0, 1).unwrap());
+    assert!(!move_pane(&tx, d, 0, (2, 1)).unwrap());
+    assert!(!move_pane(&tx, d, 0, (1, 5)).unwrap());
+    assert!(!move_pane(&tx, d, 0, (0, 1)).unwrap());
     tx.commit().unwrap();
     assert_eq!(slots(&conn, d), vec![1, 3, 4]);
     assert_eq!(slots(&conn, other), vec![1], "the other desk is untouched");
@@ -866,18 +875,18 @@ fn a_pane_id_is_random_hex_and_a_desk_id_is_not() {
 fn divider_fractions_are_clamped_and_a_missing_desk_says_so() {
     let conn = db();
     let d = create(&conn, "/p", None, 0).unwrap().id;
-    assert!(layout(&conn, d, 0.0, 2.5, None).unwrap());
+    assert!(layout(&conn, d, 0, (0.0, 2.5), None).unwrap());
     let after = get(&conn, d).unwrap().unwrap();
     assert_eq!((after.col, after.row), (MIN_FRACTION, MAX_FRACTION));
-    assert!(layout(&conn, d, f64::NAN, 0.4, None).unwrap());
+    assert!(layout(&conn, d, 0, (f64::NAN, 0.4), None).unwrap());
     assert_eq!(get(&conn, d).unwrap().unwrap().col, 0.5);
-    assert!(!layout(&conn, d + 99, 0.5, 0.5, None).unwrap());
+    assert!(!layout(&conn, d + 99, 0, (0.5, 0.5), None).unwrap());
     // Full view is kept, left alone when not sent, and a slot out of
     // range is the grid.
-    assert!(layout(&conn, d, 0.5, 0.5, Some(3)).unwrap());
-    assert!(layout(&conn, d, 0.5, 0.5, None).unwrap());
+    assert!(layout(&conn, d, 0, (0.5, 0.5), Some(3)).unwrap());
+    assert!(layout(&conn, d, 0, (0.5, 0.5), None).unwrap());
     assert_eq!(get(&conn, d).unwrap().unwrap().full_slot, 3);
-    assert!(layout(&conn, d, 0.5, 0.5, Some(9)).unwrap());
+    assert!(layout(&conn, d, 0, (0.5, 0.5), Some(9)).unwrap());
     assert_eq!(get(&conn, d).unwrap().unwrap().full_slot, 0);
     assert!(!rename(&conn, d, "  ").unwrap(), "a name is not whitespace");
     assert!(rename(&conn, d, "chores").unwrap());
@@ -930,9 +939,16 @@ fn a_closed_pane_leaves_no_gap_and_comes_back_at_the_end() {
         .map(|p| p.id.clone())
         .collect();
     assert!(rename_pane(&conn, &ids[1], "  the   tests \n", NAMED_BY_AGENT).unwrap());
-    assert!(layout(&conn, d, 0.5, 0.5, Some(3)).unwrap());
+    assert!(layout(&conn, d, 0, (0.5, 0.5), Some(3)).unwrap());
     let tx = conn.transaction().unwrap();
-    assert_eq!(close_pane(&tx, &ids[1], 5).unwrap(), Some((d, 2)));
+    assert_eq!(
+        close_pane(&tx, &ids[1], 5).unwrap(),
+        Some(Freed {
+            desk_id: d,
+            grp: 0,
+            slot: 2
+        })
+    );
     assert_eq!(close_pane(&tx, "nope", 5).unwrap(), None);
     tx.commit().unwrap();
     let after = get(&conn, d).unwrap().unwrap();
@@ -1469,7 +1485,7 @@ fn a_landed_line_waits_for_the_readers_check_and_can_be_reopened() {
 }
 
 fn back(conn: &mut Connection, desk: i64) -> Opened {
-    open_pane(conn, desk, "/p", "npm run dev", false, true, 0).unwrap()
+    open_pane(conn, desk, "/p", "npm run dev", false, (0, true), 0).unwrap()
 }
 
 fn sent(conn: &mut Connection, id: &str, to_back: bool) -> Sent {
@@ -1508,7 +1524,7 @@ fn a_desk_holds_four_in_the_grid_and_four_in_the_back() {
     assert_eq!(slots(&conn, d), (1..=SLOTS).collect::<Vec<_>>());
     assert_eq!(panes_open(&conn).unwrap(), SLOTS);
     // Full view is the grid's: a slot in the back is the grid.
-    assert!(layout(&conn, d, 0.5, 0.5, Some(GRID + 1)).unwrap());
+    assert!(layout(&conn, d, 0, (0.5, 0.5), Some(GRID + 1)).unwrap());
     assert_eq!(get(&conn, d).unwrap().unwrap().full_slot, 0);
 }
 
@@ -1524,11 +1540,12 @@ fn a_pane_goes_to_the_back_and_comes_forward_and_each_side_closes_up() {
     }
     let dev = id_at(&conn, d, 1);
     let third = id_at(&conn, d, 3);
-    assert!(layout(&conn, d, 0.5, 0.5, Some(3)).unwrap());
+    assert!(layout(&conn, d, 0, (0.5, 0.5), Some(3)).unwrap());
     assert_eq!(
         sent(&mut conn, &dev, true),
         Sent::Moved {
             desk_id: d,
+            grp: 0,
             from: 1,
             to: GRID + 1
         }
@@ -1555,6 +1572,7 @@ fn a_pane_goes_to_the_back_and_comes_forward_and_each_side_closes_up() {
         sent(&mut conn, &dev, false),
         Sent::Moved {
             desk_id: d,
+            grp: 0,
             from: GRID + 1,
             to: 2
         }
@@ -1580,9 +1598,9 @@ fn a_move_never_crosses_into_the_back() {
     back(&mut conn, d);
     back(&mut conn, d);
     let tx = conn.transaction().unwrap();
-    assert!(!move_pane(&tx, d, 1, GRID + 1).unwrap());
-    assert!(!move_pane(&tx, d, GRID + 1, 1).unwrap());
-    assert!(move_pane(&tx, d, GRID + 1, GRID + 2).unwrap());
+    assert!(!move_pane(&tx, d, 0, (1, GRID + 1)).unwrap());
+    assert!(!move_pane(&tx, d, 0, (GRID + 1, 1)).unwrap());
+    assert!(move_pane(&tx, d, 0, (GRID + 1, GRID + 2)).unwrap());
     tx.commit().unwrap();
     assert_eq!(slots(&conn, d), vec![1, GRID + 1, GRID + 2]);
 }
@@ -1599,11 +1617,25 @@ fn a_close_only_closes_up_its_own_side() {
     back(&mut conn, d);
     let (grid_one, back_one) = (id_at(&conn, d, 1), id_at(&conn, d, GRID + 1));
     let tx = conn.transaction().unwrap();
-    assert_eq!(close_pane(&tx, &grid_one, 1).unwrap(), Some((d, 1)));
+    assert_eq!(
+        close_pane(&tx, &grid_one, 1).unwrap(),
+        Some(Freed {
+            desk_id: d,
+            grp: 0,
+            slot: 1
+        })
+    );
     tx.commit().unwrap();
     assert_eq!(slots(&conn, d), vec![1, GRID + 1, GRID + 2]);
     let tx = conn.transaction().unwrap();
-    assert_eq!(close_pane(&tx, &back_one, 2).unwrap(), Some((d, GRID + 1)));
+    assert_eq!(
+        close_pane(&tx, &back_one, 2).unwrap(),
+        Some(Freed {
+            desk_id: d,
+            grp: 0,
+            slot: GRID + 1
+        })
+    );
     tx.commit().unwrap();
     assert_eq!(slots(&conn, d), vec![1, GRID + 1]);
 

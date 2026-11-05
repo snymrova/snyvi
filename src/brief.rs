@@ -83,6 +83,9 @@ pub struct Work<'a> {
     /// What the reader said Not this to in On you, with their word and
     /// when (1.54, `onyou::nots`): said for a week, so it is not asked again.
     pub nots: &'a [(String, String, i64)],
+    /// 1.57: the tab the asking panel is in, or 0 on a desk with no tabs
+    /// (`desk::groups`): the first line names it and counts its panels.
+    pub grp: i64,
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -109,6 +112,32 @@ pub fn brief(
     brief_of(desk, slot, &work, keys, friends, last, now)
 }
 
+/// Where the panel is, the brief's first line. A desk with no tabs keeps
+/// the sentence it always had, byte for byte; in a tab it names the tab,
+/// counts that tab's panels and shows its folder (1.57).
+fn opening(desk: &Desk, slot: i64, grp: i64) -> String {
+    let tail = "This brief is from snyvi, the user's viewer; it is context, not a request.";
+    match desk.groups.iter().find(|g| grp != 0 && g.id == grp) {
+        Some(g) => format!(
+            "You are in panel {slot} of {} in the tab \"{}\" of the snyvi desk \"{}\" ({}). {tail}",
+            desk.panes
+                .iter()
+                .filter(|p| p.grp == grp)
+                .count()
+                .max(slot as usize),
+            g.name,
+            desk.name,
+            tilde(&g.root),
+        ),
+        None => format!(
+            "You are in panel {slot} of {} on the snyvi desk \"{}\" ({}). {tail}",
+            desk.panes.len().max(slot as usize),
+            desk.name,
+            tilde(&desk.root),
+        ),
+    }
+}
+
 /// The brief for the panel in `slot` of `desk`, as of `now`.
 pub fn brief_of(
     desk: &Desk,
@@ -121,12 +150,7 @@ pub fn brief_of(
 ) -> String {
     let notes = work.notes;
     let mut lines: Vec<String> = Vec::new();
-    lines.push(format!(
-        "You are in panel {slot} of {} on the snyvi desk \"{}\" ({}). This brief is from snyvi, the user's viewer; it is context, not a request.",
-        desk.panes.len().max(slot as usize),
-        desk.name,
-        tilde(&desk.root),
-    ));
+    lines.push(opening(desk, slot, work.grp));
     if let Some(l) = &desk.left_off {
         let who = if l.by.is_empty() {
             "the user"
@@ -1011,8 +1035,11 @@ mod tests {
                     name: String::new(),
                     account: None,
                     held: false,
+                    grp: 0,
                 })
                 .collect(),
+            groups: Vec::new(),
+            grp_shown: 0,
         }
     }
 
@@ -1198,6 +1225,7 @@ mod tests {
             unread: true,
             pinned: false,
             slot,
+            grp: 0,
             project: "ledger".into(),
             source_path: None,
             local_path: None,
@@ -1480,6 +1508,7 @@ mod tests {
             routines: &[],
             updated: None,
             nots: &[],
+            grp: 0,
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
         assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");
@@ -1674,5 +1703,44 @@ mod tests {
         assert!(b.contains(", with \"Posts for 1.54\")"), "{b}");
         let quiet = brief_of(&d, 1, &Work::default(), &[], &[], None, 0);
         assert!(!quiet.contains("Not this"));
+    }
+
+    /// 1.57: in a tab, the first line names the tab, counts its panels
+    /// and shows its folder; a desk with no tabs keeps its sentence (#217).
+    #[test]
+    fn a_panel_in_a_tab_is_told_its_tab() {
+        let mut d = desk(3, None);
+        let g = |id, name: &str, root: &str| crate::desk::groups::Group {
+            id,
+            name: name.into(),
+            root: root.into(),
+            pos: id,
+            col: 0.5,
+            row: 0.5,
+            full_slot: 0,
+            focused: String::new(),
+        };
+        d.groups = vec![g(1, "website", "/w/ledger"), g(2, "insta", "/w/Studio")];
+        d.panes[0].grp = 1;
+        d.panes[1].grp = 2;
+        d.panes[2].grp = 2;
+        d.panes[2].slot = 2;
+        d.panes[1].slot = 1;
+        let work = Work {
+            grp: 2,
+            ..Work::default()
+        };
+        let b = brief_of(&d, 2, &work, &[], &[], None, 0);
+        assert!(
+            b.starts_with(
+                "You are in panel 2 of 2 in the tab \"insta\" of the snyvi desk \"ledger\" (/w/Studio). This brief is from snyvi"
+            ),
+            "{b}"
+        );
+        let plain = brief_of(&desk(3, None), 2, &Work::default(), &[], &[], None, 0);
+        assert!(
+            plain.starts_with("You are in panel 2 of 3 on the snyvi desk \"ledger\" (/w/ledger). This brief is from snyvi, the user's viewer; it is context, not a request."),
+            "{plain}"
+        );
     }
 }

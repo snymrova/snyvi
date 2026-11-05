@@ -199,6 +199,7 @@ mod tests {
             id: 3,
             name: "ledger".into(),
             slot: 2,
+            grp: 0,
         };
         let (a, _) = add(&c, new("from a panel"), Some(at.clone()), 0).unwrap();
         assert_eq!(a.from.as_ref(), Some(&at));

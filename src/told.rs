@@ -177,18 +177,21 @@ pub fn doc_for(conn: &Connection, desk_id: i64, thread_id: i64) -> String {
     ) else {
         return String::new();
     };
-    let slot: i64 = conn
-        .query_row("SELECT slot FROM panes WHERE id = ?1", params![pane], |r| {
-            r.get(0)
-        })
-        .unwrap_or(0);
+    // The panel's tab and slot together (1.57): a slot alone is one in each tab.
+    let (grp, slot): (i64, i64) = conn
+        .query_row(
+            "SELECT grp, slot FROM panes WHERE id = ?1",
+            params![pane],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or((0, 0));
     conn.prepare_cached(
-        "SELECT id FROM docs WHERE desk_id = ?1 AND (?2 = 0 OR desk_slot = ?2) AND received_at >= ?3
+        "SELECT id FROM docs WHERE desk_id = ?1 AND (?2 = 0 OR (desk_slot = ?2 AND desk_grp = ?4)) AND received_at >= ?3
            AND deleted_at = 0 ORDER BY received_at DESC LIMIT 1",
     )
     .ok()
     .and_then(|mut st| {
-        st.query_row(params![desk_id, slot, since], |r| r.get::<_, String>(0))
+        st.query_row(params![desk_id, slot, since, grp], |r| r.get::<_, String>(0))
             .optional()
             .ok()
             .flatten()

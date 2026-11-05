@@ -83,6 +83,9 @@ pub struct DeskDoc {
     pub unread: bool,
     pub pinned: bool,
     pub slot: i64,
+    /// 1.57: the tab of the panel that sent it, beside its slot, or 0.
+    #[serde(skip_serializing_if = "crate::desk::is_zero")]
+    pub grp: i64,
     pub project: String,
     /// The file it was sent from, when it was one.
     pub source_path: Option<String>,
@@ -245,7 +248,7 @@ const FTS_INSERT: &str =
 const FTS_DELETE: &str =
     "DELETE FROM docs_fts WHERE rowid = (SELECT rowid FROM docs WHERE id = ?1)";
 
-const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), d.saved_path, p.root";
+const DOC_COLS: &str = "d.id, d.project_id, p.name, d.workflow_id, w.key, w.title, d.title, d.kind, d.lang, d.size, d.received_at, d.source_path, d.branch, d.pinned, d.origin, d.content_hash, d.desk_id, d.desk_name, d.desk_slot, d.sender, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), d.saved_path, p.root, d.desk_grp";
 const DOC_FROM: &str =
     "FROM live_docs d JOIN projects p ON p.id = d.project_id JOIN workflows w ON w.id = d.workflow_id";
 /// The same join over `head_docs`: what every list of documents reads, so one
@@ -580,6 +583,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (34, crate::onyou::DESK_COLUMNS_1_54),
     (34, crate::onyou::HOME_COLUMNS_1_54),
     (34, crate::routine::LATE_COLUMNS_1_54), // 1.54: a run's lateness, a run's sleep (#198)
+    // 1.57: a desk's tabs (#217) -- `panes` rebuilt for UNIQUE(desk_id, grp,
+    // slot), the groups, and the tab a document's panel was in
+    (35, desk::groups::COLUMNS_1_57),
+    (35, desk::groups::DOCS_COLUMN_1_57),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -594,7 +601,7 @@ fn desk_docs_sql(off: bool, sent: bool) -> String {
     let sent = if sent { "AND d.origin != 'hook'" } else { "" };
     format!(
         "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path,
-                d.saved_path, d.origin, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), p.root
+                d.saved_path, d.origin, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), p.root, d.desk_grp
          FROM live_docs d JOIN projects p ON p.id = d.project_id
          WHERE d.desk_id = ?1 AND d.desk_off {} {sent}
            AND (d.source_path IS NULL
@@ -781,10 +788,11 @@ impl Store {
                     .is_ok()
             });
         tx.execute(
-            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot, is_head, session)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?17, ?13, ?14, ?15, ?16, 1, ?18)",
+            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot, is_head, session, desk_grp)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?17, ?13, ?14, ?15, ?16, 1, ?18, ?19)",
             params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, size, now, d.source_path, d.branch, hash, d.origin, d.sender,
-                d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot), unread, d.session],
+                d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot), unread, d.session,
+                d.desk.map_or(0, |o| o.grp)],
         )?;
         tx.execute(FTS_INSERT, params![id, d.title, d.search_body])?;
         // A newer version of a file takes the older one's place on the queue
@@ -1310,9 +1318,9 @@ impl Store {
             // The deleted versions too: an Undo of one brings it back where
             // its lineage now is.
             tx.execute(
-                "UPDATE docs SET project_id = ?2, workflow_id = ?3, desk_id = ?4, desk_name = ?5, desk_slot = ?6, desk_off = 0
+                "UPDATE docs SET project_id = ?2, workflow_id = ?3, desk_id = ?4, desk_name = ?5, desk_slot = ?6, desk_off = 0, desk_grp = ?9
                  WHERE id = ?1 OR (?7 IS NOT NULL AND project_id = ?8 AND source_path = ?7)",
-                params![id, to, wf, desk.id, desk.name, desk.slot, path, from],
+                params![id, to, wf, desk.id, desk.name, desk.slot, path, from, desk.grp],
             )?;
             if let Some(sp) = &path {
                 rehead(&tx, to, sp)?;
@@ -1347,6 +1355,7 @@ impl Store {
             id: 0,
             name: String::new(),
             slot: 0,
+            grp: 0,
         };
         self.move_lineage(id, &p.project_root(), &p.project_name(), &none)
     }
@@ -1803,6 +1812,7 @@ impl Store {
                     unread: r.get::<_, i64>(4)? != 0,
                     pinned: r.get::<_, i64>(5)? != 0,
                     slot: r.get(6)?,
+                    grp: r.get(13)?,
                     project: r.get(7)?,
                     source_path,
                     local_path,
@@ -1834,8 +1844,15 @@ impl Store {
         desk::rename(&self.conn.lock().unwrap(), id, name)
     }
 
-    pub fn set_desk_layout(&self, id: i64, col: f64, row: f64, full: Option<i64>) -> Result<bool> {
-        desk::layout(&self.conn.lock().unwrap(), id, col, row, full)
+    /// A desk's dividers and full view, or with `grp` its tab's (`desk::layout`).
+    pub fn set_desk_layout(
+        &self,
+        id: i64,
+        grp: i64,
+        at: (f64, f64),
+        full: Option<i64>,
+    ) -> Result<bool> {
+        desk::layout(&self.conn.lock().unwrap(), id, grp, at, full)
     }
 
     /// Close a desk (`desk::close`): the ids of the panes it closed.
@@ -2102,6 +2119,7 @@ fn row_to_doc(r: &rusqlite::Row) -> rusqlite::Result<Doc> {
                 id,
                 name: r.get(17)?,
                 slot: r.get(18)?,
+                grp: r.get(23)?,
             }),
         },
         sender: r.get(19)?,

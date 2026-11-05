@@ -16,11 +16,13 @@ fn db() -> Connection {
     for c in COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }
+    conn.execute_batch(crate::desk::groups::COLUMNS_1_57)
+        .unwrap();
     conn
 }
 
 fn pane_on(conn: &mut Connection, desk: i64) -> String {
-    match crate::desk::open_pane(conn, desk, "/w", "", false, false, 0).unwrap() {
+    match crate::desk::open_pane(conn, desk, "/w", "", false, (0, false), 0).unwrap() {
         crate::desk::Opened::Pane(p) => p.id,
         o => panic!("no pane: {o:?}"),
     }

@@ -44,6 +44,7 @@ fn db() -> Connection {
     // A plan's title is read from the documents (`waiting::rows`).
     conn.execute_batch("CREATE TABLE docs (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
         .unwrap();
+    crate::desk::groups::for_tests(&conn);
     conn
 }
 

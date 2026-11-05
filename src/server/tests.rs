@@ -385,7 +385,8 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         + routes_in("\nfn widget_routes(")
         + routes_in("\nfn media_routes(")
         + routes_in("\nfn pipeline_routes(")
-        + routes_in("\nfn receive_route(");
+        + routes_in("\nfn receive_route(")
+        + routes_in("\nfn group_routes(");
     assert_eq!(
         n,
         ROUTES.len(),
@@ -1449,6 +1450,7 @@ async fn a_friends_document_in_a_folder_goes_back_to_their_row() {
             id: desk.id,
             name: desk.name.clone(),
             slot: 0,
+            grp: 0,
         };
         let kept = store
             .move_lineage("abcdef0001", &r, &n, &on)
