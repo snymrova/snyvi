@@ -25,6 +25,13 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "tabs"
+since = "1.57.0"
+title = "Tabs in a desk"
+line = "A desk can hold tabs, one for each part of a project, each with its own folder and its own panels. Their panels keep running while you work in another, and a tab whose panel needs you says so. Ctrl Alt Shift [ and ] switch; the desk's menu makes the first."
+show = "desk .dk-menu"
+
+[[feature]]
 id = "deskfolder"
 since = "1.56.0"
 title = "A desk opens its own folder"

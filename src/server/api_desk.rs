@@ -220,7 +220,7 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                 .map(|p| {
                     let st = app.panes.status(&p.id);
                     json!({
-                        "id": p.id, "slot": p.slot, "name": p.name,
+                        "id": p.id, "slot": p.slot, "grp": p.grp, "name": p.name,
                         "running": st.running, "agent": st.agent, "agent_since": st.agent_since,
                         "blocked": st.blocked, "blocked_since": st.blocked_since,
                         "title": st.title, "model": st.model,
@@ -235,6 +235,8 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                 "last": last, "git": git.as_deref(), "pulse": pulse,
                 // By name, for Home's Keys widget; never a value.
                 "keys": d.keys,
+                // 1.57: its tabs, for the card's chips (#217).
+                "groups": d.groups.iter().map(|g| json!({ "id": g.id, "name": g.name })).collect::<Vec<_>>(),
             })
         })
         .collect();

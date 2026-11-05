@@ -16,6 +16,7 @@ the questions the design left open.
 | Thing | Where it lives | Survives a restart |
 |---|---|---|
 | A desk: name, root, two divider fractions, the slot in full view | `desks` table, `src/desk.rs` | yes |
+| A tab of a desk (1.57): its name, folder, place in the row, dividers, full view and focused panel | `desk_groups` table, `src/desk/groups.rs`; a pane's tab is `panes.grp`, a document's `docs.desk_grp` | yes |
 | A pane: slot 1–4, its name, the folder its shell was last in, the command it last ran | `panes` table, `src/desk.rs` | yes |
 | A closed pane, for Undo | `panes_closed` table, until `snyvi prune` | yes |
 | That Claude was open in a pane when the daemon stopped | `panes.resume_next`: 1 after a planned restart, 2 after any other stop | once, for the next daemon |
@@ -24,6 +25,37 @@ the questions the design left open.
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
 | A desk's links in the rail's foot, the hidden ones too | `desks.links`, JSON, `src/links.rs` | yes |
 | A routine: its line, cadence, Waits list, limits, its panel, the file its name resolved to and its hash, its Start (a draft has none), and its runs | `routines`, `routine_runs`, `src/routine.rs`; the text as allowed, for its diff, in `routines/<id>/allowed.md` | yes; a run under way when the daemon stops is ended, said so |
+
+**A desk can have tabs (1.57, #217).** A tab is a group of panels inside one
+desk -- `website`, `insta`, `bot` -- with its own folder, its own four in the
+grid and four in the back, its own dividers, full view and focused panel. The
+desk keeps one name, one list of notes, one thread list, one left-off, one set
+of keys and one account, and its rail is one list: the shown tab's panels,
+a folded line for each other tab, and the desk's documents, notes and threads,
+a row from another tab's panel carrying that tab's name. The code says
+*group* (`desk_groups`, `panes.grp`, `.dk-groups`): the `[n]` panel tabs own
+the word there.
+
+- A desk with no tabs is at `grp = 0` everywhere and is the desk it was.
+  The first tab made on it makes two: one for the panels already there,
+  named after the desk's folder and holding its dividers, and the new one.
+  Every pane, closed pane and document of the desk at 0 goes to the first in
+  the same transaction, so no row of it is left at 0.
+- Slots run 1 to 8 in each tab; `UNIQUE(desk_id, grp, slot)` holds it, which
+  is why step 35 rebuilds `panes` (its old `UNIQUE(desk_id, slot)` was inline
+  and SQLite cannot change one in place). A close, a move, a send to the back
+  and their documents' renumbering stay in their tab.
+- Panels in a tab out of sight keep running: they are mounted in a hidden
+  box laid out as the grid is, as the back's are in the drawer, so the `!` on
+  a tab can light. Three tabs of eight is twenty-four processes on one desk.
+- The tab shown is each window's own; the daemon keeps only where the desk
+  reopens (`desks.grp_shown`, `/groups/{grp}/show`). `⌃⌥⇧[` and `⌃⌥⇧]`
+  switch tabs, matched on `e.code`; `⌃⌥[` and `⌃⌥]` still cycle panels.
+- Closing a tab closes its panels the way ✕ does, with Undo; the last open
+  tab cannot be closed. A panel moved to another tab takes its documents.
+- A panel's brief names its tab: *You are in panel 2 of 3 in the tab "insta"
+  of the snyvi desk "ohmydog" (~/Studio)*; on a desk with no tabs the
+  sentence is the one it always was.
 
 **A routine (1.50) is the one process the daemon starts on its own** --
 at the hour the reader set, their own allowed slash command, skill or

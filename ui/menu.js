@@ -29,6 +29,8 @@ let picking = false;
  *  1.56 (#214) it is only for a desk: a folder is read through its desk.
  *  `forDesk` is "welcome" from Welcome, which goes on to Got another one? */
 export async function pick(ctx, forDesk = true) {
+  // 1.57: a function is asked for a folder, not a desk: a new tab's.
+  const take = typeof forDesk === "function" ? forDesk : null;
   const { capability, state, toast } = ctx;
   if (!capability) { toast("Desks open in the snyvi window", { sub: "a browser tab has none", face: null }); return; }
   if (picking) { alreadyOpen(ctx); return; }
@@ -50,6 +52,7 @@ export async function pick(ctx, forDesk = true) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) { toast("Could not open a folder", { sub: new Error(j.error || `${r.status}`) }); return; }
     if (!state.browse.some(x => x.id === j.root.id)) state.browse = state.browse.concat(j.root);
+    if (take) { take({ root: j.root.id, path: "" }); return; }
     // One that has a desk already shows it, as a project's desk glyph does;
     // a second desk on it is its own menu's New desk here.
     const trim = p => p && p.replace(/(.)\/+$/, "$1");
@@ -483,6 +486,8 @@ function entries(ctx, el, byKey = false) {
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       dk && { label: "Keys…", run: () => dk.keysHere() },
+      // 1.57: a tab of its own folder and panels (#217); the row's + asks the same.
+      dk && { label: "New tab…", moves: 1, run: () => { const r = el.getBoundingClientRect(); open(ctx, newTabAt(), r.left, r.bottom + 4); } },
       // Focus follows the pointer left this menu for the foot strip (1.43):
       // it is the whole app's, and here it read as this desk's alone.
       RULE,
@@ -494,6 +499,18 @@ function entries(ctx, el, byKey = false) {
     ] };
   }
   if (el.matches("[data-desksort]")) return sorts(ctx);
+  // 1.57: where a new tab goes -- this desk's folder, the places New desk
+  // offers, or the dialog -- from the tab row's + or the desk's New tab….
+  if (el.matches(".dk-group-new") && ctx.desk && ctx.desk.newTab) {
+    if (!capability) return null;
+    const dk = ctx.desk, places = recent(ctx).slice(0, FEW);
+    return { head: "New tab in…", items: [
+      { label: "This desk's folder", moves: 1, run: () => dk.newTab(null) },
+      ...places.map(f => ({ label: f.name, hint: f.hint, moves: 1, run: () => dk.newTab(f) })),
+      RULE,
+      { label: "Another folder…", run: () => pick(ctx, f => dk.newTab(f)) },
+    ] };
+  }
   // `+ New desk`, wherever it is -- the Desks head, the empty Desks row, the
   // Desks page -- asks where before it makes anything: a desk is for a
   // project, and one in the home folder is the exception, so it is last.
@@ -513,6 +530,10 @@ function entries(ctx, el, byKey = false) {
   }
   return ctx.desk && ctx.desk.actions ? ctx.desk.actions(el) : null;
 }
+
+/** The row's + as the desk menu asks for its menu: the real one when the
+ *  desk has tabs, a stand-in that matches it when it has none yet. */
+const newTabAt = () => document.querySelector(".dk-group-new") || Object.assign(document.createElement("button"), { className: "dk-group-new" });
 
 /** How many places New desk in… lists before More folders…: a menu that fits
  *  under its button, and the projects of this week. */

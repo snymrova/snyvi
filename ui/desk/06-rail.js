@@ -165,6 +165,17 @@ function sec(key, part, name, o, body) {
     ctx.secHead(key, name, o) + `<div class="sec-body">${body}</div></section>`;
 }
 
+/** The other tabs, one folded line each under the shown tab's panels:
+ *  `insta · 2 panels · needs you`. A click shows that tab (1.57). */
+function tabLines(d, esc) {
+  if (!d.grp) return "";
+  return d.groups.filter(g => g.id !== d.grp).map(g => {
+    const ps = d.all.filter(p => p.grp === g.id), need = ps.some(p => needsYou(views.get(p.id)));
+    return `<li class="dk-tabline${need ? " blk" : ""}"><button type="button" class="dk-group dk-tabrow" data-grp="${g.id}" data-tip="Show ${esc(g.name)}" data-tip-sub="${esc(tilde(g.root))}">` +
+      `<span class="nm">${esc(g.name)}</span><span class="dk-tl-n">${ctx.plural(ps.length, "panel")}${need ? " · needs you" : ""}</span></button></li>`;
+  }).join("");
+}
+
 function rail() {
   const d = current();
   if (!d) return;
@@ -231,7 +242,7 @@ function rail() {
       count: `${blocked ? `!${blocked} · ` : ""}${nGrid}/${j.per_desk}${nBack ? ` · ${nBack} back` : ""}`, tone: blocked ? "warn" : "",
       countTip: blocked ? `${ctx.plural(blocked, "panel")} ${blocked === 1 ? "needs" : "need"} you` : "",
     }, `<ul class="dk-panes">` + vs.filter(v => !isBack(v.pane)).map(paneRow).join("") +
-      (nBack ? `<li class="dk-backline" role="presentation">In the back</li>` + vs.filter(v => isBack(v.pane)).map(paneRow).join("") : "") + (closedRow && closedRow.desk === d.id
+      (nBack ? `<li class="dk-backline" role="presentation">In the back</li>` + vs.filter(v => isBack(v.pane)).map(paneRow).join("") : "") + tabLines(d, esc) + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>` +
@@ -278,8 +289,10 @@ function rail() {
   meta();
   // The head's Left off slot carries a launch's count, which ticks change.
   leftOffSlot(d);
-  // And the back's chips their panel's mark, and the drawer its word.
+  // And the back's chips their panel's mark, and the drawer its word;
+  // and a tab its `!`, for a panel out of sight that needs the reader.
   backHead(d);
+  groupsHead(d);
   fromBar();
 }
 
@@ -292,7 +305,7 @@ function pageChips(vs, dl) {
   for (const v of vs) {
     const a = v.el.querySelector(".pn-page");
     if (!a) continue;
-    const mine = dl.filter(y => y.unread && y.slot === v.pane.slot), x = mine[0];
+    const mine = dl.filter(y => y.unread && y.slot === v.pane.slot && (y.grp || 0) === (v.pane.grp || 0)), x = mine[0];
     a.hidden = !x;
     if (!x) continue;
     const say = mine.length > 1 ? `sent ${mine.length} pages · Read the newest` : "sent a page · Read it";
@@ -365,12 +378,19 @@ function stripClick(e) {
 
 /** A document's row in the rail, or the row it leaves behind when it is
  *  removed: the title, struck through, and its Undo where the ✕ was. */
+/** Which panel sent a document: the shown tab's by its slot, another tab's
+ *  by that tab's name and the slot (1.57). */
+function docFrom(vs, x) {
+  const n = otherTab(current(), x.grp);
+  return n ? `${n} · [${x.slot}]` : sentBy(vs, x.slot);
+}
+
 function docRow(x, gone, vs, esc) {
   if (gone) return `<li class="dk-note gone" role="status"><span class="nm">${esc(x.title)}</span><button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}">Undo</button></li>` + errLine(`d${x.id}`, esc);
   // The slot and not the name: a name changes with the panel's title, and
   // the rail compares what it draws.
   const on = x.id === reading, v = on && sentFrom(), to = v ? `Back to panel ${v.pane.slot}` : "Back to the panels";
-  return `<li class="dk-doc${on ? " on" : ""}${ctx.corner?.()?.rising(x.id) ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? to : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(sentBy(vs, x.slot))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
+  return `<li class="dk-doc${on ? " on" : ""}${ctx.corner?.()?.rising(x.id) ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? to : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(docFrom(vs, x))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span>${tabMark(current(), x.grp)}<span class="age">${ctx.relShort(x.received_at)}</span></a>` +
     // Its tools: the path to copy, where there is one; on the row of the
     // document on the page, the way back to the panes, in view at rest; and
     // the ✕ that takes it off this list -- this list only.
@@ -656,7 +676,9 @@ function noteRow(x, esc) {
   // An open line's date comes first: the marks' room cuts from the end, and
   // "overdue" was the word cut to "ove" behind a long stage (N2).
   // The stage, in words, comes last (1.56): it is the mark that shrinks.
-  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + promiseMark(x, esc) + picMark(x, esc) + stageMark(x, esc);
+  // From a panel in another tab, that tab's name leads (1.57).
+  const tm = current()?.group && x.grp && x.grp !== current().group.name ? `<span class="dk-tabmark" data-tip="From the tab ${esc(x.grp)}">${esc(x.grp)}</span>` : "";
+  const marks = tm + (x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + promiseMark(x, esc) + picMark(x, esc) + stageMark(x, esc));
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
@@ -895,8 +917,8 @@ function stageWords(x) {
   const st = stageOf(x), by = x.stage_by || "an agent", t = !x.done && !liveOn(x) ? threadOf(x) : null;
   if (t && t.pr && !t.merged) return `in PR #${t.pr}`;
   if (st === "working") {
-    const slot = views.get(x.stage_pane)?.pane?.slot;
-    return liveOn(x) ? `${by} is on it${slot != null ? ` in panel ${slot}` : ""}` : `${by} worked on it, not out yet`;
+    const p = views.get(x.stage_pane)?.pane, slot = p?.slot, tab = p && otherTab(current(), p.grp);
+    return liveOn(x) ? `${by} is on it${slot != null ? ` in panel ${slot}${tab ? ` of ${tab}` : ""}` : ""}` : `${by} worked on it, not out yet`;
   }
   return st === "planned" ? `planned by ${by}` : st === "read" ? `read by ${by}` : "";
 }
@@ -1439,7 +1461,7 @@ function sentFrom() {
   if (readFrom && views.get(readFrom)) return views.get(readFrom);
   const d = current();
   const x = d && docList.find(y => String(y.id) === String(reading));
-  const p = x && x.slot && d.panes.find(q => q.slot === x.slot);
+  const p = x && x.slot && allPanes(d).find(q => q.slot === x.slot && (q.grp || 0) === (x.grp || 0));
   return (p && views.get(p.id)) || null;
 }
 

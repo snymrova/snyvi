@@ -15,7 +15,7 @@ async function act(b, byKey) {
       // Pressed while it cannot: it says why, as ⌃⌥N does.
       const why = noNew(d);
       if (why) return ctx.toast("New panel", why);
-      const j = await ctx.api(`/api/desks/${d.id}/panes`, {});
+      const j = await ctx.api(`/api/desks/${d.id}/panes`, d.grp ? { grp: d.grp } : {});
       focused = j.pane.id;
       await ctx.refresh();
       // Asking for a pane is asking for a shell: it starts, and the Start bar
@@ -430,6 +430,7 @@ function focusPane(id) {
   // with that pane focused.
   if (reading != null) { ctx.go(deskId, true, v.pane.slot); return; }
   // One in the back is the drawer's: opened on it, it has the keys.
+  toGroupOf(v);
   if (isBack(v.pane)) { drawer(id); return; }
   focused = id;
   if (full) saveFull();
@@ -451,7 +452,10 @@ function click(e) {
   // closes again.
   const wb = !e.target.closest("a") && e.target.closest(".wg-body, .wg-why");
   if (wb) { ctx.seatOpen(wb); return; }
-  const m = e.target.closest("[data-desk-menu]");
+  // A tab's name shows it; the + at the row's end asks where (23-groups.js).
+  const tg = e.target.closest(".dk-group[data-grp]");
+  if (tg) { if (!tg.dataset.dragged) showGroup(+tg.dataset.grp); return; }
+  const m = e.target.closest("[data-desk-menu], .dk-group-new");
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   if (backClick(e)) return;
   const f = e.target.closest("[data-focus]");
@@ -473,7 +477,7 @@ function saveFull() {
   const d = current(), v = views.get(focused);
   if (!d) return;
   d.full_slot = full && v ? v.pane.slot : 0;
-  ctx.api(`/api/desks/${d.id}/layout`, { col: d.col, row: d.row, full: d.full_slot }).catch(() => {});
+  ctx.api(`/api/desks/${d.id}/layout`, layoutBody(d, { full: d.full_slot })).catch(() => {});
 }
 
 /** The focused pane in full view, or the grid again. */
@@ -508,6 +512,11 @@ function keys(e) {
     e.preventDefault(); e.stopPropagation();
     const v = views.get(focused);
     if (e.shiftKey) { if (v) sendBack(v, !isBack(v.pane)); } else backKey();
+    return;
+  }
+  // ⌃⌥⇧[ ⌃⌥⇧]: the tab before or after (23-groups.js); ⌃⌥[ ⌃⌥] stay the panels.
+  if (e.shiftKey && /^Bracket(Left|Right)$/.test(e.code)) {
+    if (reading == null && groupStep(e.code === "BracketRight" ? 1 : -1)) { e.preventDefault(); e.stopPropagation(); }
     return;
   }
   if (e.shiftKey && NEXT[e.key]) {
@@ -628,6 +637,7 @@ export function open(c) {
   // Home's "last touched" and the desk it offers to pick up start here.
   if (c.id != null) c.api(`/api/desks/${c.id}/visit`, {}).catch(() => {});
   keepPoints(c.desks);
+  tabNext(c.id);
   const d = current();
   if (d && slot) toSlot(d, d.panes.find(x => x.slot === slot));
   draw();
@@ -662,7 +672,7 @@ function toSlot(d, p) {
   focused = p.id;
   if (!d.full_slot || d.full_slot === p.slot) return;
   d.full_slot = p.slot;
-  ctx.api(`/api/desks/${d.id}/layout`, { col: d.col, row: d.row, full: p.slot }).catch(() => {});
+  ctx.api(`/api/desks/${d.id}/layout`, layoutBody(d, { full: p.slot })).catch(() => {});
 }
 
 /** The cell, measured in the font and size a pane is drawn in, and the
@@ -789,6 +799,8 @@ export function actions(el) {
   // The chip on a panel's row, or the change's own row (22-change.js).
   const card = el.closest(".dk-pth, .dk-change");
   if (card) return threadMenu(card);
+  const tab = el.closest(".dk-group[data-grp]");
+  if (tab) return groupMenu(+tab.dataset.grp);
   const lk = el.closest(".dk-lk-more, .dk-lk");
   if (lk) return linksMenu(lk);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
@@ -905,6 +917,8 @@ export const isFull = () => full;
 export const startAll = () => act({ dataset: { a: "all" } });
 export const renameHere = () => { const d = current(); if (d) renameDesk(d); };
 export const keysHere = () => { const d = current(); if (d) keysSheet(d); };
+/** 1.57: a new tab on folder `f` (from menu.js's New tab in…), or on the desk's own. */
+export const newTab = f => newGroup(f);
 
 export function update(desks) {
   if (!ctx) return;

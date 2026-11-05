@@ -48,11 +48,11 @@ async function watch() {
 
 /** A pane the reader cannot see: the window is hidden, a document is read
  *  over the desk, the grid had no room for it, or it is in the back and the
- *  drawer is not open on it (18-back.js). Its frames are taken in
- *  but not drawn (`paint`), and the daemon sends it one a second, not
- *  sixty: a desk left behind a document used to cost as much as one in
- *  view. */
-const seen = v => !document.hidden && reading == null && v.el.isConnected && (!isBack(v.pane) || drawerOn === v.id);
+ *  drawer is not open on it (18-back.js), or it is in a tab not shown
+ *  (23-groups.js). Its frames are taken in but not drawn (`paint`), and the
+ *  daemon sends it one a second, not sixty: a desk left behind a document
+ *  used to cost as much as one in view. */
+const seen = v => !document.hidden && reading == null && v.el.isConnected && (!isBack(v.pane) || drawerOn === v.id) && !v.el.parentElement?.classList.contains("dk-gbox");
 let paced = null;
 function pace() {
   const slow = [...views.values()].filter(v => !seen(v)).map(v => v.id).sort();

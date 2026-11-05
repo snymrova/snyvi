@@ -682,7 +682,7 @@ async function runNewPanel(d, w) {
   const why = noNew(d);
   if (why) return ctx.toast("New panel", why);
   let p;
-  try { p = await ctx.api(`/api/desks/${d.id}/panes`, { cmd: w.cmd }); }
+  try { p = await ctx.api(`/api/desks/${d.id}/panes`, { cmd: w.cmd, ...(d.grp ? { grp: d.grp } : {}) }); }
   catch (e) { rowErr = { k: `w${w.id}`, why: "Could not open a panel", raw: e.message, again: { a: "tn-newpanel", w: String(w.id) } }; rail(); return; }
   focused = p.pane.id;
   await ctx.refresh();
@@ -799,7 +799,9 @@ async function openSuggested(d, s) {
     if (j.desk && j.desk.id) { await ctx.refresh(); ctx.go(j.desk.id); }
     return;
   }
-  const p = await ctx.api(`/api/desks/${d.id}/panes`, { cmd: s.cmd, back });
+  // In the asking panel's own tab, else the one shown (1.57).
+  const grp = (s.pane && views.get(s.pane)?.pane.grp) || d.grp || 0;
+  const p = await ctx.api(`/api/desks/${d.id}/panes`, { cmd: s.cmd, back, ...(grp ? { grp } : {}) });
   if (!back) focused = p.pane.id;
   if (s.name) { try { await ctx.api(`/api/panes/${p.pane.id}/rename`, { name: s.name }); } catch {} }
   await ctx.refresh();

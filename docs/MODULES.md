@@ -14,6 +14,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/assets.rs` | 648 | the shell pages, the `ASSETS` table (routes, hashes and the live read all come from it), fonts, Mermaid, a document's files |
 | `src/server/api_docs.rs` | 1105 | the library over HTTP, the receive endpoint, asides, Lately's routes and `lately_log` (what every writer calls beside its event), terminal and reveal |
 | `src/server/api_desk.rs` | 1535 | Home, desks, panels, notes, keys, pastes, Ctrl-clicked paths; every route behind `refuse_desk` |
+| `src/server/api_groups.rs` | 280 | 1.57: a desk's tabs -- make, rename, move, show (the reopen default), close and restore one, and a panel into another (#217) |
 | `src/server/api_agent.rs` | 638 | `/api/agents`, connect, and what an agent in a panel says (`/api/panes/{id}/*`, token + running pane) |
 | `src/server/api_peer.rs` | 820 | a friend's snyvi: pairing, the friends list, Send to…, a line, an agent's offer, what is done with a frame (`docs/PEER.md`) |
 | `src/server/api_friend.rs` | 90 | a friend as one place: `/friend/{id}`, `/api/peers/{id}/talk`, and a new version landing with its earlier ones (1.49) |
@@ -48,6 +49,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | File | Lines | What |
 |---|---|---|
 | `src/desk.rs` | 2935 | **over.** desks, panes rows, panes_closed, desk_notes, desk_keys names, the brief's data; shared ops the UI and the agent path both call |
+| `src/desk/groups.rs` | 560 | 1.57: a desk's tabs, which the code calls groups: `desk_groups`, the `panes` rebuild for `UNIQUE(desk_id, grp, slot)`, the first tab's split, close and restore, a panel to another tab (#217) |
 | `src/pane.rs` | 2175 | a PTY and the process on it; `SNYVI_SESSION` and key values into the env |
 | `src/screen.rs` | 1995 | vte → cells → frames the page paints |
 | `src/prompt.rs` | 571 | snyvi's own shell prompt |
@@ -93,6 +95,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/index.html`, `ui/boot.js`, `ui/app.css`, `ui/themes.css` | — | first paint | shell, theme before paint, styles |
 | `ui/app/01-shell.js` … `10-boot.js` | 119–871 each | first paint | `app.js`, as ten parts in one function scope: shell and helpers, tree, queue and what moved, documents and connect, notes and live refresh, the rail, navigation, desks, what snyvi says back, boot. `build.rs` joins them in name order |
 | `ui/desk/01-head.js` … `08-style.js` | 123–882 each | lazy | `desk.js`, as eight parts of one module: head, socket, screen, keys and a pane, the desk, the rail, actions and the seam, style |
+| `ui/desk/23-groups.js` | 330 | lazy | 1.57: a desk's tabs -- `inTab` (the desk as the shown tab sees it, through `current()`), the head's row, the hidden boxes the other tabs' panels run in, switching, the tab's menu |
 | `ui/home.js` | 1330 | lazy | Home, with Friends |
 | `ui/peer.js` | 237 | lazy | pairing, Send to…, a line for a friend, an agent's offer |
 | `ui/friend.js` | 250 | lazy | a friend's page: everything between you, both ways, and a foot that sends (1.49) |

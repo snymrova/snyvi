@@ -2,8 +2,10 @@
  * order (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
 // ---------- the desk ----------
 
+/** The desk on the page, as the tab shown sees it (23-groups.js `inTab`):
+ *  a desk with no tabs as it is. */
 function current() {
-  return ctx.desks && ctx.desks.desks.find(d => d.id === deskId);
+  return inTab(ctx.desks && ctx.desks.desks.find(d => d.id === deskId));
 }
 
 /** How many panes the grid has room for: four above 720px, two above
@@ -65,6 +67,8 @@ function layout() {
   for (const v of shown) catchUp(v);
   pace();
   backLayout(d);
+  groupsMount(d);
+  groupsHead(d);
   if (!all.length) grid.innerHTML = `<p class="dk-none">${d.panes.length ? "Every panel on this desk is in the back." : "No panels on this desk."} <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
   leftOffSlot(d);
@@ -527,7 +531,7 @@ function draw() {
     return;
   }
   document.title = `${d.name} · desk`;
-  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b>${rootButton()}<span class="dk-tabs"></span>` +
+  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-groups" data-part="desk.groups"></span>${rootButton()}<span class="dk-tabs"></span>` +
     `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div>${DRAWER}<div class="dk-live vh" aria-live="polite"></div></div>`;
@@ -546,9 +550,10 @@ function draw() {
 /** Views for the desk's panes: the ones already here kept, scrollback and
  *  all, new ones made, gone ones dropped. Then the socket is told. */
 function sync(d) {
-  const ids = new Set(d.panes.map(p => p.id));
+  // Every tab's panes keep their views: one out of sight still runs.
+  const ids = new Set(allPanes(d).map(p => p.id));
   for (const v of [...views.values()]) if (!ids.has(v.id)) dropView(v);
-  for (const p of d.panes) {
+  for (const p of allPanes(d)) {
     const v = views.get(p.id);
     if (v) { if (!p.held) unready(v); v.pane = p; if (p.status) v.status = { ...v.status, ...p.status }; header(v); }
     else views.set(p.id, makeView(p));
@@ -558,7 +563,10 @@ function sync(d) {
   const fp = d.full_slot && d.panes.find(p => p.slot === d.full_slot);
   full = !!fp;
   if (fp) focused = fp.id;
-  if (!views.has(focused)) focused = d.panes[0] ? d.panes[0].id : null;
+  // Focus is the shown tab's: its own kept one, else its first.
+  if (!d.panes.some(p => p.id === focused)) focused = d.group && d.panes.some(p => p.id === d.group.focused) ? d.group.focused : d.panes[0] ? d.panes[0].id : null;
+  const t = ctx.docEl.querySelector(".dk-root-t");
+  if (t) t.textContent = tilde(d.root);
   layout();
   watch();
 }
@@ -708,7 +716,7 @@ function openLink(url) {
 async function moveTo(v, slot) {
   const d = current();
   if (!d || slot === v.pane.slot) return;
-  try { await ctx.api(`/api/desks/${d.id}/move`, { from: v.pane.slot, to: slot }); }
+  try { await ctx.api(`/api/desks/${d.id}/move`, { from: v.pane.slot, to: slot, ...(d.grp ? { grp: d.grp } : {}) }); }
   catch (e) { ctx.toast("Could not move the panel", e); }
 }
 
@@ -726,6 +734,9 @@ function drag(v, e) {
     const t = at && (at.closest(".dk-grid > .pn") || at.closest(".dk-tabs [data-focus]"));
     const w = t && views.get(t.dataset.id || t.dataset.focus);
     if (w && w !== v && !isBack(w.pane) && !isBack(v.pane)) return { w, el: t };
+    // Onto another tab's name: the panel goes to that tab (1.57).
+    const g = at && at.closest(".dk-group[data-grp]");
+    if (g && +g.dataset.grp !== v.pane.grp) return { grp: +g.dataset.grp, el: g };
     // The back: its chips, or the head's room for them when there are none.
     const b = !isBack(v.pane) && at && (at.closest(".dk-back") || at.closest(".dk-tabs"));
     return b ? { back: true, el: b } : null;
@@ -749,6 +760,7 @@ function drag(v, e) {
     v.dragged = true;
     const t = ev.type === "pointerup" && target(ev);
     if (t && t.back) sendBack(v, true);
+    else if (t && t.grp) regroup(v, t.grp);
     else if (t) moveTo(v, t.w.pane.slot);
   };
   // Followed on the window, not captured by the head: a captured pointer
@@ -777,7 +789,7 @@ function dividers() {
       if (vert) d.col = f; else d.row = f;
       layout();
     };
-    const save = () => { const d = current(); if (d) ctx.api(`/api/desks/${d.id}/layout`, { col: d.col, row: d.row }).catch(() => {}); };
+    const save = () => { const d = current(); if (d) ctx.api(`/api/desks/${d.id}/layout`, layoutBody(d)).catch(() => {}); };
     div.addEventListener("pointerdown", e => {
       if (e.button !== 0) return;
       div.setPointerCapture(e.pointerId);
