@@ -18,7 +18,7 @@ each wearing a label would be noise.
 |---|---|---|
 | `side` | the sidebar, left | `#side` · `ui/index.html` |
 | `side.head` | the mark, live dot, update, search, hide | `.side-head` |
-| `side.tree` | Inbox, desks, projects, folders | `#trees` · `renderTree()` in `app.js` |
+| `side.tree` | Inbox, desks, projects, folders; a desk's row shows its folder button and ✕ on hover (1.57) | `#trees` · `renderTree()` in `app.js` · `[data-deskdir]` |
 | `side.foot` | theme, accent, font, width, wrap, keys, game | `.side-foot` |
 | `main` | the page | `#main` |
 | `main.head` | the page's bar: back, title, its tools | `#chrome` |
@@ -33,7 +33,7 @@ each wearing a label would be noise.
 
 | Name | What it is | Where |
 |---|---|---|
-| `rail.panels` | Panels: a row each, then `+ New panel` / `Start all` | `rail()` · `paneRow` |
+| `rail.panels` | Panels: a row each, then `+ New panel` / `Start all`; on a desk with tabs, the shown tab's panels and one folded line for each other tab (`.dk-tabline`, 1.57) | `rail()` · `paneRow` · `tabLines()` |
 | `rail.points` | Points kept from documents, per panel (only while there are some) | `pointSec()` |
 | `rail.docs` | Documents the desk's panels sent, newest first | `rail()` · `docRow()` |
 | `rail.docs.row` | one document: icon, `.title` (one line; two on the open one), `.by` (panel · age), `.dk-tools` (copy path, back, ✕) | `.dk-doc` |
@@ -53,6 +53,7 @@ reach.
 
 | Name | What it is | Where |
 |---|---|---|
+| `desk.groups` | the desk's named tabs, after its name in the head, the shown one underlined, a `!` on one whose panel needs you, a ✕ on each (on hover, and on the shown one), and `+` for a new one (1.57); the `+` alone on a desk with no tabs, or one | `.dk-groups` · `groupsHead()` in `desk.js` |
 | `desk.back` | the chips of the panels in the back, after the grid's tabs in the desk's head (1.49) | `.dk-back` · `backChips()` in `desk.js` |
 | `desk.drawer` | the drawer over the bottom of the grid, open on one panel in the back; laid out always, seen only open | `.dk-drawer` · `backLayout()` |
 

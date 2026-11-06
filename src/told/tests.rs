@@ -36,6 +36,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::onyou::DESK_COLUMNS_1_54).unwrap();
     conn.execute_batch(crate::peer::SCHEMA).unwrap();
     conn.execute_batch(COLUMNS_1_48).unwrap();
+    crate::desk::groups::for_tests(&conn);
     conn
 }
 

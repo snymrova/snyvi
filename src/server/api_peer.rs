@@ -1803,6 +1803,7 @@ pub(crate) fn on_desk(d: &crate::desk::Desk) -> crate::desk::Origin {
         id: d.id,
         name: d.name.clone(),
         slot: 0,
+        grp: 0,
     }
 }
 

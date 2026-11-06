@@ -164,7 +164,7 @@ async function backNew(d, cmd) {
   if (!cmd) return;
   backField = false; backDraft = "";
   try {
-    const j = await ctx.api(`/api/desks/${d.id}/panes`, { cmd, back: true });
+    const j = await ctx.api(`/api/desks/${d.id}/panes`, { cmd, back: true, ...(d.grp ? { grp: d.grp } : {}) });
     await ctx.refresh();
     // Its first size is the drawer's, and its first start is this one.
     const nv = views.get(j.pane.id);

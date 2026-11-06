@@ -698,6 +698,8 @@
       if (gone && Date.now() - gone.made > 350) undoGone(gone);
       return;
     }
+    const df = e.target.closest("[data-deskdir]");
+    if (df) { e.preventDefault(); e.stopPropagation(); deskDir(+df.dataset.deskdir); return; }
     const dd = e.target.closest("[data-dropdesk]");
     if (dd) {
       // Inside the desk's link: a click on the ✕ is not a click on the desk.

@@ -74,7 +74,7 @@
   deskNav.addEventListener("pointerenter", () => { if (capability) useActs().catch(() => { actsLoading = null; }); });
   deskNav.addEventListener("pointerdown", e => {
     const a = e.target.closest(".t-desk > a[data-desk]");
-    if (a && capability && acts && !e.target.closest("[data-dropdesk]")) acts.dragDesk(actsCtx, a, e);
+    if (a && capability && acts && !e.target.closest(".row-x")) acts.dragDesk(actsCtx, a, e);
   });
   /* #175: the order the Desks list is drawn in. "" is the reader's own
    * (desks.pos: a drag, Move up and down, ⌥↑ ⌥↓); "seen" is last opened
@@ -182,7 +182,7 @@
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
         `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${w ? `<span class="k">${icon("doc", 12, "k-ico")}${w}</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : `<span class="dot${m === "●" ? " on" : m === "◦" ? " run" : ""}"></span>`}<span class="vh">${say}</span></span>`,
-        `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
+        `${capability ? `<button type="button" class="row-x row-f" data-deskdir="${d.id}" data-tip="Open its folder" data-tip-sub="${esc(tilde(d.root))}" aria-label="Folder of ${esc(d.name)}">${icon("folder", 13)}</button><button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
     // under the pointer must not be swapped for a copy of itself: it would
@@ -200,9 +200,15 @@
     if (deskNav.$head !== head) { deskNav.firstElementChild.outerHTML = head; deskNav.$head = head; }
     rows.forEach((r, i) => { if (lis[i].$e !== r[1]) { lis[i].querySelector(".end").outerHTML = r[1]; lis[i].$e = r[1]; } });
   }
+  /** A desk's folder, read over it (#214): its row's folder button. A folder
+   *  gone from disk says so; the desk is kept. */
+  async function deskDir(id) {
+    try { const j = await deskApi(`/api/desks/${id}/folder`, {}); await showBrowse(j.root.id, "", true, false, { over: id, root: j.root }); }
+    catch (e) { toast("Could not open its folder", { sub: e }); }
+  }
   /** The desk view. A tab gets the sentence and not the grid: it could never
    *  start anything, and a grid of dead panes would say it might. */
-  async function showDesk(id, push = true, slot = 0) {
+  async function showDesk(id, push = true, slot = 0, grp = 0) {
     // /desks is Home (1.56, audit B5): Home's cards already say of every
     // desk what a list here said less of -- name, a count and a path with
     // nothing between them (A1) -- and a second board would drift from it.
@@ -227,7 +233,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, push, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), browse: (r, p, o) => showBrowse(r, p, true, false, o), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod, peer: peerCtx });
+    desk.open({ id, slot, grp, push, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), browse: (r, p, o) => showBrowse(r, p, true, false, o), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod, peer: peerCtx });
     cornerMod?.draw();
   }
   /** Out of the desk view, to wherever the page is going next. */

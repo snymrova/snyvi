@@ -248,6 +248,11 @@ a.hm-panels { display: inline-flex; align-items: center; gap: 6px; color: var(--
 a.hm-panels:hover { color: var(--fg); }
 .hm-pk-go { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
 .hm-pk-go .btn kbd { min-width: 0; margin-left: 2px; padding: 0; border: 0; background: none; color: inherit; opacity: .75; }
+.hm-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 0; }
+.hm-tab { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; height: 20px; border: 1px solid var(--rule); border-radius: var(--r-pill); font-size: var(--fs-micro); color: var(--fg-2); text-decoration: none; }
+.hm-tab:hover { color: var(--fg); border-color: var(--accent); }
+.hm-tab.blk { color: var(--warn); border-color: var(--warn); }
+.hm-tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .hm-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--rule); }
 .hm-chips > .hm-s { margin-right: 4px; }
 .hm-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px solid var(--rule); border-radius: var(--r-pill); font-size: var(--fs-small); color: var(--fg); text-decoration: none; }
@@ -726,7 +731,7 @@ function status(j) {
     if (asking.length) {
       ring = true;
       const [d, p] = asking[0];
-      bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} needs you${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
+      bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}"${p.grp ? ` data-grp="${p.grp}"` : ""}>${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} needs you${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
     }
     // On you opens the corner's tray, the one every page has, so its coming
     // moves nothing (audit 67d008cb6f, plan b0bca0a11f).
@@ -778,6 +783,13 @@ function threadLines(j, d) {
 const BRANCH = `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="4" cy="3.5" r="1.8"/><circle cx="4" cy="12.5" r="1.8"/><circle cx="12" cy="5.5" r="1.8"/><path d="M4 5.3v5.4M12 7.3c0 3-4 2.5-7.2 4"/></svg>`;
 
 /** The dots of the panels that are doing something; a stopped panel has none. */
+/** 1.57: a desk's tabs on its card, each opening the desk on it, with the
+ *  needs-you dot of a panel in it (#217). None for a desk with no tabs. */
+const tabChips = d => !(d.groups && d.groups.length > 1) ? "" : `<p class="hm-tabs">` + d.groups.map(g => {
+  const { esc } = c;
+  const need = d.panes.some(p => p.grp === g.id && (p.blocked || p.agent === "needs_you"));
+  return `<a class="hm-tab${need ? " blk" : ""}" href="/desk/${d.id}" data-desk="${d.id}" data-grp="${g.id}" data-tip="${esc(g.name)}${need ? " · needs you" : ""}">${esc(g.name)}${need ? `<i class="dot" aria-hidden="true"></i>` : ""}</a>`;
+}).join("") + `</p>`;
 const liveDots = d => { const ps = d.panes.filter(p => p.running || p.blocked || p.agent === "working" || p.agent === "needs_you"); return ps.length ? `<span class="hm-dots">${ps.map(dot).join("")}</span>` : ""; };
 
 const paneWord = p => p.blocked ? "rang" : p.agent === "needs_you" ? "Claude is asking" : p.agent === "working" ? "Claude working"
@@ -828,14 +840,14 @@ function pick(j) {
   for (const p of d.panes) said.set(paneWord(p), [...(said.get(paneWord(p)) || []), p]);
   const panels = [...said].map(([w, [p, ...more]]) => more.length
     ? `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}">${dot(p)}${plural(more.length + 1, "panel")} <span class="hm-s">${w}</span></a>`
-    : `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${w}</span></a>`).join("");
+    : `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}"${p.grp ? ` data-grp="${p.grp}"` : ""}>${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${w}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
   // The other desks, as chips, only while Other desks below is hidden: it lists them.
   const chips = rest.length && hidden().includes("desks") ? `<p class="hm-chips"><span class="hm-s">or</span>${rest.map(o =>
     `<a class="hm-chip" href="/desk/${o.id}" data-desk="${o.id}" data-tip="${esc(o.name)} · ${o.touched ? touched(o.touched) : "not opened yet"}" data-tip-sub="${esc(o.panes.map(p => `${p.name || `panel ${p.slot}`} ${paneWord(p)}`).join(" · ") || "no panels")}">` +
     `${esc(o.name)}${liveDots(o)}<span class="fact">${o.touched ? age(o.touched) : "new"}</span></a>`).join("")}</p>` : "";
   return box(`<h2>Pick up</h2><div class="hm-pk-top"><a class="hm-pk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="fact">${touched(d.touched)}</span>${spark(d.pulse)}</div>` +
-    left + next + threadLines(j, d) + facts +
+    tabChips(d) + left + next + threadLines(j, d) + facts +
     `<div class="hm-pk-go"><a class="btn btn-primary" href="/desk/${d.id}" data-desk="${d.id}" data-hm-open>Open desk<kbd>↵</kbd></a>` +
     (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Pin this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Unpin" : "Pin here"}</button>` : "") +
     `</div>` + chips);
@@ -1099,7 +1111,7 @@ function desksList(j) {
     return `<div class="hm-dk">` +
       `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? ago(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
       `<button type="button" class="hm-dk-add${d.open ? "" : " hm-dk-n"}" data-hm="addopen" data-k="${d.id}" data-tip="New note on ${esc(d.name)}" data-tip-sub="in the bar at the top" aria-label="A new note on ${esc(d.name)}">+</button></div>` +
-      left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) + threadLines(j, d) +
+      tabChips(d) + left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) + threadLines(j, d) +
       (foot ? `<div class="hm-dk-foot">${foot}</div>` : "") + `</div>`;
   };
   return `<div class="hm-dks">` + shown.map(card).join("") + `</div>` +
@@ -1675,10 +1687,20 @@ async function park(id, next) {
   return true;
 }
 
+/** 1.57: a link to a tab of a desk -- a card's chip, the ring on a panel
+ *  in a tab -- says which tab before the desk opens, in capture so it is
+ *  said before the page's own handler shows the desk (desk/23-groups.js). */
+function tabLinks(el) {
+  el.addEventListener("click", e => {
+    const t = e.target.closest("a[data-desk][data-grp]");
+    if (t && +t.dataset.grp) try { sessionStorage.setItem("snyvi.tabNext", `${t.dataset.desk}:${t.dataset.grp}`); } catch {}
+  }, true);
+}
+
 function wire() {
   const el = c.docEl.querySelector(".hm");
   if (!el || el.dataset.wired) return;
-  el.dataset.wired = "1";
+  el.dataset.wired = "1"; tabLinks(el);
   el.addEventListener("click", async e => {
     // Lately's rows are the corner's, and so are their buttons.
     const cn = e.target.closest("button[data-a^='cn-']");

@@ -27,7 +27,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .prepare(
-                "SELECT d.id, k.id, k.name, COALESCE(d.desk_slot, 0), k.root, p.root, d.desk_off
+                "SELECT d.id, k.id, k.name, COALESCE(d.desk_slot, 0), k.root, p.root, d.desk_off, d.desk_grp
                  FROM live_docs d JOIN desks k ON k.id = d.desk_id JOIN projects p ON p.id = d.project_id
                  WHERE p.root NOT LIKE 'peer:%'",
             )?
@@ -38,6 +38,7 @@ impl Store {
                         id: r.get(1)?,
                         name: r.get(2)?,
                         slot: r.get(3)?,
+                        grp: r.get(7)?,
                     },
                     desk_root: r.get(4)?,
                     project_root: r.get(5)?,

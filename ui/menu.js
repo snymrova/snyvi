@@ -478,11 +478,15 @@ function entries(ctx, el, byKey = false) {
     if (!d || !capability) return null;
     return { head: d.name, items: [
       !here && { label: "Show", run: () => ctx.show(id, true) },
-      d.panes.filter(p => p.slot <= ctx.state.desks.per_desk).length < ctx.state.desks.per_desk && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => newPanel(ctx, id) },
+      // On the desk shown, its own: in the tab on screen, which says why when
+      // that tab is full (#217); a desk elsewhere, the tab it reopens on.
+      (dk ? dk.newHere : d.panes.filter(p => p.slot <= ctx.state.desks.per_desk).length < ctx.state.desks.per_desk) && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => dk ? dk.newHere() : newPanel(ctx, id) },
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       dk && { label: "Keys…", run: () => dk.keysHere() },
+      // 1.57: more panels on this desk, in its folder (#217): the head's + too.
+      dk && dk.newTab && { label: "New tab", run: () => dk.newTab() },
       // Focus follows the pointer left this menu for the foot strip (1.43):
       // it is the whole app's, and here it read as this desk's alone.
       RULE,

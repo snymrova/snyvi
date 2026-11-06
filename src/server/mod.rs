@@ -16,6 +16,7 @@ mod api_desk;
 mod api_docs;
 mod api_friend;
 mod api_gallery;
+mod api_groups;
 mod api_media;
 mod api_peer;
 mod api_pipeline;
@@ -42,6 +43,7 @@ use api_desk::*;
 use api_docs::*;
 use api_friend::*;
 use api_gallery::*;
+use api_groups::*;
 use api_media::*;
 use api_peer::*;
 use api_pipeline::*;
@@ -434,6 +436,18 @@ fn pane_routes() -> Router<Arc<App>> {
         )
 }
 
+/// 1.57: a desk's tabs (`api_groups`), and a panel moved into one.
+fn group_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/desks/{id}/groups", post(create_group))
+        .route("/api/desks/{id}/groups/{grp}/rename", post(rename_group))
+        .route("/api/desks/{id}/groups/{grp}/move", post(move_group))
+        .route("/api/desks/{id}/groups/{grp}/show", post(show_group))
+        .route("/api/desks/{id}/groups/{grp}/close", post(close_group))
+        .route("/api/desks/{id}/groups/{grp}/restore", post(restore_group))
+        .route("/api/panes/{id}/group", post(regroup_pane))
+}
+
 /// Folders read straight from disk (`api_browse`): the picker, Welcome's
 /// new folder, and what an open folder holds.
 fn browse_routes() -> Router<Arc<App>> {
@@ -683,6 +697,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/rename", post(rename_desk))
         .route("/api/desks/{id}/layout", post(desk_layout))
         .route("/api/desks/{id}/move", post(move_pane))
+        .merge(group_routes())
         .route("/api/desks/{id}/delete", post(delete_desk))
         .route("/api/desks/{id}/reopen", post(reopen_desk))
         .route("/api/desks/{id}/folder", post(desk_folder))

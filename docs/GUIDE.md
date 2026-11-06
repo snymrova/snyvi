@@ -1729,10 +1729,26 @@ files as you click them. Nothing of it is stored, nothing joins the
 library, and nothing appears in the inbox. It is a reader for code and
 notes you already have, not an import.
 
+### Tabs in a desk
+
+A project with parts running at once -- a website, a bot, the automation
+that posts for it -- can keep them on one desk as tabs. The `+` after the
+desk's name makes one at once, in the desk's folder, with a shell started;
+the first press on a desk makes two, "Tab 1" for the panels you had and
+"Tab 2" for the new one. Click a tab's name to show it, double-click the
+shown one to rename it, and press Ctrl Alt Shift ] or [ for the next or
+the one before. The panels of the tabs you are not looking at keep
+running, and a tab whose panel needs you shows a `!` on its name. A tab's
+✕ closes it with its panels, kept and stopped, and Undo brings it back;
+right-click a tab for Move left and right and to move the focused panel
+there. Notes, documents and threads stay the desk's, one list for every
+tab. On Home, a desk with tabs has a chip for each, and a chip opens the
+desk on that tab.
+
 ### A desk's folder
 
-A desk is its folder, so the desk opens it: the path in the desk's head is
-a button. It shows the folder's page over the desk, with the desk's rail
+A desk is its folder, so the desk opens it: rest the pointer on a desk's
+row in the sidebar and a folder button shows beside its ✕. It shows the folder's page over the desk, with the desk's rail
 beside it and a ✕ back to the panels. The folder is a tree in a column
 on the left, and what you read is on the right: the folder's README at
 first, then each file you click. The tree stays as it was while you go

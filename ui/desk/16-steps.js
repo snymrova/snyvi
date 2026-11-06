@@ -131,7 +131,7 @@ async function stepShell(d, w, i, cmd) {
     const why = noNew(d);
     if (why) return ctx.toast("New panel", why);
     let p;
-    try { p = await ctx.api(`/api/desks/${d.id}/panes`, {}); }
+    try { p = await ctx.api(`/api/desks/${d.id}/panes`, d.grp ? { grp: d.grp } : {}); }
     catch (e) { rowErr = { k: `w${w.id}`, why: "Could not open a panel", raw: e.message, again: { a: "tn-step-run", w: String(w.id), i: String(i), to: "shell" } }; rail(); return; }
     st.shell = p.pane.id;
     stepsKeep();

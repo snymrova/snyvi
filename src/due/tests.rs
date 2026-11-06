@@ -168,6 +168,7 @@ fn db() -> Connection {
     conn.execute_batch(TURN_COLUMN_1_47).unwrap();
     conn.execute_batch(crate::waiting::COLUMNS_1_47).unwrap();
     conn.execute_batch(crate::onyou::DESK_COLUMNS_1_54).unwrap();
+    crate::desk::groups::for_tests(&conn);
     conn
 }
 

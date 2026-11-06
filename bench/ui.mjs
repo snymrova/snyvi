@@ -300,6 +300,7 @@ async function main() {
     await section("the keys sheet: Claude as, then keys", () => keysSheetRows(cdp, base));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
     await section("panels in the back: a chip, a drawer, one that dies", () => backPanelRows(cdp, base));
+    await section("#217: tabs in a desk, made, named, stepped, closed", () => tabRows(cdp, base));
     await section("#187: back from a page is back to the panel that sent it", () => senderRows(cdp, base, token));
     await section("#188: files by name in ⌘K", () => findRows(cdp, base, token, env, tmp));
     await section("#214: a desk opens its own folder", () => deskFolderRows(cdp, base, token, env, tmp));
@@ -4195,6 +4196,113 @@ async function backPanelRows(cdp, base) {
   return rows;
 }
 
+/* 1.57: a desk's tabs (ui/desk/23-groups.js, #217). The + on a desk with no
+ * tabs makes two, the old panels' and a new one's, in the desk's folder; a
+ * double-click renames the shown one; the keys step round; a new panel, from
+ * the rail or the desk's ⋯, goes in the tab on screen; a hidden tab that
+ * rings says so; ✕ closes one with an Undo; Home's chip opens a tab. */
+async function tabRows(cdp, base) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}) => (await fetch(base + path, { method: "POST", headers: H, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const deskNow = async id => (await (await fetch(`${base}/api/desks`, { headers: H })).json()).desks.find(d => d.id === id);
+  const d0 = await post("/api/desks", { name: "the tabs" });
+  const desk = d0.desk ? d0.desk.id : d0.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  const first = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  await post(`/api/panes/${first}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const shown = () => p.ev(`(() => { const t = document.querySelector(".dk-groups .dk-group.on"); return t ? { id: +t.dataset.grp, name: t.firstChild.textContent } : null; })()`);
+  const inGrp = (d, g) => d.panes.filter(x => x.grp === g).map(x => x.id);
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    const plus = await until(`!!document.querySelector(".dk-groups .dk-group-new") && !document.querySelector(".dk-groups .dk-group")`);
+    rows.push(["a desk with no tabs has the + alone", plus, plus ? "the +, and no names" : "no +, or names on a desk without tabs"]);
+
+    if (plus) await p.clickOn(".dk-groups .dk-group-new");
+    const two = plus && await until(`document.querySelectorAll(".dk-groups .dk-group").length === 2 && document.querySelectorAll(".dk-grid > .pn").length === 1`);
+    let d = await deskNow(desk);
+    const [t1, t2] = (d.groups || []).map(g => g.id), on = await shown();
+    const made = two && d.groups.map(g => g.name).join(" ") === "Tab 1 Tab 2" && on && on.id === t2 && inGrp(d, t1).join() === first && inGrp(d, t2).length === 1
+      && d.groups.every(g => g.root === d.root) && await p.ev(`!!document.querySelector('.dk-gbox .pn[data-id="${first}"]')`);
+    rows.push(["its first press makes Tab 1 for the panels and Tab 2, shown, in the desk's folder", !!made,
+      !two ? "the row did not come, or the grid holds more than the new panel" : !made ? `tabs ${JSON.stringify((d.groups || []).map(g => [g.name, g.root]))}, shown ${on && on.name}, Tab 1 holds ${inGrp(d, t1).length}` : "Tab 1 holds the old panel, out of sight and running; Tab 2 a new shell"]);
+
+    // A double-click on the shown tab renames it where it stands.
+    if (made) { const c = await p.ui("center", ".dk-groups .dk-group.on"); await p.dblclick(c.x, c.y); }
+    const field = made && await until(`document.activeElement?.classList.contains("dk-group-in")`);
+    if (field) { await p.type("server"); await p.press("Enter"); }
+    const renamed = field && await until(`document.querySelector(".dk-groups .dk-group.on")?.firstChild.textContent === "server"`);
+    rows.push(["a double-click on the shown tab renames it in place", renamed,
+      !made ? "no tabs to rename" : !field ? "no field came on the name" : renamed ? "Tab 2 is server" : `it reads ${(await shown())?.name}`]);
+
+    // The keys, from inside a panel: ⌃⌥⇧] is the next tab, round.
+    await p.ev(`document.querySelector(".dk-grid > .pn .pn-body")?.focus(); 1`);
+    for (const type of ["rawKeyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: "}", code: "BracketRight", windowsVirtualKeyCode: 221, modifiers: 11 }, sessionId);
+    const stepped = made && await until(`document.querySelector(".dk-groups .dk-group.on")?.dataset.grp === "${t1}" && !!document.querySelector('.dk-grid > .pn[data-id="${first}"]')`);
+    rows.push(["⌃⌥⇧] from a panel shows the next tab", stepped, stepped ? "Tab 1, its panel in the grid" : `the shown tab is ${(await shown())?.name}`]);
+
+    // A new panel goes in the tab on screen: the rail's, then the desk ⋯'s
+    // from the other tab.
+    if (stepped) await p.clickOn('#toc .dk-new[data-a="new"]');
+    const railNew = stepped && await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    d = await deskNow(desk);
+    rows.push(["the rail's + New panel lands in the tab on screen", railNew && inGrp(d, t1).length === 2 && inGrp(d, t2).length === 1,
+      !railNew ? "no second panel in the grid" : `Tab 1 holds ${inGrp(d, t1).length}, server ${inGrp(d, t2).length}`]);
+    if (stepped) await p.clickOn(`.dk-groups .dk-group[data-grp="${t2}"]`);
+    const back2 = stepped && await until(`document.querySelector(".dk-groups .dk-group.on")?.dataset.grp === "${t2}"`);
+    if (back2) {
+      await p.clickOn(".dk-head [data-desk-menu]");
+      await until(`!document.querySelector("#ctx")?.hidden`, 20);
+      const i = await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.startsWith("New panel"))`);
+      if (i >= 0) await p.clickOn(`#ctx button[data-i="${i}"]`);
+    }
+    const menuNew = back2 && await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    d = await deskNow(desk);
+    rows.push(["the desk ⋯'s New panel lands in the tab on screen too", menuNew && inGrp(d, t2).length === 2 && inGrp(d, t1).length === 2,
+      !back2 ? "server did not show" : !menuNew ? "no second panel in server's grid" : `Tab 1 holds ${inGrp(d, t1).length}, server ${inGrp(d, t2).length}`]);
+
+    // A panel out of sight that rings: its tab's name says so.
+    if (menuNew) {
+      await post(`/api/panes/${first}/stop`);
+      for (let i = 0; i < 20 && (await deskNow(desk)).panes.find(x => x.id === first)?.running; i++) await sleep(100);
+      await post(`/api/panes/${first}/start`, { cmd: `printf '\\a'; while :; do ${sleepBin} 1; done` });
+    }
+    const rang = menuNew && await until(`!!document.querySelector('.dk-groups .dk-group.blk[data-grp="${t1}"]') && document.querySelector('.dk-groups .dk-group[data-grp="${t1}"] .dk-group-mark')?.textContent === "!"`, 100);
+    rows.push(["a hidden tab whose panel rings wears a !", rang, rang ? "Tab 1!, amber" : `Tab 1 is "${await p.ev(`document.querySelector('.dk-groups .dk-group[data-grp="${t1}"]')?.className || "gone"`)}"`]);
+
+    // ✕ on the shown tab: closed, its panels kept; the lone tab left hides
+    // its name; the toast's Undo brings it back with both panels.
+    if (menuNew) await p.clickOn(`.dk-groups .dk-group-x[data-grp-x="${t2}"]`);
+    const closed = menuNew && await until(`!document.querySelector(".dk-groups .dk-group") && !!document.querySelector("#toasts .toast .act")`);
+    rows.push(["✕ closes a tab, and one left reads as none", closed, closed ? "the + alone, and an Undo" : `the row holds ${await p.ev(`document.querySelectorAll(".dk-groups .dk-group").length`)} names`]);
+    if (closed) await p.clickOn("#toasts .toast .act");
+    const undone = closed && await until(`document.querySelectorAll(".dk-groups .dk-group").length === 2 && document.querySelector(".dk-groups .dk-group.on")?.dataset.grp === "${t2}"`);
+    d = await deskNow(desk);
+    rows.push(["its Undo brings the tab back, with its panels", undone && inGrp(d, t2).length === 2,
+      !undone ? "the tab did not come back, or is not shown" : `server holds ${inGrp(d, t2).length}`]);
+
+    // Home: a desk of two tabs has a chip for each, and one opens that tab.
+    await p.goto(`${base}/#cap=${cap}`);
+    const chip = `.hm-tab[data-desk="${desk}"][data-grp="${t1}"]`;
+    const chipped = await until(`!!document.querySelector('${chip}')`);
+    if (chipped) await p.clickOn(chip);
+    const opened = chipped && await until(`location.pathname === "/desk/${desk}" && document.querySelector(".dk-groups .dk-group.on")?.dataset.grp === "${t1}"`);
+    rows.push(["Home's chip opens the desk on that tab", opened, !chipped ? "no chip on the desk's card" : opened ? "the desk, on Tab 1" : `on ${await p.ev("location.pathname")}, tab ${(await shown())?.name}`]);
+  } finally {
+    const d = await deskNow(desk).catch(() => null);
+    for (const x of (d && d.panes) || []) await post(`/api/panes/${x.id}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
 /** #187: a page one panel sent, opened while another had the focus, goes
  *  back to its sender -- the ✕ says so, the rail marks it, full view
  *  follows, one in the back opens its drawer -- and history's way back
@@ -4268,7 +4376,8 @@ async function findRows(cdp, base, token, env, tmp) {
   return rows;
 }
 
-/** #214: the path in a desk's head opens the desk's folder over the desk,
+/** #214: the folder on a desk's row in the sidebar (1.57; the head's path
+ *  before) opens the desk's folder over the desk,
  *  as a tree, and the ✕ goes back to the panels; the folder comes back as
  *  it was left. The sidebar has no Folders, and a layout saved with it
  *  draws without it. The desk's folder is closed for reading first, so the
@@ -4293,21 +4402,22 @@ async function deskFolderRows(cdp, base, token, env, tmp) {
   const sub = `.fp .b-dir > details[data-path="sub"]`;
   try {
     await p.goto(`${base}/desk/${desk}#cap=${cap}`);
-    const door = await until(`!!document.querySelector(".dk-root-b")`);
+    const dirSel = `#side [data-deskdir="${desk}"]`;
+    const door = await until(`!!document.querySelector('${dirSel}')`);
     const left = await p.ev(`({ folders: !!document.querySelector("#browse-nav"), icon: !!document.querySelector('#rail-nav [data-pop="browse"]') })`);
     rows.push(["the sidebar has no Folders, and its rail no folder icon", !left.folders && !left.icon,
       left.folders ? "#browse-nav is still in the sidebar" : left.icon ? "the rail still has the folder icon" : "Inbox, Desks, Widgets"]);
-    if (door) await p.clickOn(".dk-root-b");
+    if (door) await p.clickOn(dirSel);
     const over = door && await until(`location.pathname.startsWith("/b/") && !!document.querySelector('${sub}')`);
     const seen = await p.ev(`({ x: !document.querySelector("#chrome .over").hidden, tip: document.querySelector("#chrome .over")?.lastChild?.dataset.tip || "", rail: !!document.querySelector('#toc [data-sec="panels"]') })`);
-    rows.push(["the head's path opens the desk's folder over the desk", over && seen.x && seen.rail,
-      !door ? "no folder button in the desk's head" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "no ✕ in the head" : `the tree, the desk's rail, and "${seen.tip}"`]);
+    rows.push(["the desk row's folder opens the desk's folder over the desk", over && seen.x && seen.rail,
+      !door ? "no folder button on the desk's row" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "no ✕ in the head" : `the tree, the desk's rail, and "${seen.tip}"`]);
     if (over) await p.clickOn(`${sub} > summary`);
     const opened = over && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
     if (over) await p.clickOn("#chrome .over > :last-child");
-    const back = over && await until(`location.pathname === "/desk/${desk}" && !!document.querySelector(".dk-root-b")`);
+    const back = over && await until(`location.pathname === "/desk/${desk}" && !!document.querySelector(".dk-grid")`);
     rows.push(["its ✕ goes back to the panels", back, back ? "the desk, as it was" : `the page is on ${await p.ev("location.pathname")}`]);
-    if (back) await p.clickOn(".dk-root-b");
+    if (back) await p.clickOn(dirSel);
     const kept = back && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
     const mem = await p.ev(`(() => { try { return Object.values(JSON.parse(localStorage.getItem("snyvi.folders") || "{}")).some(m => (m.open || []).includes("sub")); } catch { return false; } })()`);
     rows.push(["the folder comes back as it was left", opened && kept && mem,

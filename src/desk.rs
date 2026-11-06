@@ -248,6 +248,14 @@ pub struct Desk {
     /// hidden ones too, for their Undo (`crate::links`).
     pub links: Vec<crate::links::Link>,
     pub panes: Vec<Pane>,
+    /// 1.57: its tabs, in the reader's order, or none (`groups`). With tabs,
+    /// each holds its own layout and the desk's `col`, `row` and `full_slot`
+    /// rest.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<groups::Group>,
+    /// The tab the desk reopens on, or 0 (`groups::show`).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub grp_shown: i64,
 }
 
 /// A key a desk hands its panels, by name. The value is in the keychain or
@@ -468,6 +476,12 @@ pub struct DeskNote {
     /// not yet..., which takes the tick back (`check_note`).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub recheck: bool,
+    /// 1.57: the tab of the panel working on it or that ticked it, by name,
+    /// for the rail's mark on a row from another tab; empty on a desk with
+    /// no tabs or when that panel is gone. `notes` fills it in, since the
+    /// pane itself is never the page's.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub grp: String,
 }
 
 /// How long a tick that was not the reader's still offers not yet...
@@ -487,7 +501,7 @@ pub fn on_branch(n: &DeskNote, now: i64) -> bool {
         && n.done_at > now - LAND_WINDOW_S
 }
 
-fn is_zero(n: &i64) -> bool {
+pub(crate) fn is_zero(n: &i64) -> bool {
     *n == 0
 }
 
@@ -580,6 +594,10 @@ pub struct Pane {
     /// in the desk view). Cleared by the first start, whatever it runs.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
+    /// 1.57: the tab it is in, or 0 on a desk with no tabs (`groups`). The
+    /// slot is the slot in that tab.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub grp: i64,
 }
 
 /// Where a document came from, when it came from a pane: the desk and the
@@ -592,6 +610,9 @@ pub struct Origin {
     pub id: i64,
     pub name: String,
     pub slot: i64,
+    /// 1.57: the tab the slot is in, or 0 (`groups`).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub grp: i64,
 }
 
 /// A pane with the desk it is on, for the things that need both: starting it,
@@ -640,7 +661,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
         .query_map([], row_to_desk)?
         .collect::<rusqlite::Result<_>>()?;
     let mut stmt = conn.prepare(
-        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes ORDER BY desk_id, slot",
+        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name, account, held, grp FROM panes ORDER BY desk_id, grp, slot",
     )?;
     let panes: Vec<(i64, Pane)> = stmt
         .query_map([], |r| Ok((r.get(0)?, row_to_pane(r, 1)?)))?
@@ -648,6 +669,11 @@ pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
     for (desk_id, pane) in panes {
         if let Some(d) = desks.iter_mut().find(|d| d.id == desk_id) {
             d.panes.push(pane);
+        }
+    }
+    for (desk_id, g) in groups::all(conn)? {
+        if let Some(d) = desks.iter_mut().find(|d| d.id == desk_id) {
+            d.groups.push(g);
         }
     }
     // One query for every desk's keys, picked per desk the way `keys` picks.
@@ -683,12 +709,13 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
         return Ok(None);
     };
     let mut stmt = conn.prepare(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes WHERE desk_id = ?1 ORDER BY slot",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account, held, grp FROM panes WHERE desk_id = ?1 ORDER BY grp, slot",
     )?;
     desk.panes = stmt
         .query_map(params![id], |r| row_to_pane(r, 0))?
         .collect::<rusqlite::Result<_>>()?;
     desk.keys = keys(conn, id)?;
+    desk.groups = groups::of(conn, id)?;
     Ok(Some(desk))
 }
 
@@ -729,6 +756,8 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         account: 0,
         links: Vec::new(),
         panes: Vec::new(),
+        groups: Vec::new(),
+        grp_shown: 0,
     })
 }
 
@@ -827,8 +856,15 @@ pub fn rename(conn: &Connection, id: i64, name: &str) -> Result<bool> {
 /// Where the two dividers sit, and which slot is in full view. Clamped,
 /// because a fraction that came from a drag can arrive as anything and a pane
 /// no one can see is not a pane. `full` left out keeps what is there; a slot
-/// out of range is the grid.
-pub fn layout(conn: &Connection, id: i64, col: f64, row: f64, full: Option<i64>) -> Result<bool> {
+/// out of range is the grid. 1.57: `grp` is the tab the page shows, whose
+/// own row holds its layout; 0 for a desk with no tabs, the desk's row.
+pub fn layout(
+    conn: &Connection,
+    id: i64,
+    grp: i64,
+    (col, row): (f64, f64),
+    full: Option<i64>,
+) -> Result<bool> {
     let clamp = |f: f64| {
         if f.is_finite() {
             f.clamp(MIN_FRACTION, MAX_FRACTION)
@@ -837,6 +873,13 @@ pub fn layout(conn: &Connection, id: i64, col: f64, row: f64, full: Option<i64>)
         }
     };
     let full = full.map(|s| if side(false).contains(&s) { s } else { 0 });
+    if grp != 0 {
+        return Ok(conn.execute(
+            "UPDATE desk_groups SET col = ?3, row = ?4, full_slot = COALESCE(?5, full_slot)
+             WHERE id = ?2 AND desk_id = ?1 AND closed_at = 0",
+            params![id, grp, clamp(col), clamp(row), full],
+        )? > 0);
+    }
     Ok(conn.execute(
         "UPDATE desks SET col = ?2, row = ?3, full_slot = COALESCE(?4, full_slot) WHERE id = ?1",
         params![id, clamp(col), clamp(row), full],
@@ -861,17 +904,13 @@ pub fn close(conn: &mut Connection, id: i64, now: i64) -> Result<Option<Vec<Stri
         return Ok(None);
     }
     let ids: Vec<String> = tx
-        .prepare("SELECT id FROM panes WHERE desk_id = ?1 ORDER BY slot")?
+        .prepare("SELECT id FROM panes WHERE desk_id = ?1 ORDER BY grp, slot")?
         .query_map(params![id], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     // One at a time, in slot order: `reopen` reads them back in the order
     // they were written, which puts each where it was.
     for p in &ids {
-        tx.execute(
-            "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, name_by, agent_session, account, created_at, closed_at, back)
-             SELECT id, desk_id, cwd, cmd, name, name_by, agent_session, account, created_at, ?2, slot > ?3 FROM panes WHERE id = ?1",
-            params![p, now, GRID],
-        )?;
+        groups::stash(&tx, p, now)?;
     }
     tx.execute("DELETE FROM panes WHERE desk_id = ?1", params![id])?;
     tx.commit()?;
@@ -895,27 +934,17 @@ pub fn reopen(conn: &mut Connection, id: i64) -> Result<bool> {
         return Ok(false);
     };
     tx.execute("UPDATE desks SET closed_at = 0 WHERE id = ?1", params![id])?;
-    let closed: Vec<(String, bool)> = tx
+    let closed: Vec<(String, i64, bool)> = tx
         .prepare(
-            "SELECT id, back FROM panes_closed WHERE desk_id = ?1 AND closed_at = ?2
+            "SELECT id, grp, back FROM panes_closed WHERE desk_id = ?1 AND closed_at = ?2
              ORDER BY rowid",
         )?
-        .query_map(params![id, at], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .query_map(params![id, at], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    // Each side fills from its first slot, in the order they closed, which is
-    // slot order; past a side's cap one stays in the Removed list.
-    let (mut grid, mut behind) = (side(false), side(true));
-    for (p, back) in &closed {
-        let Some(slot) = (if *back { behind.next() } else { grid.next() }) else {
-            continue;
-        };
-        tx.execute(
-            "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, name_by, agent_session, account, created_at)
-             SELECT id, desk_id, ?2, cwd, cmd, name, name_by, agent_session, account, created_at FROM panes_closed WHERE id = ?1",
-            params![p, slot],
-        )?;
-        tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![p])?;
-    }
+    // Each side of each tab fills from its first slot, in the order they
+    // closed, which is slot order; past a side's cap one stays in the
+    // Removed list.
+    groups::bring_back(&tx, id, &closed)?;
     tx.commit()?;
     Ok(true)
 }
@@ -1048,7 +1077,9 @@ pub fn prune_desks(conn: &Connection, before: i64, dry_run: bool) -> Result<Vec<
 }
 
 /// Open a pane on a desk, in the lowest free slot of its side: the grid, or
-/// the back when `back`.
+/// the back when `back`. 1.57: in tab `grp`, or with 0 the one the reader
+/// is on (`groups::live_grp`), so a caller that knows no tabs still lands
+/// it in one.
 ///
 /// The desk's four is read inside the same transaction that writes the row,
 /// so two requests that arrive together cannot each see three panes and both
@@ -1059,7 +1090,7 @@ pub fn open_pane(
     cwd: &str,
     cmd: &str,
     held: bool,
-    back: bool,
+    (grp, back): (i64, bool),
     now: i64,
 ) -> Result<Opened> {
     let tx = conn.transaction()?;
@@ -1074,17 +1105,15 @@ pub fn open_pane(
     if !exists {
         return Ok(Opened::NoSuchDesk);
     }
-    let taken: Vec<i64> = tx
-        .prepare("SELECT slot FROM panes WHERE desk_id = ?1")?
-        .query_map(params![desk_id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
+    let grp = groups::live_grp(&tx, desk_id, grp)?;
+    let taken = groups::taken(&tx, desk_id, grp)?;
     let Some(slot) = side(back).find(|s| !taken.contains(s)) else {
         return Ok(Opened::DeskFull);
     };
     let id = pane_id()?;
     tx.execute(
-        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, created_at, held) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![id, desk_id, slot, cwd, cmd, now, held],
+        "INSERT INTO panes(id, desk_id, grp, slot, cwd, cmd, created_at, held) VALUES(?1, ?2, ?8, ?3, ?4, ?5, ?6, ?7)",
+        params![id, desk_id, slot, cwd, cmd, now, held, grp],
     )?;
     tx.commit()?;
     Ok(Opened::Pane(Pane {
@@ -1098,6 +1127,7 @@ pub fn open_pane(
         name: String::new(),
         account: None,
         held,
+        grp,
     }))
 }
 
@@ -1108,16 +1138,22 @@ pub fn open_pane(
 /// out of range. Runs inside the caller's transaction, which also moves what
 /// the panes sent (`Store::move_pane`); `UNIQUE(desk_id, slot)` is checked
 /// row by row, so the pane moving out goes through slot 0 first. Both slots
-/// are on one side: across, a pane goes by `send_back`.
-pub fn move_pane(tx: &rusqlite::Transaction, desk_id: i64, from: i64, to: i64) -> Result<bool> {
+/// are on one side: across, a pane goes by `send_back`. 1.57: both in tab
+/// `grp` (0 on a desk with no tabs); to another tab, by `groups::regroup`.
+pub fn move_pane(
+    tx: &rusqlite::Transaction,
+    desk_id: i64,
+    grp: i64,
+    (from, to): (i64, i64),
+) -> Result<bool> {
     let range = side(in_back(from));
     if !range.contains(&from) || !range.contains(&to) {
         return Ok(false);
     }
     let moving: Option<String> = tx
         .query_row(
-            "SELECT id FROM panes WHERE desk_id = ?1 AND slot = ?2",
-            params![desk_id, from],
+            "SELECT id FROM panes WHERE desk_id = ?1 AND grp = ?3 AND slot = ?2",
+            params![desk_id, from, grp],
             |r| r.get(0),
         )
         .optional()?;
@@ -1129,17 +1165,18 @@ pub fn move_pane(tx: &rusqlite::Transaction, desk_id: i64, from: i64, to: i64) -
     }
     tx.execute("UPDATE panes SET slot = 0 WHERE id = ?1", params![moving])?;
     tx.execute(
-        "UPDATE panes SET slot = ?3 WHERE desk_id = ?1 AND slot = ?2",
-        params![desk_id, to, from],
+        "UPDATE panes SET slot = ?3 WHERE desk_id = ?1 AND grp = ?4 AND slot = ?2",
+        params![desk_id, to, from, grp],
     )?;
     tx.execute(
         "UPDATE panes SET slot = ?2 WHERE id = ?1",
         params![moving, to],
     )?;
     // Full view is on a pane, not a position: it goes where that pane went.
+    let (table, row) = groups::layout_row(desk_id, grp);
     tx.execute(
-        "UPDATE desks SET full_slot = CASE full_slot WHEN ?2 THEN ?3 WHEN ?3 THEN ?2 ELSE full_slot END WHERE id = ?1",
-        params![desk_id, from, to],
+        &format!("UPDATE {table} SET full_slot = CASE full_slot WHEN ?2 THEN ?3 WHEN ?3 THEN ?2 ELSE full_slot END WHERE id = ?1"),
+        params![row, from, to],
     )?;
     Ok(true)
 }
@@ -1153,39 +1190,52 @@ pub fn move_pane(tx: &rusqlite::Transaction, desk_id: i64, from: i64, to: i64) -
 /// same transaction (`Store::close_pane`); `None` if the id is not a pane's.
 ///
 /// Each shift moves a pane into the slot just vacated, so `UNIQUE(desk_id,
-/// slot)` holds row by row, the reasoning `move_pane` gives.
-pub fn close_pane(tx: &rusqlite::Transaction, id: &str, now: i64) -> Result<Option<(i64, i64)>> {
-    let Some((desk_id, slot)) = tx
+/// grp, slot)` holds row by row, the reasoning `move_pane` gives. 1.57: all
+/// of it within the pane's tab, which is returned with the desk and slot.
+pub fn close_pane(tx: &rusqlite::Transaction, id: &str, now: i64) -> Result<Option<Freed>> {
+    let Some(freed) = tx
         .query_row(
-            "SELECT desk_id, slot FROM panes WHERE id = ?1",
+            "SELECT desk_id, grp, slot FROM panes WHERE id = ?1",
             params![id],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            |r| {
+                Ok(Freed {
+                    desk_id: r.get(0)?,
+                    grp: r.get(1)?,
+                    slot: r.get(2)?,
+                })
+            },
         )
         .optional()?
     else {
         return Ok(None);
     };
-    tx.execute(
-        "INSERT OR REPLACE INTO panes_closed(id, desk_id, cwd, cmd, name, name_by, agent_session, account, created_at, closed_at, back)
-         SELECT id, desk_id, cwd, cmd, name, name_by, agent_session, account, created_at, ?2, slot > ?3 FROM panes WHERE id = ?1",
-        params![id, now, GRID],
-    )?;
+    let Freed { desk_id, grp, slot } = freed;
+    groups::stash(tx, id, now)?;
     tx.execute("DELETE FROM panes WHERE id = ?1", params![id])?;
-    close_up(tx, desk_id, slot)?;
+    close_up(tx, desk_id, grp, slot)?;
+    let (table, row) = groups::layout_row(desk_id, grp);
     tx.execute(
-        "UPDATE desks SET full_slot = CASE WHEN full_slot = ?2 THEN 0 WHEN full_slot > ?2 THEN full_slot - 1 ELSE full_slot END WHERE id = ?1",
-        params![desk_id, slot],
+        &format!("UPDATE {table} SET full_slot = CASE WHEN full_slot = ?2 THEN 0 WHEN full_slot > ?2 THEN full_slot - 1 ELSE full_slot END WHERE id = ?1"),
+        params![row, slot],
     )?;
-    Ok(Some((desk_id, slot)))
+    Ok(Some(freed))
 }
 
-/// The panes after `slot` on its side, one slot down each, into the one just
-/// vacated, so `UNIQUE(desk_id, slot)` holds row by row.
-fn close_up(tx: &rusqlite::Transaction, desk_id: i64, slot: i64) -> Result<()> {
+/// Where a closed pane was: its desk, its tab (0 for none) and its slot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Freed {
+    pub desk_id: i64,
+    pub grp: i64,
+    pub slot: i64,
+}
+
+/// The panes after `slot` on its side of tab `grp`, one slot down each, into
+/// the one just vacated, so `UNIQUE(desk_id, grp, slot)` holds row by row.
+fn close_up(tx: &rusqlite::Transaction, desk_id: i64, grp: i64, slot: i64) -> Result<()> {
     for s in slot + 1..=*side(in_back(slot)).end() {
         tx.execute(
-            "UPDATE panes SET slot = ?3 WHERE desk_id = ?1 AND slot = ?2",
-            params![desk_id, s, s - 1],
+            "UPDATE panes SET slot = ?3 WHERE desk_id = ?1 AND grp = ?4 AND slot = ?2",
+            params![desk_id, s, s - 1, grp],
         )?;
     }
     Ok(())
@@ -1194,8 +1244,14 @@ fn close_up(tx: &rusqlite::Transaction, desk_id: i64, slot: i64) -> Result<()> {
 /// What came of sending a pane to the back, or bringing it forward.
 #[derive(Debug, PartialEq)]
 pub enum Sent {
-    /// From one slot to the other side's lowest free one, on this desk.
-    Moved { desk_id: i64, from: i64, to: i64 },
+    /// From one slot to the other side's lowest free one, on this desk and
+    /// in this tab (0 for none).
+    Moved {
+        desk_id: i64,
+        grp: i64,
+        from: i64,
+        to: i64,
+    },
     /// Already on that side.
     Stays,
     /// That side is full.
@@ -1211,11 +1267,17 @@ pub enum Sent {
 /// (`Store::send_back`); the pane goes through slot 0, the reasoning
 /// `move_pane` gives.
 pub fn send_back(tx: &rusqlite::Transaction, id: &str, back: bool) -> Result<Sent> {
-    let Some((desk_id, from)) = tx
+    let Some((desk_id, grp, from)) = tx
         .query_row(
-            "SELECT desk_id, slot FROM panes WHERE id = ?1",
+            "SELECT desk_id, grp, slot FROM panes WHERE id = ?1",
             params![id],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
         )
         .optional()?
     else {
@@ -1224,24 +1286,27 @@ pub fn send_back(tx: &rusqlite::Transaction, id: &str, back: bool) -> Result<Sen
     if in_back(from) == back {
         return Ok(Sent::Stays);
     }
-    let taken: Vec<i64> = tx
-        .prepare("SELECT slot FROM panes WHERE desk_id = ?1")?
-        .query_map(params![desk_id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
+    let taken = groups::taken(tx, desk_id, grp)?;
     let Some(to) = side(back).find(|s| !taken.contains(s)) else {
         return Ok(Sent::Full);
     };
     tx.execute("UPDATE panes SET slot = 0 WHERE id = ?1", params![id])?;
-    close_up(tx, desk_id, from)?;
+    close_up(tx, desk_id, grp, from)?;
     tx.execute("UPDATE panes SET slot = ?2 WHERE id = ?1", params![id, to])?;
     // Leaving the grid moves full view as a close does; arriving leaves it.
     if back {
+        let (table, row) = groups::layout_row(desk_id, grp);
         tx.execute(
-            "UPDATE desks SET full_slot = CASE WHEN full_slot = ?2 THEN 0 WHEN full_slot > ?2 THEN full_slot - 1 ELSE full_slot END WHERE id = ?1",
-            params![desk_id, from],
+            &format!("UPDATE {table} SET full_slot = CASE WHEN full_slot = ?2 THEN 0 WHEN full_slot > ?2 THEN full_slot - 1 ELSE full_slot END WHERE id = ?1"),
+            params![row, from],
         )?;
     }
-    Ok(Sent::Moved { desk_id, from, to })
+    Ok(Sent::Moved {
+        desk_id,
+        grp,
+        from,
+        to,
+    })
 }
 
 /// What came of asking for a closed pane back.
@@ -1256,34 +1321,34 @@ pub enum Restored {
 
 /// A closed pane back on its desk, in the lowest free slot of the side it
 /// was on, as `open_pane` picks one. Stopped: it comes back the way a restart
-/// brings a pane back, its saved text greyed and Start offered.
+/// brings a pane back, its saved text greyed and Start offered. 1.57: into
+/// its own tab, or the one the reader is on when its tab is closed.
 pub fn restore_pane(conn: &mut Connection, id: &str) -> Result<Restored> {
     let tx = conn.transaction()?;
-    let Some((desk_id, back)) = tx
+    let Some((desk_id, grp, back)) = tx
         .query_row(
-            "SELECT desk_id, back FROM panes_closed WHERE id = ?1",
+            "SELECT desk_id, grp, back FROM panes_closed WHERE id = ?1",
             params![id],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, bool>(1)?)),
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, bool>(2)?,
+                ))
+            },
         )
         .optional()?
     else {
         return Ok(Restored::Gone);
     };
-    let taken: Vec<i64> = tx
-        .prepare("SELECT slot FROM panes WHERE desk_id = ?1")?
-        .query_map(params![desk_id], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    let Some(slot) = side(back).find(|s| !taken.contains(s)) else {
+    let grp = groups::live_grp(&tx, desk_id, grp)?;
+    let taken = groups::taken(&tx, desk_id, grp)?;
+    if !side(back).any(|s| !taken.contains(&s)) {
         return Ok(Restored::DeskFull);
-    };
-    tx.execute(
-        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, name, name_by, agent_session, account, created_at)
-         SELECT id, desk_id, ?2, cwd, cmd, name, name_by, agent_session, account, created_at FROM panes_closed WHERE id = ?1",
-        params![id, slot],
-    )?;
-    tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![id])?;
+    }
+    groups::bring_back(&tx, desk_id, &[(id.to_string(), grp, back)])?;
     let pane = tx.query_row(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes WHERE id = ?1",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account, held, grp FROM panes WHERE id = ?1",
         params![id],
         |r| row_to_pane(r, 0),
     )?;
@@ -1320,6 +1385,12 @@ pub fn prune_closed(
             "DELETE FROM panes_closed WHERE closed_at < ?1",
             params![before],
         )?;
+        // A closed tab goes with the last of its panels.
+        conn.execute(
+            "DELETE FROM desk_groups WHERE closed_at != 0 AND closed_at < ?1
+               AND NOT EXISTS (SELECT 1 FROM panes_closed c WHERE c.grp = desk_groups.id)",
+            params![before],
+        )?;
     }
     Ok(gone)
 }
@@ -1346,16 +1417,16 @@ pub fn rename_pane(conn: &Connection, id: &str, name: &str, by: &str) -> Result<
 pub fn pane(conn: &Connection, id: &str) -> Result<Option<Placed>> {
     Ok(conn
         .query_row(
-            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, p.account, p.held, d.id, d.name, d.root, d.account
+            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, p.account, p.held, p.grp, d.id, d.name, d.root, d.account
              FROM panes p JOIN desks d ON d.id = p.desk_id WHERE p.id = ?1",
             params![id],
             |r| {
                 Ok(Placed {
                     pane: row_to_pane(r, 0)?,
-                    desk_id: r.get(9)?,
-                    desk_name: r.get(10)?,
-                    root: r.get(11)?,
-                    desk_account: r.get(12)?,
+                    desk_id: r.get(10)?,
+                    desk_name: r.get(11)?,
+                    root: r.get(12)?,
+                    desk_account: r.get(13)?,
                 })
             },
         )
@@ -1501,7 +1572,7 @@ pub fn panes_open(conn: &Connection) -> Result<i64> {
 /// what a machine that has never seen snyvi would have.
 pub fn clear(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "DELETE FROM desk_notes; DELETE FROM panes_closed; DELETE FROM panes; DELETE FROM desks;",
+        "DELETE FROM desk_notes; DELETE FROM panes_closed; DELETE FROM panes; DELETE FROM desk_groups; DELETE FROM desks;",
     )?;
     Ok(())
 }
@@ -1526,7 +1597,16 @@ pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
         .query_map(params![desk_id], row_to_note)?
         .collect::<rusqlite::Result<_>>()?;
     let now = crate::store::now();
+    let tabs = groups::pane_tabs(conn, desk_id)?;
     for n in &mut notes {
+        let pane = if n.stage_pane.is_empty() {
+            &n.done_pane
+        } else {
+            &n.stage_pane
+        };
+        if let Some(name) = tabs.get(pane) {
+            n.grp = name.clone();
+        }
         n.on_branch = on_branch(n, now);
         n.recheck = n.done && !n.done_by.is_empty() && n.done_at > now - RECHECK_S;
         if !n.doc.is_empty() {
@@ -2242,6 +2322,7 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         doc_title: String::new(),
         on_branch: false,
         recheck: false,
+        grp: String::new(),
     })
 }
 
@@ -2344,7 +2425,7 @@ fn pane_id() -> Result<String> {
 }
 
 const DESK_COLS: &str =
-    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account, links, left_off_needs, left_off_ok_at";
+    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account, links, left_off_needs, left_off_ok_at, grp_shown";
 
 fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
     let text: String = r.get(7)?;
@@ -2381,6 +2462,8 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
         account: r.get(15)?,
         links: crate::links::from_column(&r.get::<_, String>(16)?),
         panes: Vec::new(),
+        groups: Vec::new(),
+        grp_shown: r.get(19)?,
     })
 }
 
@@ -2401,8 +2484,11 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
         name: r.get(at + 6)?,
         account: r.get(at + 7)?,
         held: r.get(at + 8)?,
+        grp: r.get(at + 9)?,
     })
 }
+
+pub mod groups;
 
 #[cfg(test)]
 mod tests;

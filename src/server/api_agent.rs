@@ -704,6 +704,7 @@ pub(crate) async fn pane_brief(
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .and_then(|s| crate::whats_new::brief_line(s, now)),
+        grp: placed.pane.grp,
     };
     let context = crate::brief::brief_of(
         &desk,

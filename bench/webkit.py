@@ -21,7 +21,7 @@ these rows are what says it still does.
 
     xvfb-run -a python3 bench/webkit.py            report
     xvfb-run -a python3 bench/webkit.py --check    and exit non-zero on a fault
-    xvfb-run -a python3 bench/webkit.py --desk     only what a working desk costs
+    xvfb-run -a python3 bench/webkit.py --desk     only what a working desk costs, and one of three tabs
     xvfb-run -a python3 bench/webkit.py --desk-hidden --desk-scroll --idle --daemon
     xvfb-run -a python3 bench/webkit.py --git       a desk at its prompt runs no git
     xvfb-run -a python3 bench/webkit.py --media     80 songs open at once, one plays at once
@@ -685,11 +685,63 @@ def desk_row(env, base):
             return ("a desk of 4 at work", False, "not exactly one new web process")
         v.js(DESK_WATCH)
         m = measure(v, pid, dpid)
+        PLAIN.append(m)
         seen = json.loads(v.js(DESK_SEEN))
         if DISPLAY:
             return (f"a desk of 4 at work on {os.environ.get('DISPLAY', '?')}", None,
                     f"recorded, not enforced: {cost(m)}; {seen['drawn']} live canvases, panes {seen['size']} px")
         return ("a desk of 4 at work", True, f"{cost(m)}; {seen['drawn']} live canvases, panes {seen['size']} px")
+    finally:
+        v.win.destroy()
+        stop(base, H, panes)
+
+
+# The plain desk row's measurement, for the tabs row to be held against.
+PLAIN = []
+# What two tabs of four at work out of sight may add to a desk of four in
+# view, in points of one core of the whole web process (1.57, #217). They are
+# mounted, sized and running, and sent one frame a second, as the back is.
+TABS_EXTRA = 5.0
+# The panels in the grid drawing the load, not the ones out of sight.
+GRID_WORKING = """[...document.querySelectorAll('.dk-grid .pn-scr')].filter(s => /Painting/.test(s.textContent)).length"""
+
+
+def desk_tabs_row(env, base):
+    """Three tabs of four panels, every one at work, with the first shown: what
+    the two out of sight add to the plain desk row's cost (#217)."""
+    _, cap, H = capability(env, base)
+    node = shutil.which("node") or "node"
+    cmd = f"{node} {LOAD}"
+    desk, panes = make_desk(base, H, "tabs", cmd)
+    grps = [post(base, f"/api/desks/{desk}/groups", {}, H)["grp"] for _ in range(2)]
+    for g in grps:
+        for _ in range(4):
+            panes.append(post(base, f"/api/desks/{desk}/panes", {"grp": g}, H)["pane"]["id"])
+            post(base, f"/api/panes/{panes[-1]}/start", {"cmd": cmd}, H)
+    req = urllib.request.Request(base + "/api/desks", headers=H)
+    with urllib.request.urlopen(req) as r:
+        d = next(x for x in json.loads(r.read())["desks"] if x["id"] == desk)
+    first = d["groups"][0]["id"]
+    post(base, f"/api/desks/{desk}/groups/{first}/show", {}, H)
+    dpid = daemon_pid(base)
+    before = web_processes()
+    v = View(f"{base}/desk/{desk}#cap={cap}", (1920, 1080))
+    name = "three tabs of 4 at work, one shown"
+    try:
+        if not until(v, f"{GRID_WORKING} === 4 && document.querySelectorAll('.dk .pn').length === 12", 150):
+            mounted = v.js("document.querySelectorAll('.dk .pn').length")
+            return (name, False, f"{v.js(GRID_WORKING)} drawing in the grid, {mounted} panels mounted")
+        v.wait(3000)
+        pid = one_new(before)
+        if pid is None:
+            return (name, False, "not exactly one new web process")
+        v.js(DESK_WATCH)
+        m = measure(v, pid, dpid)
+        if not PLAIN:
+            return (name, None, f"recorded, the plain desk row did not measure: {cost(m)}")
+        extra = m["mean"] - PLAIN[0]["mean"]
+        return (name, extra <= TABS_EXTRA,
+                f"{extra:+.1f} points on the desk of 4 (at most {TABS_EXTRA:.0f}): {cost(m)}")
     finally:
         v.win.destroy()
         stop(base, H, panes)
@@ -1104,6 +1156,8 @@ def main():
                 rows += idle_rows(env, base)
             if DESK_ONLY:
                 rows.append(desk_row(env, base))
+                if not DISPLAY:
+                    rows.append(desk_tabs_row(env, base))
             if DESK_HIDDEN:
                 rows += desk_hidden_rows(env, base, doc)
             if DESK_SCROLL:
@@ -1204,6 +1258,7 @@ def main():
         rows += canvas_rows(env, base)
         rows += idle_rows(env, base)
         rows.append(desk_row(env, base))
+        rows.append(desk_tabs_row(env, base))
         rows += desk_hidden_rows(env, base, doc)
         rows += desk_scroll_rows(env, base)
         rows += daemon_rows(env, base)

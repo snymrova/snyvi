@@ -27,6 +27,9 @@ fn db() -> Connection {
     conn.execute_batch(crate::onyou::DESK_COLUMNS_1_54).unwrap();
     conn.execute_batch("CREATE TABLE docs(id TEXT PRIMARY KEY, title TEXT NOT NULL)")
         .unwrap();
+    // 1.57's step copies `panes.name_by`, so 1.46's column comes first.
+    conn.execute_batch(desk::NAME_BY_COLUMNS_1_46).unwrap();
+    conn.execute_batch(desk::groups::COLUMNS_1_57).unwrap();
     conn
 }
 

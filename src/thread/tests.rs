@@ -35,6 +35,7 @@ fn db() -> Connection {
     {
         conn.execute_batch(c).unwrap();
     }
+    crate::desk::groups::for_tests(&conn);
     conn
 }
 

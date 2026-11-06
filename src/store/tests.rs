@@ -176,6 +176,31 @@ const OLD_1_47: &str =
      ALTER TABLE threads DROP COLUMN told_how; ALTER TABLE threads DROP COLUMN ask_told_at;
      DROP TABLE home_state; ALTER TABLE desks DROP COLUMN rule_asked_at;";
 
+/// 1.57's step, taken back (step 35, `desk::groups::COLUMNS_1_57` and
+/// `DOCS_COLUMN_1_57`): `panes` rebuilt to 1.56's shape, with its
+/// `UNIQUE(desk_id, slot)`, and the groups, the closed panes' group, the
+/// reopen default and the documents' group gone.
+const OLD_1_57: &str = "CREATE TABLE panes_1 (
+  id TEXT PRIMARY KEY,
+  desk_id INTEGER NOT NULL REFERENCES desks(id) ON DELETE CASCADE,
+  slot INTEGER NOT NULL,
+  cwd TEXT NOT NULL,
+  cmd TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  agent_session TEXT NOT NULL DEFAULT '',
+  resume_next INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL DEFAULT '',
+  account INTEGER,
+  held INTEGER NOT NULL DEFAULT 0,
+  name_by TEXT NOT NULL DEFAULT '',
+  UNIQUE(desk_id, slot)
+);
+INSERT INTO panes_1 SELECT id, desk_id, slot, cwd, cmd, created_at, agent_session, resume_next, name, account, held, name_by FROM panes;
+DROP TABLE panes; ALTER TABLE panes_1 RENAME TO panes;
+CREATE INDEX panes_desk ON panes(desk_id, slot);
+ALTER TABLE panes_closed DROP COLUMN grp; ALTER TABLE desks DROP COLUMN grp_shown;
+ALTER TABLE docs DROP COLUMN desk_grp; DROP TABLE desk_groups;";
+
 /// 1.49's column, taken away: which side a closed pane was on (step 31,
 /// `desk::BACK_COLUMN_1_49`).
 const OLD_1_49_BACK: &str = "ALTER TABLE panes_closed DROP COLUMN back;";
@@ -523,6 +548,7 @@ fn a_moved_pane_takes_its_documents_slot_with_it() {
         id: desk.id,
         name: "snyvi".into(),
         slot,
+        grp: 0,
     };
     let (one, two) = (at(1), at(2));
     let mut d = new_doc("From one", "aaa", "w");
@@ -532,7 +558,7 @@ fn a_moved_pane_takes_its_documents_slot_with_it() {
     d.desk = Some(&two);
     s.insert(&new_id("b"), d).unwrap();
 
-    assert!(s.move_pane(desk.id, 1, 2).unwrap());
+    assert!(s.move_pane(desk.id, 0, 1, 2).unwrap());
     let slot_of = |title: &str| {
         s.desk_docs(desk.id, 40, false)
             .unwrap()
@@ -543,7 +569,7 @@ fn a_moved_pane_takes_its_documents_slot_with_it() {
     };
     assert_eq!(slot_of("From one"), 2);
     assert_eq!(slot_of("From two"), 1);
-    assert!(!s.move_pane(desk.id, 3, 1).unwrap(), "no pane at 3");
+    assert!(!s.move_pane(desk.id, 0, 3, 1).unwrap(), "no pane at 3");
     assert_eq!(slot_of("From one"), 2, "a refused move changes nothing");
 }
 
@@ -566,6 +592,7 @@ fn a_pane_sent_back_takes_its_documents_and_the_grid_closes_up() {
             id: desk.id,
             name: "snyvi".into(),
             slot,
+            grp: 0,
         };
         let mut d = new_doc(title, title, "w");
         d.desk = Some(&o);
@@ -603,11 +630,13 @@ fn a_desk_lists_what_its_panes_sent_newest_first() {
         id: 7,
         name: "snyvi".into(),
         slot: 2,
+        grp: 0,
     };
     let elsewhere = Origin {
         id: 8,
         name: "other".into(),
         slot: 1,
+        grp: 0,
     };
     fn from<'a>(o: &'a Origin, mut d: NewDoc<'a>) -> NewDoc<'a> {
         d.desk = Some(o);
@@ -1057,7 +1086,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1346,7 +1375,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1501,6 +1530,7 @@ fn a_lineage_moves_whole_onto_a_desk() {
         id: 3,
         name: "Garden".into(),
         slot: 0,
+        grp: 0,
     };
     let moved = s
         .move_lineage(&one.id, "/w/garden", "garden", &garden)
@@ -1767,6 +1797,7 @@ fn a_desks_brief_names_its_sends_not_its_drafts() {
         id: 7,
         name: "snyvi".into(),
         slot: 1,
+        grp: 0,
     };
     fn at<'a>(mut d: NewDoc<'a>, o: &'a Origin, origin: &'a str) -> NewDoc<'a> {
         d.desk = Some(o);
@@ -1879,7 +1910,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1922,7 +1953,7 @@ fn a_1_46_1_database_keeps_its_panel_names() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
+        "{OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
     ))
     .unwrap();
     drop(conn);
@@ -1942,4 +1973,176 @@ fn a_1_46_1_database_keeps_its_panel_names() {
         (version, name.as_str(), by.as_str()),
         (MIGRATIONS.last().unwrap().0, "auth refactor", "")
     );
+}
+
+/// 1.57: a 1.56 database -- four panels, one since closed, documents from
+/// each -- opens as a desk with no tabs and nothing moved, and the first
+/// tab on it puts every pane, closed pane and document into the first
+/// group, so each document still matches its panel on (tab, slot) (#217).
+#[test]
+fn a_1_56_database_opens_with_no_tabs_and_its_first_tab_moves_nothing() {
+    let dir = tempdir::Dir::new("snyvi-store-1-56");
+    let paths = Paths {
+        data_dir: dir.path.clone(),
+        config_dir: dir.path.clone(),
+        docs_dir: dir.path.join("docs"),
+        db_path: dir.path.join("t.db"),
+        token_path: dir.path.join("token"),
+    };
+    let (desk, ids) = {
+        let s = Store::open(&paths).unwrap();
+        let d = s.create_desk("/home/p/omd", None).unwrap();
+        let mut ids = vec![];
+        for slot in 1..=4 {
+            let Opened::Pane(p) = s.open_pane(d.id, "/home/p/omd", "", false).unwrap() else {
+                panic!("room")
+            };
+            ids.push(p.id);
+            let o = Origin {
+                id: d.id,
+                name: d.name.clone(),
+                slot,
+                grp: 0,
+            };
+            let title = format!("From {slot}");
+            let mut doc = new_doc(&title, &title, "w");
+            doc.desk = Some(&o);
+            s.insert(&new_id(&title), doc).unwrap();
+        }
+        assert!(s.close_pane(&ids[3]).unwrap());
+        (d.id, ids)
+    };
+    let conn = Connection::open(&paths.db_path).unwrap();
+    conn.execute_batch(&format!("{OLD_1_57} PRAGMA user_version = 34;"))
+        .unwrap();
+    drop(conn);
+
+    let s = Store::open(&paths).unwrap();
+    let slots_of = |s: &Store| -> Vec<(String, i64, i64)> {
+        let mut v: Vec<(String, i64, i64)> = s
+            .desk_docs(desk, 40, false)
+            .unwrap()
+            .into_iter()
+            .map(|d| (d.title, d.grp, d.slot))
+            .collect();
+        v.sort();
+        v
+    };
+    {
+        let conn = s.conn.lock().unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, MIGRATIONS.last().unwrap().0);
+    }
+    let d = s.desk(desk).unwrap().unwrap();
+    assert!(d.groups.is_empty());
+    let placed: Vec<(i64, i64)> = d.panes.iter().map(|p| (p.grp, p.slot)).collect();
+    assert_eq!(placed, [(0, 1), (0, 2), (0, 3)], "nothing moved");
+    assert_eq!(
+        slots_of(&s),
+        [
+            ("From 1".into(), 0, 1),
+            ("From 2".into(), 0, 2),
+            ("From 3".into(), 0, 3),
+            ("From 4".into(), 0, 0)
+        ]
+    );
+
+    let made = s.create_group(desk, "insta").unwrap().unwrap();
+    let d = s.desk(desk).unwrap().unwrap();
+    let first = d.groups[0].id;
+    assert_ne!(first, made);
+    assert!(d.panes.iter().all(|p| p.grp == first));
+    {
+        let conn = s.conn.lock().unwrap();
+        let zeros: i64 = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM panes WHERE desk_id = ?1 AND grp = 0)
+                      + (SELECT COUNT(*) FROM panes_closed WHERE desk_id = ?1 AND grp = 0)
+                      + (SELECT COUNT(*) FROM docs WHERE desk_id = ?1 AND desk_grp = 0)",
+                params![desk],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(zeros, 0, "no row of the desk is left at 0");
+    }
+    assert_eq!(
+        slots_of(&s),
+        [
+            ("From 1".into(), first, 1),
+            ("From 2".into(), first, 2),
+            ("From 3".into(), first, 3),
+            ("From 4".into(), first, 0)
+        ]
+    );
+    // And the closed one comes back into the first tab.
+    assert!(matches!(
+        s.restore_pane(&ids[3]).unwrap(),
+        crate::desk::Restored::Pane(p) if p.grp == first && p.slot == 4
+    ));
+}
+
+/// 1.57: a close in one tab renumbers that tab's documents and no other's,
+/// and a panel moved to another tab takes its documents with it while the
+/// tab it left renumbers its own (#217).
+#[test]
+fn a_tab_renumbers_its_own_documents_and_a_moved_panel_takes_its_own() {
+    let (s, _d) = temp_store();
+    let desk = s.create_desk("/home/p/omd", None).unwrap();
+    let two = s.create_group(desk.id, "two").unwrap().unwrap();
+    let one = s.desk(desk.id).unwrap().unwrap().groups[0].id;
+    let mut ids = std::collections::HashMap::new();
+    for g in [one, two] {
+        for slot in 1..=3 {
+            let Opened::Pane(p) = s
+                .open_pane_on(desk.id, "/p", "", false, (g, false))
+                .unwrap()
+            else {
+                panic!("room")
+            };
+            assert_eq!(p.slot, slot);
+            ids.insert((g, slot), p.id);
+            let o = Origin {
+                id: desk.id,
+                name: desk.name.clone(),
+                slot,
+                grp: g,
+            };
+            let title = format!("{g}-{slot}");
+            let mut doc = new_doc(&title, &title, "w");
+            doc.desk = Some(&o);
+            s.insert(&new_id(&title), doc).unwrap();
+        }
+    }
+    let at = |title: &str| {
+        s.desk_docs(desk.id, 40, false)
+            .unwrap()
+            .into_iter()
+            .find(|d| d.title == title)
+            .map(|d| (d.grp, d.slot))
+            .unwrap()
+    };
+    assert!(s.close_pane(&ids[&(one, 1)]).unwrap());
+    assert_eq!(at(&format!("{one}-1")), (one, 0), "closed, no panel's");
+    assert_eq!(at(&format!("{one}-2")), (one, 1));
+    assert_eq!(at(&format!("{one}-3")), (one, 2));
+    for slot in 1..=3 {
+        assert_eq!(
+            at(&format!("{two}-{slot}")),
+            (two, slot),
+            "the other tab's stay put"
+        );
+    }
+
+    // two's panel 1 to one: it takes one's slot 3, its document follows,
+    // and two closes up behind it.
+    assert!(matches!(
+        s.regroup_pane(&ids[&(two, 1)], one).unwrap(),
+        crate::desk::groups::Regrouped::Moved { to: 3, .. }
+    ));
+    assert_eq!(at(&format!("{two}-1")), (one, 3));
+    assert_eq!(at(&format!("{two}-2")), (two, 1));
+    assert_eq!(at(&format!("{two}-3")), (two, 2));
+    assert_eq!(at(&format!("{one}-2")), (one, 1), "one's own untouched");
 }

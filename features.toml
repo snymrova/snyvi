@@ -25,11 +25,18 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "tabs"
+since = "1.57.0"
+title = "Tabs in a desk"
+line = "A desk can hold tabs, one for each part of a project, each with its own panels in the desk's folder. The + after the desk's name makes one, a double-click renames it and its ✕ closes it with an Undo. Their panels keep running while you work in another, and a tab whose panel needs you says so. Ctrl Alt Shift [ and ] switch."
+show = "desk .dk-group-new"
+
+[[feature]]
 id = "deskfolder"
 since = "1.56.0"
 title = "A desk opens its own folder"
-line = "The path in a desk's head is a button: it shows the folder over the desk, its tree beside the file you read, with Find and git's M and A on what is changed, and remembers what you unfolded, where you were and the last file you read. Folders left the sidebar: a folder is read through its desk."
-show = "desk .dk-root-b"
+line = "A desk's row in the sidebar has a folder button (in its head until 1.57): it shows the folder over the desk, its tree beside the file you read, with Find and git's M and A on what is changed, and remembers what you unfolded, where you were and the last file you read. Folders left the sidebar: a folder is read through its desk."
+show = "desk #side [data-deskdir]"
 
 [[feature]]
 id = "change"

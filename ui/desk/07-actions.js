@@ -8,14 +8,14 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (changeAct(a, b, d) || await folderAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
+    if (d && (changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
       // Pressed while it cannot: it says why, as ⌃⌥N does.
       const why = noNew(d);
       if (why) return ctx.toast("New panel", why);
-      const j = await ctx.api(`/api/desks/${d.id}/panes`, {});
+      const j = await ctx.api(`/api/desks/${d.id}/panes`, d.grp ? { grp: d.grp } : {});
       focused = j.pane.id;
       await ctx.refresh();
       // Asking for a pane is asking for a shell: it starts, and the Start bar
@@ -430,6 +430,7 @@ function focusPane(id) {
   // with that pane focused.
   if (reading != null) { ctx.go(deskId, true, v.pane.slot); return; }
   // One in the back is the drawer's: opened on it, it has the keys.
+  toGroupOf(v);
   if (isBack(v.pane)) { drawer(id); return; }
   focused = id;
   if (full) saveFull();
@@ -451,6 +452,12 @@ function click(e) {
   // closes again.
   const wb = !e.target.closest("a") && e.target.closest(".wg-body, .wg-why");
   if (wb) { ctx.seatOpen(wb); return; }
+  // A tab's name, its ✕ and the row's + (23-groups.js).
+  if (groupClick(e)) return;
+  // A note's text, double-clicked, is rewritten where it is; the first click
+  // has opened where it stands, which the field then takes the place of.
+  const nn = e.detail === 2 && e.target.closest('.dk-note > .nm[data-a="note-gate"]');
+  if (nn) { e.preventDefault(); act({ dataset: { a: "note-edit", n: nn.dataset.n } }); return; }
   const m = e.target.closest("[data-desk-menu]");
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   if (backClick(e)) return;
@@ -473,7 +480,7 @@ function saveFull() {
   const d = current(), v = views.get(focused);
   if (!d) return;
   d.full_slot = full && v ? v.pane.slot : 0;
-  ctx.api(`/api/desks/${d.id}/layout`, { col: d.col, row: d.row, full: d.full_slot }).catch(() => {});
+  ctx.api(`/api/desks/${d.id}/layout`, layoutBody(d, { full: d.full_slot })).catch(() => {});
 }
 
 /** The focused pane in full view, or the grid again. */
@@ -510,6 +517,11 @@ function keys(e) {
     if (e.shiftKey) { if (v) sendBack(v, !isBack(v.pane)); } else backKey();
     return;
   }
+  // ⌃⌥⇧[ ⌃⌥⇧]: the tab before or after (23-groups.js); ⌃⌥[ ⌃⌥] stay the panels.
+  if (e.shiftKey && /^Bracket(Left|Right)$/.test(e.code)) {
+    if (reading == null && groupStep(e.code === "BracketRight" ? 1 : -1)) { e.preventDefault(); e.stopPropagation(); }
+    return;
+  }
   if (e.shiftKey && NEXT[e.key]) {
     const d = current(), v = views.get(focused);
     if (reading != null || !d || !v) return;
@@ -542,26 +554,6 @@ function keys(e) {
 
 const onResize = () => { if (current()) layout(); };
 
-/** The head's folder button (#214): the desk's own folder, read over the
- *  desk. A folder moved or deleted on disk says so on the button itself,
- *  where the click was, and the next click asks again. */
-async function folderAct(a, b, d) {
-  if (a !== "folder") return false;
-  let j;
-  try { j = await ctx.api(`/api/desks/${d.id}/folder`, {}); }
-  catch (e) {
-    b.classList.add("gone");
-    b.dataset.tip = ctx.sayErr(e).why;
-    b.dataset.tipSub = "moved or deleted on disk · the desk is kept";
-    return true;
-  }
-  b.classList.remove("gone");
-  // The root by its id, and the root itself: the `browse` event that lists
-  // it may not be in yet.
-  await ctx.browse(j.root.id, "", { over: d.id, root: j.root });
-  return true;
-}
-
 // ---------- the seam ----------
 
 /** The document the desk stepped aside for, or null while the desk is the
@@ -578,6 +570,8 @@ function detach() {
   clearInterval(clock);
   if (!ctx) return;
   ctx.docEl.removeEventListener("click", click);
+  ctx.docEl.removeEventListener("contextmenu", tabMenu);
+  ctx.docEl.removeEventListener("keydown", tabMenu);
   ctx.tocEl.removeEventListener("click", click);
   ctx.tocEl.removeEventListener("dragover", dragOver);
   ctx.tocEl.removeEventListener("dragleave", dragLeave);
@@ -611,7 +605,7 @@ export function open(c) {
   // second click. History's way back (alt+←) pushes nothing, and lands on
   // the panels as the reader left them.
   const from = !c.slot && c.push && c.id === deskId && sentFrom();
-  const slot = from ? from.pane.slot : c.slot;
+  const slot = from ? from.pane.slot : c.slot, grp = from ? from.pane.grp : c.grp;
   const first = !ctx;
   detach();
   ctx = c;
@@ -628,10 +622,15 @@ export function open(c) {
   // Home's "last touched" and the desk it offers to pick up start here.
   if (c.id != null) c.api(`/api/desks/${c.id}/visit`, {}).catch(() => {});
   keepPoints(c.desks);
+  tabNext(c.id);
+  // A slot is a place in a tab: the tab it names first, when it names one.
+  if (c.id != null && grp) shownBy.set(c.id, grp);
   const d = current();
   if (d && slot) toSlot(d, d.panes.find(x => x.slot === slot));
   draw();
   ctx.docEl.addEventListener("click", click);
+  ctx.docEl.addEventListener("contextmenu", tabMenu);
+  ctx.docEl.addEventListener("keydown", tabMenu);
   ctx.tocEl.addEventListener("click", click);
   ctx.tocEl.addEventListener("dragover", dragOver);
   ctx.tocEl.addEventListener("dragleave", dragLeave);
@@ -662,7 +661,7 @@ function toSlot(d, p) {
   focused = p.id;
   if (!d.full_slot || d.full_slot === p.slot) return;
   d.full_slot = p.slot;
-  ctx.api(`/api/desks/${d.id}/layout`, { col: d.col, row: d.row, full: p.slot }).catch(() => {});
+  ctx.api(`/api/desks/${d.id}/layout`, layoutBody(d, { full: p.slot })).catch(() => {});
 }
 
 /** The cell, measured in the font and size a pane is drawn in, and the
@@ -789,6 +788,8 @@ export function actions(el) {
   // The chip on a panel's row, or the change's own row (22-change.js).
   const card = el.closest(".dk-pth, .dk-change");
   if (card) return threadMenu(card);
+  const tab = el.closest(".dk-group[data-grp]");
+  if (tab) return groupMenu(+tab.dataset.grp);
   const lk = el.closest(".dk-lk-more, .dk-lk");
   if (lk) return linksMenu(lk);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
@@ -905,6 +906,10 @@ export const isFull = () => full;
 export const startAll = () => act({ dataset: { a: "all" } });
 export const renameHere = () => { const d = current(); if (d) renameDesk(d); };
 export const keysHere = () => { const d = current(); if (d) keysSheet(d); };
+/** 1.57: a new tab on folder `f` (from menu.js's New tab in…), or on the desk's own. */
+export const newTab = () => newGroup();
+/** The desk menu's New panel: ⌃⌥N's, in the tab on screen. */
+export const newHere = () => act({ dataset: { a: "new" } });
 
 export function update(desks) {
   if (!ctx) return;

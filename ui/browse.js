@@ -53,7 +53,7 @@
 .fp .fp-last { flex: none; font-size: var(--fs-micro); color: var(--accent); }
 .fp .b-file.fp-was a { color: var(--fg); }
 .fp .b-file.fp-was a > .r-ico { color: var(--accent); opacity: 1; }
-#doc:where(:has(.fp-split):not(:has(.kind-code, .kind-text, .kind-diff, .kind-table, .kind-image, article.preview, .hm))) { max-width: calc(var(--measure) + 96px + 292px); }
+#doc:has(.fp-split) { max-width: none; padding-left: 40px; padding-right: 40px; }
 #doc:has(.fp-split) { container-type: inline-size; }
 .fp-split { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 0 32px; align-items: start; }
 .fp-l { position: sticky; top: calc(var(--head-h) + 8px); max-height: calc(100vh - var(--head-h) - 24px); overflow: auto; overscroll-behavior: contain; padding: 0 4px 16px 0; scrollbar-width: thin; }

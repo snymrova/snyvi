@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS + BACK_CSS + CHANGE_CSS;
+  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS + BACK_CSS + CHANGE_CSS + GROUPS_CSS;
   document.head.append(s);
 }
 
@@ -162,16 +162,6 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-keep:hover { color: var(--fg); border-color: var(--accent); }
 .dk-ev { padding: 0 4px; border: 0; background: none; font: inherit; font-size: var(--fs-micro); color: var(--accent); cursor: pointer; }
 .dk-ev:hover { text-decoration: underline; }
-.dk-root { color: var(--fg-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The path as the door to the desk's folder (#214): framed in the rule, the
- * accent on hover and while the folder is the page. A folder gone from disk
- * is struck through, the tip saying why; nothing about it changes size. */
-.dk-root-b { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 40ch; padding: 1px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; cursor: pointer; transition: color var(--t), border-color var(--t); }
-.dk-root-b svg { flex: none; }
-.dk-root-t { overflow: hidden; text-overflow: ellipsis; }
-.dk-root-b:hover, .dk-root-b:focus-visible { color: var(--fg); border-color: var(--accent); }
-.dk-root-b.gone .dk-root-t { text-decoration: line-through; }
-.dk-root-b.gone { color: var(--warn); }
 .dk-tabs { display: flex; gap: 2px; margin-left: auto; }
 .dk-tabs button { font-family: var(--mono); font-size: 11px; color: var(--fg-3); padding: 2px 5px; border-radius: var(--r-xs); }
 .dk-tabs button.on { color: var(--accent); background: var(--accent-bg); }
@@ -549,7 +539,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-by button:hover { color: var(--accent); }
 /* The circle. A button rather than a checkbox input so it draws the same on
    every platform, with the role and the state a checkbox would have carried. */
-.dk-tick { position: relative; flex: none; display: grid; place-items: center; width: 12px; height: 12px; margin-top: 6px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
+.dk-tick { position: relative; flex: none; display: grid; place-items: center; width: 14px; height: 14px; margin-top: 5px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: transparent; transition: box-shadow var(--t), background var(--t), color var(--t); }
 .dk-tick:hover { box-shadow: inset 0 0 0 1.5px var(--accent); }
 /* Done is quiet: the accent is for what wants looking at, and a done note
    is the one thing on the rail that does not. */
@@ -566,12 +556,14 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-prom.kept { color: var(--ok); }
 /* Ticked without evidence: the ✓ in a ring, not on a disc. */
 .dk-tick.bare[aria-checked="true"] { background: none; box-shadow: inset 0 0 0 1.5px var(--fg-3); color: var(--fg-3); }
-.dk-tick svg { width: 9px; height: 9px; }
+.dk-tick svg { width: 10px; height: 10px; }
 /* Small to the eye and not to the hand: the press lands on 20 px. */
 .dk-tick:not(.ghost)::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; }
 /* The field's own circle: the row keeps its shape while it is being written,
    so the text does not step left and back again as the field opens and shuts. */
 .dk-tick.ghost { box-shadow: inset 0 0 0 1.5px var(--rule-2); }
+/* In the field's row, the circle on the field's middle, as on a text line. */
+.dk-note.new .dk-tick { margin-top: 7px; }
 /* Left of the text, the circle alone, on the text's first line. Under the
  * text, one quiet line: the line's number, the one the reader and the agents
  * call it by, quiet until the row is under the pointer, and a click copies
@@ -684,12 +676,13 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The done half, folded to one row at the list's foot, at a note's left
    edge; Clear at its right, and the Undo in the row's place after it. */
 .dk-done-li { display: flex; align-items: center; min-height: 24px; }
-.dk-done-b { display: flex; align-items: center; gap: 6px; padding-left: 11px; font-variant-numeric: tabular-nums; }
-.dk-done-b svg { width: 12px; height: 12px; }
+/* Its ✓ is a done note's: the same filled circle, in the circles' column. */
+.dk-done-b { display: flex; align-items: center; gap: 6px; padding-left: 8px; font-variant-numeric: tabular-nums; }
+.dk-done-b svg { flex: none; box-sizing: border-box; width: 14px; height: 14px; padding: 2px; border-radius: 50%; background: var(--fg-3); color: var(--bg); stroke-width: 2.4; }
 .dk-done-b[aria-expanded="true"] { color: var(--fg-2); }
 .dk-done-x { margin-left: auto; font-size: var(--fs-micro); opacity: 0; transition: opacity var(--t); }
 .dk-done-li:is(:hover, :focus-within) .dk-done-x { opacity: 1; }
-.dk-done-li .dk-cleared { padding-left: 11px; }
+.dk-done-li .dk-cleared { padding-left: 8px; }
 .dk-cleared { display: flex; align-items: center; gap: 4px; padding-left: 8px; font-size: var(--fs-micro); color: var(--fg-3); animation: dk-fade 140ms ease-out; }
 /* How far an agent has got: at the line's right end, over its ✕, in a slot
  * every line keeps, so a line that is picked up does not rewrap. Read is a
