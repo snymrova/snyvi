@@ -482,6 +482,9 @@ pub struct DeskNote {
     /// pane itself is never the page's.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub grp: String,
+    /// 1.58: how many checks the reader holds on it (`checks`): a count, never the lines.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub checks_held: i64,
 }
 
 /// How long a tick that was not the reader's still offers not yet...
@@ -1572,7 +1575,7 @@ pub fn panes_open(conn: &Connection) -> Result<i64> {
 /// what a machine that has never seen snyvi would have.
 pub fn clear(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "DELETE FROM desk_notes; DELETE FROM panes_closed; DELETE FROM panes; DELETE FROM desk_groups; DELETE FROM desks;",
+        "DELETE FROM note_checks; DELETE FROM desk_notes; DELETE FROM panes_closed; DELETE FROM panes; DELETE FROM desk_groups; DELETE FROM desks;",
     )?;
     Ok(())
 }
@@ -1613,6 +1616,7 @@ pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
             n.doc_title = doc_title(conn, &n.doc);
         }
     }
+    checks::count_into(conn, desk_id, &mut notes)?;
     Ok(notes)
 }
 
@@ -2319,10 +2323,8 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         due_rang_at: r.get(27)?,
         ok_at: r.get(28)?,
         doc: r.get(29)?,
-        doc_title: String::new(),
-        on_branch: false,
-        recheck: false,
-        grp: String::new(),
+        // The rest are filled in by `notes`: titles, tabs, marks, the count of checks.
+        ..DeskNote::default()
     })
 }
 
@@ -2488,6 +2490,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
     })
 }
 
+pub mod checks;
 pub mod groups;
 
 #[cfg(test)]

@@ -701,7 +701,13 @@ pub(crate) async fn desk_notes(
                 .into_iter()
                 .map(|(n, to, kept)| json!({ "note": n, "to": to, "kept": kept }))
                 .collect();
-            Json(json!({ "notes": notes, "promised": promised })).into_response()
+            // 1.58: the checks held on each line, the page's alone: the
+            // agent's read (`pane_notes`) has only their count.
+            let checks = app
+                .store
+                .clocked(|c, _| crate::desk::checks::for_desk(c, id))
+                .unwrap_or_default();
+            Json(json!({ "notes": notes, "promised": promised, "checks": checks })).into_response()
         }
         Err(e) => err(e),
     }
@@ -860,6 +866,8 @@ pub(crate) async fn check_desk_note(
         // A second reopen in a week suggests a rule (1.48, `crate::week`).
         if ok && !b.works {
             crate::week::reopen_rule(c, id, now)?;
+            // Held checks run fresh at the next check-it (1.58).
+            crate::desk::checks::clear_results(c, id, note)?;
         }
         Ok(ok)
     }) {

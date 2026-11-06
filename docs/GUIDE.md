@@ -1177,6 +1177,19 @@ Suggested in the rail's corner, where nothing they do moves the page.
   commit reached main with no tick reads **check it**. On a note a Claude
   or a merge ticked, **not yet…** says what is still wrong and reopens it.
   Your tick keeps the commit it landed with.
+- **Checks you hold on a note** (1.58). Click a note's text and press
+  **Hold a check…**: one line of what you will try once the work is done --
+  *after Download I can see where the file went* -- and Enter holds it, up
+  to seven on a note. The note shows a small **2 checks** under its text,
+  which opens them again. The Claude building it is told only how many you
+  hold, never what they say; it may suggest a few while it plans, shown
+  greyed with **Keep** and ✕, and once you keep one it is out of its sight
+  too. When the work lands (**check it**, or a Claude's tick), the note lists
+  your lines with a ✓ and ✗ each: **✓ works** lights once every line is ✓,
+  and a ✗ opens **not yet…** with that line already written, so Enter
+  reopens the note with its words and the next Claude's brief leads with
+  them. The circle still ticks a note the old way. A ✕ on a check has an
+  Undo; nothing is deleted.
 - **A date on a line.** End a note with when it is due -- `post the 1.47
   note by fri 10`, `call the bank tomorrow`, `check the stats in 3 days`,
   `send the invoice by 28 oct` -- and snyvi takes the date off the text and

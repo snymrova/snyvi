@@ -213,7 +213,12 @@ pub fn brief_of(
                     ),
                     (false, _) => String::new(),
                 };
-                format!("#{} {}{from}{due}", n.id, cut(&n.text, LINE_CHARS))
+                format!(
+                    "#{} {}{from}{due}{}",
+                    n.id,
+                    cut(&n.text, LINE_CHARS),
+                    held(n)
+                )
             })
             .collect();
         let more = open.len().saturating_sub(OPEN_SHOWN);
@@ -429,6 +434,16 @@ fn ago_words(s: i64) -> String {
     }
 }
 
+/// How many checks the user holds on a line (1.58, `desk::checks`): the
+/// count, so the builder knows its work will be tried, and never the lines.
+fn held(n: &DeskNote) -> String {
+    match n.checks_held {
+        0 => String::new(),
+        1 => " (1 check held)".into(),
+        k => format!(" ({k} checks held)"),
+    }
+}
+
 /// What the loop left open, ahead of the list: lines whose work landed on
 /// main with no tick, for the agent that can check the work to tick, and
 /// lines the user said are still broken, with their words. Any panel can
@@ -445,7 +460,7 @@ fn loose_ends(open: &[&DeskNote]) -> Vec<String> {
             } else {
                 String::new()
             };
-            format!("#{} {}{said}", n.id, cut(&n.text, LINE_CHARS))
+            format!("#{} {}{}{said}", n.id, cut(&n.text, LINE_CHARS), held(n))
         })
         .collect();
     if !reopened.is_empty() {
@@ -1178,6 +1193,33 @@ mod tests {
         assert!(
             b.contains("(2): #3 wire the route; #93 water the beans (from Trapti)."),
             "{b}"
+        );
+    }
+
+    /// Checks the user holds on a line reach the brief as a count only
+    /// (1.58), on the open line and on a reopened one.
+    #[test]
+    fn a_line_with_held_checks_says_how_many_and_never_which() {
+        let mut held = note(195, "say where Download saved", false);
+        held.checks_held = 2;
+        let mut one = note(196, "open it from there", false);
+        one.checks_held = 1;
+        let b = brief(
+            &desk(3, None),
+            1,
+            &[held.clone(), one],
+            &[],
+            &[],
+            None,
+            1000,
+        );
+        assert!(b.contains("#195 say where Download saved (2 checks held); #196 open it from there (1 check held)."), "{b}");
+        held.stage = crate::desk::REOPENED.into();
+        held.reply = "✗ the path shows: only a tick showed".into();
+        let got = loose_ends(&[&held]);
+        assert!(
+            got[0].contains("#195 say where Download saved (2 checks held): \"✗ the path shows"),
+            "{got:?}"
         );
     }
 

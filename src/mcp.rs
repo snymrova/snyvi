@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
 mod cards;
+mod checks;
 mod threads;
 mod widgets;
 
@@ -204,6 +205,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("tick_desk_note", Session::tick_desk_note),
     ("mark_desk_note", Session::mark_desk_note),
     ("suggest_desk_note", Session::suggest_desk_note),
+    ("suggest_check", Session::suggest_check),
     ("offer_routine", Session::offer_routine),
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
@@ -297,6 +299,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
         tools.extend(threads::specs());
         tools.extend(widgets::specs());
         tools.extend(cards::specs());
+        tools.extend(checks::specs());
         if friends != Some(false) {
             tools.push(offer_spec());
             tools.push(offer_line_spec());
@@ -1091,13 +1094,19 @@ fn say_notes(v: &Value) -> String {
         } else {
             ""
         };
+        // How many checks the user holds on it (1.58): a count, never the lines.
+        let held = match n.get("checks_held").and_then(Value::as_i64).unwrap_or(0) {
+            0 => String::new(),
+            1 => " (1 check held)".into(),
+            k => format!(" ({k} checks held)"),
+        };
         // A friend's line is their words, link and all, not the user's: said
         // as the brief says it (`brief.rs`).
         let from = field("sent_by")
             .map(|f| format!(" (from {f}, a friend)"))
             .unwrap_or_default();
         out.push_str(&format!(
-            "- [{}] #{id} {text}{from}{by}{due}{ok}\n",
+            "- [{}] #{id} {text}{from}{by}{due}{ok}{held}\n",
             if done { "x" } else { " " }
         ));
         // The one line said about it: an agent's, or the user's own words.

@@ -25,6 +25,12 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "checks"
+since = "1.58.0"
+title = "Checks you hold on a note"
+line = "A note can carry a few lines of what you will try once its work is done. Open a note and press Hold a check…; the agent building it is told only how many you hold, never what they say. When the work lands, the note lists them with a ✓ and ✗ each: works lights once every line passes, and a ✗ reopens the note with that line's words for the next agent."
+
+[[feature]]
 id = "tabs"
 since = "1.57.0"
 title = "Tabs in a desk"

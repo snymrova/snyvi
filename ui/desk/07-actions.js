@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
+    if (d && (changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await checksAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {

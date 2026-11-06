@@ -587,6 +587,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // slot), the groups, and the tab a document's panel was in
     (35, desk::groups::COLUMNS_1_57),
     (35, desk::groups::DOCS_COLUMN_1_57),
+    (36, desk::checks::COLUMNS_1_58), // 1.58: checks the reader holds on a note (H2.1)
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

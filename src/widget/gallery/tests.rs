@@ -8,6 +8,8 @@ fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(super::super::SCHEMA).unwrap();
     conn.execute_batch(desk::SCHEMA).unwrap();
+    conn.execute_batch(crate::desk::checks::COLUMNS_1_58)
+        .unwrap();
     for c in [
         desk::POS_COLUMN,
         desk::HELD_COLUMN,

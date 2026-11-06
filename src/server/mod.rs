@@ -12,6 +12,7 @@
 mod api_accounts;
 mod api_agent;
 mod api_browse;
+mod api_checks;
 mod api_desk;
 mod api_docs;
 mod api_friend;
@@ -39,6 +40,7 @@ mod ws;
 use api_accounts::*;
 use api_agent::*;
 use api_browse::*;
+use api_checks::*;
 use api_desk::*;
 use api_docs::*;
 use api_friend::*;
@@ -482,6 +484,28 @@ fn note_routes() -> Router<Arc<App>> {
         )
         .route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))
         .route("/api/desks/{id}/notes/{note}/check", post(check_desk_note))
+        // 1.58: checks the reader holds on a line (`api_checks`).
+        .route("/api/desks/{id}/notes/{note}/checks", post(add_check))
+        .route(
+            "/api/desks/{id}/notes/{note}/checks/{check}",
+            post(set_check),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/checks/{check}/remove",
+            post(remove_check),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/checks/{check}/restore",
+            post(restore_check),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/checks/{check}/keep",
+            post(keep_check),
+        )
+        .route(
+            "/api/panes/{id}/notes/{note}/suggest-check",
+            post(pane_suggest_check),
+        )
         .route(
             "/api/desks/{id}/notes/{note}/image",
             post(add_note_image).layer(axum::extract::DefaultBodyLimit::max(NOTE_IMAGE_BYTES)),

@@ -266,6 +266,25 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
    `every_desk_route_is_behind_the_gate` holds the order of those checks,
    and that the store is reached for nothing else.
 
+   Since 1.58 a note can carry **checks the reader holds** on it
+   (`src/desk/checks.rs`, table `note_checks`): one line each, at most 160
+   characters, seven to a note, of what they will try once the work is done.
+   They are held *from the agent by construction*: `DeskNote` has no field
+   for them, only `checks_held`, the count `checks::count_into` fills; the
+   lines are read by `checks::for_desk`, which only the page's `desk_notes`
+   handler calls. `read_desk_notes` and the brief say "(2 checks held)" and
+   nothing more. The agent's one write is `suggest_check`
+   (`POST /api/panes/{id}/notes/{note}/suggest-check` `{texts, by}`, the token
+   and a running pane): at most five a call and three waiting on a note,
+   answered with how many landed and were refused, never the list. The
+   reader's five routes are behind the capability
+   (`/api/desks/{id}/notes/{note}/checks`, then `/{check}` with `text` or
+   `result` ok, fail or clear, and `/{check}/remove`, `/restore`, `/keep`).
+   A ✕ sets `removed_at`; nothing is deleted. A reopen (`check` with
+   `works: false`) clears every line's ✓ and ✗ so the next check-it runs
+   them fresh, and a ✗ on the row passes that line's words as the reopen's
+   reply, which the next brief leads with.
+
 One consequence to know about: **a capability dies with the daemon that
 minted it.** After a restart or an upgrade, an open window's socket is
 refused, and the desk says so and asks for the window to be reopened.

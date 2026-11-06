@@ -3875,6 +3875,32 @@ async function panelRows(cdp, base, token) {
       !loopSaid ? "the agent's line never showed under the note" : asked ? "a shipped thread still offered works on notes no commit named" : !notYet ? `the agent's tick offered no not yet… (tick answered ${tk4.status})` :
         !loopField ? "not yet… opened no field" : !reopened ? "the note did not read reopened, with your words" : "said, shipped and not asked, ticked, reopened"]);
 
+    // 1.58, H2.1: a check the reader holds on a note. The agent reads only
+    // how many (`checks_held`), never the words; it may suggest three to a
+    // note and a fourth is refused; the row's mark says so.
+    const n6 = (await post(`/api/desks/${desk}/notes`, { text: "bench: held checks" })).note.id;
+    const held = await post(`/api/desks/${desk}/notes/${n6}/checks`, { text: "bench: the path shows beside Download" });
+    const agentRead = await (await fetch(`${base}/api/panes/${pa}/notes`, { headers: { authorization: `Bearer ${token}` } })).text();
+    const readN6 = (JSON.parse(agentRead).notes || []).find(n => n.id === n6) || {};
+    const sug = await (await agent(`notes/${n6}/suggest-check`, { texts: ["bench s1", "bench s2", "bench s3", "bench s4"], by: "bench-agent" })).json().catch(() => ({}));
+    const markSays = await until(`/^1 check/.test(document.querySelector('${row95(n6)} .dk-held')?.textContent || "")`, 40);
+    rows.push(["a check you hold shows on its note, and the agent reads only its count; a fourth suggestion is refused",
+      !!held.check && readN6.checks_held === 1 && !agentRead.includes("the path shows") && sug.suggested === 3 && sug.refused === 1 && markSays,
+      !held.check ? "the check was not held" : readN6.checks_held !== 1 ? `the agent read checks_held ${readN6.checks_held}` : agentRead.includes("the path shows") ? "the agent's read carries the check's words" :
+        sug.suggested !== 3 || sug.refused !== 1 ? `suggest answered ${JSON.stringify(sug)}` : !markSays ? "the row has no \"1 check\" mark" : "held, counted, suggestions capped"]);
+
+    // At check-it the row lists the check with ✓ and ✗; a ✗ opens not yet…
+    // with the check's words in it, and Enter reopens the note with them.
+    await agent(`notes/${n6}/tick`, { by: "bench-agent", commit: "5c2d3e4f" });
+    const listed = await until(`!!document.querySelector('.dk-note.done:has([data-n="${n6}"]) .dk-checks.inrow [data-a="check-fail"]')`, 40);
+    if (listed) await q.clickOn(`.dk-note.done:has([data-n="${n6}"]) [data-a="check-fail"]`);
+    const prefilled = listed && await until(`(document.activeElement?.matches?.('${row95(n6)} textarea.dk-note-over') && document.activeElement.value.startsWith("✗ bench: the path shows beside Download"))`, 20);
+    if (prefilled) { await q.type("only a tick showed"); await q.press("Enter", { raw: true }); }
+    const failed = prefilled && await until(`(document.querySelector('${row95(n6)}:not(.done) .dk-reply.mine')?.textContent || "").includes("✗ bench: the path shows beside Download")`, 40);
+    rows.push(["at check-it a held check has ✓ and ✗ on the row; ✗ reopens the note with that check's words",
+      listed && prefilled && failed,
+      !listed ? "the ticked row listed no check with ✗" : !prefilled ? "✗ opened no field with the check in it" : !failed ? "the note did not reopen with the check's words" : "listed, ✗, reopened with its words"]);
+
     // #110: decisions asked together are one card: a row each, the
     // recommended option marked; the card counts down as they are answered,
     // and only with all of them answered does it offer to send them.

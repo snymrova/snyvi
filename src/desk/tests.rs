@@ -28,6 +28,7 @@ pub(crate) fn db() -> Connection {
     }
     // After the accounts' columns: the rebuild copies `panes.account`.
     conn.execute_batch(groups::COLUMNS_1_57).unwrap();
+    conn.execute_batch(checks::COLUMNS_1_58).unwrap();
     conn
 }
 
