@@ -9,15 +9,10 @@ use crate::desk::groups::{Closed, Regrouped};
 
 #[derive(Deserialize)]
 pub(crate) struct NewGroupBody {
-    /// What the reader called it; empty takes the folder's last part.
+    /// What the reader called it; empty is "Tab n". Every tab is in the
+    /// desk's own folder: a tab is a set of panels, not another project.
     #[serde(default)]
     pub(crate) name: String,
-    /// A browse root's id and a folder's path in it, as a new desk takes
-    /// them. Left out, the tab starts in the desk's own folder.
-    #[serde(default)]
-    pub(crate) root: Option<String>,
-    #[serde(default)]
-    pub(crate) path: String,
 }
 
 #[derive(Deserialize)]
@@ -57,10 +52,9 @@ pub(crate) fn group_root(desk: &crate::desk::Desk, grp: i64) -> (i64, String) {
     }
 }
 
-/// A new tab, in a folder the reader picked (`browse.resolve`, the way a new
-/// desk takes one), or in the desk's own. On a desk with no tabs it makes the
-/// first tab too, for the panels already there. Answers the desk and the new
-/// tab's id; the page starts its first panel the way a new desk's is.
+/// A new tab, in the desk's folder. On a desk with no tabs it makes the first
+/// tab too, for the panels already there. Answers the desk and the new tab's
+/// id; the page starts its first panel the way a new desk's is.
 pub(crate) async fn create_group(
     State(app): S,
     headers: HeaderMap,
@@ -71,23 +65,7 @@ pub(crate) async fn create_group(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    let Ok(Some(desk)) = app.store.desk(id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let dir = match &b.root {
-        Some(root) => match app.browse.resolve(root, &b.path) {
-            Ok(dir) if dir.is_dir() => dir,
-            _ => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": "no such folder" })),
-                )
-                    .into_response()
-            }
-        },
-        None => std::path::PathBuf::from(&desk.root),
-    };
-    match app.store.create_group(id, &b.name, &dir.to_string_lossy()) {
+    match app.store.create_group(id, &b.name) {
         Ok(Some(grp)) => {
             desks_moved(&app);
             let desk = app.store.desk(id).ok().flatten();

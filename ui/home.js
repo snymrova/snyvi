@@ -785,7 +785,7 @@ const BRANCH = `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stro
 /** The dots of the panels that are doing something; a stopped panel has none. */
 /** 1.57: a desk's tabs on its card, each opening the desk on it, with the
  *  needs-you dot of a panel in it (#217). None for a desk with no tabs. */
-const tabChips = d => !(d.groups && d.groups.length) ? "" : `<p class="hm-tabs">` + d.groups.map(g => {
+const tabChips = d => !(d.groups && d.groups.length > 1) ? "" : `<p class="hm-tabs">` + d.groups.map(g => {
   const { esc } = c;
   const need = d.panes.some(p => p.grp === g.id && (p.blocked || p.agent === "needs_you"));
   return `<a class="hm-tab${need ? " blk" : ""}" href="/desk/${d.id}" data-desk="${d.id}" data-grp="${g.id}" data-tip="${esc(g.name)}${need ? " · needs you" : ""}">${esc(g.name)}${need ? `<i class="dot" aria-hidden="true"></i>` : ""}</a>`;
@@ -840,14 +840,14 @@ function pick(j) {
   for (const p of d.panes) said.set(paneWord(p), [...(said.get(paneWord(p)) || []), p]);
   const panels = [...said].map(([w, [p, ...more]]) => more.length
     ? `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}">${dot(p)}${plural(more.length + 1, "panel")} <span class="hm-s">${w}</span></a>`
-    : `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${w}</span></a>`).join("");
+    : `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}"${p.grp ? ` data-grp="${p.grp}"` : ""}>${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${w}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
   // The other desks, as chips, only while Other desks below is hidden: it lists them.
   const chips = rest.length && hidden().includes("desks") ? `<p class="hm-chips"><span class="hm-s">or</span>${rest.map(o =>
     `<a class="hm-chip" href="/desk/${o.id}" data-desk="${o.id}" data-tip="${esc(o.name)} · ${o.touched ? touched(o.touched) : "not opened yet"}" data-tip-sub="${esc(o.panes.map(p => `${p.name || `panel ${p.slot}`} ${paneWord(p)}`).join(" · ") || "no panels")}">` +
     `${esc(o.name)}${liveDots(o)}<span class="fact">${o.touched ? age(o.touched) : "new"}</span></a>`).join("")}</p>` : "";
   return box(`<h2>Pick up</h2><div class="hm-pk-top"><a class="hm-pk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="fact">${touched(d.touched)}</span>${spark(d.pulse)}</div>` +
-    left + next + threadLines(j, d) + facts +
+    tabChips(d) + left + next + threadLines(j, d) + facts +
     `<div class="hm-pk-go"><a class="btn btn-primary" href="/desk/${d.id}" data-desk="${d.id}" data-hm-open>Open desk<kbd>↵</kbd></a>` +
     (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Pin this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Unpin" : "Pin here"}</button>` : "") +
     `</div>` + chips);

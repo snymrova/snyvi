@@ -2049,10 +2049,7 @@ fn a_1_56_database_opens_with_no_tabs_and_its_first_tab_moves_nothing() {
         ]
     );
 
-    let made = s
-        .create_group(desk, "insta", "/home/p/Studio")
-        .unwrap()
-        .unwrap();
+    let made = s.create_group(desk, "insta").unwrap().unwrap();
     let d = s.desk(desk).unwrap().unwrap();
     let first = d.groups[0].id;
     assert_ne!(first, made);
@@ -2093,7 +2090,7 @@ fn a_1_56_database_opens_with_no_tabs_and_its_first_tab_moves_nothing() {
 fn a_tab_renumbers_its_own_documents_and_a_moved_panel_takes_its_own() {
     let (s, _d) = temp_store();
     let desk = s.create_desk("/home/p/omd", None).unwrap();
-    let two = s.create_group(desk.id, "two", "/two").unwrap().unwrap();
+    let two = s.create_group(desk.id, "two").unwrap().unwrap();
     let one = s.desk(desk.id).unwrap().unwrap().groups[0].id;
     let mut ids = std::collections::HashMap::new();
     for g in [one, two] {

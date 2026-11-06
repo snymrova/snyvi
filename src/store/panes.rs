@@ -165,10 +165,10 @@ impl Store {
     /// 1.57: a new tab on a desk (`groups::create`). On its first, the
     /// desk's documents go to the group its panels went to, in the same
     /// transaction, so no row of the desk is left at 0.
-    pub fn create_group(&self, desk_id: i64, name: &str, root: &str) -> Result<Option<i64>> {
+    pub fn create_group(&self, desk_id: i64, name: &str) -> Result<Option<i64>> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        let Some(made) = groups::create(&tx, desk_id, name, root, now())? else {
+        let Some(made) = groups::create(&tx, desk_id, name, now())? else {
             return Ok(None);
         };
         if let Some(first) = made.first {

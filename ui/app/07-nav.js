@@ -12,7 +12,7 @@
     else if (a.dataset.nav === "welcome") showWelcome(true);
     else if (a.dataset.nav === "desks") showDesk(null, true);
     else if (a.dataset.browse !== undefined) showBrowse(a.dataset.browse, a.dataset.path, true);
-    else if (a.dataset.desk !== undefined) showDesk(+a.dataset.desk, true, +a.dataset.slot || 0);
+    else if (a.dataset.desk !== undefined) showDesk(+a.dataset.desk, true, +a.dataset.slot || 0, +a.dataset.grp || 0);
     else showDoc(a.dataset.id, true);
     if (root.dataset.sheet === "side") closeSheet();
   });

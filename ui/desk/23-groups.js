@@ -66,26 +66,29 @@ function layoutBody(d, extra = {}) {
 /** Whether a panel in this tab's views needs the reader: the `[n]!` mark's test. */
 const needsYou = v => v && (v.status.blocked || v.status.agent === "needs_you");
 
-/** The tab row in the head: `website | insta! | bot  +`. Empty for a desk
- *  with no tabs: its first is made from the desk's menu. A tab's `!` is
- *  drawn in a slot its name keeps either way, so a mark coming and going
- *  moves nothing. */
+/** The tab row in the head: `Tab 1 | insta! ✕ | bot  +`. A desk with no
+ *  tabs, or one left, has the + alone, and its first press makes two: one
+ *  for the panels already there and the new one. A tab's `!` and its ✕ have their room
+ *  whether or not they are drawn, so nothing coming and going moves the row;
+ *  the last tab has no ✕, a desk keeps one. */
 function groupsHead(d) {
   const el = ctx.docEl.querySelector(".dk-groups");
   if (!el) return;
   const gs = d && d.groups || [], { esc } = ctx, at = gs.findIndex(x => x.id === d.grp);
   // The key that reaches a tab from the one shown: the next ], the one before [.
   const key = i => i === (at + 1) % gs.length ? "ctrl+alt+shift+]" : i === (at + gs.length - 1) % gs.length ? "ctrl+alt+shift+[" : "";
-  const html = !gs.length ? "" : gs.map((g, i) => {
+  // One tab left reads as none: the + alone, as on a desk that never had two.
+  const html = (gs.length < 2 ? [] : gs).map((g, i) => {
     const on = g.id === d.grp, need = !on && allPanes(d).some(p => p.grp === g.id && needsYou(views.get(p.id)));
-    return `<button type="button" class="dk-group${on ? " on" : ""}${need ? " blk" : ""}" data-grp="${g.id}" role="tab" aria-selected="${on}" ` +
-      `data-tip="${esc(g.name)}${need ? " · needs you" : ""}" data-tip-sub="${esc(tilde(g.root))}"${on ? "" : ` data-key="${key(i)}"`}>` +
-      `${esc(g.name)}<i class="dk-group-mark" aria-hidden="true">${need ? "!" : ""}</i></button>`;
-  }).join("") + `<button type="button" class="dk-group-new" data-tip="New tab" data-tip-sub="a folder of its own, panels of its own" aria-label="New tab">+</button>`;
+    return `<span class="dk-gt${on ? " on" : ""}"><button type="button" class="dk-group${on ? " on" : ""}${need ? " blk" : ""}" data-grp="${g.id}" role="tab" aria-selected="${on}" ` +
+      `data-tip="${esc(g.name)}${need ? " · needs you" : ""}" data-tip-sub="${on ? "double-click to rename" : "show it"}"${on ? "" : ` data-key="${key(i)}"`}>` +
+      `${esc(g.name)}<i class="dk-group-mark" aria-hidden="true">${need ? "!" : ""}</i></button>` +
+      (gs.length > 1 ? `<button type="button" class="dk-group-x" data-grp-x="${g.id}" data-tip="Close ${esc(g.name)}" data-tip-sub="its panels are kept, stopped" aria-label="Close tab ${esc(g.name)}">×</button>` : "") + `</span>`;
+  }).join("") + `<button type="button" class="dk-group-new" data-tip="New tab" data-tip-sub="more panels, in this desk's folder" aria-label="New tab">+</button>`;
   if (el.dataset.drawn === html) return;
   el.dataset.drawn = html;
   el.innerHTML = html;
-  el.setAttribute("role", gs.length ? "tablist" : "presentation");
+  el.setAttribute("role", gs.length > 1 ? "tablist" : "presentation");
 }
 
 /** The panes of the tabs out of sight, each tab in a box of its own laid out
@@ -141,8 +144,6 @@ function showGroup(grp, focus = true) {
   const fp = d.full_slot && d.panes.find(p => p.slot === d.full_slot);
   full = !!fp;
   focused = fp ? fp.id : d.panes.some(p => p.id === d.group.focused) ? d.group.focused : (gridPanes(d)[0] || d.panes[0] || {}).id || null;
-  const t = ctx.docEl.querySelector(".dk-root-t");
-  if (t) t.textContent = tilde(d.root);
   ctx.api(`/api/desks/${deskId}/groups/${grp}/show`, {}).catch(() => {});
   layout();
   rail();
@@ -169,6 +170,33 @@ function groupStep(by) {
   return true;
 }
 
+/** A click in the tab row: a tab's name shows it, a second click on the shown
+ *  one renames it there; its ✕ closes it; the + makes the next. */
+function groupClick(e) {
+  const x = e.target.closest(".dk-group-x[data-grp-x]");
+  if (x) { const g = current()?.groups?.find(t => t.id === +x.dataset.grpX); if (g) closeGroup(g); return true; }
+  if (e.target.closest(".dk-group-new")) { newGroup(); return true; }
+  const tg = e.target.closest(".dk-group[data-grp]");
+  if (!tg) return false;
+  if (tg.dataset.dragged) return true;
+  const grp = +tg.dataset.grp, d = current();
+  if (e.detail === 2 && d && d.grp === grp) { const g = d.groups.find(t => t.id === grp); if (g) renameGroup(g); }
+  else showGroup(grp);
+  return true;
+}
+
+/** A tab's menu from a right click, the menu key or ⇧F10 on it. The window's
+ *  own list of what has a menu is first paint's, so a tab, which only a desk
+ *  has, asks from here; the window's listener after this one finds nothing
+ *  there and only keeps the webview's own menu away. */
+function tabMenu(e) {
+  const t = e.target.closest?.(".dk-group[data-grp]");
+  if (!t || (e.type === "keydown" && !(e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)))) return;
+  e.preventDefault();
+  const r = t.getBoundingClientRect(), key = e.type === "keydown";
+  ctx.menu?.(t, key ? r.left : e.clientX, key ? r.bottom + 4 : e.clientY, key);
+}
+
 /** A panel shown wherever it is: its own tab first, when that is another. */
 function toGroupOf(v) {
   const d = current();
@@ -176,23 +204,21 @@ function toGroupOf(v) {
 }
 
 /** The name of the tab a pane is in, when the desk has tabs and it is not
- *  the one shown: the rail's mark on a row from elsewhere. */
+ *  the one shown: a document's tip and a working line's words say it. No
+ *  row wears it as a chip: every tab is in the desk's folder, and a chip
+ *  read "Tab 1" on everything sent before the first tab. */
 function otherTab(d, grp) {
   if (!d || !d.grp || !grp || grp === d.grp) return "";
   return (d.groups.find(g => g.id === grp) || {}).name || "";
 }
 
-/** A tab's mark on a rail row, empty when the row is this tab's. */
-const tabMark = (d, grp) => { const n = otherTab(d, grp); return n ? `<span class="dk-tabmark" data-tip="From the tab ${ctx.esc(n)}">${ctx.esc(n)}</span>` : ""; };
-
-/** A new tab: on a folder from the places New desk offers, this desk's own,
- *  or one from the dialog (menu.js, "New tab in…"). Made, it is shown with one panel started, as a
- *  new desk opens. */
-async function newGroup(f) {
+/** A new tab, in the desk's own folder, named "Tab n" until renamed. Made,
+ *  it is shown with one panel started, as a new desk opens. */
+async function newGroup() {
   const d = current();
   if (!d) return;
   try {
-    const j = await ctx.api(`/api/desks/${d.id}/groups`, !f ? {} : f.project != null ? { project: f.project, name: f.name } : { root: f.root, path: f.path });
+    const j = await ctx.api(`/api/desks/${d.id}/groups`, {});
     shownBy.set(d.id, j.grp);
     const p = await ctx.api(`/api/desks/${d.id}/panes`, { grp: j.grp });
     focused = p.pane.id;
@@ -243,6 +269,7 @@ function renameGroup(g, typed, why) {
     const el = ctx.docEl.querySelector(".dk-groups");
     if (el) delete el.dataset.drawn;
     await ctx.refresh();
+    ctx.docEl.querySelector(`.dk-group[data-grp="${g.id}"]`)?.focus({ preventScroll: true });
   };
   input.addEventListener("keydown", e => {
     e.stopPropagation();
@@ -270,6 +297,7 @@ async function closeGroup(g) {
   catch (e) { ctx.toast("Could not close the tab", e); return; }
   if (shownBy.get(deskId) === g.id) shownBy.delete(deskId);
   await ctx.refresh();
+  views.get(focused)?.body.focus({ preventScroll: true });
   ctx.toast(`Closed ${g.name}`, "Its panels are kept, stopped", null, { label: "Undo", run: async () => {
     await ctx.api(j.restore, {}); shownBy.set(deskId, g.id); await ctx.refresh();
   } });
@@ -281,11 +309,16 @@ const GROUPS_CSS = `
  * one shown underlined in the accent. The [n] panel tabs stay where they
  * are, further right, so the two are never one control. A tab's ! has its
  * room whether or not it is drawn, so a mark coming moves nothing. */
-.dk-groups { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
-.dk-groups:empty { display: none; }
+.dk-groups { display: flex; align-items: center; gap: 2px; min-width: 0; flex: none; max-width: 40%; overflow: hidden; }
+.dk-gt { display: inline-flex; align-items: center; flex: none; border-radius: var(--r-xs) var(--r-xs) 0 0; }
+.dk-gt:hover { background: var(--rule); }
+.dk-gt.on { box-shadow: inset 0 -2px 0 var(--accent); }
+.dk-group-x { flex: none; width: 16px; height: 16px; margin-right: 3px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); font-size: 13px; line-height: 1; cursor: pointer; visibility: hidden; }
+.dk-gt:hover .dk-group-x, .dk-gt.on .dk-group-x, .dk-group-x:focus-visible { visibility: visible; }
+.dk-group-x:hover { color: var(--fg); background: var(--rule-2); }
 .dk-groups .dk-group { flex: none; padding: 2px 6px 3px 8px; border-radius: var(--r-xs) var(--r-xs) 0 0; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; }
-.dk-groups .dk-group:hover { color: var(--fg); background: var(--rule); }
-.dk-groups .dk-group.on { color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
+.dk-groups .dk-group:hover { color: var(--fg); }
+.dk-groups .dk-group.on { color: var(--fg); }
 .dk-groups .dk-group.blk { color: var(--warn); font-weight: 600; }
 .dk-group-mark { display: inline-block; width: 1ch; font-style: normal; text-align: center; }
 .dk-group-new { flex: none; padding: 2px 6px; border-radius: var(--r-xs); color: var(--fg-3); }
@@ -303,5 +336,4 @@ const GROUPS_CSS = `
 #toc .dk-tabrow:hover { background: var(--rule); color: var(--fg); }
 .dk-tl-n { margin-left: auto; color: var(--fg-3); font-size: var(--fs-micro); }
 .dk-tabline.blk .dk-tl-n { color: var(--warn); font-weight: 600; }
-.dk-tabmark { flex: none; margin-left: 6px; padding: 0 5px; border-radius: var(--r-pill); background: var(--rule); color: var(--fg-3); font-size: var(--fs-micro); line-height: 16px; white-space: nowrap; }
 `;

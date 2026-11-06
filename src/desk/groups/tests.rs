@@ -2,9 +2,9 @@ use super::*;
 use crate::desk;
 use crate::desk::tests::db;
 
-fn tab(conn: &mut Connection, desk: i64, name: &str, root: &str) -> Created {
+fn tab(conn: &mut Connection, desk: i64, name: &str) -> Created {
     let tx = conn.transaction().unwrap();
-    let made = create(&tx, desk, name, root, 1).unwrap().unwrap();
+    let made = create(&tx, desk, name, 1).unwrap().unwrap();
     tx.commit().unwrap();
     made
 }
@@ -36,8 +36,8 @@ fn zeros(conn: &Connection, desk: i64) -> (i64, i64) {
 
 /// A desk with no tabs is the desk it was: its panes at 0, no groups in
 /// its JSON, its own layout. The first `+` makes two groups, puts every
-/// pane and closed pane that was at 0 into the first, named after the
-/// folder and holding the desk's dividers, and shows the new one.
+/// pane and closed pane that was at 0 into the first, "Tab 1", in the
+/// desk's folder like every tab, holding the desk's dividers, and shows the new one.
 #[test]
 fn the_first_tab_splits_the_desk_and_leaves_no_row_at_zero() {
     let mut conn = db();
@@ -54,7 +54,7 @@ fn the_first_tab_splits_the_desk_and_leaves_no_row_at_zero() {
     assert!(get(&conn, d).unwrap().unwrap().groups.is_empty());
     assert_eq!(default_grp(&conn, d).unwrap(), 0);
 
-    let made = tab(&mut conn, d, "  insta ", "/w/Studio");
+    let made = tab(&mut conn, d, "  insta ");
     let first = made
         .first
         .expect("the desk's first tab makes the first group");
@@ -67,7 +67,7 @@ fn the_first_tab_splits_the_desk_and_leaves_no_row_at_zero() {
         .iter()
         .map(|g| (g.name.as_str(), g.root.as_str()))
         .collect();
-    assert_eq!(names, [("ohmydog", "/w/ohmydog"), ("insta", "/w/Studio")]);
+    assert_eq!(names, [("Tab 1", "/w/ohmydog"), ("insta", "/w/ohmydog")]);
     let g = &desk.groups[0];
     assert_eq!(
         (g.col, g.row, g.full_slot),
@@ -84,9 +84,9 @@ fn the_first_tab_splits_the_desk_and_leaves_no_row_at_zero() {
     assert_eq!((p.grp, p.slot), (first, 3));
 
     // A second `+` makes one more and splits nothing.
-    let third = tab(&mut conn, d, "", "/w/omd-bot");
+    let third = tab(&mut conn, d, "");
     assert_eq!(third.first, None);
-    assert_eq!(get(&conn, d).unwrap().unwrap().groups[2].name, "omd-bot");
+    assert_eq!(get(&conn, d).unwrap().unwrap().groups[2].name, "Tab 3");
 }
 
 /// Four in the grid and four in the back, per tab: three tabs hold
@@ -95,8 +95,8 @@ fn the_first_tab_splits_the_desk_and_leaves_no_row_at_zero() {
 fn eight_panes_in_each_of_three_tabs() {
     let mut conn = db();
     let d = desk::create(&conn, "/w", None, 0).unwrap().id;
-    let a = tab(&mut conn, d, "b", "/b");
-    let grps = [a.first.unwrap(), a.id, tab(&mut conn, d, "c", "/c").id];
+    let a = tab(&mut conn, d, "b");
+    let grps = [a.first.unwrap(), a.id, tab(&mut conn, d, "c").id];
     for g in grps {
         for back in [false, true] {
             for _ in 0..GRID {
@@ -124,7 +124,7 @@ fn eight_panes_in_each_of_three_tabs() {
 fn a_close_in_one_tab_leaves_the_others_where_they_are() {
     let mut conn = db();
     let d = desk::create(&conn, "/w", None, 0).unwrap().id;
-    let made = tab(&mut conn, d, "two", "/two");
+    let made = tab(&mut conn, d, "two");
     let (one, two) = (made.first.unwrap(), made.id);
     for g in [one, two] {
         for _ in 0..3 {
@@ -178,7 +178,7 @@ fn a_close_in_one_tab_leaves_the_others_where_they_are() {
 fn a_restore_into_a_full_tab_is_refused() {
     let mut conn = db();
     let d = desk::create(&conn, "/w", None, 0).unwrap().id;
-    let made = tab(&mut conn, d, "two", "/two");
+    let made = tab(&mut conn, d, "two");
     let two = made.id;
     for _ in 0..GRID {
         open_in(&mut conn, d, two, false);
@@ -214,7 +214,7 @@ fn a_restore_into_a_full_tab_is_refused() {
 fn a_panel_moves_to_another_tab_and_its_old_tab_closes_up() {
     let mut conn = db();
     let d = desk::create(&conn, "/w", None, 0).unwrap().id;
-    let made = tab(&mut conn, d, "two", "/two");
+    let made = tab(&mut conn, d, "two");
     let (one, two) = (made.first.unwrap(), made.id);
     for _ in 0..3 {
         open_in(&mut conn, d, one, false);
@@ -264,7 +264,7 @@ fn a_panel_moves_to_another_tab_and_its_old_tab_closes_up() {
 fn a_closed_tab_comes_back_with_its_panels_and_the_last_one_stays() {
     let mut conn = db();
     let d = desk::create(&conn, "/w", None, 0).unwrap().id;
-    let made = tab(&mut conn, d, "two", "/two");
+    let made = tab(&mut conn, d, "two");
     let (one, two) = (made.first.unwrap(), made.id);
     open_in(&mut conn, d, one, false);
     open_in(&mut conn, d, two, false);
@@ -294,7 +294,7 @@ fn a_closed_tab_comes_back_with_its_panels_and_the_last_one_stays() {
 fn a_desk_with_tabs_reopens_with_its_panels_in_their_tabs() {
     let mut conn = db();
     let d = desk::create(&conn, "/w", None, 0).unwrap().id;
-    let made = tab(&mut conn, d, "two", "/two");
+    let made = tab(&mut conn, d, "two");
     let (one, two) = (made.first.unwrap(), made.id);
     for g in [one, two, two] {
         open_in(&mut conn, d, g, false);
@@ -312,8 +312,8 @@ fn a_tab_is_renamed_moved_and_shown_on_its_own_desk_only() {
     let mut conn = db();
     let d = desk::create(&conn, "/w", None, 0).unwrap().id;
     let other = desk::create(&conn, "/o", None, 0).unwrap().id;
-    let made = tab(&mut conn, d, "two", "/two");
-    let three = tab(&mut conn, d, "three", "/three").id;
+    let made = tab(&mut conn, d, "two");
+    let three = tab(&mut conn, d, "three").id;
     let one = made.first.unwrap();
     assert!(rename(&conn, d, made.id, " web ").unwrap());
     assert!(!rename(&conn, d, made.id, "  ").unwrap());

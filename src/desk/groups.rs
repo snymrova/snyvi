@@ -218,10 +218,10 @@ pub(super) fn taken(tx: &Connection, desk_id: i64, grp: i64) -> Result<Vec<i64>>
 }
 
 /// A name for a tab: the reader's, trimmed and cut, or the folder's last part.
-fn group_name(name: &str, root: &str) -> String {
+fn group_name(name: &str, nth: i64) -> String {
     let n = clip_to(name.trim(), GROUP_NAME_CHARS);
     if n.is_empty() {
-        clip_to(&derive_name(root), GROUP_NAME_CHARS)
+        format!("Tab {nth}")
     } else {
         n
     }
@@ -247,7 +247,6 @@ pub fn create(
     tx: &rusqlite::Transaction,
     desk_id: i64,
     name: &str,
-    root: &str,
     now: i64,
 ) -> Result<Option<Created>> {
     let Some((desk_root, col, row, full)) = tx
@@ -267,10 +266,12 @@ pub fn create(
     else {
         return Ok(None);
     };
-    let had: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM desk_groups WHERE desk_id = ?1 AND closed_at = 0",
+    // Open ones, for whether this is the split; every one the desk ever had,
+    // for a default name no closed tab, brought back, would share.
+    let (had, ever): (i64, i64) = tx.query_row(
+        "SELECT COUNT(*) FILTER (WHERE closed_at = 0), COUNT(*) FROM desk_groups WHERE desk_id = ?1",
         params![desk_id],
-        |r| r.get(0),
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     let insert = "INSERT INTO desk_groups(desk_id, name, root, pos, col, row, full_slot, created_at)
          VALUES(?1, ?2, ?3, (SELECT COALESCE(MAX(pos), 0) + 1 FROM desk_groups WHERE desk_id = ?1), ?4, ?5, ?6, ?7)";
@@ -279,7 +280,7 @@ pub fn create(
             insert,
             params![
                 desk_id,
-                group_name("", &desk_root),
+                group_name("", ever + 1),
                 desk_root,
                 col,
                 row,
@@ -300,9 +301,10 @@ pub fn create(
     } else {
         None
     };
+    let nth = ever + 1 + i64::from(first.is_some());
     tx.execute(
         insert,
-        params![desk_id, group_name(name, root), root, 0.5, 0.5, 0, now],
+        params![desk_id, group_name(name, nth), desk_root, 0.5, 0.5, 0, now],
     )?;
     let id = tx.last_insert_rowid();
     tx.execute(

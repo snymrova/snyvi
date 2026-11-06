@@ -27,18 +27,23 @@ the questions the design left open.
 | A routine: its line, cadence, Waits list, limits, its panel, the file its name resolved to and its hash, its Start (a draft has none), and its runs | `routines`, `routine_runs`, `src/routine.rs`; the text as allowed, for its diff, in `routines/<id>/allowed.md` | yes; a run under way when the daemon stops is ended, said so |
 
 **A desk can have tabs (1.57, #217).** A tab is a group of panels inside one
-desk -- `website`, `insta`, `bot` -- with its own folder, its own four in the
-grid and four in the back, its own dividers, full view and focused panel. The
-desk keeps one name, one list of notes, one thread list, one left-off, one set
-of keys and one account, and its rail is one list: the shown tab's panels,
-a folded line for each other tab, and the desk's documents, notes and threads,
-a row from another tab's panel carrying that tab's name. The code says
+desk -- `website`, `insta`, `bot` -- with its own four in the grid and four
+in the back, its own dividers, full view and focused panel. Every tab is in
+the desk's folder: a tab is a set of panels, not another project. The desk
+keeps one name, one list of notes, one thread list, one left-off, one set of
+keys and one account, and its rail is one list: the shown tab's panels, a
+folded line for each other tab, and the desk's documents, notes and threads.
+No row wears a tab's name as a chip; a document's tip says which tab's panel
+sent it, and a working line's words which tab its agent is in. The code says
 *group* (`desk_groups`, `panes.grp`, `.dk-groups`): the `[n]` panel tabs own
 the word there.
 
-- A desk with no tabs is at `grp = 0` everywhere and is the desk it was.
-  The first tab made on it makes two: one for the panels already there,
-  named after the desk's folder and holding its dividers, and the new one.
+- A desk with no tabs is at `grp = 0` everywhere and is the desk it was,
+  with only the `+` after its name. The first press makes two: "Tab 1" for
+  the panels already there, holding their dividers, and "Tab 2", shown with
+  a shell started. A tab is "Tab n" until renamed (n counts every tab the
+  desk ever had, so a name never comes back); a double-click on the shown
+  one renames it in place.
   Every pane, closed pane and document of the desk at 0 goes to the first in
   the same transaction, so no row of it is left at 0.
 - Slots run 1 to 8 in each tab; `UNIQUE(desk_id, grp, slot)` holds it, which
@@ -51,8 +56,14 @@ the word there.
 - The tab shown is each window's own; the daemon keeps only where the desk
   reopens (`desks.grp_shown`, `/groups/{grp}/show`). `⌃⌥⇧[` and `⌃⌥⇧]`
   switch tabs, matched on `e.code`; `⌃⌥[` and `⌃⌥]` still cycle panels.
-- Closing a tab closes its panels the way ✕ does, with Undo; the last open
-  tab cannot be closed. A panel moved to another tab takes its documents.
+- Each tab has a ✕ (on hover, and always on the shown one): it closes the
+  tab's panels the way a panel's ✕ does, with Undo in a toast. The last open
+  tab has none and cannot be closed, and one tab left draws no names: it
+  reads as a desk without tabs. A panel moved to another tab takes its
+  documents.
+- What makes a panel -- the rail's + New panel, the desk ⋯'s New panel,
+  `⌃⌥N` -- makes it in the tab on screen. A link to a panel by its slot (Home's
+  Pick up, a document's "From desk [n]") carries its tab too.
 - A panel's brief names its tab: *You are in panel 2 of 3 in the tab "insta"
   of the snyvi desk "ohmydog" (~/Studio)*; on a desk with no tabs the
   sentence is the one it always was.

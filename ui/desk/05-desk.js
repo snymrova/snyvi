@@ -69,7 +69,7 @@ function layout() {
   backLayout(d);
   groupsMount(d);
   groupsHead(d);
-  if (!all.length) grid.innerHTML = `<p class="dk-none">${d.panes.length ? "Every panel on this desk is in the back." : "No panels on this desk."} <button type="button" data-a="new">New panel</button></p>`;
+  if (!all.length) grid.innerHTML = `<p class="dk-none">${d.panes.length ? `Every panel in this ${d.grp ? "tab" : "desk"} is in the back.` : `No panels in this ${d.grp ? "tab" : "desk"}.`} <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
   leftOffSlot(d);
   keysSlot(d);
@@ -85,7 +85,7 @@ function leftOffSlot(d) {
   const head = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
   if (!head) return;
   let el = head.querySelector(".dk-left");
-  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-root").after(el); }
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-groups").after(el); }
   if (leftField === d.id && el.querySelector("input")) return;
   const l = d.left_off;
   if (leftGone && leftGone.desk === d.id) {
@@ -516,8 +516,6 @@ function tabs(d, all, shown) {
  *  the ✕ coming back here. It takes the slot the path's text had, so the
  *  head moves nothing. Folders left the sidebar with it: a folder is read
  *  through its desk. */
-const rootButton = () => `<button type="button" class="dk-root dk-root-b" data-a="folder" data-tip="Open this desk's folder" data-tip-sub="read it here, over the desk">` +
-  `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ctx.icons.folder}</svg><span class="dk-root-t"></span></button>`;
 
 function draw() {
   const d = current();
@@ -531,12 +529,11 @@ function draw() {
     return;
   }
   document.title = `${d.name} · desk`;
-  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-groups" data-part="desk.groups"></span>${rootButton()}<span class="dk-tabs"></span>` +
+  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-groups" data-part="desk.groups"></span><span class="dk-tabs"></span>` +
     `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div>${DRAWER}<div class="dk-live vh" aria-live="polite"></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;
-  docEl.querySelector(".dk-root-t").textContent = tilde(d.root);
   gridWatch?.disconnect();
   let seen = 0;
   gridWatch = new ResizeObserver(([en]) => { const w = Math.round(en.contentRect.width); if (w !== seen) { seen = w; if (current()) layout(); } });
@@ -565,8 +562,6 @@ function sync(d) {
   if (fp) focused = fp.id;
   // Focus is the shown tab's: its own kept one, else its first.
   if (!d.panes.some(p => p.id === focused)) focused = d.group && d.panes.some(p => p.id === d.group.focused) ? d.group.focused : d.panes[0] ? d.panes[0].id : null;
-  const t = ctx.docEl.querySelector(".dk-root-t");
-  if (t) t.textContent = tilde(d.root);
   layout();
   watch();
 }

@@ -390,7 +390,7 @@ function docRow(x, gone, vs, esc) {
   // The slot and not the name: a name changes with the panel's title, and
   // the rail compares what it draws.
   const on = x.id === reading, v = on && sentFrom(), to = v ? `Back to panel ${v.pane.slot}` : "Back to the panels";
-  return `<li class="dk-doc${on ? " on" : ""}${ctx.corner?.()?.rising(x.id) ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? to : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(docFrom(vs, x))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span>${tabMark(current(), x.grp)}<span class="age">${ctx.relShort(x.received_at)}</span></a>` +
+  return `<li class="dk-doc${on ? " on" : ""}${ctx.corner?.()?.rising(x.id) ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? to : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(docFrom(vs, x))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
     // Its tools: the path to copy, where there is one; on the row of the
     // document on the page, the way back to the panes, in view at rest; and
     // the ✕ that takes it off this list -- this list only.
@@ -676,9 +676,10 @@ function noteRow(x, esc) {
   // An open line's date comes first: the marks' room cuts from the end, and
   // "overdue" was the word cut to "ove" behind a long stage (N2).
   // The stage, in words, comes last (1.56): it is the mark that shrinks.
-  // From a panel in another tab, that tab's name leads (1.57).
-  const tm = current()?.group && x.grp && x.grp !== current().group.name ? `<span class="dk-tabmark" data-tip="From the tab ${esc(x.grp)}">${esc(x.grp)}</span>` : "";
-  const marks = tm + (x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + promiseMark(x, esc) + picMark(x, esc) + stageMark(x, esc));
+  // No tab's name on a line (1.57): every tab is in the desk's folder, so a
+  // line from another tab is still this desk's work; its stage words say
+  // which tab a working agent is in.
+  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + promiseMark(x, esc) + picMark(x, esc) + stageMark(x, esc);
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
@@ -688,7 +689,7 @@ function noteRow(x, esc) {
     // A click on the text opens the line's gate (1.56, audit B2): its
     // plan and Approve, its thread, its commit and the checks, where a
     // click used to rewrite it. The pen rewrites, and so does the menu.
-    `<button type="button" class="nm" data-a="${x.done ? "note-edit" : "note-gate"}" data-n="${x.id}" aria-expanded="${gateOpen === x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, x.done ? "click to rewrite" : "click for where it is · the pen rewrites"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${linked(x.text, esc)}</span></button>` +
+    `<button type="button" class="nm" data-a="${x.done ? "note-edit" : "note-gate"}" data-n="${x.id}" aria-expanded="${gateOpen === x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, x.done ? "click to rewrite" : "click for where it is · double-click rewrites"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${linked(x.text, esc)}</span></button>` +
     `<span class="dk-tail">` +
     `<span class="dk-tools">${x.done ? "" : `<button type="button" data-a="note-edit" data-n="${x.id}" data-tip="Rewrite" aria-label="Rewrite ${esc(x.text)}">${ico("pen")}</button>`}<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
     replyLine(x, esc) +
