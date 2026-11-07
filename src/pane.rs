@@ -114,7 +114,7 @@ pub const BUSY_OUTPUT: Duration = Duration::from_secs(90);
 const RESUME_FOR: Duration = Duration::from_secs(5 * 60);
 /// However long nobody looks, the marks and offers go this long after the
 /// daemon came up: a conversation a day old is not coming back by itself.
-const MARKS_AT_MOST: Duration = Duration::from_secs(24 * 3600);
+pub const MARKS_AT_MOST: Duration = Duration::from_secs(24 * 3600);
 /// An agent that says `working` and has printed nothing this long is not
 /// working: a Claude stopped with Esc says nothing more, while one that is
 /// working repaints its spinner every second.
@@ -218,6 +218,11 @@ pub struct Status {
     /// pane's first start, like `resume`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub offer: bool,
+    /// 1.58: on offer because the last daemon died with Claude in this pane
+    /// -- the OOM killer, a SIGKILL -- rather than stopping (`desk::marks`).
+    /// Only with `offer`; the page says "closed unexpectedly" for it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub crashed: bool,
     /// The folder the shell is in now, as the kernel says -- not where it was
     /// started. Empty until it has been asked, and on Windows, which has no
     /// cheap answer.
@@ -613,6 +618,22 @@ pub struct Start<'a> {
 /// Told a panel's id and the folder its shell is now in.
 type CwdSink = Box<dyn Fn(&str, &str) + Send + Sync>;
 
+/// 1.58: what a panel's mark for the next start should say now, for the
+/// store's `resume_next` (`desk::marks`), which panes cannot reach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    /// An agent's session came into the running panel: once per session,
+    /// not per turn.
+    AgentIn,
+    /// It went: Claude quit and the shell stayed, or the process ended.
+    AgentOut,
+    /// The panel started as anything but the shell an offer comes back as:
+    /// whatever it was marked to be, it has been. Told on every such start.
+    Spent,
+}
+
+type MarkSink = Box<dyn Fn(&str, Mark) + Send + Sync>;
+
 pub struct Panes {
     live: Mutex<HashMap<String, Arc<Live>>>,
     dir: PathBuf,
@@ -636,6 +657,12 @@ pub struct Panes {
     /// Where a pane's shell has moved to is written down through this -- the
     /// store's `set_pane_cwd`, given by the server, since panes have no store.
     cwd_sink: Mutex<Option<CwdSink>>,
+    /// And what each one's mark should be, through the store's `set_pane_live`
+    /// and `spend_pane_mark`. See `Mark`.
+    mark_sink: Mutex<Option<MarkSink>>,
+    /// The panes an agent is in, as last told through `mark_sink`, so it is
+    /// told a change and never a repeat.
+    agents_in: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Panes {
@@ -649,6 +676,8 @@ impl Panes {
             told: Mutex::new(HashMap::new()),
             marks: Mutex::new(Marks::default()),
             cwd_sink: Mutex::new(None),
+            mark_sink: Mutex::new(None),
+            agents_in: Mutex::new(Default::default()),
         });
         // A daemon killed rather than stopped keeps what it had up to the
         // last of these.
@@ -697,6 +726,7 @@ impl Panes {
                 status: Status {
                     resume: self.marked(id),
                     offer: self.offered(id),
+                    crashed: self.crashed(id),
                     ..Status::default()
                 },
                 old,
@@ -827,6 +857,7 @@ impl Panes {
             .unwrap_or_else(|| Status {
                 resume: self.marked(id),
                 offer: self.offered(id),
+                crashed: self.crashed(id),
                 ..Status::default()
             })
     }
@@ -839,6 +870,17 @@ impl Panes {
         };
         let i = l.inner.lock().unwrap();
         is_answering(&i.status, Instant::now().saturating_duration_since(i.wrote))
+    }
+
+    /// 1.58: how long a running pane has printed nothing, for the restore
+    /// queue, which stops a shell on offer only once it is at rest. `None`
+    /// when it is not running.
+    pub fn quiet_for(&self, id: &str) -> Option<Duration> {
+        let l = self.live.lock().unwrap().get(id).cloned()?;
+        let i = l.inner.lock().unwrap();
+        i.status
+            .running
+            .then(|| Instant::now().saturating_duration_since(i.wrote))
     }
 
     /// The panes a restart should wait for, and an update: see `is_busy`.
@@ -909,10 +951,12 @@ impl Panes {
         let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
         for l in live {
             let (marked, offered) = (self.marked(&l.id), self.offered(&l.id));
+            let crashed = self.crashed(&l.id);
             let mut i = l.inner.lock().unwrap();
             if !i.status.running {
                 i.status.resume = marked;
                 i.status.offer = offered;
+                i.status.crashed = crashed;
             }
         }
     }
@@ -969,9 +1013,36 @@ impl Panes {
         self.marks.lock().unwrap().offer(id, Instant::now())
     }
 
+    /// 1.58: of the offers, the panes the last daemon died with an agent in
+    /// (`desk::ResumeMarks::crashed`). Read once at start, like `mark_offer`.
+    pub fn mark_crashed(&self, ids: Vec<String>) {
+        self.marks.lock().unwrap().crashed = ids.into_iter().collect();
+        self.refresh_marks();
+    }
+
+    /// Whether a pane is on offer because of a crash, now.
+    pub fn crashed(&self, id: &str) -> bool {
+        let m = self.marks.lock().unwrap();
+        m.crashed.contains(id) && m.offer(id, Instant::now())
+    }
+
     /// How a moved shell's folder is written down. Set once, by the server.
     pub fn on_cwd(&self, sink: CwdSink) {
         *self.cwd_sink.lock().unwrap() = Some(sink);
+    }
+
+    /// How a panel's mark for the next start is written down. Set once, by
+    /// the server, before any pane can start.
+    pub fn on_mark(&self, sink: MarkSink) {
+        *self.mark_sink.lock().unwrap() = Some(sink);
+    }
+
+    /// Say a panel's mark through the sink. Never under a pane's lock: the
+    /// sink takes the store's.
+    fn tell_mark(&self, id: &str, mark: Mark) {
+        if let Some(sink) = self.mark_sink.lock().unwrap().as_ref() {
+            sink(id, mark);
+        }
     }
 
     /// Ask the kernel where each running shell is, and when one has moved, say
@@ -1410,6 +1481,20 @@ impl Panes {
     /// browser tab reads too, so what was typed and the title a program set
     /// stay behind the capability, on the desk socket.
     fn changed(&self, id: &str, status: &Status) {
+        // Every change of `agent_in` passes here -- a report, a session's
+        // start or end, the process ending -- so the mark is told here, and
+        // only when it flips: one write per session, none per turn.
+        let flip = {
+            let mut lives = self.agents_in.lock().unwrap();
+            if status.agent_in && status.running {
+                lives.insert(id.to_string()).then_some(Mark::AgentIn)
+            } else {
+                lives.remove(id).then_some(Mark::AgentOut)
+            }
+        };
+        if let Some(mark) = flip {
+            self.tell_mark(id, mark);
+        }
         // An exact repeat of the last word is dropped: every page redraws on
         // this, and a redraw that changes nothing still takes the row out from
         // under the pointer.
@@ -1455,6 +1540,9 @@ pub fn is_answering(s: &Status, since_output: Duration) -> bool {
 struct Marks {
     resume: std::collections::HashSet<String>,
     offer: std::collections::HashSet<String>,
+    /// Of `offer`, the ones a crash left. Not spent by a start: a panel
+    /// started as its shell while on offer still says why.
+    crashed: std::collections::HashSet<String>,
     resume_until: Option<Instant>,
     cap: Instant,
 }
@@ -1464,6 +1552,7 @@ impl Default for Marks {
         Marks {
             resume: Default::default(),
             offer: Default::default(),
+            crashed: Default::default(),
             resume_until: None,
             cap: Instant::now(),
         }
@@ -1760,6 +1849,7 @@ impl Live {
             // the shell over the conversation has chosen.
             resume: false,
             offer: s.offer,
+            crashed: s.offer && panes.crashed(&self.id),
             cwd: s.cwd.to_string(),
             account: s.account,
             // A new process has told nothing yet about any model, and no
@@ -1779,6 +1869,12 @@ impl Live {
         }
         drop(i);
         panes.changed(&self.id, &status);
+        // Whatever this start is, the store's mark is spent too -- except
+        // the shell an offer comes back as, which keeps the offer on its
+        // strip, and in the store, until the reader answers it.
+        if !status.offer {
+            panes.tell_mark(&self.id, Mark::Spent);
+        }
         self.wake.notify_one();
 
         // The reader: bytes to the screen, answers back to the program. It

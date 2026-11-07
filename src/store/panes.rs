@@ -30,15 +30,35 @@ impl Store {
     }
 
     /// Those marks, as the daemon that comes up reads them
-    /// (`desk::read_resume`): the planned restart's panes, then the ones to
-    /// offer.
-    pub fn panes_resume(&self) -> Result<(Vec<String>, Vec<String>)> {
+    /// (`desk::read_resume`): the planned restart's panes, the ones to
+    /// offer, and which of those a crash left.
+    pub fn panes_resume(&self) -> Result<desk::ResumeMarks> {
         desk::read_resume(&self.conn.lock().unwrap())
     }
 
-    /// And cleared, once that daemon holds the port (`desk::clear_resume`).
-    pub fn clear_panes_resume(&self) -> Result<()> {
-        desk::clear_resume(&self.conn.lock().unwrap())
+    /// And settled, once that daemon holds the port (`desk::settle_marks`).
+    pub fn settle_panes_resume(&self) -> Result<()> {
+        desk::settle_marks(&self.conn.lock().unwrap())
+    }
+
+    /// A window has shown this start's offers (`desk::age_offers`).
+    pub fn age_pane_offers(&self) -> Result<usize> {
+        desk::age_offers(&self.conn.lock().unwrap())
+    }
+
+    /// An agent came into a running panel, or went (`desk::set_live`).
+    pub fn set_pane_live(&self, id: &str, on: bool) -> Result<bool> {
+        desk::set_live(&self.conn.lock().unwrap(), id, on)
+    }
+
+    /// The panel started, so its mark is spent (`desk::spend`).
+    pub fn spend_pane_mark(&self, id: &str) -> Result<bool> {
+        desk::spend(&self.conn.lock().unwrap(), id)
+    }
+
+    /// The offers a long-running daemon let go (`desk::lapse_offers`).
+    pub fn lapse_pane_offers(&self) -> Result<usize> {
+        desk::lapse_offers(&self.conn.lock().unwrap())
     }
 
     /// Mark the panes that had Claude open, on an unplanned way out

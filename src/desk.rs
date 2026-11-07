@@ -16,7 +16,8 @@
 //! (`resume()` in ui/desk.js), since that is the reader's window asking, not a
 //! timer. The screen and the PTY are in-memory beside these rows and die with
 //! the daemon, which is why a pane row carries no state column at all --
-//! `resume_next` is a mark for the next start, not a state.
+//! `resume_next` is a mark for the next start, not a state (`marks`: 1.58
+//! adds 3, "an agent is in this panel now", which a crash leaves behind).
 //!
 //! A desk holds four panes and there is no cap across desks. There was one,
 //! eight, written against the memory budget: a truecolor cell is about 11
@@ -1476,76 +1477,6 @@ pub fn set_agent_session(conn: &Connection, id: &str, session: &str) -> Result<b
     )? > 0)
 }
 
-/// Mark the panes a planned restart should bring back as `claude --resume`:
-/// the ones given, and of those only the ones whose conversation is known,
-/// since a mark on a pane with nothing to resume would start `claude
-/// --resume ` with no id. Every other mark is cleared in the same statement,
-/// so the table only ever describes the one restart in progress.
-pub fn mark_resume(conn: &Connection, ids: &[String]) -> Result<usize> {
-    conn.execute(
-        "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
-        [],
-    )?;
-    let mut n = 0;
-    for id in ids {
-        n += conn.execute(
-            "UPDATE panes SET resume_next = 1 WHERE id = ?1 AND agent_session <> ''",
-            params![id],
-        )?;
-    }
-    Ok(n)
-}
-
-/// Mark the panes that had Claude open when the daemon stopped without
-/// planning to -- `snyvi stop`, a signal, a reboot -- as ones to *offer* back
-/// (`resume_next = 2`), where a planned restart's mark (1) starts them as the
-/// conversation. A pane already marked either way keeps its mark.
-pub fn mark_offer(conn: &Connection, ids: &[String]) -> Result<usize> {
-    let mut n = 0;
-    for id in ids {
-        n += conn.execute(
-            "UPDATE panes SET resume_next = 2 WHERE id = ?1 AND resume_next = 0 AND agent_session <> ''",
-            params![id],
-        )?;
-    }
-    Ok(n)
-}
-
-/// The marks the last daemon left: the planned restart's panes, then the ones
-/// to offer. Read once by the daemon that comes up, which keeps them in the
-/// runtime from there (`pane::Panes::mark_resume`, `mark_offer`) and clears
-/// them here (`clear_resume`) only once it holds the port: a successor that
-/// dies before then is started again, and must find them again.
-pub fn read_resume(conn: &Connection) -> Result<(Vec<String>, Vec<String>)> {
-    let mut stmt =
-        conn.prepare("SELECT id, resume_next FROM panes WHERE resume_next <> 0 ORDER BY id")?;
-    let rows: Vec<(String, i64)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    let (planned, offered): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(_, k)| *k == 1);
-    Ok((
-        planned.into_iter().map(|(id, _)| id).collect(),
-        offered.into_iter().map(|(id, _)| id).collect(),
-    ))
-}
-
-/// Every mark cleared, so a daemon that crashes later does not find them
-/// again a day on. What is still unspent at the next exit is written back.
-pub fn clear_resume(conn: &Connection) -> Result<()> {
-    conn.execute(
-        "UPDATE panes SET resume_next = 0 WHERE resume_next <> 0",
-        [],
-    )?;
-    Ok(())
-}
-
-#[cfg(test)]
-fn take_resume(conn: &Connection) -> Result<(Vec<String>, Vec<String>)> {
-    let marks = read_resume(conn)?;
-    clear_resume(conn)?;
-    Ok(marks)
-}
-
 /// Where a pane's shell has gone, so its next start is there: the folder the
 /// kernel reported on the git tick, or at shutdown. True only when it moved.
 pub fn set_cwd(conn: &Connection, id: &str, cwd: &str) -> Result<bool> {
@@ -2491,6 +2422,8 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
 }
 
 pub mod checks;
+pub mod marks;
+pub use marks::*;
 pub mod groups;
 
 #[cfg(test)]

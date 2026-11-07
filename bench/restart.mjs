@@ -257,6 +257,59 @@ async function main() {
         !strip ? "no strip on the panel" : !went ? "Resume did nothing to see" : went === "went" ? "the resume went in, the strip with it" : !away ? `said "${went}", then ✕ did not put it away` : `said "${went}" in the strip, ✕ put it away`);
       killTree(browser2.proc);
     }
+
+    // 1.58: a crash. The OOM killer took the session with 31 conversations
+    // open and none came back, because a crash ran no exit to mark them. Now
+    // an agent in a panel leaves a live mark, and SIGKILL leaves it there.
+    // Three panels with an agent and one shell, on a desk of their own; the
+    // daemon is killed outright, and the next one is started with a stub
+    // `claude` first on its PATH, which reports itself after two seconds
+    // and stays, so the queue's two-at-a-time can be read.
+    const hk = await health();
+    const curl = (() => { try { execFileSync("sh", ["-c", "command -v curl"], { stdio: "ignore" }); return true; } catch { return false; } })();
+    const crashDesk = (await postC("/api/desks", { name: "crash" }));
+    const cd = crashDesk.desk ? crashDesk.desk.id : crashDesk.id;
+    const agents = [], plain = (await postC(`/api/desks/${cd}/panes`)).pane.id;
+    await postC(`/api/panes/${plain}/start`, { cmd: "exec sleep 300" });
+    for (let i = 0; i < 3; i++) {
+      const id = (await postC(`/api/desks/${cd}/panes`)).pane.id;
+      await postC(`/api/panes/${id}/start`, { cmd: "exec sleep 300" });
+      await postT(`/api/panes/${id}/agent`, { state: i ? "done" : "working", session });
+      agents.push(id);
+    }
+    process.kill(hk.pid, "SIGKILL");
+    await until(async () => !(await health()), 40);
+    const stub = join(tmp, "stub");
+    mkdirSync(stub, { recursive: true });
+    writeFileSync(join(stub, "claude"), `#!/bin/sh\nsleep 2\ncurl -s -o /dev/null -X POST -H 'authorization: Bearer ${token}' -H 'content-type: application/json' -d "{\\"state\\":\\"working\\",\\"session\\":\\"$2\\"}" "http://127.0.0.1:${PORT}/api/panes/$SNYVI_SESSION/agent"\nexec sleep 300\n`, { mode: 0o755 });
+    execFileSync(BIN, ["send", md], { env: { ...env, PATH: `${stub}:${env.PATH}` }, cwd: tmp, stdio: "ignore" });
+    const hn = await until(health, 40);
+    const getC = async path => (await fetch(base + path, { headers: C })).json().catch(() => ({}));
+    const rs = hn ? await getC("/api/restore?panes=1") : {};
+    const on = new Set((rs.panes || []).map(p => p.id));
+    const cl = (await desks()).find(x => x.id === cd);
+    const cs = id => ((cl && cl.panes.find(p => p.id === id)) || {}).status || {};
+    // The first desk's offer was seen by the page above, so this start lets
+    // it go; without a page it was never seen, and is still offered.
+    const seenOne = !!chrome;
+    row("a crash leaves the panels Claude was in on offer, saying so", !!hn && rs.crashed === true && agents.every(id => on.has(id) && cs(id).offer && cs(id).crashed) && !on.has(plain) && !cs(plain).offer && on.size === (seenOne ? 3 : 4) && cl.offers === 3,
+      !hn ? "no daemon came back" : `left ${rs.left}, crashed ${rs.crashed}, on offer ${on.size} (${seenOne ? "the page's seen offer lapsed" : "no page, the earlier offer stands"}), desk offers ${cl && cl.offers}, the shell offered ${!!cs(plain).offer}`);
+    if (hn && curl) {
+      const asked = await fetch(`${base}/api/restore`, { method: "POST", headers: C, body: JSON.stringify({ desk: cd, from: cd }) });
+      const q = await asked.json().catch(() => ({}));
+      await sleep(1200);
+      const mid = await getC("/api/restore");
+      const resumed = async () => ((await desks()).find(x => x.id === cd).panes || []).filter(p => (p.status || {}).running && /^claude --resume /.test((p.status || {}).cmd || "")).length;
+      const two = await resumed();
+      row("Restore starts this desk's two at a time", asked.status === 202 && q.queued === 3 && two === 2 && mid.queued === 3,
+        `queued ${q.queued} (${asked.status}); after 1.2 s ${two} running as the conversation, ${mid.queued} still in the queue`);
+      const done = await until(async () => { const r = await getC("/api/restore"); return r.back === 3 && r.queued === 0 ? r : null; }, 80);
+      const all = await resumed();
+      row("and each agent coming in frees its slot, until all are back", !!done && all === 3 && done.left === (seenOne ? 0 : 1),
+        done ? `${done.back} of ${done.total} back, ${all} running as the conversation, ${done.left} left on offer elsewhere` : `stuck: ${JSON.stringify(await getC("/api/restore"))}`);
+    } else {
+      row("Restore starts this desk's two at a time", true, hn ? "skipped: no curl for the stub claude" : "skipped: no daemon");
+    }
   } finally {
     if (chromeProc) killTree(chromeProc);
     try { cli("stop"); } catch {}

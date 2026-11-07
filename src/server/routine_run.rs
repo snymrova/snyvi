@@ -302,8 +302,10 @@ async fn panel(app: &App, r: &Routine, desk: &crate::desk::Desk) -> anyhow::Resu
     Ok(pane.id)
 }
 
-/// Stop what the panel is running, and wait for it to go.
-async fn stop_then(app: &App, pane: &str) -> anyhow::Result<()> {
+/// Stop what the panel is running, and wait for it to go. The restore
+/// queue's too (`restore_run`), before a shell on offer becomes its
+/// conversation.
+pub(crate) async fn stop_then(app: &App, pane: &str) -> anyhow::Result<()> {
     if !app.panes.is_running(pane) {
         return Ok(());
     }
