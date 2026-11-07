@@ -1800,13 +1800,7 @@ impl Live {
         // the process gets the plain spelling; what is stored stays as it is.
         cmd.cwd(dunce::simplified(std::path::Path::new(s.cwd)));
         i.begin(&s);
-        fresh_env(&mut cmd, std::env::var_os("CLAUDECODE").is_some());
-        cmd.env("SNYVI_SESSION", &self.id);
-        cmd.env("SNYVI_DESK", s.desk);
-        cmd.env("SNYVI_SLOT", s.slot.to_string());
-        for (k, v) in s.env {
-            cmd.env(k, v);
-        }
+        child_env(&mut cmd, &self.id, &s);
         let mut child = pair
             .slave
             .spawn_command(cmd)
@@ -2302,6 +2296,19 @@ const AGENT_TOOL_ENV: &[&str] = &["NO_COLOR", "FORCE_COLOR", "GIT_TERMINAL_PROMP
 /// runs as a token account carries that token, and a `/login` panel of that
 /// daemon would quietly run as it. `start_pane` sets it back for a panel
 /// whose account is a token.
+/// What a panel's child is started with: a fresh environment, the pane's
+/// id, desk and slot for the hook and the MCP server, and the desk's keys.
+/// Out of `Live::start`, which is over its length.
+fn child_env(cmd: &mut CommandBuilder, id: &str, s: &Start) {
+    fresh_env(cmd, std::env::var_os("CLAUDECODE").is_some());
+    cmd.env("SNYVI_SESSION", id);
+    cmd.env("SNYVI_DESK", s.desk);
+    cmd.env("SNYVI_SLOT", s.slot.to_string());
+    for (k, v) in s.env {
+        cmd.env(k, v);
+    }
+}
+
 fn fresh_env(cmd: &mut CommandBuilder, inside: bool) {
     for k in AGENT_ENV {
         cmd.env_remove(k);

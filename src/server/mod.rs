@@ -859,6 +859,28 @@ fn spawn_runners(app: &Arc<App>) {
     routine_run::spawn(app.clone());
 }
 
+/// The marks the last daemon left (`desk::marks`): the planned restart's,
+/// which are only offers with no marker behind them, the offers, and since
+/// 1.58 the live marks a crash left, which are offers now, each saying the
+/// last daemon died with Claude open there. Out of `run`, over its length.
+fn marks_at_start(
+    store: &Store,
+    planned: bool,
+) -> (crate::desk::ResumeMarks, Vec<String>, Vec<String>) {
+    let marks = store.panes_resume().unwrap_or_default();
+    let (mut resume, mut offer) = (marks.planned.clone(), marks.offered.clone());
+    if !planned {
+        offer.append(&mut resume);
+    }
+    if !marks.crashed.is_empty() {
+        eprintln!(
+            "snyvi: the last daemon stopped unexpectedly; {} panel(s) had Claude open",
+            marks.crashed.len()
+        );
+    }
+    (marks, resume, offer)
+}
+
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let window = config::load_or_create_window_secret(&paths)?;
@@ -870,19 +892,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // restart it was for never came, or came long ago -- is only an offer:
     // nothing types a conversation back on its own the next day.
     let planned = read_restart_marker(&paths);
-    // 1.58: and a crash leaves the live marks no exit rewrote, which are
-    // offers now, each saying the last daemon died with Claude open there.
-    let marks = store.panes_resume().unwrap_or_default();
-    let (mut resume, mut offer) = (marks.planned.clone(), marks.offered.clone());
-    if planned.is_none() {
-        offer.append(&mut resume);
-    }
-    if !marks.crashed.is_empty() {
-        eprintln!(
-            "snyvi: the last daemon stopped unexpectedly; {} panel(s) had Claude open",
-            marks.crashed.len()
-        );
-    }
+    let (marks, resume, offer) = marks_at_start(&store, planned.is_some());
     if let Some(apply) = planned {
         eprintln!(
             "snyvi: back from a planned restart{}; {} panel(s) to resume",

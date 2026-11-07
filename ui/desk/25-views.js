@@ -44,8 +44,10 @@ function viewsSlot(d) {
     el.setAttribute("role", "group");
     el.setAttribute("aria-label", "Views of this desk");
     // The left group's last, against the head's free middle: a board's
-    // button grows into it, and moves nothing on either side.
-    hd.querySelector(".dk-tabs").before(el);
+    // button grows into it, and moves nothing on either side. After the
+    // left-off line, whose margin was that middle: one drawn later goes in
+    // right after the tabs (05-desk.js), so before this either way.
+    (hd.querySelector(".dk-left") || hd.querySelector(".dk-groups")).after(el);
   }
   const on = viewOn && viewOn.desk === d.id ? `board:${viewOn.board}` : "panels";
   const b = (v, label, tip) => `<button type="button" class="dk-vbtn${on === v ? " on" : ""}" data-view="${esc(v)}" aria-pressed="${on === v}" data-tip="${esc(tip)}">${esc(label)}</button>`;
@@ -264,12 +266,17 @@ function folderFocus() {
 }
 
 const VIEWS_CSS = `
-.dk-views { display: inline-flex; gap: 2px; flex: none; margin: 0 var(--sp-2); padding: 2px; border-radius: var(--r-pill); background: var(--wash); }
+.dk-views { display: inline-flex; gap: 2px; flex: none; margin: 0 auto 0 var(--sp-2); padding: 2px; border-radius: var(--r-pill); background: var(--wash); }
+.dk-head .dk-left:has(~ .dk-views) { margin-right: 0; }
+.dk-head .dk-views ~ .dk-tabs { margin-left: 0; }
 .dk-vbtn { padding: 2px var(--sp-3); border: 0; border-radius: var(--r-pill); background: none; color: var(--fg-2); font: inherit; font-size: var(--fs-small); cursor: pointer; white-space: nowrap; }
 .dk-vbtn:hover { color: var(--fg); }
 .dk-vbtn.on { background: var(--bg-raise); color: var(--fg); box-shadow: var(--shadow-1); }
 .dk-view { position: absolute; inset: 0; z-index: var(--z-sticky); display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 38%); gap: 8px; background: var(--bg); }
 .dk-vsurf { position: relative; min-width: 0; border-radius: var(--r-md); overflow: hidden; }
+/* The board's own host rule fills its positioned parent, which here is the
+   whole view, dock and all: in the view it is its cell, and no more. */
+.dk-vsurf.bd { position: relative; inset: auto; }
 .dk-dock { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .dk-dock-h { display: flex; gap: var(--sp-2); align-items: center; height: 28px; flex: none; font-size: var(--fs-small); color: var(--fg-3); }
 .dk-dock-k { margin-right: auto; }

@@ -4565,7 +4565,7 @@ async function viewRows(cdp, base, token, env, tmp) {
     // A file's ✕ is back to its folder's page (#214), the dock still there;
     // the folder page's ✕ is back to the panels.
     if (folder) await p.clickOn("#chrome .over > :last-child");
-    const up = folder && await until(`location.pathname === "/b/${rid}/" && !!document.querySelector("#doc > .fp-split:not(.fp-file)") && !!document.querySelector("#doc > .dk-fdock .dk-dock-b > .pn")`);
+    const up = folder && await until(`location.pathname.replace(/\\/$/, "") === "/b/${rid}" && !!document.querySelector("#doc > .fp-split:not(.fp-file)") && !!document.querySelector("#doc > .dk-fdock .dk-dock-b > .pn")`);
     if (up) await p.clickOn("#chrome .over > :last-child");
     const home = up && await until(`location.pathname === "/desk/${desk}" && document.querySelectorAll(".dk-grid > .pn").length === 2 && !document.querySelector(".dk-fdock")`);
     const gone = home && await untilAsync(async () => ((await focus()).focus == null ? true : null));

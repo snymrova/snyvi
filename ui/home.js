@@ -71,11 +71,11 @@ const CSS = `
 .hm-rs-b { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); font-weight: 600; cursor: pointer; }
 .hm-rs-b.q { color: var(--fg-2); font-weight: 400; }
 .hm-rs-b:hover { text-decoration: underline; }
-.hm-rsp { position: absolute; top: 24px; left: 0; z-index: 20; width: min(460px, 100%); max-height: min(60vh, 520px); overflow: auto; padding: 12px 14px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); font-size: var(--fs-small); }
+.hm-rsp { position: absolute; top: 24px; left: 0; z-index: 5; width: min(460px, 100%); max-height: min(60vh, 520px); overflow: auto; padding: 12px 14px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); font-size: var(--fs-small); }
 .hm-rsp h3 { margin: 10px 0 4px; font-size: var(--fs-small); font-weight: 600; color: var(--fg-2); }
 .hm-rsp h3:first-of-type { margin-top: 0; }
 .hm-rsp-t { display: flex; align-items: center; gap: 8px; width: 100%; padding: 3px 0; border: 0; background: none; font: inherit; color: var(--fg); text-align: left; cursor: pointer; }
-.hm-rsp-t > i { flex: none; width: 13px; height: 13px; border: 1px solid var(--rule-2); border-radius: 3px; font-style: normal; font-size: 10px; line-height: 12px; text-align: center; }
+.hm-rsp-t > i { flex: none; width: 13px; height: 13px; border: 1px solid var(--rule-2); border-radius: var(--r-xs); font-style: normal; font-size: var(--fs-micro); line-height: 12px; text-align: center; }
 .hm-rsp-t[aria-checked="true"] > i { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .hm-rsp-t[aria-checked="true"] > i::before { content: "✓"; }
 .hm-rsp-f { display: flex; justify-content: flex-end; gap: 10px; margin: 12px 0 0; }
@@ -808,6 +808,15 @@ function rsSheet() {
     [...by.values()].map(g => `<h3>${esc(g.name)}</h3>` + g.ps.map(p =>
       `<button type="button" class="hm-rsp-t" role="checkbox" aria-checked="${!rsOff.has(p.id)}" data-hm="rs-tick" data-r="${esc(p.id)}"><i aria-hidden="true"></i>${esc(p.name || `Panel ${p.slot}`)}</button>`).join("")).join("") +
     `<p class="hm-rsp-f"><button type="button" class="btn" data-hm="rs-close">Cancel</button><button type="button" class="btn btn-primary" data-hm="rs-go"${n ? "" : " disabled"}>Restore ${n}</button></p></div>`;
+}
+
+/** Choose… closes on Escape, the focus back on what opened it. */
+function rsKeys(el) {
+  el.addEventListener("keydown", e => {
+    if (e.key !== "Escape" || !rsPicks || !e.target.closest?.(".hm-rsp")) return;
+    e.preventDefault(); e.stopPropagation();
+    rsPicks = null; draw(last); c.docEl.querySelector("[data-hm=rs-pick]")?.focus({ preventScroll: true });
+  });
 }
 
 async function rsClick(k, b) {
@@ -1782,7 +1791,7 @@ function tabLinks(el) {
 function wire() {
   const el = c.docEl.querySelector(".hm");
   if (!el || el.dataset.wired) return;
-  el.dataset.wired = "1"; tabLinks(el);
+  el.dataset.wired = "1"; tabLinks(el); rsKeys(el);
   el.addEventListener("click", async e => {
     // Lately's rows are the corner's, and so are their buttons.
     const cn = e.target.closest("button[data-a^='cn-']");
@@ -1791,8 +1800,7 @@ function wire() {
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
-    const k = b.dataset.hm, id = +b.dataset.k || 0;
-    if (k.startsWith("rs-")) return void rsClick(k, b);
+    const k = b.dataset.hm, id = +b.dataset.k || 0; if (k.startsWith("rs-")) return void rsClick(k, b);
     // The ✕ in a folded widget's head hides it; it does not fold it.
     if (k === "hide") { e.preventDefault(); setHidden([...new Set([...hidden(), b.dataset.k])]); draw(last); c.docEl.querySelector("[data-hm=unhide]")?.focus({ preventScroll: true }); }
     else if (k === "unhide") { setHidden([]); draw(last); }
@@ -1859,12 +1867,6 @@ function wire() {
     addPics(images(e.dataTransfer));
   });
   el.addEventListener("focusin", e => { if (e.target.dataset?.hm === "bar") asks(e.target); });
-  // Choose… closes on Escape, the focus back on what opened it.
-  el.addEventListener("keydown", e => {
-    if (e.key !== "Escape" || !rsPicks || !e.target.closest?.(".hm-rsp")) return;
-    e.preventDefault(); e.stopPropagation();
-    rsPicks = null; draw(last); c.docEl.querySelector("[data-hm=rs-pick]")?.focus({ preventScroll: true });
-  });
   // A read that came while a line was being composed is drawn once it is.
   el.addEventListener("compositionstart", () => { composing = true; });
   el.addEventListener("compositionend", () => { composing = false; setTimeout(drawHeld, 0); });

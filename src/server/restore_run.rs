@@ -337,7 +337,10 @@ fn settle_flights(app: &App) {
 }
 
 fn drop_one(app: &App, id: &str, why: &str) {
-    eprintln!("snyvi: restore: panel {} left as it is: {why}", &id[..id.len().min(8)]);
+    eprintln!(
+        "snyvi: restore: panel {} left as it is: {why}",
+        &id[..id.len().min(8)]
+    );
     let mut s = app.restore.lock();
     s.found.remove(id);
     s.waiting.remove(id);
@@ -483,6 +486,10 @@ mod tests {
         assert_eq!(width_at(&psi("9.99")), 2);
         assert_eq!(width_at(&psi("10.00")), 1);
         assert_eq!(width_at(&psi("45.20")), 0);
-        assert_eq!(width_at("garbage"), 2, "a read it cannot parse is no pressure");
+        assert_eq!(
+            width_at("garbage"),
+            2,
+            "a read it cannot parse is no pressure"
+        );
     }
 }

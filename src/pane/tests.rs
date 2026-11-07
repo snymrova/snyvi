@@ -326,7 +326,10 @@ async fn the_mark_sink_hears_an_agent_come_and_go_once_and_a_start_spend() {
     };
     // The shell an offer comes back as keeps the offer: nothing is spent.
     let status = panes.get(id).start(start(true), &panes).unwrap();
-    assert!(status.offer && status.crashed, "started as its shell, still says why");
+    assert!(
+        status.offer && status.crashed,
+        "started as its shell, still says why"
+    );
     assert!(panes.quiet_for(id).is_some());
     assert!(panes.agent_in(id));
     for state in ["working", "done", "working", "needs_you", "done"] {

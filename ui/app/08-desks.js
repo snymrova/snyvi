@@ -644,14 +644,12 @@
     // A desk was made, renamed, closed, or a pane opened or closed. The event
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());
-    // 1.58: conversations coming back after a crash (src/server/restore_run.rs).
-    es.addEventListener("restore", ev => desk?.restoreSaid?.(parse(ev)));
     // A widget changed: a global one here, a desk's in its rail.
     es.addEventListener("widget", ev => { const j = parse(ev); if (!j) return; if (j.desk_id === 0) widgetSaid(j); else desk?.widgetSaid?.(j); });
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
-    // A board moved, or the reader's focus did (1.58): ui/desk/25-views.js's.
-    for (const n of ["board", "focus"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) desk?.viewSaid?.(n, j); });
+    // A board moved, the reader's focus did, or a crash's conversations came back (1.58).
+    for (const n of ["board", "focus", "restore"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
     // An agent ticked a line on a desk's list.
     es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); });
     // A pane started, stopped, or rang for its reader: the dots, at once.

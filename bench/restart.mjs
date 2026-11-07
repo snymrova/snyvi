@@ -294,15 +294,40 @@ async function main() {
     const seenOne = !!chrome;
     row("a crash leaves the panels Claude was in on offer, saying so", !!hn && rs.crashed === true && agents.every(id => on.has(id) && cs(id).offer && cs(id).crashed) && !on.has(plain) && !cs(plain).offer && on.size === (seenOne ? 3 : 4) && cl.offers === 3,
       !hn ? "no daemon came back" : `left ${rs.left}, crashed ${rs.crashed}, on offer ${on.size} (${seenOne ? "the page's seen offer lapsed" : "no page, the earlier offer stands"}), desk offers ${cl && cl.offers}, the shell offered ${!!cs(plain).offer}`);
+    // What the reader sees: Home's status line says it first, and its ✕
+    // takes it away without moving anything under it; the crash desk's
+    // strips offer all three. Opening the desk starts each as its shell on
+    // offer, which the queue below stops once quiet, as it would for a reader.
+    if (hn && chrome) {
+      const browser3 = await launch(join(tmp, "chrome3"));
+      const { sessionId: s3 } = await tab(browser3.cdp);
+      const ev3 = async expr => (await browser3.cdp.send("Runtime.evaluate", { expression: expr, returnByValue: true }, s3)).result.value;
+      const go3 = async url => { const l = pageLoad(browser3.cdp, s3, url); await browser3.cdp.send("Page.navigate", { url }, s3); await l; };
+      await go3(`${base}/#cap=${cap}`);
+      const said = await until(() => ev3(`document.querySelector(".hm-status .hm-rs.crash")?.textContent || ""`), 40);
+      const gridY = () => ev3(`Math.round(document.querySelector(".hm-grid")?.getBoundingClientRect().top ?? -1)`);
+      const y0 = await gridY();
+      await ev3(`document.querySelector('[data-hm="rs-x"]')?.click(); 1`);
+      const gone = await until(() => ev3(`!document.querySelector(".hm-status .hm-rs")`), 40);
+      const y1 = await gridY();
+      row("Home says it first in the status line, and its ✕ moves nothing", !!said && /closed unexpectedly/.test(said) && !!gone && y0 === y1 && y0 > 0,
+        !said ? "no line in Home's status" : !gone ? "✕ left the line" : `"${said}"; the grid at ${y0} → ${y1}`);
+      await go3(`${base}/desk/${cd}#cap=${cap}`);
+      const all = await until(() => ev3(`(() => { const b = [...document.querySelectorAll('.pn-offer:not([hidden]) [data-offer="all"]:not([hidden])')]; const t = document.querySelector('.pn-offer:not([hidden]) > span')?.textContent || ""; return b.length === 3 && /closed unexpectedly/.test(t) ? b[0].textContent : ""; })()`), 80);
+      row("each panel's strip says why, and offers all of the desk's", !!all && /All 3 here/.test(all),
+        all ? `"${all}" on all three strips` : `strips: ${await ev3(`[...document.querySelectorAll(".pn-offer:not([hidden])")].map(o => o.textContent).join(" | ")`)}`);
+      killTree(browser3.proc);
+    }
     if (hn && curl) {
       const asked = await fetch(`${base}/api/restore`, { method: "POST", headers: C, body: JSON.stringify({ desk: cd, from: cd }) });
       const q = await asked.json().catch(() => ({}));
-      await sleep(1200);
-      const mid = await getC("/api/restore");
       const resumed = async () => ((await desks()).find(x => x.id === cd).panes || []).filter(p => (p.status || {}).running && /^claude --resume /.test((p.status || {}).cmd || "")).length;
-      const two = await resumed();
+      // The first moment two are back as the conversation, the third waits:
+      // the stub reports two seconds after its start.
+      const two = await until(async () => { const n = await resumed(); return n >= 2 ? n : null; }, 80);
+      const mid = await getC("/api/restore");
       row("Restore starts this desk's two at a time", asked.status === 202 && q.queued === 3 && two === 2 && mid.queued === 3,
-        `queued ${q.queued} (${asked.status}); after 1.2 s ${two} running as the conversation, ${mid.queued} still in the queue`);
+        `queued ${q.queued} (${asked.status}); then ${two} running as the conversation, ${mid.queued} still in the queue`);
       const done = await until(async () => { const r = await getC("/api/restore"); return r.back === 3 && r.queued === 0 ? r : null; }, 80);
       const all = await resumed();
       row("and each agent coming in frees its slot, until all are back", !!done && all === 3 && done.left === (seenOne ? 0 : 1),
