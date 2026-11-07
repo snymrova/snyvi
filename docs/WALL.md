@@ -18,6 +18,12 @@ paired friend. A page goes to the wall, in the clear, signed by you, and
 you can take it down. What others say comes back to you as words you read;
 it never reaches an agent unless you make it a note.
 
+Reading is not pressing, and is said plainly: while Home shows *What
+people are building*, the daemon asks the wall for `wall.json` at most
+once an hour, and for a card's pictures once each, kept here after. Those
+are plain GETs with nothing of yours in them, and the window itself never
+fetches the internet. Hide the section and it is never asked.
+
 ## Before and after
 
 | | Before 1.59 | From 1.59 |

@@ -218,9 +218,7 @@ fn svg_fills(bytes: &[u8]) -> Vec<(Rgb, f64)> {
                 continue;
             };
             let v = v.trim_start().trim_start_matches(['"', '\'']);
-            let end = v
-                .find(|c: char| matches!(c, '"' | '\'' | ';' | ' ' | '>' | '/'))
-                .unwrap_or(v.len());
+            let end = v.find(['"', '\'', ';', ' ', '>', '/']).unwrap_or(v.len());
             if let Some(c) = colour_word(&v[..end.min(v.len())], v) {
                 match seen.iter_mut().find(|(s, _)| *s == c) {
                     Some(s) => s.1 += 1.0,

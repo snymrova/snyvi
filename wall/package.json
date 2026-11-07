@@ -9,7 +9,8 @@
     "check": "tsc --noEmit",
     "deploy": "wrangler deploy",
     "mint": "node scripts/mint.mjs",
-    "hide": "node scripts/hide.mjs"
+    "hide": "node scripts/hide.mjs",
+    "daemon": "node test/daemon.mjs"
   },
   "dependencies": {
     "@noble/ciphers": "1.3.0",

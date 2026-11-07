@@ -11,8 +11,13 @@
  * Three segments: Everyone (the wall, newest moment first), Following (the
  * pages this reader follows, kept in this browser), Friends (pages friends
  * sent Friends only). The hearts are shown, never ranked; a page that hides
- * its count shows the heart alone. Your own pages head the section in one
- * line each.
+ * its count shows the heart alone. Your own pages are one line on the
+ * segments' row.
+ *
+ * The section never changes height (no layout shift): the segments' row,
+ * then one row of cards of one height that scrolls sideways, 0 cards or 12.
+ * Reading, offline and empty all draw inside that same box. Its height is
+ * WALL_H below, and ui/home.js holds it before this chunk arrives.
  */
 
 let read = null, at = 0, loading = null;
@@ -28,7 +33,7 @@ const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } cat
  *  that holds their place. */
 export function html(c) {
   style();
-  return `<div class="wl" data-wall>${read ? body(c) : `<p class="wl-quiet">Reading the wall…</p>`}</div>`;
+  return `<div class="wl" data-wall>${read ? body(c) : frame("", `<p class="wl-quiet">Reading the wall…</p>`, true)}</div>`;
 }
 
 /** After each draw of Home: listen on the new section, and read the wall
@@ -43,10 +48,17 @@ export function fill(el, c) {
 
 function body(c) {
   const { esc } = c;
-  const mine = (read.mine || []).map(m => `<p class="wl-mine">${esc(m.title)} ${m.visibility === "everyone" ? (m.checked ? "is on the wall" : "is up, not on the wall until its check is in the repo") : "went to friends"}${m.hearts ? ` · ${m.hearts} ♥${m.since ? ` since ${esc(c.rel(m.since * 1000))}` : ""}` : ""}${(m.names || []).length ? ` · ${esc(m.names.slice(0, 3).join(", "))}` : ""}</p>`).join("");
+  const mine = (read.mine || []).map(m => `${m.title} ${m.visibility === "everyone" ? (m.checked ? "is on the wall" : "is up, not on the wall until its check is in the repo") : "went to friends"}${m.hearts ? ` · ${m.hearts} ♥${m.since ? ` since ${c.rel(m.since * 1000)}` : ""}` : ""}${(m.names || []).length ? ` · ${m.names.slice(0, 3).join(", ")}` : ""}`).join(" · ");
+  const xs = cards(c);
+  return frame(mine ? `<span class="wl-mine" data-tip="${esc(mine)}">${esc(mine)}</span>` : "", xs, !/wl-card/.test(xs));
+}
+
+/** The box every state draws in: the segments' row (and your own pages'
+ *  line), then the cards' row, or a line in its place. */
+function frame(mine, inner, none) {
   const segs = [["everyone", "Everyone"], ["following", "Following"], ["friends", "Friends"]].map(([k, l]) =>
     `<button type="button" data-wl="seg" data-k="${k}" aria-pressed="${seg === k}">${l}</button>`).join("");
-  return `${mine}<div class="wl-segs" role="group" aria-label="Whose pages">${segs}</div><div class="wl-cards">${cards(c)}</div>`;
+  return `<div class="wl-head"><div class="wl-segs" role="group" aria-label="Whose pages">${segs}</div>${mine}</div><div class="wl-cards${none ? " wl-none" : ""}">${inner}</div>`;
 }
 
 function list() {
@@ -114,18 +126,22 @@ function style() {
   document.head.append(Object.assign(document.createElement("style"), { id: "wl-css", textContent: WALL_CSS }));
 }
 
-/* The section keeps a card's height while it reads (min-height), so the
- * cards fill in place. A card wears its page's wash as a faint tint and its
- * accent on the heart; the eight are app.css's, by name. */
+/* One height, whatever is in it: WALL_H = the head's row (30) + its gap (8)
+ * + the cards' row (132: a 118 px card and room for a scrollbar under it).
+ * ui/home.js's placeholder says 170px too. A card wears its page's wash as
+ * a faint tint and its accent on the heart; the eight are app.css's, by name. */
 const WALL_CSS = `
-.wl { min-height: 132px; }
+.wl { height: 170px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.wl-head { height: 30px; flex: none; display: flex; align-items: center; gap: 12px; min-width: 0; }
 .wl-quiet { margin: 8px 0; font-size: var(--fs-small); color: var(--fg-3); }
-.wl-mine { margin: 0 0 6px; font-size: var(--fs-small); color: var(--fg-2); }
-.wl-segs { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-pill); background: var(--wash); margin: 4px 0 10px; }
+.wl-mine { margin-left: auto; min-width: 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-segs { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-pill); background: var(--wash); }
 .wl-segs button { border: 0; background: none; padding: 2px var(--sp-4); border-radius: var(--r-pill); color: var(--fg-2); font: inherit; font-size: var(--fs-small); cursor: pointer; }
 .wl-segs button[aria-pressed="true"] { background: var(--bg-raise); color: var(--fg); box-shadow: var(--shadow-1); }
-.wl-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-.wl-card { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--r-md); background: color-mix(in srgb, var(--wl-wash) 6%, var(--bg-raise)); }
+.wl-cards { height: 132px; flex: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 280px); align-items: start; gap: 10px;
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-snap-type: x proximity; }
+.wl-cards.wl-none { display: block; overflow: hidden; }
+.wl-card { height: 118px; box-sizing: border-box; overflow: hidden; scroll-snap-align: start; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--r-md); background: color-mix(in srgb, var(--wl-wash) 6%, var(--bg-raise)); }
 .wl-card header { display: flex; gap: 8px; align-items: center; }
 .wl-logo { width: 28px; height: 28px; border-radius: var(--r-sm); object-fit: contain; flex: none; }
 .wl-i { display: grid; place-items: center; background: var(--rule); color: var(--fg-2); font-weight: 600; font-size: var(--fs-ui); }
@@ -136,9 +152,9 @@ const WALL_CSS = `
 .wl-m { margin: 0; font-size: var(--fs-small); display: flex; gap: 6px; align-items: baseline; min-width: 0; }
 .wl-heart { border: 0; background: none; color: var(--fg-3); font: inherit; font-size: var(--fs-ui); cursor: pointer; padding: 2px 4px; border-radius: var(--r-sm); }
 .wl-heart[aria-pressed="true"] { color: var(--accent); }
-.wl-card footer { display: flex; gap: 10px; align-items: center; font-size: var(--fs-small); margin-top: 2px; }
+.wl-card footer { display: flex; gap: 10px; align-items: center; min-width: 0; font-size: var(--fs-small); margin-top: auto; }
 .wl-card footer a { color: var(--fg-2); }
 .wl-card footer button { border: 0; background: none; padding: 0; color: var(--fg-2); font: inherit; font-size: var(--fs-small); cursor: pointer; }
 .wl-card footer button[aria-pressed="true"] { color: var(--fg); }
-.wl-said { color: var(--fg-3); font-size: var(--fs-micro); }
+.wl-said { min-width: 0; color: var(--fg-3); font-size: var(--fs-micro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;

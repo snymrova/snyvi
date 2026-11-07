@@ -1,0 +1,20 @@
+{
+  "note": "written by `cargo test wall::tests::the_walls_vectors_are_written_from_here`; do not edit",
+  "wall_seed": "awcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw",
+  "wall_sign": "jhABf__-N3mvDJ-Bb3Y85GDUAqBKpHcSZLZCvkBaRyk",
+  "wall_box": "E75P6uryBMf9M1j8nAByGIHRdCeBKCJ-xnTzf3_pe20",
+  "to_sign": "Gc9lQosmlcFcT6weqIZPreRvK4aXizBLZetkUSfJNiU",
+  "to_box": "MdSras7slhE3kXA3k25gcW-sVzr-lNnahKgCBEjfwRI",
+  "nonce": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUF",
+  "content": "{\"kind\":\"wall\",\"slug\":\"breeds-of-dogs\",\"hearts\":3,\"names\":[\"Trapti\",\"Sam\"],\"since\":1800000000,\"reported\":1,\"v\":5}",
+  "frame": "AY4QAX___jd5rwyfgW92PORg1AKgSqR3EmS2Qr5AWkcpBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFImTE8Bj-WxgQl2i2zuQBs52Q2wiySjfHa4YVKbJx8BUQJLzYd2UZyCo2b2-S_tRRoHsTcqVHmEspstR7E0MMMFKUXuRkdXfUfF8IwugSl98si1V3AtPPW8_O3A4DygBvUzeGTIH-zveokfQ0waHy2c6vrXY5HNdYHjz3o33ZORbqLvCmmtDUnplV8zSviCgTM_hPKSF9SEbfvuK9NYyWqPvogRkrkK9BPUD8ZFc7UkHDVQSsdm34uSe0xZGuvFSk8XNhVAs",
+  "auth": {
+    "method": "PUT",
+    "path": "/pages/breeds-of-dogs",
+    "secs": 1800000123,
+    "body": "eyJzbHVnIjoiYnJlZWRzLW9mLWRvZ3MifQ",
+    "message": "snyvi-wall-v1\nPUT\n/pages/breeds-of-dogs\n1800000123\n8d152258262a5af70e37444daa1cee200a50c79bcf4697e995df66b5eb3e27fe",
+    "from": "Gc9lQosmlcFcT6weqIZPreRvK4aXizBLZetkUSfJNiU",
+    "signature": "e3Dmqaalzu6G7IsVnvQejRNDlxZOQmnrGMP6YssWN2Kyhla04hdU9j104USQFu5q69WBhsLUDL7-eG1rFgB4Ag"
+  }
+}

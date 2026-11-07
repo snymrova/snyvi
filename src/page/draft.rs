@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Where a drafted field came from: what its chip says.
+#[cfg(test)]
 pub const FROM: [&str; 6] = ["readme", "icon", "git", "views", "thread", "desk"];
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
