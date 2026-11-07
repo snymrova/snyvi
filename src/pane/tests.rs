@@ -196,6 +196,7 @@ fn a_mark_waits_for_a_look_then_lapses_into_an_offer() {
     let m = |until: Option<Instant>| Marks {
         resume: ["r".to_string()].into(),
         offer: ["o".to_string()].into(),
+        crashed: Default::default(),
         resume_until: until,
         cap: t0 + MARKS_AT_MOST,
     };
@@ -286,6 +287,77 @@ async fn a_resume_mark_rides_the_status_until_the_pane_starts_or_it_lapses() {
         "and written back as an offer"
     );
     assert!(!panes.get(never).attach().0[0].contains("\"resume\":true"));
+}
+
+/// 1.58: the store's mark is told when an agent comes in and when it goes
+/// -- once each, however many turns between -- and when a start spends it,
+/// which the shell an offer comes back as does not. An offer a crash left
+/// says so on the status.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_mark_sink_hears_an_agent_come_and_go_once_and_a_start_spend() {
+    let dir = crate::store::tempdir::Dir::new("snyvi-pane-live");
+    let (events, _) = broadcast::channel(64);
+    let panes = Panes::new(&dir.path, events);
+    let heard: Arc<Mutex<Vec<(String, Mark)>>> = Default::default();
+    let h = heard.clone();
+    panes.on_mark(Box::new(move |id, m| {
+        h.lock().unwrap().push((id.to_string(), m))
+    }));
+    let id = "0000000000000000000000000000000d";
+    panes.mark_offer(vec![id.into()]);
+    panes.mark_crashed(vec![id.into()]);
+    assert!(panes.status(id).offer && panes.status(id).crashed);
+    let cwd = dir.path.to_string_lossy().to_string();
+    let start = |offer: bool| Start {
+        cwd: &cwd,
+        root: &cwd,
+        cmd: "sleep 30",
+        desk: "d",
+        slot: 1,
+        cols: 80,
+        rows: 10,
+        accent: "",
+        offer,
+        args: &[],
+        env: &[],
+        account: 0,
+        back: false,
+    };
+    // The shell an offer comes back as keeps the offer: nothing is spent.
+    let status = panes.get(id).start(start(true), &panes).unwrap();
+    assert!(
+        status.offer && status.crashed,
+        "started as its shell, still says why"
+    );
+    assert!(panes.quiet_for(id).is_some());
+    assert!(panes.agent_in(id));
+    for state in ["working", "done", "working", "needs_you", "done"] {
+        assert!(panes.set_agent(id, state));
+    }
+    assert!(panes.set_agent(id, ""), "Claude quit; the shell stays");
+    assert!(panes.set_agent(id, "working"));
+    panes.get(id).stop();
+    let until = Instant::now() + Duration::from_secs(5);
+    // The exit is told from the pane's own thread, just after it stops.
+    while (panes.is_running(id) || heard.lock().unwrap().len() < 4) && Instant::now() < until {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(panes.quiet_for(id), None, "not running");
+    // Started as anything else: spent, and said on every such start.
+    panes.get(id).start(start(false), &panes).unwrap();
+    panes.get(id).stop();
+    let said: Vec<Mark> = heard.lock().unwrap().iter().map(|(_, m)| *m).collect();
+    assert_eq!(
+        said,
+        [
+            Mark::AgentIn,
+            Mark::AgentOut,
+            Mark::AgentIn,
+            Mark::AgentOut,
+            Mark::Spent
+        ]
+    );
 }
 
 #[test]

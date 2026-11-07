@@ -168,6 +168,9 @@ pub(crate) async fn desk_session(app: Arc<App>, mut socket: WebSocket) {
     // A window is showing a desk: someone can see the panes a restart
     // marked, so their clock starts now. See `pane::RESUME_FOR`.
     app.panes.arm_marks();
+    // And the offers a crash or a stop left have been seen: they lapse at
+    // the second start after this one (`desk::marks`).
+    super::restore_run::seen(&app);
     // Bounded, so a page that cannot keep up makes its forwarders wait, and a
     // forwarder that waits long enough is resynced rather than buffered.
     let (out, mut frames) = tokio::sync::mpsc::channel::<Arc<str>>(64);

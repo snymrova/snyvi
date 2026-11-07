@@ -458,7 +458,7 @@
     peerUse().then(m => m.event(peerCtx, j), () => {});
   };
   /** Home shows a little of all of these; each one reads it again, soon. */
-  const HOME_EVENTS = ["panes", "ctx", "quota", "desks", "desknotes", "doc", "read", "update", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
+  const HOME_EVENTS = ["panes", "ctx", "quota", "desks", "desknotes", "doc", "read", "update", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing", "restore"];
   /** A document in, as the stream tells it (`doc_event`): a save in place,
    *  a draft the hook saved, or an arrival. Out of `connect`, which was long
    *  enough before drafts had a branch of their own. */
@@ -648,6 +648,8 @@
     es.addEventListener("widget", ev => { const j = parse(ev); if (!j) return; if (j.desk_id === 0) widgetSaid(j); else desk?.widgetSaid?.(j); });
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
+    // A board moved, the reader's focus did, or a crash's conversations came back (1.58).
+    for (const n of ["board", "focus", "restore"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
     // An agent ticked a line on a desk's list.
     es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); });
     // A pane started, stopped, or rang for its reader: the dots, at once.

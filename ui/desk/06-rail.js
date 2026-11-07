@@ -276,13 +276,14 @@ function rail() {
   const lay = ctx.layout ? ctx.layout() : null, off = new Set(lay ? lay.hidden : []);
   const order = (lay && lay.right.length ? lay.right : Object.keys(secs)).filter(id => secs[id] && !off.has(id) && !(id === "widgets" && off.has("right:widgets")));
   const backHad = backHeld();
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + order.map(id => secs[id]()).join("") + `</div>`);
+  // A board open over the desk puts its section first (25-views.js).
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + viewRail() + order.map(id => secs[id]()).join("") + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); findFocus(); noteFocus(); rtFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); checksFocus(); rtFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
   pageChips(vs, live);
   onYou(d);
@@ -679,7 +680,7 @@ function noteRow(x, esc) {
   // No tab's name on a line (1.57): every tab is in the desk's folder, so a
   // line from another tab is still this desk's work; its stage words say
   // which tab a working agent is in.
-  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + promiseMark(x, esc) + picMark(x, esc) + stageMark(x, esc);
+  const marks = x.done ? doneMark(x, esc) + picMark(x, esc) + tell(x, esc) + promiseMark(x, esc) : dueMark(x, esc) + docMark(x, esc) + promiseMark(x, esc) + picMark(x, esc) + checkMark(x, esc) + stageMark(x, esc);
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
@@ -694,7 +695,7 @@ function noteRow(x, esc) {
     `<span class="dk-tools">${x.done ? "" : `<button type="button" data-a="note-edit" data-n="${x.id}" data-tip="Rewrite" aria-label="Rewrite ${esc(x.text)}">${ico("pen")}</button>`}<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
     replyLine(x, esc) +
     `<span class="dk-meta"><button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button>` +
-    `<span class="dk-marks">${marks}</span></span>` + duePop(x, esc) + gatePop(x, esc) +
+    `<span class="dk-marks">${marks}</span></span>` + checksRow(x, esc) + duePop(x, esc) + gatePop(x, esc) + checksPop(x, esc) +
     // A friend's open line says whose it is, on a line of its own; ticked,
     // its "Tell Trapti ✓" is one of the marks above.
     // Their initial, in their colour, as everywhere a friend shows (#123).
@@ -759,7 +760,10 @@ function stageMark(x, esc) {
   const sh = !x.done ? shippedOf(x) : null;
   if (sh) {
     const where = sh.commit ? ` in ${esc(sh.commit.slice(0, 7))}` : sh.pr ? ` in PR #${esc(sh.pr)}` : "";
-    return `<span class="dk-stage shipped words" role="img" data-tip="Shipped${where}" data-tip-sub="out on main, waiting for your check" aria-label="Shipped${where}, waiting for your check">shipped${where}</span>` +
+    const word = `<span class="dk-stage shipped words" role="img" data-tip="Shipped${where}" data-tip-sub="out on main, waiting for your check" aria-label="Shipped${where}, waiting for your check">shipped${where}</span>`;
+    // Checks held (1.58): Works and Not yet… are under the lines, on the row.
+    if (atCheck(x)) return word;
+    return word +
       `<button type="button" class="dk-stage dk-chk ok" data-a="note-works" data-n="${x.id}" data-tip="Shipped${where}: it works" data-tip-sub="ticks it as yours" aria-label="It works: ${esc(x.text)}">✓ works</button>` +
       `<button type="button" class="dk-stage dk-chk" data-a="note-broken" data-n="${x.id}" data-tip="Not yet" data-tip-sub="say what is still wrong; it reopens, and the next agent's brief leads with it" aria-label="Still broken: ${esc(x.text)}">not yet…</button>`;
   }
@@ -870,8 +874,10 @@ function gatePop(x, esc) {
       (x.ok_at ? act("note-ok", "Take the approval back", ` data-doc="${esc(x.stage_doc)}" data-undo="1"`) : act("note-ok", "Approve", ` data-doc="${esc(x.stage_doc)}" data-undo="0" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt; snyvi starts nothing"`, true)) + `</p>`);
   }
   if (t) rows.push(`<p class="dk-gate-t">${esc(t.name)} · ${esc(t.stage)}${t.pr ? ` · PR ${esc(t.pr)}${t.ci ? ` ${esc(t.ci)}` : ""}` : ""}</p>`);
-  if (sh) rows.push(`<p class="dk-gate-acts">${act("note-works", "✓ works", "", true)}${act("note-broken", "not yet…")}</p>`);
-  const more = [x.doc ? act("note-doc", "Its document", ` data-d="${esc(x.doc)}"`) : "", act("note-edit", "Rewrite")].filter(Boolean).join("");
+  if (sh && !atCheck(x)) rows.push(`<p class="dk-gate-acts">${act("note-works", "✓ works", "", true)}${act("note-broken", "not yet…")}</p>`);
+  // What the reader will try once it is done (1.58, 24-checks.js).
+  const held = heldOf(x).length, hold = atCheck(x) ? "" : act("check-open", held ? `Your ${ctx.plural(held, "check")}` : "Hold a check…", ` data-tip="What you'll try when it's done" data-tip-sub="the builder sees only how many"`);
+  const more = [hold, x.doc ? act("note-doc", "Its document", ` data-d="${esc(x.doc)}"`) : "", act("note-edit", "Rewrite")].filter(Boolean).join("");
   rows.push(`<p class="dk-gate-acts">${more}</p>`);
   return `<span class="dk-gate" role="group" aria-label="Where ${esc(x.text)} is">${rows.join("")}</span>`;
 }
@@ -884,7 +890,7 @@ function gatePop(x, esc) {
  *  its circle unticks it. */
 function doneMark(x, esc) {
   const branch = x.on_branch ? `<span class="dk-stage branch" role="img" data-tip="On a branch: ${esc(x.done_commit.slice(0, 7))}" data-tip-sub="it says so until the commit is on main" aria-label="On a branch"><span class="w">on a branch</span></span>` : "";
-  const again = x.recheck ? `<button type="button" class="dk-stage dk-chk" data-a="note-broken" data-n="${x.id}" data-tip="Not yet" data-tip-sub="say what is still wrong; the tick comes off, and the next agent's brief leads with it" aria-label="Still broken: ${esc(x.text)}">not yet…</button>` : "";
+  const again = x.recheck && !atCheck(x) ? `<button type="button" class="dk-stage dk-chk" data-a="note-broken" data-n="${x.id}" data-tip="Not yet" data-tip-sub="say what is still wrong; the tick comes off, and the next agent's brief leads with it" aria-label="Still broken: ${esc(x.text)}">not yet…</button>` : "";
   return branch + again;
 }
 
@@ -1236,6 +1242,7 @@ async function getNotes(id, again) {
   const ticked = notesAt === id && was.some(stillOpen) && !next.some(stillOpen) && next.filter(x => x.done).length > was.filter(x => x.done).length;
   noteList = next; notesAt = id;
   promisedTo = new Map((j.promised || []).map(p => [p.note, p]));
+  setChecks(j.checks);
   if (ticked && ctx.done) ctx.done();
   if (current()) rail();
 }

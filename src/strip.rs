@@ -50,8 +50,8 @@ enum Mode {
 /// Comments, indentation and blank lines out; everything else through as
 /// written.
 /// The served scripts that are kept as parts on disk: `ui/app/*.js` is
-/// `app.js`, `ui/desk/*.js` is `desk.js`, joined in name order (the parts
-/// are numbered). A file an agent can hold in one read, and an anchor that
+/// `app.js`, `ui/desk/*.js` is `desk.js`, `ui/board/*.js` is `board.js`,
+/// joined in name order (the parts are numbered). A file an agent can hold in one read, and an anchor that
 /// is unique in it, is what the split buys; the page still fetches one
 /// script. `app.js` is one function scope -- it was an IIFE in one file --
 /// so the wrapper is put round its parts here, and each part on disk is a
@@ -432,8 +432,8 @@ mod tests {
     fn served_scripts() -> Vec<String> {
         let ui = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/ui"));
         [
-            "boot.js", "app.js", "mmd.js", "desk.js", "game.js", "about.js", "find.js", "keys.js",
-            "menu.js",
+            "boot.js", "app.js", "mmd.js", "desk.js", "board.js", "game.js", "about.js", "find.js",
+            "keys.js", "menu.js",
         ]
         .iter()
         .map(|name| source(ui, name).unwrap_or_else(|e| panic!("{name}: {e}")))

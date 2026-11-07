@@ -28,6 +28,7 @@ pub(crate) fn db() -> Connection {
     }
     // After the accounts' columns: the rebuild copies `panes.account`.
     conn.execute_batch(groups::COLUMNS_1_57).unwrap();
+    conn.execute_batch(checks::COLUMNS_1_58).unwrap();
     conn
 }
 
@@ -645,8 +646,8 @@ fn a_held_panel_waits_until_its_first_start() {
 }
 
 /// A planned restart marks the panes it should bring back, and only the
-/// ones with a conversation to bring; the next daemon takes the marks
-/// once, and a third daemon finds none.
+/// ones with a conversation to bring; the next daemon reads the marks once,
+/// and what it did not spend stays as an offer.
 #[test]
 fn resume_marks_are_set_for_known_conversations_and_taken_once() {
     let mut conn = db();
@@ -663,21 +664,25 @@ fn resume_marks_are_set_for_known_conversations_and_taken_once() {
     let a = "0f6c1c2e-8a41-4b7e-9d3a-5e2f1b7c9a10";
     assert!(set_agent_session(&conn, &talked.id, a).unwrap());
     assert!(set_agent_session(&conn, &other.id, a).unwrap());
-    let none = (Vec::<String>::new(), Vec::<String>::new());
-    assert_eq!(take_resume(&conn).unwrap(), none);
+    assert_eq!(take_resume(&conn).unwrap(), ResumeMarks::default());
     // Two asked for, one with a conversation: one mark. The third pane
     // knows a conversation but was not asked for, and stays unmarked.
     assert_eq!(
         mark_resume(&conn, &[talked.id.clone(), silent.id.clone()]).unwrap(),
         1
     );
-    assert_eq!(take_resume(&conn).unwrap().0, vec![talked.id.clone()]);
-    assert_eq!(take_resume(&conn).unwrap(), none, "taken once");
+    assert_eq!(take_resume(&conn).unwrap().planned, vec![talked.id.clone()]);
+    // Read once as planned; what the start did not spend is an offer now.
+    let again = take_resume(&conn).unwrap();
+    assert!(again.planned.is_empty(), "taken once");
+    assert_eq!(again.offered, vec![talked.id.clone()]);
+    assert!(spend(&conn, &talked.id).unwrap());
     // A new set replaces the old, so a mark cannot outlive the restart
     // that made it.
     mark_resume(&conn, std::slice::from_ref(&talked.id)).unwrap();
     mark_resume(&conn, std::slice::from_ref(&other.id)).unwrap();
-    assert_eq!(take_resume(&conn).unwrap().0, vec![other.id.clone()]);
+    assert_eq!(take_resume(&conn).unwrap().planned, vec![other.id.clone()]);
+    spend(&conn, &other.id).unwrap();
 
     // 1.7.1: an unplanned stop offers instead, only where a conversation
     // is known, and never over a planned mark.
@@ -690,10 +695,128 @@ fn resume_marks_are_set_for_known_conversations_and_taken_once() {
         .unwrap(),
         1
     );
+    let m = take_resume(&conn).unwrap();
     assert_eq!(
-        take_resume(&conn).unwrap(),
-        (vec![talked.id.clone()], vec![other.id.clone()])
+        (m.planned, m.offered, m.crashed),
+        (vec![talked.id.clone()], vec![other.id.clone()], vec![])
     );
+}
+
+/// Three panes with a conversation each, for the marks' tests.
+fn three_talking(conn: &mut Connection) -> [String; 3] {
+    let d = create(conn, "/p", None, 0).unwrap();
+    let a = "0f6c1c2e-8a41-4b7e-9d3a-5e2f1b7c9a10";
+    [(); 3].map(|_| {
+        let Opened::Pane(p) = pane(conn, d.id) else {
+            panic!("no pane")
+        };
+        assert!(set_agent_session(conn, &p.id, a).unwrap());
+        p.id
+    })
+}
+
+/// 1.58: an agent in a panel leaves a live mark; a daemon that dies with it
+/// there (nothing rewrote it) is read as a crash, and the panel offered.
+/// One with no session to resume is not offered.
+#[test]
+fn a_live_mark_a_crash_leaves_is_offered_as_crashed() {
+    let mut conn = db();
+    let [a, b, _] = three_talking(&mut conn);
+    let desk = get_desk_of(&conn, &a);
+    let Opened::Pane(bare) = pane(&mut conn, desk) else {
+        panic!("no pane")
+    };
+    assert!(set_live(&conn, &a, true).unwrap());
+    assert!(!set_live(&conn, &a, true).unwrap(), "once");
+    assert!(set_live(&conn, &bare.id, true).unwrap());
+    // `b`'s agent came and went: nothing to offer.
+    assert!(set_live(&conn, &b, true).unwrap());
+    assert!(set_live(&conn, &b, false).unwrap());
+    // SIGKILL: nothing runs. The next start reads:
+    let m = read_resume(&conn).unwrap();
+    assert_eq!(m.offered, vec![a.clone()]);
+    assert_eq!(m.crashed, vec![a.clone()]);
+    settle_marks(&conn).unwrap();
+    assert_eq!(mark_of(&conn, &a), 4);
+    assert_eq!(mark_of(&conn, &bare.id), 0, "no session, nothing kept");
+    // A second crash before any window looked keeps the offer, as a crash.
+    let m = take_resume(&conn).unwrap();
+    assert_eq!((m.offered, m.crashed), (vec![a.clone()], vec![a.clone()]));
+}
+
+/// Every exit the daemon runs rewrites its live marks, so the next start
+/// reads none of them as a crash: a clean stop makes them offers, a planned
+/// restart makes the ones it was given 1 and the rest offers.
+#[test]
+fn an_exit_rewrites_every_live_mark() {
+    let mut conn = db();
+    let [a, b, c] = three_talking(&mut conn);
+    for id in [&a, &b, &c] {
+        set_live(&conn, id, true).unwrap();
+    }
+    // A clean stop names only the panes with an agent working; `c`'s
+    // agent was in but quiet, and is offered all the same.
+    assert_eq!(mark_offer(&conn, std::slice::from_ref(&a)).unwrap(), 3);
+    let m = take_resume(&conn).unwrap();
+    assert_eq!(m.offered.len(), 3);
+    assert!(m.crashed.is_empty(), "a clean stop is no crash");
+    for id in [&a, &b, &c] {
+        spend(&conn, id).unwrap();
+        set_live(&conn, id, true).unwrap();
+    }
+    assert_eq!(mark_resume(&conn, std::slice::from_ref(&a)).unwrap(), 1);
+    let m = read_resume(&conn).unwrap();
+    assert_eq!(m.planned, vec![a.clone()]);
+    assert_eq!(m.offered.len(), 2);
+    assert!(m.crashed.is_empty());
+}
+
+/// rev 2: an offer ages only once a window has shown it, survives the
+/// start after that, and lapses at the next. A planned restart and a clean
+/// stop keep its age; starting the panel spends it, whatever its age.
+#[test]
+fn an_offer_lapses_at_the_second_start_after_a_window_saw_it() {
+    let mut conn = db();
+    let [a, b, c] = three_talking(&mut conn);
+    mark_offer(&conn, &[a.clone(), b.clone(), c.clone()]).unwrap();
+    // Two starts nobody looked at: still offered.
+    take_resume(&conn).unwrap();
+    assert_eq!(take_resume(&conn).unwrap().offered.len(), 3);
+    // A window looks.
+    assert_eq!(age_offers(&conn).unwrap(), 3);
+    // `c` is started: spent, whatever its age.
+    assert!(spend(&conn, &c).unwrap());
+    // A clean stop and a planned restart do not make a seen offer fresh.
+    mark_offer(&conn, &[a.clone(), b.clone()]).unwrap();
+    mark_resume(&conn, &[]).unwrap();
+    assert_eq!(mark_of(&conn, &a), 5);
+    // The next start: seen, so lapsed.
+    assert_eq!(take_resume(&conn).unwrap(), ResumeMarks::default());
+    assert_eq!(mark_of(&conn, &a), 0);
+    assert_eq!(mark_of(&conn, &c), 0);
+}
+
+/// A live mark is not spent by a start, and an offer does not stop an
+/// agent's mark; a planned restart's 1 is never written over by one.
+#[test]
+fn a_live_mark_and_the_others_keep_out_of_each_others_way() {
+    let mut conn = db();
+    let [a, b, _] = three_talking(&mut conn);
+    set_live(&conn, &a, true).unwrap();
+    assert!(!spend(&conn, &a).unwrap());
+    assert_eq!(lapse_offers(&conn).unwrap(), 0);
+    assert_eq!(age_offers(&conn).unwrap(), 0);
+    assert_eq!(mark_of(&conn, &a), 3);
+    mark_resume(&conn, std::slice::from_ref(&b)).unwrap();
+    assert!(!set_live(&conn, &b, true).unwrap());
+    assert_eq!(mark_of(&conn, &b), 1);
+    mark_offer(&conn, &[]).unwrap();
+    assert!(set_live(&conn, &a, true).unwrap(), "an offer gives way");
+    assert_eq!(lapse_offers(&conn).unwrap(), 0);
+}
+
+fn get_desk_of(conn: &Connection, pane_id: &str) -> i64 {
+    super::pane(conn, pane_id).unwrap().unwrap().desk_id
 }
 
 /// Where the shell went is where it starts next, and saying the same

@@ -11,7 +11,9 @@
 
 mod api_accounts;
 mod api_agent;
+mod api_board;
 mod api_browse;
+mod api_checks;
 mod api_desk;
 mod api_docs;
 mod api_friend;
@@ -20,6 +22,7 @@ mod api_groups;
 mod api_media;
 mod api_peer;
 mod api_pipeline;
+mod api_restore;
 mod api_routine;
 mod api_thread;
 mod api_week;
@@ -30,6 +33,7 @@ mod events;
 mod lifecycle;
 mod peer_link;
 mod pipeline_run;
+mod restore_run;
 mod routine_run;
 #[cfg(test)]
 mod tests;
@@ -38,7 +42,9 @@ mod ws;
 
 use api_accounts::*;
 use api_agent::*;
+use api_board::*;
 use api_browse::*;
+use api_checks::*;
 use api_desk::*;
 use api_docs::*;
 use api_friend::*;
@@ -47,6 +53,7 @@ use api_groups::*;
 use api_media::*;
 use api_peer::*;
 use api_pipeline::*;
+use api_restore::*;
 use api_routine::*;
 use api_thread::*;
 use api_week::*;
@@ -192,6 +199,9 @@ pub struct App {
     /// Set when the window has been asked to quit so a newer one can be
     /// started in its place; acted on when its stream ends.
     pub relaunch_window: std::sync::atomic::AtomicBool,
+    /// 1.58: the offers this start found, and a restore under way
+    /// (`restore_run`).
+    pub(crate) restore: restore_run::Restore,
     /// Set once this daemon has decided to leave for a restart: what the
     /// pill says in the seconds before the stream drops, rather than
     /// going back to "Restart to update".
@@ -208,6 +218,9 @@ pub struct App {
     /// What the last update's page told (`crate::whats_new`), for the update
     /// block, `/api/guide` and a panel's brief.
     pub whats_new: std::sync::Mutex<Option<crate::whats_new::Said>>,
+    /// Where the reader is in each desk's view now (`crate::focus`): in
+    /// memory, so a restart forgets it as it forgets the live screen.
+    pub focus: crate::focus::Foci,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -354,11 +367,13 @@ fn new_app(
         leaving: std::sync::Mutex::new(Leaving::Stopped),
         update,
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
+        restore: Default::default(),
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
         usage: Default::default(),
         peers: Default::default(),
         whats_new: std::sync::Mutex::new(crate::whats_new::read(&paths.data_dir)),
+        focus: Default::default(),
     })
 }
 
@@ -482,12 +497,66 @@ fn note_routes() -> Router<Arc<App>> {
         )
         .route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))
         .route("/api/desks/{id}/notes/{note}/check", post(check_desk_note))
+        // 1.58: checks the reader holds on a line (`api_checks`).
+        .route("/api/desks/{id}/notes/{note}/checks", post(add_check))
+        .route(
+            "/api/desks/{id}/notes/{note}/checks/{check}",
+            post(set_check),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/checks/{check}/remove",
+            post(remove_check),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/checks/{check}/restore",
+            post(restore_check),
+        )
+        .route(
+            "/api/desks/{id}/notes/{note}/checks/{check}/keep",
+            post(keep_check),
+        )
+        .route(
+            "/api/panes/{id}/notes/{note}/suggest-check",
+            post(pane_suggest_check),
+        )
         .route(
             "/api/desks/{id}/notes/{note}/image",
             post(add_note_image).layer(axum::extract::DefaultBodyLimit::max(NOTE_IMAGE_BYTES)),
         )
         .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
+}
+
+/// A board (`api_board`, docs/BOARD.md) and the reader's focus: the agent's
+/// on the panel, behind the token; the page's on the desk.
+fn board_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/panes/{id}/board/{board}", get(pane_board))
+        .route(
+            "/api/panes/{id}/board/{board}/frames/{frame}",
+            post(pane_frame_write).layer(axum::extract::DefaultBodyLimit::max(
+                crate::board::MAX_FRAME_BYTES + 16 * 1024,
+            )),
+        )
+        .route(
+            "/api/panes/{id}/board/{board}/frames/{frame}/hide",
+            post(pane_frame_hide),
+        )
+        .route(
+            "/api/panes/{id}/board/{board}/arrange",
+            post(pane_board_arrange),
+        )
+        .route(
+            "/api/panes/{id}/board/{board}/look/{frame}",
+            post(pane_frame_look),
+        )
+        .route(
+            "/api/panes/{id}/board/{board}/export",
+            get(pane_board_export),
+        )
+        .route("/api/panes/{id}/focus", get(pane_focus))
+        .route("/api/desks/{id}/board/{board}", get(desk_board))
+        .route("/api/desks/{id}/focus", post(set_desk_focus))
 }
 
 /// Music, in the left rail (`api_media`, #204). The plays and the tracks are
@@ -685,6 +754,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/resolve", post(resolve_path))
         .route("/api/find", get(find_files))
         .route("/api/find/open", post(find_open))
+        .route("/api/restore", get(get_restore).post(post_restore))
         .merge(browse_routes())
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/docs/{id}/blob", get(doc_blob))
@@ -706,6 +776,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/docs/{doc}/remove", post(remove_desk_doc))
         .route("/api/desks/{id}/docs/{doc}/restore", post(restore_desk_doc))
         .merge(note_routes())
+        .merge(board_routes())
         .route("/api/desks/{id}/leftoff", post(desk_left_off))
         .route("/api/desks/{id}/keys", get(desk_keys).post(add_desk_key))
         .route("/api/desks/{id}/keys/{name}/remove", post(remove_desk_key))
@@ -788,6 +859,28 @@ fn spawn_runners(app: &Arc<App>) {
     routine_run::spawn(app.clone());
 }
 
+/// The marks the last daemon left (`desk::marks`): the planned restart's,
+/// which are only offers with no marker behind them, the offers, and since
+/// 1.58 the live marks a crash left, which are offers now, each saying the
+/// last daemon died with Claude open there. Out of `run`, over its length.
+fn marks_at_start(
+    store: &Store,
+    planned: bool,
+) -> (crate::desk::ResumeMarks, Vec<String>, Vec<String>) {
+    let marks = store.panes_resume().unwrap_or_default();
+    let (mut resume, mut offer) = (marks.planned.clone(), marks.offered.clone());
+    if !planned {
+        offer.append(&mut resume);
+    }
+    if !marks.crashed.is_empty() {
+        eprintln!(
+            "snyvi: the last daemon stopped unexpectedly; {} panel(s) had Claude open",
+            marks.crashed.len()
+        );
+    }
+    (marks, resume, offer)
+}
+
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let window = config::load_or_create_window_secret(&paths)?;
@@ -799,10 +892,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // restart it was for never came, or came long ago -- is only an offer:
     // nothing types a conversation back on its own the next day.
     let planned = read_restart_marker(&paths);
-    let (mut resume, mut offer) = store.panes_resume().unwrap_or_default();
-    if planned.is_none() {
-        offer.append(&mut resume);
-    }
+    let (marks, resume, offer) = marks_at_start(&store, planned.is_some());
     if let Some(apply) = planned {
         eprintln!(
             "snyvi: back from a planned restart{}; {} panel(s) to resume",
@@ -835,7 +925,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // which panes come back as a conversation.
     app.panes.mark_resume(resume);
     app.panes.mark_offer(offer);
+    app.panes.mark_crashed(marks.crashed.clone());
     follow_cwd(&app);
+    // The marks' sink and the offers' queue, before any pane can start.
+    restore_run::start(&app, &marks);
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
     let leaving = app.clone();
@@ -868,7 +961,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         }
     }
     drop_restart_marker(&paths);
-    let _ = leaving.store.clear_panes_resume();
+    let _ = leaving.store.settle_panes_resume();
     // After it: until then `ready` may still name the version now running,
     // and the watcher would apply it again.
     spawn_restart_watcher(leaving.clone());

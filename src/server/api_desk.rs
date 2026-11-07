@@ -86,6 +86,9 @@ pub(crate) async fn home(
         "quotas": home_quotas(&app),
         "quota": app.usage.least(crate::store::now()).map(|(_, q)| q),
         "version": VERSION,
+        // 1.58: what a crash or a stop left on offer, for the bar over
+        // Home (`restore_run`); absent when there is none.
+        "restore": if gated { super::restore_run::for_home(&app) } else { None },
     }))
     .into_response()
 }
@@ -470,6 +473,8 @@ pub(crate) async fn desks(
     match (app.store.desks(), app.store.panes_open()) {
         (Ok(desks), Ok(panes)) => Json(json!({
             "desks": with_status(&app, &desks),
+            // Each desk's views, by id: Folder, and a board per design/*/ (1.58).
+            "views": super::api_board::views_by_desk(&desks),
             // So a pane's header can say `~/snyvi` rather than the whole path.
             "home": dirs::home_dir(),
             "panes": panes,
@@ -494,6 +499,12 @@ pub(crate) async fn desks(
 pub(crate) fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json::Value {
     let mut v = serde_json::to_value(desks).unwrap_or_default();
     for d in v.as_array_mut().into_iter().flatten() {
+        // 1.58: how many conversations are on offer here, for the head's
+        // Resume (`restore_run`). Only when there are any.
+        let offers = super::restore_run::offers_on(app, d["id"].as_i64().unwrap_or(0));
+        if offers > 0 {
+            d["offers"] = json!(offers);
+        }
         for p in d["panes"].as_array_mut().into_iter().flatten() {
             let id = p["id"].as_str().unwrap_or_default().to_string();
             p["status"] = serde_json::to_value(app.panes.status(&id)).unwrap_or_default();
@@ -701,7 +712,13 @@ pub(crate) async fn desk_notes(
                 .into_iter()
                 .map(|(n, to, kept)| json!({ "note": n, "to": to, "kept": kept }))
                 .collect();
-            Json(json!({ "notes": notes, "promised": promised })).into_response()
+            // 1.58: the checks held on each line, the page's alone: the
+            // agent's read (`pane_notes`) has only their count.
+            let checks = app
+                .store
+                .clocked(|c, _| crate::desk::checks::for_desk(c, id))
+                .unwrap_or_default();
+            Json(json!({ "notes": notes, "promised": promised, "checks": checks })).into_response()
         }
         Err(e) => err(e),
     }
@@ -860,6 +877,8 @@ pub(crate) async fn check_desk_note(
         // A second reopen in a week suggests a rule (1.48, `crate::week`).
         if ok && !b.works {
             crate::week::reopen_rule(c, id, now)?;
+            // Held checks run fresh at the next check-it (1.58).
+            crate::desk::checks::clear_results(c, id, note)?;
         }
         Ok(ok)
     }) {
@@ -1927,7 +1946,10 @@ pub(crate) fn default_rows() -> u16 {
 
 /// Start a pane's process. The only way one starts: this request, from a
 /// click in a window holding the capability. Nothing on a timer, nothing at
-/// daemon start, and nothing derived from a document -- premise 3.
+/// daemon start, and nothing derived from a document -- premise 3. The
+/// other click-started paths are a routine's Run (`routine_run`) and, 1.58,
+/// a restore's (`POST /api/restore`, `restore_run`), which starts only the
+/// panes that click named, of the ones this start found on offer.
 pub(crate) async fn start_pane(
     State(app): S,
     headers: HeaderMap,

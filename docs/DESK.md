@@ -19,7 +19,7 @@ the questions the design left open.
 | A tab of a desk (1.57): its name, folder, place in the row, dividers, full view and focused panel | `desk_groups` table, `src/desk/groups.rs`; a pane's tab is `panes.grp`, a document's `docs.desk_grp` | yes |
 | A pane: slot 1–4, its name, the folder its shell was last in, the command it last ran | `panes` table, `src/desk.rs` | yes |
 | A closed pane, for Undo | `panes_closed` table, until `snyvi prune` | yes |
-| That Claude was open in a pane when the daemon stopped | `panes.resume_next`: 1 after a planned restart, 2 after any other stop | once, for the next daemon |
+| That Claude was open in a pane when the daemon stopped | `panes.resume_next`: 1 after a planned restart, 2 after any other stop, 3 while an agent is in it (so a crash leaves it), 4 an offer a crash left, 5 an offer a window has seen (`src/desk/marks.rs`) | until the panel starts, or the second start after a window saw it |
 | A pane's last screen, as plain text | `panes/<id>.txt` beside the store | yes, shown greyed |
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
@@ -186,8 +186,45 @@ restart`) marks the panes Claude was in, and the window starts them as
 `claude --resume` (1.7.0). Any other stop the daemon hears -- `snyvi stop`, a
 signal, a reboot -- marks them to be *offered*: the shell comes back in its
 folder and a strip over it says Claude was open, with Resume conversation,
-which types `claude --resume <id>` at the prompt without Enter. A crash or a
-`kill -9` hears nothing and marks nothing; the rail's ↻ is still there.
+which types `claude --resume <id>` at the prompt without Enter.
+
+**After a crash (1.58).** A crash or a `kill -9` hears nothing, so the mark
+is written before it: an agent coming into a running panel sets
+`resume_next = 3`, its going clears it, and every exit the daemon runs
+rewrites its 3s. A 3 still there at the next start is a daemon that died
+with Claude open, and the panel is offered back as one that "closed
+unexpectedly" (4). Home's status line says so first, with **Restore all**,
+**Choose…** and ✕; a desk with two or more on offer has **↻ All N here** in
+each panel's strip. Either queues the panels (`src/server/restore_run.rs`),
+this desk first, two at a time -- one, or none, while
+`/proc/pressure/memory` says memory is short -- each holding its slot
+until its agent reports, its process ends, or two minutes pass. The queue
+holds only what a click named, of what this start found on offer; it stops
+the shell an offer came back as once that shell is quiet, and leaves
+anything else the reader is running alone. An offer lapses at the second
+start after a window showed it, so a restore nobody wanted does not ask for
+ever; until a window has, an update's restart or a second crash keep it. A
+panel whose agent never reported -- `claude` started and gone before its
+first hook -- has nothing to bring back.
+
+**Views over a desk (1.58, plan 6ff79c55a7).** A desk has views, not kinds:
+Panels, Folder, and a Board for each `design/<board>/` its folder holds. The
+switcher in the head (`ui/desk/25-views.js`) is always there, Panels and
+Folder first, so a board appearing adds a button at the end and moves
+nothing. A board opens over the grid, inside it, and **docks one panel**
+beside it: the pane's own element moves into the dock, socket, scrollback and
+keys untouched, and `layout` leaves it out of the grid until Panels puts it
+back. Folder is #214's reader over the desk with a panel docked the same way:
+the reader draws each page into the doc whole, so a `MutationObserver` puts
+the dock back after every folder page, and its focus is the file and the
+lines marked (`#L4-L9`). Only the switcher's Folder docks; the desk row's
+folder button reads the folder as before. The open view sets the reader's
+**focus** (`src/focus.rs`, `POST /api/desks/{id}/focus`): one per desk, in
+memory, which the brief says as its second line for half an hour and
+`read_focus` reads, so "this one" names a file or the frames selected. It is a
+name, never input. The board itself is `docs/BOARD.md`. The studio this
+replaces failed for want of the dock, the tools and the focus; if a month in
+the board is not opened, the view goes and the folder stays.
 
 ## 2. The premises, and the line that enforces each
 
@@ -265,6 +302,25 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
    already open -- it hands an agent one list through the front door.
    `every_desk_route_is_behind_the_gate` holds the order of those checks,
    and that the store is reached for nothing else.
+
+   Since 1.58 a note can carry **checks the reader holds** on it
+   (`src/desk/checks.rs`, table `note_checks`): one line each, at most 160
+   characters, seven to a note, of what they will try once the work is done.
+   They are held *from the agent by construction*: `DeskNote` has no field
+   for them, only `checks_held`, the count `checks::count_into` fills; the
+   lines are read by `checks::for_desk`, which only the page's `desk_notes`
+   handler calls. `read_desk_notes` and the brief say "(2 checks held)" and
+   nothing more. The agent's one write is `suggest_check`
+   (`POST /api/panes/{id}/notes/{note}/suggest-check` `{texts, by}`, the token
+   and a running pane): at most five a call and three waiting on a note,
+   answered with how many landed and were refused, never the list. The
+   reader's five routes are behind the capability
+   (`/api/desks/{id}/notes/{note}/checks`, then `/{check}` with `text` or
+   `result` ok, fail or clear, and `/{check}/remove`, `/restore`, `/keep`).
+   A ✕ sets `removed_at`; nothing is deleted. A reopen (`check` with
+   `works: false`) clears every line's ✓ and ✗ so the next check-it runs
+   them fresh, and a ✗ on the row passes that line's words as the reopen's
+   reply, which the next brief leads with.
 
 One consequence to know about: **a capability dies with the daemon that
 minted it.** After a restart or an upgrade, an open window's socket is

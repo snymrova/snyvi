@@ -397,12 +397,15 @@
   let drawnTree = null, drawnInbox = null, drawnTok = null, recutDone = true;
   const treeTouched = new MutationObserver(() => { drawnTree = null; });
   treeTouched.observe(treeEl, { childList: true, subtree: true });
-  /** How many rows the list shows: no more than fit between what stands
-   *  above it (the head and the find box) and what must stay on screen
-   *  below it (every section after the Inbox, down to the last one's head),
-   *  less the foot row. Measured, because each of those changes it; never
-   *  fewer than three. A row is two lines, 40 px (app.css .t-doc a). */
-  const ROW_H = 40, FOOT_H = 26, MIN_CAP = 3, CAP_MAX = 30;
+  /** How many rows the list shows: a fixed CAP_MAX, so a tall window does
+   *  not turn the sidebar into one long list (the reader's ask, 1.58: the
+   *  rest is one click away in All documents). Fewer when they do not fit
+   *  between what stands above it (the head and the find box) and what must
+   *  stay on screen below it (every section after the Inbox, down to the
+   *  last one's head), less the foot row; measured, because each of those
+   *  changes it; never fewer than three. A row is two lines, 40 px (app.css
+   *  .t-doc a). */
+  const ROW_H = 40, FOOT_H = 26, MIN_CAP = 3, CAP_MAX = 8;
   function inboxCap() {
     const room = treesEl.clientHeight;
     if (!room || root.dataset.side === "0" || folded.has("inbox")) return CAP_MAX;

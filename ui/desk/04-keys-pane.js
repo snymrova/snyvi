@@ -84,7 +84,7 @@ function makeView(p) {
   el.dataset.id = p.id;
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-acc"></span><span class="pn-git"></span><span class="pn-ctx"></span><a class="pn-page" hidden></a><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Panel ${p.slot}"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
-    `<div class="pn-offer" hidden role="status"><span>${OFFER_SAYS}</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
+    `<div class="pn-offer" hidden role="status"><span>${offerSays(p.status)}</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="all" hidden></button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-switch" hidden role="status"><span></span></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden data-tip="Resume conversation" data-tip-sub="claude --resume, the one this panel last had">↻ Resume conversation</button></form>`;
@@ -209,6 +209,7 @@ function offerClick(v, e) {
     const why = resumeHere(v, true);
     if (why) { offerSay(v, why); return; }
   } else if (b.dataset.offer === "restart") offerRestart(v);
+  else if (b.dataset.offer === "all") return void restoreDesk(b);
   else { offerStop(v); v.body.focus(); }
   v.offered = false; v.offerSpent = true; header(v);
 }
@@ -320,13 +321,16 @@ function resume(v) {
 /** What the strip over a pane says, and for five seconds instead of it
  *  whatever kept its button from going. */
 const OFFER_SAYS = "Claude was open here when snyvi stopped";
+/** 1.58: and when it did not stop but died -- the OOM killer, a SIGKILL --
+ *  the strip says so (`Status::crashed`, src/desk/marks.rs). */
+const offerSays = s => s && s.crashed ? "Claude was open here when snyvi closed unexpectedly" : OFFER_SAYS;
 function offerSay(v, why) {
   const t = v.el.querySelector(".pn-offer > span");
   if (!t) return;
   t.textContent = why;
   t.classList.add("why");
   clearTimeout(v.offerTimer);
-  v.offerTimer = setTimeout(() => { t.textContent = OFFER_SAYS; t.classList.remove("why"); }, 5000);
+  v.offerTimer = setTimeout(() => { t.textContent = offerSays(v.status); t.classList.remove("why"); }, 5000);
 }
 
 /** The strip's Resume on a shell that is not at its prompt yet -- its rc
@@ -364,7 +368,7 @@ function offerStop(v) {
   const t = v.el.querySelector(".pn-offer > span"), go = v.el.querySelector(".pn-offer [data-offer]");
   if (!t || !go) return;
   clearTimeout(v.offerTimer);
-  t.textContent = OFFER_SAYS;
+  t.textContent = offerSays(v.status);
   t.classList.remove("why");
   go.disabled = false;
   go.dataset.offer = "go";
@@ -606,6 +610,7 @@ function header(v) {
   else if (s.offer && !v.offerSpent) v.offered = true;
   const off = v.el.querySelector(".pn-offer");
   if (off) off.hidden = !(v.offered && talked(v) && s.running);
+  if (off && !off.hidden) restoreStrip(v, off);
   if (off && off.hidden && v.offerWait) offerStop(v);
   switchStrip(v);
   cursor(v);

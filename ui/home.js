@@ -63,6 +63,22 @@ const CSS = `
 .hm-onyou { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--warn); cursor: pointer; }
 .hm-onyou:hover, .hm-onyou[aria-expanded="true"] { text-decoration: underline; }
 .hm-onyou.old { font-weight: 400; color: var(--fg-2); }
+/* 1.58: what a crash or a stop left on offer, first in the status line,
+   which is one line whatever it says; Choose… opens over the page under
+   it, as On you does, so neither moves anything. */
+.hm-rs { color: var(--fg-2); }
+.hm-rs.crash { color: var(--warn); font-weight: 600; }
+.hm-rs-b { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); font-weight: 600; cursor: pointer; }
+.hm-rs-b.q { color: var(--fg-2); font-weight: 400; }
+.hm-rs-b:hover { text-decoration: underline; }
+.hm-rsp { position: absolute; top: 24px; left: 0; z-index: 5; width: min(460px, 100%); max-height: min(60vh, 520px); overflow: auto; padding: 12px 14px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: var(--r-md); box-shadow: var(--shadow-3); font-size: var(--fs-small); }
+.hm-rsp h3 { margin: 10px 0 4px; font-size: var(--fs-small); font-weight: 600; color: var(--fg-2); }
+.hm-rsp h3:first-of-type { margin-top: 0; }
+.hm-rsp-t { display: flex; align-items: center; gap: 8px; width: 100%; padding: 3px 0; border: 0; background: none; font: inherit; color: var(--fg); text-align: left; cursor: pointer; }
+.hm-rsp-t > i { flex: none; width: 13px; height: 13px; border: 1px solid var(--rule-2); border-radius: var(--r-xs); font-style: normal; font-size: var(--fs-micro); line-height: 12px; text-align: center; }
+.hm-rsp-t[aria-checked="true"] > i { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.hm-rsp-t[aria-checked="true"] > i::before { content: "✓"; }
+.hm-rsp-f { display: flex; justify-content: flex-end; gap: 10px; margin: 12px 0 0; }
 /* A desk's moving threads, a line each under its notes. */
 .hm-th { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
 .hm-th li { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-small); color: var(--fg-3); }
@@ -675,7 +691,7 @@ function draw(j) {
   const desks = j.desks ? w("desks", "Other desks", desksList(j)) : "";
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span>${weekLine(j)}</header>` +
-    `<div class="hm-st">${status(j)}</div>` +
+    `<div class="hm-st">${status(j)}${rsSheet()}</div>` +
     `<div class="hm-grid"><div class="hm-main">${bar(j)}${yourWeek(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot"><button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
@@ -715,6 +731,8 @@ function draw(j) {
 function status(j) {
   const { esc, plural } = c, bits = [];
   let ring = false;
+  const rs = rsLine(j);
+  if (rs) bits.push(rs);
   if (j.desks) {
     const asking = [];
     for (const d of j.desks) for (const p of d.panes) if (p.blocked || p.agent === "needs_you") asking.push([d, p]);
@@ -754,6 +772,79 @@ function status(j) {
   const qs = quotasOf(j), lq = leastOf(qs, "five_hour"), w = windowLeft(lq?.five_hour);
   if (w) bits.push(`<span data-tip="Claude's five-hour window${qs.length > 1 ? `, as ${esc(lq.label)}` : ""}" data-tip-sub="${esc(w.text)}">${qs.length > 1 ? `${esc(lq.label)}: ` : ""}5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
   return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.filter(Boolean).join(" · ")}</p>`;
+}
+
+/* ---------- bringing them back (1.58, plan 4b492bec68) ----------
+ *
+ * What a crash or a stop left on offer (`restore_run`): first in the status
+ * line, "snyvi closed unexpectedly · 31 conversations on 20 desks · Restore
+ * all · Choose… · ✕", and while they come back, "12 of 31 back · Stop". The
+ * daemon starts them two at a time, fewer when memory is short. Nothing is
+ * started without a press here, on a desk's strip, or in Choose…. */
+
+/** Choose…'s list once read (`?panes=1`), and the panes unticked in it. */
+let rsPicks = null, rsOff = new Set();
+
+function rsLine(j) {
+  const r = j.restore, { plural } = c;
+  if (!r || r.hidden) return "";
+  if (r.queued) return `<span class="hm-rs">${r.back} of ${r.total} back</span> <button type="button" class="hm-rs-b q" data-hm="rs-stop" data-tip="Stop" data-tip-sub="the ones starting now finish">Stop</button>`;
+  if (!r.left) return "";
+  const desks = Object.keys(r.desks || {}).length;
+  const what = `${plural(r.left, "conversation")}${desks > 1 ? ` on ${desks} desks` : ""}`;
+  return `<span class="hm-rs${r.crashed ? " crash" : ""}">${r.crashed ? "snyvi closed unexpectedly" : "Claude was open when snyvi stopped"} · ${what}</span> ` +
+    `<button type="button" class="hm-rs-b" data-hm="rs-all" data-tip="Restore all" data-tip-sub="two at a time, this desk first">Restore all</button> ` +
+    `<button type="button" class="hm-rs-b q" data-hm="rs-pick" aria-haspopup="dialog" aria-expanded="${!!rsPicks}">Choose…</button> ` +
+    `<button type="button" class="hm-rs-b q" data-hm="rs-x" data-tip="Not now" data-tip-sub="each panel still offers its own" aria-label="Not now">✕</button>`;
+}
+
+/** Choose…: every one on offer, by desk, all ticked, and one Restore. */
+function rsSheet() {
+  if (!rsPicks) return "";
+  const { esc } = c, by = new Map();
+  for (const p of rsPicks) { if (!by.has(p.desk)) by.set(p.desk, { name: p.desk_name, ps: [] }); by.get(p.desk).ps.push(p); }
+  const n = rsPicks.filter(p => !rsOff.has(p.id)).length;
+  return `<div class="hm-rsp" role="dialog" aria-label="Choose what to restore">` +
+    [...by.values()].map(g => `<h3>${esc(g.name)}</h3>` + g.ps.map(p =>
+      `<button type="button" class="hm-rsp-t" role="checkbox" aria-checked="${!rsOff.has(p.id)}" data-hm="rs-tick" data-r="${esc(p.id)}"><i aria-hidden="true"></i>${esc(p.name || `Panel ${p.slot}`)}</button>`).join("")).join("") +
+    `<p class="hm-rsp-f"><button type="button" class="btn" data-hm="rs-close">Cancel</button><button type="button" class="btn btn-primary" data-hm="rs-go"${n ? "" : " disabled"}>Restore ${n}</button></p></div>`;
+}
+
+/** Choose… closes on Escape, the focus back on what opened it. */
+function rsKeys(el) {
+  el.addEventListener("keydown", e => {
+    if (e.key !== "Escape" || !rsPicks || !e.target.closest?.(".hm-rsp")) return;
+    e.preventDefault(); e.stopPropagation();
+    rsPicks = null; draw(last); c.docEl.querySelector("[data-hm=rs-pick]")?.focus({ preventScroll: true });
+  });
+}
+
+async function rsClick(k, b) {
+  const api = (body, path = "/api/restore") => c.deskApi(path, body);
+  try {
+    if (k === "rs-pick") {
+      if (rsPicks) { rsPicks = null; draw(last); return; }
+      const j = await api(undefined, "/api/restore?panes=1");
+      rsPicks = j.panes || []; rsOff = new Set();
+      draw(last);
+      c.docEl.querySelector(".hm-rsp-t")?.focus({ preventScroll: true });
+      return;
+    }
+    if (k === "rs-tick") {
+      const id = b.dataset.r;
+      rsOff.has(id) ? rsOff.delete(id) : rsOff.add(id);
+      draw(last);
+      c.docEl.querySelector(`.hm-rsp-t[data-r="${window.CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (k === "rs-close") { rsPicks = null; draw(last); c.docEl.querySelector("[data-hm=rs-pick]")?.focus({ preventScroll: true }); return; }
+    b.disabled = true;
+    if (k === "rs-all") await api({ all: true });
+    else if (k === "rs-go") { await api({ ids: rsPicks.filter(p => !rsOff.has(p.id)).map(p => p.id) }); rsPicks = null; }
+    else if (k === "rs-stop") await api({ stop: true });
+    else if (k === "rs-x") { rsPicks = null; await api({ hide: true }); }
+    soonRefresh("restore");
+  } catch (e) { b.disabled = false; c.peerCtx.toast("Could not restore", { sub: c.peerCtx.sayErr(e).why }); }
 }
 
 /* ---------- On you and Threads (#90) ----------
@@ -1700,7 +1791,7 @@ function tabLinks(el) {
 function wire() {
   const el = c.docEl.querySelector(".hm");
   if (!el || el.dataset.wired) return;
-  el.dataset.wired = "1"; tabLinks(el);
+  el.dataset.wired = "1"; tabLinks(el); rsKeys(el);
   el.addEventListener("click", async e => {
     // Lately's rows are the corner's, and so are their buttons.
     const cn = e.target.closest("button[data-a^='cn-']");
@@ -1709,7 +1800,7 @@ function wire() {
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
-    const k = b.dataset.hm, id = +b.dataset.k || 0;
+    const k = b.dataset.hm, id = +b.dataset.k || 0; if (k.startsWith("rs-")) return void rsClick(k, b);
     // The ✕ in a folded widget's head hides it; it does not fold it.
     if (k === "hide") { e.preventDefault(); setHidden([...new Set([...hidden(), b.dataset.k])]); draw(last); c.docEl.querySelector("[data-hm=unhide]")?.focus({ preventScroll: true }); }
     else if (k === "unhide") { setHidden([]); draw(last); }

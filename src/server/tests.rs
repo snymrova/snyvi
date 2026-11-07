@@ -378,6 +378,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         + routes_in("\nfn pane_routes(")
         + routes_in("\nfn browse_routes(")
         + routes_in("\nfn note_routes(")
+        + routes_in("\nfn board_routes(")
         + routes_in("\nfn account_routes(")
         + routes_in("\nfn peer_routes(")
         + routes_in("\nfn setting_routes(")

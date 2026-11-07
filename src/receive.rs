@@ -22,8 +22,9 @@ pub struct Payload {
     pub cwd: Option<String>,
     /// Opaque session key from the sender, used as the default workflow.
     pub session: Option<String>,
-    /// Who sent it: "mcp", "cli", "hook" or "watch". Hook and watch sends of the same
-    /// file are coalesced.
+    /// Who sent it: "mcp", "cli", "hook", "watch" or "board". Hook and watch
+    /// sends of the same file are coalesced, and a board's frame with the
+    /// board's write before it (`coalesce_secs`).
     pub origin: Option<String>,
     /// The MCP client's name from its `initialize`, so the connect page can
     /// say when an agent last sent something.
@@ -93,6 +94,31 @@ pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_MEDIA_BYTES: u64 = 1024 * 1024 * 1024;
 /// Automatic sends of the same file within this window overwrite the latest snapshot.
 const COALESCE_SECS: i64 = 180;
+/// A board's frame is written by the agent on purpose, one change at a time,
+/// and the reader compares its versions: only a burst (the agent fixing what
+/// it just wrote) is one version. Three minutes would fold a whole round of
+/// variants into one (plan 6ff79c55a7, G2).
+const BOARD_COALESCE_SECS: i64 = 20;
+
+/// Whether an automatic send folds into the latest one of the same file:
+/// both automatic, a board's only with a board's, in the same workflow, and
+/// within its window.
+fn folds(origin: &str, prev: &crate::store::Doc, wf_key: &str) -> bool {
+    automatic(origin)
+        && automatic(&prev.origin)
+        && (origin == "board") == (prev.origin == "board")
+        && prev.workflow == wf_key
+        && crate::store::now() - prev.received_at < coalesce_secs(origin)
+}
+
+/// How long an automatic send of `origin` overwrites the one before it.
+fn coalesce_secs(origin: &str) -> i64 {
+    if origin == "board" {
+        BOARD_COALESCE_SECS
+    } else {
+        COALESCE_SECS
+    }
+}
 /// How much of a document's text goes into the search index: the first half
 /// megabyte, like the outline's cap. A 32 MB log is searched by the thing
 /// it is about, which is at the top; indexing all of it is what made a save
@@ -114,15 +140,24 @@ pub fn search_text(text: &str) -> &str {
 
 /// Sends nobody asked for one at a time: the Claude Code hook fires on every edit,
 /// `snyvi watch` on every save. They coalesce with each other.
+///
+/// A board's frame (`crate::board::write`) is one too: nobody asked to read
+/// it, it is the agent drawing.
 fn automatic(origin: &str) -> bool {
-    matches!(origin, "hook" | "watch")
+    matches!(origin, "hook" | "watch" | "board")
 }
 
 /// Saved by the hook as Claude wrote it, not sent: a draft, until the agent
 /// sends it (audit bf13a1859b, decision R3). `snyvi watch` is automatic too,
 /// but the reader started it for the file, and it stays loud.
+///
+/// A board's frame is quiet the same way: listed under its board's one
+/// workflow, never waiting, no chime. The reader is watching the board, and
+/// the board redraws. A `send_document` of the same bytes takes it over as
+/// it takes over a hook's draft, which is how an agent hands a frame over to
+/// be read.
 fn quiet(origin: &str) -> bool {
-    origin == "hook"
+    matches!(origin, "hook" | "board")
 }
 
 /// A send someone meant, which takes over the hook's draft of the same bytes.
@@ -484,17 +519,10 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     // snapshots; within a short window, overwrite the last one instead.
     let wf_key = wf_name.to_lowercase();
 
-    let coalesce_into = match (origin, &latest_same_path) {
-        (o, Some(prev))
-            if automatic(o)
-                && automatic(&prev.origin)
-                && prev.workflow == wf_key
-                && crate::store::now() - prev.received_at < COALESCE_SECS =>
-        {
-            Some(prev.id.clone())
-        }
-        _ => None,
-    };
+    let coalesce_into = latest_same_path
+        .as_ref()
+        .filter(|prev| folds(origin, prev, &wf_key))
+        .map(|prev| prev.id.clone());
     // The id is fixed before rendering so relative image URLs can point at /files/<id>/.
     let id = coalesce_into
         .clone()
@@ -778,6 +806,57 @@ mod tests {
         assert_eq!(hooked.doc.id, watched.doc.id);
         assert_eq!(s.source(&watched.doc.id).unwrap(), "# Notes\n\nv6");
         assert_eq!(s.count().unwrap(), 3);
+    }
+
+    /// A board's frame (plan 6ff79c55a7, G2): quiet, a burst of writes is one
+    /// version, a hook's draft of the same file never folds into it, and the
+    /// agent's `send_document` of the same bytes takes it over.
+    #[test]
+    fn a_board_frame_is_quiet_coalesces_alone_and_can_be_handed_over() {
+        let (s, r, d) = setup();
+        let file = d.path.join("cards.html");
+        std::fs::write(&file, "<p>v1</p>").unwrap();
+        let cwd = d.path.to_string_lossy().to_string();
+        let mk = |origin: &str, workflow: Option<&str>| Payload {
+            path: Some(file.to_string_lossy().to_string()),
+            cwd: Some(cwd.clone()),
+            session: Some("s".into()),
+            origin: Some(origin.into()),
+            workflow: workflow.map(str::to_string),
+            ..Default::default()
+        };
+        let board = Some("board:home");
+        let first = receive(&s, &r, mk("board", board)).unwrap();
+        assert!(first.quiet && !first.existing);
+        assert_eq!(s.waiting().unwrap(), 0, "a frame does not wait");
+        assert_eq!(first.doc.workflow, "board:home");
+
+        std::fs::write(&file, "<p>v2</p>").unwrap();
+        let burst = receive(&s, &r, mk("board", board)).unwrap();
+        assert!(
+            burst.existing,
+            "a rewrite inside the window is the same version"
+        );
+        assert_eq!(burst.doc.id, first.doc.id);
+
+        std::fs::write(&file, "<p>v3</p>").unwrap();
+        let hooked = receive(&s, &r, mk("hook", board)).unwrap();
+        assert!(
+            !hooked.existing,
+            "a hook draft never folds into a board's frame, even in its workflow"
+        );
+        std::fs::write(&file, "<p>v4</p>").unwrap();
+        let after = receive(&s, &r, mk("board", board)).unwrap();
+        assert!(!after.existing, "nor a frame into a hook draft");
+
+        let sent = receive(&s, &r, mk("mcp", None)).unwrap();
+        assert!(sent.promoted, "the agent's send takes the frame over");
+        assert_eq!(sent.doc.id, after.doc.id);
+        assert_eq!(s.waiting().unwrap(), 1, "and now it waits to be read");
+
+        assert_eq!(coalesce_secs("board"), 20);
+        assert_eq!(coalesce_secs("hook"), COALESCE_SECS);
+        assert_eq!(coalesce_secs("watch"), COALESCE_SECS);
     }
 
     /// The hook's draft is listed and does not wait; the agent's send of the

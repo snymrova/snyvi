@@ -17,11 +17,13 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | the agent's side: `/api/panes/{id}/*`, agents | `src/server/api_agent.rs` | reach the store before `agent_pane` |
 | pipelines: rows (`src/pipeline.rs`), planner, transcript reader; the runner (`src/server/pipeline_run.rs`); the window's routes (`src/server/api_pipeline.rs`) | | start one from a token route; put a step through a shell |
 | routines (1.50; the field and the draft, 1.53): rows, runs, drafts (`src/routine.rs`), where a `/name` lives in Claude Code's order (`src/routine/places.rs`), the Waits suggested and matched (`src/routine/waits.rs`), the cadence (`src/due/every.rs`); the runner (`src/server/routine_run.rs`); the window's routes (`src/server/api_routine.rs`); the rail's section and field (`ui/desk/19-routine.js`), the sheet (`ui/desk/21-routine-sheet.js`) | | start, save or widen one from a token route; run a file the reader has not allowed; take an agent's words as a prompt |
+| a restore after a crash (1.58): the marks for the next start, live while an agent is in (`src/desk/marks.rs`); the queue, two at a time (`src/server/restore_run.rs`); the window's routes (`src/server/api_restore.rs`); Home's line (`ui/home.js`), a desk's strip (`ui/desk/26-restore.js`) | | start anything a click did not name; stop a panel the reader is using; leave a 3 behind on an exit it runs |
 | a friend's snyvi: pairing, Send to…, offers, the link | `src/server/api_peer.rs`, `src/server/peer_link.rs` (the socket to the relay), `src/peer.rs` (keys, code, frame, relay client, tables), `relay/` (the Worker) | send on an agent's word; parse a frame before its key is pinned; wait at the relay with anything but the one socket |
 | Music: stations, the reader's streams and folder | `src/server/api_media.rs`, `src/music.rs` (the station list, the relay, the folder), `ui/music.js` | play on an agent's word; relay a URL that isn't on the list or the reader's own |
 | the desk socket · SSE · browse mode · restart, update, reset | `src/server/{ws,events,api_browse,lifecycle}.rs` | — |
 | the route table test | `src/server/tests.rs` | lag the router: the count must match |
 | documents on disk + SQLite index + FTS | `src/store.rs` | know about HTTP or panes |
+| a board: `design/<board>/`, its frames and `board.json` | `src/board.rs` (`docs/BOARD.md`) | build a path before the name is checked; write outside the desk's folder |
 | desks, panes rows, notes, keys (names) | `src/desk.rs` | run processes; `pane.rs` does |
 | a PTY, its process, its screen | `src/pane.rs`, `src/screen.rs` | touch the store |
 | every transport's way in | `src/receive.rs` → `render.rs` | be bypassed; hook, MCP, CLI, watch all call it |
@@ -34,7 +36,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | the window | `src/bin/app.rs` | hold daemon logic |
 | every message from outside: the corner's card, pill and tray (On you, Lately) | `ui/corner.js`, `src/lately.rs` (kept, `lately_log` beside each event), `ui/desk/10-onyou.js` (the desk's corner) | put a message anywhere else, or let one go on a timer (`docs/DESIGN.md` §4.5) |
 | first paint | `ui/index.html`, `ui/boot.js`, `ui/app/*.js` (joined into `app.js`), `ui/app.css`, `ui/themes.css` | grow past the budget (`bench/bytes.mjs`) |
-| lazy chunks | `ui/desk/*.js` (joined into `desk.js`), `ui/home.js`, `ui/about.js`, `ui/mmd.js`, `ui/menu.js`, `ui/peer.js`, … | be imported by first paint |
+| lazy chunks | `ui/desk/*.js` (joined into `desk.js`), `ui/board/*.js` (joined into `board.js`), `ui/home.js`, `ui/about.js`, `ui/mmd.js`, `ui/menu.js`, `ui/peer.js`, … | be imported by first paint |
 | the strip, the join, the embed | `build.rs`, `src/strip.rs` (`source` joins `ui/app/*.js` and `ui/desk/*.js` in name order; `SNYVI_UI_DIR` serves the same join) | serve a part on its own |
 
 ## The flows

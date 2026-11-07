@@ -59,6 +59,12 @@ notes, its threads, the user's On you list.
   yours to check. The user's merge closes only the notes its PR's commits
   name. A note the user reopened says what is still wrong; the brief leads
   with it.
+- A note can hold the user's own checks: lines of what they will try once
+  the work is done. You see only how many (`(2 checks held)` in the brief
+  and `read_desk_notes`), never the words, so build for the whole note, not
+  for a guess at the checks. When you plan a note, `suggest_check` may offer
+  up to five lines in their terms (three wait on a note); you will not be
+  shown them again. A failed check reopens the note with its words.
 - `hand_over` is for what blocks you that only they can do: a command to run
   (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
   A merge hand-over carries the PR's page as its `link`: snyvi settles it
@@ -103,6 +109,15 @@ notes, its threads, the user's On you list.
   `needs: you` when something waits; and keeps each run inside 25 minutes.
   When the brief says this panel is a routine, you are that run: when it says
   it is a try, the user is watching.
+
+## A board
+
+When the user asks you to design something they will look at -- a page, a
+screen, a card -- in a desk panel, draw it on a board: `board_read` first, then
+one `frame_write` per piece, variants as frames side by side, and look at each
+before saying done. "This one" is what they selected (`board_read` or
+`read_focus`). How, at length: [board.md](board.md); read it before the
+first frame.
 
 ## Widgets
 

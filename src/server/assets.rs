@@ -26,6 +26,11 @@ pub(crate) const MMD_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/mmd.js")
 /// desk pays nothing for it.
 pub(crate) const DESK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/desk.js"));
 
+/// The Board view (docs/BOARD.md): imported by the desk the first time a
+/// board is opened, never before -- a reader who never opens a board pays
+/// nothing for it, and first paint is untouched.
+pub(crate) const BOARD_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/board.js"));
+
 /// The window's frame -- the bar's three buttons and what drags -- fetched
 /// only inside the native window, since a tab has no window to frame.
 pub(crate) const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
@@ -1055,6 +1060,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("mmd.js", MMD_JS, JS),
     // The desk view, on the same terms as the diagram driver.
     ("desk.js", DESK_JS, JS),
+    ("board.js", BOARD_JS, JS),
     ("frame.js", FRAME_JS, JS),
     ("game.js", GAME_JS, JS),
     ("about.js", ABOUT_JS, JS),

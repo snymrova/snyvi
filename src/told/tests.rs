@@ -3,6 +3,8 @@ use super::*;
 fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
+    conn.execute_batch(crate::desk::checks::COLUMNS_1_58)
+        .unwrap();
     conn.execute_batch(crate::desk::POS_COLUMN).unwrap();
     conn.execute_batch(crate::desk::SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::desk::LOOP_COLUMNS_1_37).unwrap();
@@ -156,6 +158,8 @@ fn no_one_marks_it_told_and_a_friend_is_a_row() {
 fn old_threads_stay_quiet() {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
+    conn.execute_batch(crate::desk::checks::COLUMNS_1_58)
+        .unwrap();
     conn.execute_batch(crate::thread::SCHEMA).unwrap();
     conn.execute(
         "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'w', '/w', 0)",

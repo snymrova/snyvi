@@ -631,8 +631,11 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// 20.7 to within a hair of 21, with no crate added. 21.5 until 1.57.0:
 /// a desk's tabs (src/desk/groups.rs, the `panes` rebuild of migration 35,
 /// the seven routes in src/server/api_groups.rs) took the musl build from
-/// 21.5 to 21.6 MB, with no crate added.
-const BINARY_MB: f64 = 22.0;
+/// 21.5 to 21.6 MB, with no crate added. 22 until 1.58.0: held checks on a
+/// note, the Board (src/board.rs and its tools) and restore after a crash
+/// (the live marks and /api/restore) took the musl build from 21.6 to 22.1
+/// MB, with no crate added.
+const BINARY_MB: f64 = 22.5;
 
 /// Returns whether any row was over budget.
 ///

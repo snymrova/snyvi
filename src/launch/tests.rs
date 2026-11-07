@@ -3,6 +3,8 @@ use super::*;
 fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
+    conn.execute_batch(crate::desk::checks::COLUMNS_1_58)
+        .unwrap();
     conn.execute_batch(crate::desk::POS_COLUMN).unwrap();
     conn.execute_batch(crate::desk::SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::desk::LOOP_COLUMNS_1_37).unwrap();

@@ -25,6 +25,25 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "board"
+since = "1.58.0"
+title = "A board beside your panel"
+line = "Ask Claude to design something and it draws on a board in your desk's folder, frame by frame, while you watch. Pick a frame and say what to change: Claude reads what you picked. The panel you talk to stays docked beside the board."
+show = "desk .dk-views"
+
+[[feature]]
+id = "restore"
+since = "1.58.0"
+title = "Everything back after a crash"
+line = "When snyvi is killed with conversations open -- the system out of memory, a power cut -- the next start offers them back. Home says so in its first line, with Restore all and Choose…, and each panel's strip says Claude was open there. They come back two at a time, fewer when memory is short, the desk you are on first."
+
+[[feature]]
+id = "checks"
+since = "1.58.0"
+title = "Checks you hold on a note"
+line = "A note can carry a few lines of what you will try once its work is done. Open a note and press Hold a check…; the agent building it is told only how many you hold, never what they say. When the work lands, the note lists them with a ✓ and ✗ each: works lights once every line passes, and a ✗ reopens the note with that line's words for the next agent."
+
+[[feature]]
 id = "tabs"
 since = "1.57.0"
 title = "Tabs in a desk"

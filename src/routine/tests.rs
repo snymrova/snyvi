@@ -3,6 +3,8 @@ use super::*;
 fn db() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
+    conn.execute_batch(crate::desk::checks::COLUMNS_1_58)
+        .unwrap();
     conn.execute_batch(crate::thread::SCHEMA).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(DRAFT_COLUMNS_1_53).unwrap();
@@ -127,6 +129,8 @@ fn a_file_that_reads_continue_is_continued_and_any_other_resumed() {
 fn a_routine_from_before_1_53_stays_live_with_its_file() {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
+    conn.execute_batch(crate::desk::checks::COLUMNS_1_58)
+        .unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(
         "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'news', '/tmp/news', 1);

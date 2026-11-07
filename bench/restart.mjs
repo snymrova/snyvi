@@ -257,6 +257,84 @@ async function main() {
         !strip ? "no strip on the panel" : !went ? "Resume did nothing to see" : went === "went" ? "the resume went in, the strip with it" : !away ? `said "${went}", then ✕ did not put it away` : `said "${went}" in the strip, ✕ put it away`);
       killTree(browser2.proc);
     }
+
+    // 1.58: a crash. The OOM killer took the session with 31 conversations
+    // open and none came back, because a crash ran no exit to mark them. Now
+    // an agent in a panel leaves a live mark, and SIGKILL leaves it there.
+    // Three panels with an agent and one shell, on a desk of their own; the
+    // daemon is killed outright, and the next one is started with a stub
+    // `claude` first on its PATH, which reports itself after two seconds
+    // and stays, so the queue's two-at-a-time can be read.
+    const hk = await health();
+    const curl = (() => { try { execFileSync("sh", ["-c", "command -v curl"], { stdio: "ignore" }); return true; } catch { return false; } })();
+    const crashDesk = (await postC("/api/desks", { name: "crash" }));
+    const cd = crashDesk.desk ? crashDesk.desk.id : crashDesk.id;
+    const agents = [], plain = (await postC(`/api/desks/${cd}/panes`)).pane.id;
+    await postC(`/api/panes/${plain}/start`, { cmd: "exec sleep 300" });
+    for (let i = 0; i < 3; i++) {
+      const id = (await postC(`/api/desks/${cd}/panes`)).pane.id;
+      await postC(`/api/panes/${id}/start`, { cmd: "exec sleep 300" });
+      await postT(`/api/panes/${id}/agent`, { state: i ? "done" : "working", session });
+      agents.push(id);
+    }
+    process.kill(hk.pid, "SIGKILL");
+    await until(async () => !(await health()), 40);
+    const stub = join(tmp, "stub");
+    mkdirSync(stub, { recursive: true });
+    writeFileSync(join(stub, "claude"), `#!/bin/sh\nsleep 2\ncurl -s -o /dev/null -X POST -H 'authorization: Bearer ${token}' -H 'content-type: application/json' -d "{\\"state\\":\\"working\\",\\"session\\":\\"$2\\"}" "http://127.0.0.1:${PORT}/api/panes/$SNYVI_SESSION/agent"\nexec sleep 300\n`, { mode: 0o755 });
+    execFileSync(BIN, ["send", md], { env: { ...env, PATH: `${stub}:${env.PATH}` }, cwd: tmp, stdio: "ignore" });
+    const hn = await until(health, 40);
+    const getC = async path => (await fetch(base + path, { headers: C })).json().catch(() => ({}));
+    const rs = hn ? await getC("/api/restore?panes=1") : {};
+    const on = new Set((rs.panes || []).map(p => p.id));
+    const cl = (await desks()).find(x => x.id === cd);
+    const cs = id => ((cl && cl.panes.find(p => p.id === id)) || {}).status || {};
+    // The first desk's offer was seen by the page above, so this start lets
+    // it go; without a page it was never seen, and is still offered.
+    const seenOne = !!chrome;
+    row("a crash leaves the panels Claude was in on offer, saying so", !!hn && rs.crashed === true && agents.every(id => on.has(id) && cs(id).offer && cs(id).crashed) && !on.has(plain) && !cs(plain).offer && on.size === (seenOne ? 3 : 4) && cl.offers === 3,
+      !hn ? "no daemon came back" : `left ${rs.left}, crashed ${rs.crashed}, on offer ${on.size} (${seenOne ? "the page's seen offer lapsed" : "no page, the earlier offer stands"}), desk offers ${cl && cl.offers}, the shell offered ${!!cs(plain).offer}`);
+    // What the reader sees: Home's status line says it first, and its ✕
+    // takes it away without moving anything under it; the crash desk's
+    // strips offer all three. Opening the desk starts each as its shell on
+    // offer, which the queue below stops once quiet, as it would for a reader.
+    if (hn && chrome) {
+      const browser3 = await launch(join(tmp, "chrome3"));
+      const { sessionId: s3 } = await tab(browser3.cdp);
+      const ev3 = async expr => (await browser3.cdp.send("Runtime.evaluate", { expression: expr, returnByValue: true }, s3)).result.value;
+      const go3 = async url => { const l = pageLoad(browser3.cdp, s3, url); await browser3.cdp.send("Page.navigate", { url }, s3); await l; };
+      await go3(`${base}/#cap=${cap}`);
+      const said = await until(() => ev3(`document.querySelector(".hm-status .hm-rs.crash")?.textContent || ""`), 40);
+      const gridY = () => ev3(`Math.round(document.querySelector(".hm-grid")?.getBoundingClientRect().top ?? -1)`);
+      const y0 = await gridY();
+      await ev3(`document.querySelector('[data-hm="rs-x"]')?.click(); 1`);
+      const gone = await until(() => ev3(`!document.querySelector(".hm-status .hm-rs")`), 40);
+      const y1 = await gridY();
+      row("Home says it first in the status line, and its ✕ moves nothing", !!said && /closed unexpectedly/.test(said) && !!gone && y0 === y1 && y0 > 0,
+        !said ? "no line in Home's status" : !gone ? "✕ left the line" : `"${said}"; the grid at ${y0} → ${y1}`);
+      await go3(`${base}/desk/${cd}#cap=${cap}`);
+      const all = await until(() => ev3(`(() => { const b = [...document.querySelectorAll('.pn-offer:not([hidden]) [data-offer="all"]:not([hidden])')]; const t = document.querySelector('.pn-offer:not([hidden]) > span')?.textContent || ""; return b.length === 3 && /closed unexpectedly/.test(t) ? b[0].textContent : ""; })()`), 80);
+      row("each panel's strip says why, and offers all of the desk's", !!all && /All 3 here/.test(all),
+        all ? `"${all}" on all three strips` : `strips: ${await ev3(`[...document.querySelectorAll(".pn-offer:not([hidden])")].map(o => o.textContent).join(" | ")`)}`);
+      killTree(browser3.proc);
+    }
+    if (hn && curl) {
+      const asked = await fetch(`${base}/api/restore`, { method: "POST", headers: C, body: JSON.stringify({ desk: cd, from: cd }) });
+      const q = await asked.json().catch(() => ({}));
+      const resumed = async () => ((await desks()).find(x => x.id === cd).panes || []).filter(p => (p.status || {}).running && /^claude --resume /.test((p.status || {}).cmd || "")).length;
+      // The first moment two are back as the conversation, the third waits:
+      // the stub reports two seconds after its start.
+      const two = await until(async () => { const n = await resumed(); return n >= 2 ? n : null; }, 80);
+      const mid = await getC("/api/restore");
+      row("Restore starts this desk's two at a time", asked.status === 202 && q.queued === 3 && two === 2 && mid.queued === 3,
+        `queued ${q.queued} (${asked.status}); then ${two} running as the conversation, ${mid.queued} still in the queue`);
+      const done = await until(async () => { const r = await getC("/api/restore"); return r.back === 3 && r.queued === 0 ? r : null; }, 80);
+      const all = await resumed();
+      row("and each agent coming in frees its slot, until all are back", !!done && all === 3 && done.left === (seenOne ? 0 : 1),
+        done ? `${done.back} of ${done.total} back, ${all} running as the conversation, ${done.left} left on offer elsewhere` : `stuck: ${JSON.stringify(await getC("/api/restore"))}`);
+    } else {
+      row("Restore starts this desk's two at a time", true, hn ? "skipped: no curl for the stub claude" : "skipped: no daemon");
+    }
   } finally {
     if (chromeProc) killTree(chromeProc);
     try { cli("stop"); } catch {}

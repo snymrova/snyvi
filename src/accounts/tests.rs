@@ -18,6 +18,8 @@ fn db() -> Connection {
     }
     conn.execute_batch(crate::desk::groups::COLUMNS_1_57)
         .unwrap();
+    conn.execute_batch(crate::desk::checks::COLUMNS_1_58)
+        .unwrap();
     conn
 }
 
