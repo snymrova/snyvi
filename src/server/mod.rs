@@ -26,6 +26,7 @@ mod api_pipeline;
 mod api_restore;
 mod api_routine;
 mod api_thread;
+mod api_wall;
 mod api_week;
 mod api_widget;
 mod assets;
@@ -58,6 +59,7 @@ use api_pipeline::*;
 use api_restore::*;
 use api_routine::*;
 use api_thread::*;
+use api_wall::*;
 use api_week::*;
 use api_widget::*;
 use assets::*;
@@ -566,6 +568,8 @@ fn board_routes() -> Router<Arc<App>> {
             post(desk_page_offer),
         )
         .route("/api/desks/{id}/page/owner", post(desk_page_owner))
+        .route("/api/desks/{id}/page/publish", post(desk_page_publish))
+        .route("/api/desks/{id}/page/down", post(desk_page_down))
         .route("/api/panes/{id}/post", post(pane_post))
         .route("/api/desks/{id}/focus", post(set_desk_focus))
 }

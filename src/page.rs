@@ -64,6 +64,11 @@ CREATE TABLE IF NOT EXISTS pages (
   down_at INTEGER NOT NULL DEFAULT 0,
   checked_at INTEGER NOT NULL DEFAULT 0,
   provenance TEXT NOT NULL DEFAULT '{}',
+  hearts INTEGER NOT NULL DEFAULT 0,
+  heart_names TEXT NOT NULL DEFAULT '[]',
+  hearts_since INTEGER NOT NULL DEFAULT 0,
+  hearts_at INTEGER NOT NULL DEFAULT 0,
+  reports INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -613,6 +618,98 @@ pub fn mark_checked(conn: &Connection, id: i64, at: i64) -> Result<()> {
         params![id, at],
     )?;
     Ok(())
+}
+
+/// The wall's daily line about a page of this daemon's (`api_wall::take`):
+/// the hearts since `since`, the names of those from checked pages, and
+/// the reports counted. Kept on the page, to show; the desk it is on, or
+/// `None` when no page of this daemon's has that slug.
+#[allow(clippy::too_many_arguments)]
+pub fn hearts_said(
+    conn: &Connection,
+    slug: &str,
+    hearts: i64,
+    names: &[String],
+    since: i64,
+    reported: i64,
+    now: i64,
+) -> Result<Option<i64>> {
+    let names: Vec<String> = names
+        .iter()
+        .map(|n| draft::clip(&n.split_whitespace().collect::<Vec<_>>().join(" "), 40))
+        .filter(|n| !n.is_empty())
+        .take(20)
+        .collect();
+    let desk: Option<i64> = conn
+        .query_row("SELECT desk_id FROM pages WHERE slug = ?1", [slug], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    if desk.is_some() {
+        conn.execute(
+            "UPDATE pages SET hearts = ?2, heart_names = ?3, hearts_since = ?4, hearts_at = ?5, \
+             reports = ?6 WHERE slug = ?1",
+            params![
+                slug,
+                hearts.max(0),
+                serde_json::to_string(&names)?,
+                since,
+                now,
+                reported.max(0)
+            ],
+        )?;
+    }
+    Ok(desk)
+}
+
+/// The last line's hearts, names and since, for the view and Home's row.
+pub fn hearts_of(conn: &Connection, page_id: i64) -> Result<(i64, Vec<String>, i64)> {
+    let (n, names, since): (i64, String, i64) = conn.query_row(
+        "SELECT hearts, heart_names, hearts_since FROM pages WHERE id = ?1",
+        [page_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    Ok((n, serde_json::from_str(&names).unwrap_or_default(), since))
+}
+
+/// A friend's page arrived (Friends only): kept, a resend a new row.
+pub fn friend_page(
+    conn: &Connection,
+    peer_id: i64,
+    slug: &str,
+    page: &str,
+    moment: &str,
+    now: i64,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO pages_from(peer_id, slug, page, moment, arrived_at) VALUES(?1, ?2, ?3, ?4, ?5)",
+        params![peer_id, slug, page, moment, now],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Friends' pages for Home's Friends segment: the newest of each friend's
+/// slug, newest first, with the friend's name.
+pub fn friend_pages(conn: &Connection, n: usize) -> Result<Vec<serde_json::Value>> {
+    let mut st = conn.prepare(
+        "SELECT f.slug, f.page, f.moment, f.arrived_at, p.name FROM pages_from f \
+         JOIN peers p ON p.id = f.peer_id \
+         WHERE f.removed_at = 0 AND p.removed_at = 0 AND f.id IN \
+           (SELECT MAX(id) FROM pages_from GROUP BY peer_id, slug) \
+         ORDER BY f.arrived_at DESC LIMIT ?1",
+    )?;
+    let rows = st.query_map([n as i64], |r| {
+        let page: String = r.get(1)?;
+        let moment: String = r.get(2)?;
+        Ok(serde_json::json!({
+            "slug": r.get::<_, String>(0)?,
+            "page": serde_json::from_str::<serde_json::Value>(&page).unwrap_or_default(),
+            "moment": serde_json::from_str::<serde_json::Value>(&moment).unwrap_or_default(),
+            "at": r.get::<_, i64>(3)?,
+            "from": r.get::<_, String>(4)?,
+        }))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 /// Every file the page holds: its own and its moments', each once.

@@ -189,9 +189,31 @@ function sideHtml(p, draft) {
       <input type="hidden" name="about" value="${esc(m.about || "")}">
       <button type="submit">Keep the moment</button></form>
     ${held ? `<p class="pg-quiet">Holds ${held}.</p>` : ""}
-    <div class="pg-pressrow"><button type="button" class="pg-press" data-publish${p.visibility === "off" ? " disabled" : ""}>Publish</button>
-      <span class="pg-said" aria-live="polite">${esc(said || (p.visibility === "off" ? "Choose who sees it first." : ""))}</span></div>
+    ${heartsHtml(p)}
+    <div class="pg-pressrow"><button type="button" class="pg-press" data-publish${p.visibility === "off" ? " disabled" : ""}>${up(p) ? "Publish again" : "Publish"}</button>
+      <span class="pg-said" aria-live="polite">${esc(said || rowSays(p))}</span>
+      ${up(p) ? `<button type="button" class="pg-quietbtn" data-down>Take it down</button>` : ""}
+      ${p.visibility === "everyone" && !p.checked_at ? `<button type="button" class="pg-quietbtn" data-owner data-tip="Writes .snyvi/owner in this desk's folder; the wall reads it in the repository">Add the check to the repo</button>` : ""}</div>
   </div>`;
+}
+
+const up = p => p.up_at > 0 && p.up_at >= (p.down_at || 0);
+
+/** What the row says when nothing was just pressed. */
+function rowSays(p) {
+  if (p.visibility === "off") return "Choose who sees it first.";
+  if (read.waiting) return `not up yet: ${read.waiting_why || "waiting for the wall"}`;
+  if (up(p) && p.visibility === "everyone" && !p.checked_at) return `up at snyvi.page/${p.slug} · not on the wall yet: add the check to the repo`;
+  if (up(p)) return p.visibility === "everyone" ? `up · snyvi.page/${p.slug}` : "sent to friends";
+  return "";
+}
+
+/** The wall's last line, to the builder: hearts with names, never ranked. */
+function heartsHtml(p) {
+  const h = read.hearts || {}, { esc } = o;
+  if (!h.n) return "";
+  const names = (h.names || []).slice(0, 6).join(", ");
+  return `<p class="pg-quiet pg-hearts">♥ ${h.n}${h.since ? ` since ${esc(o.rel ? o.rel(h.since * 1000) : "")}` : ""}${names ? ` · ${esc(names)}` : ""}${p.count_shown ? "" : " · the count is hidden on the page"}</p>`;
 }
 
 function wire() {
@@ -221,6 +243,8 @@ function click(e) {
   if (d.count) return void save({ edit: { count_shown: d.count === "shown" } });
   if (d.hide) return void o.api(`/api/desks/${o.desk}/page/moments`, { id: +d.hide, hidden: true }).then(load, err => o.toast("Not taken off", why(err)));
   if ("publish" in d) return void publish(t);
+  if ("down" in d) return void o.api(`/api/desks/${o.desk}/page/down`, {}).then(j => { said = j.said || "down"; load(); }, err => { said = why(err); draw(); });
+  if ("owner" in d) return void o.api(`/api/desks/${o.desk}/page/owner`, {}).then(j => { said = `written ${j.path}; commit and push it: ${j.push}`; draw(); }, err => o.toast("The check was not written", why(err)));
 }
 
 function submit(e) {
@@ -242,8 +266,8 @@ document.addEventListener("change", e => {
   save({ edit: { facts } });
 });
 
-/** The press. The wall's half is crate::wall (step 4); until then the row
- *  says so, in the row, and nothing leaves. */
+/** The press: Everyone goes to the wall, Friends only through the relay,
+ *  sealed (server/api_wall.rs). The row says how it went, in the row. */
 function publish(btn) {
   btn.disabled = true;
   o.api(`/api/desks/${o.desk}/page/publish`, {}).then(j => { said = j.said || "up · just now"; load(); },
@@ -319,7 +343,9 @@ const PAGE_CSS = `
 .pg-pressrow { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .pg-press { border: 0; border-radius: var(--r-sm); padding: 8px 12px; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
 .pg-press:disabled { opacity: .5; cursor: default; }
-.pg-said { font-size: var(--fs-small); color: var(--fg-2); min-height: 1.4em; }
+.pg-said { font-size: var(--fs-small); color: var(--fg-2); min-height: 1.4em; overflow-wrap: anywhere; }
+.pg-quietbtn { align-self: flex-start; border: 0; background: none; padding: 0; color: var(--fg-2); font: inherit; font-size: var(--fs-small); text-decoration: underline; cursor: pointer; }
+.pg-hearts { color: var(--fg-2); }
 /* By its own width: beside a docked panel the view is narrower than the window. */
 @container (max-width: 640px) {
   .pg-left, .pg-side { grid-column: 1 / -1; }

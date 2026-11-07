@@ -204,6 +204,25 @@ pub(crate) fn waiting_named(app: &App, ids: &[String]) -> Vec<serde_json::Value>
 const RESTART_TICK: std::time::Duration = std::time::Duration::from_secs(5);
 const RESTART_IDLE_TICK: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// What the wall did not take yet (1.59, `crate::wall`): tried again at
+/// most once a minute, off this task, one flush at a time. One query when
+/// nothing waits.
+fn wall_tick(app: &Arc<App>) {
+    use std::sync::atomic::{AtomicBool, AtomicI64, Ordering::SeqCst};
+    static LAST: AtomicI64 = AtomicI64::new(0);
+    static RUNNING: AtomicBool = AtomicBool::new(false);
+    let now = crate::store::now();
+    if now - LAST.load(SeqCst) < 60 || RUNNING.swap(true, SeqCst) {
+        return;
+    }
+    LAST.store(now, SeqCst);
+    let a = app.clone();
+    tokio::task::spawn_blocking(move || {
+        super::api_wall::flush_held(&a);
+        RUNNING.store(false, SeqCst);
+    });
+}
+
 /// The dates on notes whose hour has come (`crate::due::ring`): a card each,
 /// on the clock this watcher already keeps. One query when nothing is due.
 fn ring_due(app: &Arc<App>) {
@@ -281,6 +300,7 @@ pub(crate) fn spawn_restart_watcher(app: Arc<App>) {
             // pending restart waits on; nothing else would say so.
             emit_update_if_changed(&app);
             ring_due(&app);
+            wall_tick(&app);
             let pending = *app.restart.lock().unwrap();
             match pending {
                 Some(p) => {

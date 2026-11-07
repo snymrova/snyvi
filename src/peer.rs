@@ -175,6 +175,21 @@ impl Identity {
         format!("{secs}.{}", b64(&sig.to_bytes()))
     }
 
+    /// The header the wall wants on a write (1.59, `crate::wall`): the time,
+    /// and a signature over the request and its body's blake3, so a body
+    /// swapped on the way does not carry the signature with it.
+    pub fn wall_auth(&self, method: &str, path: &str, body: &[u8]) -> String {
+        let secs = crate::store::now();
+        let msg = crate::wall::auth_message(method, path, secs, body);
+        format!("{secs}.{}", b64(&self.sign.sign(msg.as_bytes()).to_bytes()))
+    }
+
+    /// A signature over `msg`, for the wall's test vectors.
+    #[cfg(test)]
+    pub fn sign_for_test(&self, msg: &[u8]) -> String {
+        b64(&self.sign.sign(msg).to_bytes())
+    }
+
     /// The key the box between this daemon and `peer` is sealed under, in the
     /// direction `from_me` says. Both public keys are in the derivation, so a
     /// key is one pair's and one direction's.
@@ -314,8 +329,9 @@ pub fn emoji(a: &[u8; 32], b: &[u8; 32]) -> String {
 /// close the loop -- a receipt, a reply, a line done. A frame without one is
 /// older. What a friend's last frame said is kept (`Peer::v`), and those
 /// kinds go only to a friend at `REPLIES_V` or past it. 3 from 1.25 (the
-/// line), 4 from 1.49, which reads an answer to a reply (`Reply::own`).
-pub const CONTENT_V: u32 = 4;
+/// line), 4 from 1.49, which reads an answer to a reply (`Reply::own`), 5
+/// from 1.59, which reads the wall's line and a friend's page.
+pub const CONTENT_V: u32 = 5;
 
 /// The first `v` that reads `Receipt`, `Reply` and `Done`.
 pub const REPLIES_V: u32 = 2;
@@ -404,6 +420,31 @@ pub enum Content {
         #[serde(default)]
         v: u32,
     },
+    /// What the wall says back about this daemon's page (1.59), once a day,
+    /// from `WALL_KEY` alone (`crate::wall::take`): the hearts since the last
+    /// line, the names of those from checked pages, and the reports counted.
+    Wall {
+        slug: String,
+        hearts: i64,
+        #[serde(default)]
+        names: Vec<String>,
+        #[serde(default)]
+        since: i64,
+        #[serde(default)]
+        reported: i64,
+        #[serde(default)]
+        v: u32,
+    },
+    /// A friend's page, sent Friends only (1.59): the page and the moment
+    /// it went out with, as JSON the reader's snyvi shows and never runs.
+    Page {
+        slug: String,
+        page: serde_json::Value,
+        #[serde(default)]
+        moment: serde_json::Value,
+        #[serde(default)]
+        v: u32,
+    },
     /// A kind a newer snyvi sends: opened, held, read after an update.
     #[serde(other)]
     Other,
@@ -414,7 +455,11 @@ impl Content {
     pub fn v(&self) -> u32 {
         match self {
             Content::Document { at, .. } | Content::Note { at, .. } => at.v,
-            Content::Receipt { v, .. } | Content::Reply { v, .. } | Content::Done { v, .. } => *v,
+            Content::Receipt { v, .. }
+            | Content::Reply { v, .. }
+            | Content::Done { v, .. }
+            | Content::Wall { v, .. }
+            | Content::Page { v, .. } => *v,
             Content::Other => 0,
         }
     }
@@ -510,10 +555,22 @@ fn unpack(payload: &[u8]) -> Result<(Content, Vec<u8>)> {
 
 /// Seal `content` for `peer`: the frame as the relay takes it.
 pub fn seal(me: &Identity, peer: &Peer, content: &Content, body: &[u8]) -> Result<Vec<u8>> {
-    let peer_box = peer.box_bytes()?;
-    let key = me.box_key(&peer_box, true);
     let mut nonce = [0u8; 24];
     getrandom::fill(&mut nonce).map_err(|e| anyhow!("reading random bytes for a nonce: {e}"))?;
+    seal_nonce(me, peer, content, body, nonce)
+}
+
+/// `seal` with the nonce given: the wall's test vectors pin one, so its
+/// TypeScript seal is checked byte for byte against this one.
+pub fn seal_nonce(
+    me: &Identity,
+    peer: &Peer,
+    content: &Content,
+    body: &[u8],
+    nonce: [u8; 24],
+) -> Result<Vec<u8>> {
+    let peer_box = peer.box_bytes()?;
+    let key = me.box_key(&peer_box, true);
     let mut out = Vec::with_capacity(1 + 32 + 24 + body.len() + 256);
     out.push(VERSION);
     out.extend_from_slice(me.sign.verifying_key().as_bytes());
@@ -644,7 +701,7 @@ fn go_on(stop: &AtomicBool) -> Result<()> {
 /// connection instead of a TLS handshake each. ureq lets an idle connection
 /// go after fifteen seconds, under what the relay allows, so a POST rarely
 /// meets one the relay closed; when it does, the try is retried.
-fn http() -> ureq::Agent {
+pub(crate) fn http() -> ureq::Agent {
     static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
     AGENT
         .get_or_init(|| {

@@ -58,6 +58,7 @@ mod told;
 mod update;
 mod version;
 mod waiting;
+mod wall;
 mod watch;
 mod week;
 mod whats_new;

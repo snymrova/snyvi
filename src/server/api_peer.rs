@@ -1109,6 +1109,16 @@ fn send_one(
                 name: name.to_string(),
                 v: peer::CONTENT_V,
             },
+            // A page, Friends only (1.59): the JSON the press wrote, in `extra`.
+            "page" => {
+                let v: serde_json::Value = serde_json::from_str(&row.extra)?;
+                Content::Page {
+                    slug: row.re.clone(),
+                    page: v.get("page").cloned().unwrap_or_default(),
+                    moment: v.get("moment").cloned().unwrap_or_default(),
+                    v: peer::CONTENT_V,
+                }
+            }
             other => anyhow::bail!("a frame of a kind this snyvi does not send: {other}"),
         };
         let frame = peer::seal(me, &p, &content, b"")?;
@@ -1332,6 +1342,10 @@ pub(crate) fn take_in(
     bytes: Vec<u8>,
     via_line: bool,
 ) -> anyhow::Result<bool> {
+    // The wall's own key, before any friend's: only its line opens from it.
+    if crate::wall::is_wall(&w.sender) {
+        return super::api_wall::take(app, me, w, &bytes);
+    }
     let friend = app
         .store
         .peer_by_key(&w.sender)?
@@ -1419,8 +1433,9 @@ pub(crate) fn bring_in(app: &Arc<App>, me: &Identity) -> anyhow::Result<usize> {
             .store
             .peer_by_key(&w.sender)?
             .filter(|p| p.removed_at == 0);
-        let fetch =
-            friend.is_some() && !app.store.peer_taken(&w.id)? && w.size as usize <= peer::FRAME_MAX;
+        let fetch = (friend.is_some() || crate::wall::is_wall(&w.sender))
+            && !app.store.peer_taken(&w.id)?
+            && w.size as usize <= peer::FRAME_MAX;
         if fetch {
             let bytes = peer::fetch(me, &w.id)?;
             if take_in(app, me, &w, bytes, false)? {
@@ -1650,6 +1665,13 @@ fn arrived(
         }
         // Held before it got here (`take_in`); nothing to keep.
         Content::Other => {}
+        // The wall's line comes from the wall's key alone (`crate::wall::take`):
+        // one a friend sends is no line of the wall's, and is dropped.
+        Content::Wall { .. } => {}
+        // A friend's page, Friends only (1.59): kept to show, never run.
+        Content::Page {
+            slug, page, moment, ..
+        } => super::api_wall::friend_page(app, p, &slug, page, moment)?,
         Content::Note {
             text,
             due_at,

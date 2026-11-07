@@ -488,6 +488,9 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ),
     // Writes into a desk's folder with the daemon's key: asked only to refuse.
     ("POST", "/api/desks/1/page/owner", None, Gate::Desk, false),
+    // The press reaches the wall: asked only to refuse.
+    ("POST", "/api/desks/1/page/publish", None, Gate::Desk, false),
+    ("POST", "/api/desks/1/page/down", None, Gate::Desk, false),
     (
         "POST",
         "/api/panes/nope/post",

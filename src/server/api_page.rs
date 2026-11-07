@@ -81,9 +81,14 @@ fn page_json(app: &App, desk: &crate::desk::Desk) -> anyhow::Result<serde_json::
             "offers": offers,
         }));
     };
-    let (moments, names) = app
-        .store
-        .clocked(|c, _| Ok((page::moments(c, p.id, false)?, page::file_names(c, &p)?)))?;
+    let (moments, names, hearts, waiting) = app.store.clocked(|c, _| {
+        Ok((
+            page::moments(c, p.id, false)?,
+            page::file_names(c, &p)?,
+            page::hearts_of(c, p.id)?,
+            crate::wall::held(c, Some(p.id))?,
+        ))
+    })?;
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     Ok(json!({
         "page": p,
@@ -91,6 +96,11 @@ fn page_json(app: &App, desk: &crate::desk::Desk) -> anyhow::Result<serde_json::
         "offers": offers,
         "held": files::held(&pages_dir(app), &refs),
         "cap": files::PAGE_MAX,
+        // The wall's last line: the hearts, with names, to the builder.
+        "hearts": { "n": hearts.0, "names": hearts.1, "since": hearts.2 },
+        // What the wall has not taken yet, and the last reason.
+        "waiting": waiting.len(),
+        "waiting_why": waiting.first().map(|r| r.error.clone()).unwrap_or_default(),
     }))
 }
 
