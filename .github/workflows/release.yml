@@ -116,8 +116,14 @@ jobs:
     strategy:
       matrix:
         include:
+          # Pinned, never ubuntu-latest. When latest became 26.04, between
+          # 1.57.0 and 1.58.0, its musl-gcc and libc put AVX2 into the static
+          # binary, and 1.58.0 died with an illegal instruction before main on
+          # any x86_64 older than Haswell; the updater rolled those machines
+          # back to 1.57.0. The step "Boots on a CPU without AVX2" below is
+          # what catches the next image that does it.
           - target: x86_64-unknown-linux-musl
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             cc: musl-gcc
             deb_arch: amd64
           - target: aarch64-unknown-linux-musl
@@ -145,6 +151,30 @@ jobs:
           file $B
           SNYVI_DATA_DIR=/tmp/s SNYVI_CONFIG_DIR=/tmp/c SNYVI_PORT=7802 $B send README.md
           SNYVI_BENCH_FACTOR=3 $B bench --check
+      - name: Boots on a CPU without AVX2
+        # The runner's own CPU has every extension, so the smoke test above
+        # passes a binary that an older machine cannot start. qemu's user
+        # mode, told it is a Nehalem (x86-64-v2, no AVX at all), executes the
+        # real binary and raises SIGILL on the first instruction that CPU
+        # lacks. Booting the daemon, not just --version, runs SQLite and the
+        # rest of startup too; a sent document proves it serves. Tried by
+        # hand on 2026-11-07: 1.58.0 dies here with 132, 1.57.0 passes.
+        if: matrix.deb_arch == 'amd64'
+        run: |
+          sudo apt-get install -y -qq qemu-user-static
+          B=target/${{ matrix.target }}/release/snyvi
+          qemu-x86_64-static -cpu Nehalem $B --version
+          export SNYVI_DATA_DIR=/tmp/q-data SNYVI_CONFIG_DIR=/tmp/q-config SNYVI_PORT=7803
+          qemu-x86_64-static -cpu Nehalem $B serve > /tmp/q.log 2>&1 &
+          pid=$!
+          for i in $(seq 90); do
+            curl -sf -m2 http://127.0.0.1:7803/api/health >/dev/null && break
+            kill -0 $pid 2>/dev/null || { cat /tmp/q.log; exit 1; }
+            sleep 1
+          done
+          curl -sf -m2 http://127.0.0.1:7803/api/health
+          $B send README.md
+          kill $pid
       - name: Package
         run: |
           name=snyvi-$VERSION-${{ matrix.target }}
