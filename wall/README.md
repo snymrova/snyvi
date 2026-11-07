@@ -48,6 +48,7 @@ sealed to its daemon with the wall's own key (`WALL_SEED`, minted by
 
     npm install
     npm run check && npm test          # wrangler dev, local, nothing deployed
-    npm run mint                       # once: WALL_SEED, and WALL_KEY/WALL_BOX for src/wall.rs
-    npm run deploy                     # by hand, with the account's token
+    npm run daemon -- <a built snyvi>  # that daemon against wrangler dev, local
+    npm run deploy                     # by hand, with the account's token (after `wrangler d1 create` and `r2 bucket create`)
+    npm run mint                       # once, after the first deploy: WALL_SEED, and WALL_KEY/WALL_BOX for src/wall.rs
     WALL_OPERATOR=… npm run hide -- <slug>   # the operator's takedown
