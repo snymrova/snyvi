@@ -37,6 +37,7 @@ pub(crate) enum Flushed {
 /// What a row is, as a request: method, path, body, content type.
 fn request(
     app: &App,
+    me: &Identity,
     slug: &str,
     r: &Row,
 ) -> anyhow::Result<(&'static str, String, Vec<u8>, String)> {
@@ -60,12 +61,18 @@ fn request(
             json,
         ),
         _ => match r.what.as_str() {
-            "page" => (
-                "PUT",
-                format!("/pages/{slug}"),
-                r.body.clone().into_bytes(),
-                json,
-            ),
+            // The page, with this daemon's box key in the signed body: what
+            // the wall seals its daily line to.
+            "page" => {
+                let mut v: serde_json::Value = serde_json::from_str(&r.body)?;
+                v["box"] = json!(crate::peer::b64(&me.box_public()));
+                (
+                    "PUT",
+                    format!("/pages/{slug}"),
+                    v.to_string().into_bytes(),
+                    json,
+                )
+            }
             "check" => (
                 "POST",
                 format!("/pages/{slug}/check"),
@@ -132,7 +139,7 @@ fn why(status: u16, body: &[u8]) -> String {
 pub(crate) fn flush_page(app: &App, me: &Identity, p: &page::Page) -> anyhow::Result<Flushed> {
     let rows = app.store.clocked(|c, _| wall::held(c, Some(p.id)))?;
     for r in rows {
-        let (method, path, body, ct) = match request(app, &p.slug, &r) {
+        let (method, path, body, ct) = match request(app, me, &p.slug, &r) {
             Ok(x) => x,
             Err(e) => {
                 app.store
