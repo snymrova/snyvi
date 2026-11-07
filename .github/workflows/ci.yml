@@ -437,6 +437,32 @@ jobs:
           CI: "1"
           WRANGLER_SEND_METRICS: "false"
 
+  wall:
+    # The wall (wall/, 1.59): wrangler dev on a spare port, D1 and R2 local,
+    # beside the test's own relay and raw files; every write driven as the
+    # daemon drives it, and the seal checked against the vectors cargo test
+    # writes. Never a deploy, which is `npm run deploy` by hand.
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: wall
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: wall/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+        env:
+          CI: "1"
+          WRANGLER_SEND_METRICS: "false"
+
   installer:
     # The one-liner, run for real, in three distributions: the per-user
     # install every Linux gets by default, an update over a running daemon,

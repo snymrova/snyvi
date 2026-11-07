@@ -29,7 +29,8 @@ if (!PORT || PORT === "7777" || !CAP) {
 }
 
 /* What each picture is of: the part to clip, and what to do first. The
- * part's box plus MARGIN, at most COLUMN wide, at 2x. */
+ * part's box plus MARGIN, at most COLUMN wide, at 2x; `vh` is the window's
+ * height when 800 is too short for the part. */
 const MARGIN = 14, COLUMN = 460;
 const STILLS = {
   "dates.png": { part: '[data-sec="notes"]' },
@@ -38,6 +39,17 @@ const STILLS = {
     part: '[data-sec="panels"]',
     first: `document.querySelector('[data-a="back-new"]')?.click(); await new Promise(r => setTimeout(r, 300));
       const i = document.querySelector(".dk-backnew input"); if (i) { i.value = "npm run dev"; i.blur(); }`,
+  },
+  // 1.59: Home's wall (path /), and a desk's Page view (path /desk/N).
+  "wall.png": { part: '[data-w="wall"]', first: `for (let i = 0; i < 40 && !document.querySelector(".wl-card"); i++) await new Promise(r => setTimeout(r, 100));` },
+  // A window tall enough for the whole page beside its docked panel.
+  "page.png": {
+    part: ".dk-view .pg-page", vh: 1400,
+    first: `document.querySelector('.dk-views [data-view="page"]')?.click();
+      for (let i = 0; i < 40 && !document.querySelector(".pg-moments li"); i++) await new Promise(r => setTimeout(r, 100));
+      // The page as a reader meets it: from its head, with its newest moment.
+      document.head.insertAdjacentHTML("beforeend", "<style>.pg-moments li + li { display: none }</style>");
+      document.querySelector(".pg-left")?.scrollTo(0, 0);`,
   },
 };
 
@@ -50,6 +62,7 @@ try {
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] }, s);
   for (const [name, st] of Object.entries(STILLS)) {
     if (only.length && !only.includes(name)) continue;
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: st.vh || 800, deviceScaleFactor: 2, mobile: false }, s);
     // A blank page between, so the same address loads again rather than
     // only moving its fragment.
     await cdp.send("Page.navigate", { url: "about:blank" }, s); await sleep(200);
@@ -66,7 +79,10 @@ try {
         || [...document.querySelectorAll(${JSON.stringify(st.part)} + " > *")].find(e => e.getBoundingClientRect().height > 0);
       for (let i = 0; el && i < ${st.up || 0}; i++) el = el.parentElement;
       if (!el) return null;
-      el.scrollIntoView({ block: "center" });
+      // At once, not glided (Home's #main scrolls smoothly), and a part
+      // taller than the window from its top.
+      el.scrollIntoView({ block: el.getBoundingClientRect().height > innerHeight * 0.8 ? "start" : "center", behavior: "instant" });
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       // From its heading: a section's box starts in the gap above it, where
       // the one before still shows.
       const b = el.getBoundingClientRect(), top = Math.max(b.top, (el.firstElementChild || el).getBoundingClientRect().top - 10);

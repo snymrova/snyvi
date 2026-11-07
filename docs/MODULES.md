@@ -31,6 +31,9 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/store.rs` | 2320 | documents on disk, SQLite index, FTS5, versions, projects, workflows, inbox |
 | `src/store/friends.rs` | 270 | the store's side of friends, thin over `peer`: moved out of `store.rs` at its 2,500 lines (1.49) |
 | `src/receive.rs` | 525 | the one entry every transport calls: locate, read, render, file; a friend's bytes come in here too |
+| `src/page.rs` | 700 | a desk's page (1.59, `docs/WALL.md`): its own SCHEMA (pages, moments, pageoffers, pages_from, page_outbox); start from the draft, edits that drop provenance chips, redraft, moments by `about`, one card per thing, the wall's hearts, friends' pages |
+| `src/page/draft.rs`, `accent.rs`, `files.rs` | 230, 360, 160 | the draft from the README, logo, remote, views and threads; the accent from the logo (Material's score, snapped to the eight; a PNG reader of its own); files copied in by content with caps |
+| `src/wall.rs` | 230 | the way to the wall: its address and keys, the signature (`auth_message`), what the wall is sent, the outbox |
 | `src/board.rs` | 590 | a board (1.58, `docs/BOARD.md`): `design/<board>/` with `board.json` and a file per frame; names checked before paths, paths kept under the desk root; write, hide, arrange, tokens, export; each frame a quiet `board` version through `receive` |
 | `src/focus.rs` | 200 | the reader's focus (1.58): where they are in a desk's view, one per desk in memory; checked, one line, said in the brief for half an hour |
 | `src/peer.rs` | 1460 | the daemon's identity, the word code, SPAKE2 pairing, the sealed frame, the relay client, the link's address, messages and backoff, the peers tables |
@@ -42,7 +45,10 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/lately.rs` | 438 | Lately: everything that came from outside, kept (documents, versions, asides, a friend's line, reply, tick, answers), one seen watermark, news pruned after 14 days (`docs/DESIGN.md` §4.5) |
 | `src/thread.rs` | 1151 | threads, turns (Your turn) and suggested panels: the tables, the stages, who is told what (#90) |
 | `src/server/api_thread.rs` | 734 | threads over HTTP: the agent's and the mod's on `/api/panes/{id}/…`, the page's on `/api/desks/{id}/…`, the held question's long-poll |
+| `src/server/api_page.rs` | 520 | the Page view's routes on the capability, `offer_post`'s on the token, `/pages/{file}`, door (a) on a shipped thread |
+| `src/server/api_wall.rs` | 640 | the press (Everyone, Friends only), take down, the outbox's flush and its minute tick, the wall's daily line arriving, a friend's page arriving, Home's `/api/wall` |
 | `src/server/api_board.rs` | 440 | a board over HTTP (1.58): the agent's `board_*`/`frame_*`/`read_focus` on the token, the page's read and focus on the capability; frames are documents, so no frame HTML is served here |
+| `src/mcp/page.rs` | 60 | `offer_post`: a card in the desk's corner, never a publish |
 | `src/mcp/board.rs` | 300 | the six board tools and how they say a board |
 | `src/claude_mod.rs` | 144 | the snyvi mod (`mod/`) built in, written to the data folder, named in a panel's `CLAUDE_CODE_PLUGIN_DIRS` |
 | `src/mcp/threads.rs` | 247 | the eight #90 MCP tools: start_thread, move_thread, ask, hand_over, settle_asks, remove_card, suggest_panel, suggest_desk |
@@ -103,6 +109,9 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/app/01-shell.js` … `10-boot.js` | 119–871 each | first paint | `app.js`, as ten parts in one function scope: shell and helpers, tree, queue and what moved, documents and connect, notes and live refresh, the rail, navigation, desks, what snyvi says back, boot. `build.rs` joins them in name order |
 | `ui/desk/01-head.js` … `08-style.js` | 123–882 each | lazy | `desk.js`, as eight parts of one module: head, socket, screen, keys and a pane, the desk, the rail, actions and the seam, style |
 | `ui/desk/23-groups.js` | 330 | lazy | 1.57: a desk's tabs -- `inTab` (the desk as the shown tab sees it, through `current()`), the head's row, the hidden boxes the other tabs' panels run in, switching, the tab's menu |
+| `ui/desk/27-page.js` | 100 | lazy | 1.59: Page in the switcher, the card in the grid's corner, `page.js` loaded on the first press |
+| `ui/page.js` | 340 | lazy | the Page view: the page in its tone, edited in place, its chips, and the side with the press |
+| `ui/wall.js` | 150 | lazy | Home's *What people are building*: Everyone, Following, Friends, hearts |
 | `ui/desk/25-views.js` | 190 | lazy | 1.58: views over a desk -- the head's switcher, a board over the grid with one panel docked, focus told on open and close |
 | `ui/board/01-canvas.js` … `06-style.js` | 30–90 each | lazy | `board.js` (1.58), imported by the desk's views part when a board opens: the world under a transform, frames as sandboxed iframes by `src`, the rail's section, selection as the reader's focus, live redraw, style |
 | `ui/home.js` | 1330 | lazy | Home, with Friends |

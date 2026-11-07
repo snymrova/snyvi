@@ -671,7 +671,7 @@ pub(crate) async fn pane_brief(
         .filter(|p| p.removed_at == 0)
         .map(|p| p.name)
         .collect();
-    let (threads, waiting, cards, untold, ship, routines, nots) = app
+    let (threads, waiting, cards, untold, ship, routines, nots, page) = app
         .store
         .clocked(|c, now| {
             Ok((
@@ -686,6 +686,7 @@ pub(crate) async fn pane_brief(
                 crate::routine::for_desk(c, desk.id)?,
                 // What the reader said Not this to, for a week (1.54).
                 crate::onyou::nots(c, desk.id, now)?,
+                crate::page::get(c, desk.id)?,
             ))
         })
         .unwrap_or_default();
@@ -706,6 +707,7 @@ pub(crate) async fn pane_brief(
             .and_then(|s| crate::whats_new::brief_line(s, now)),
         grp: placed.pane.grp,
         focus: app.focus.line(desk.id, now),
+        page: page.as_ref().map(crate::brief::page_line),
     };
     let context = crate::brief::brief_of(
         &desk,

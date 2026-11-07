@@ -25,6 +25,22 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "wall"
+since = "1.59.0"
+title = "What people are building"
+line = "Home shows what other builders are working on, newest moment first, with a heart to say you'd use it, read it or try it. Put your own desk's page there from Page in its head, when you press Publish and not before."
+still = "wall.png"
+show = "home [data-w=wall]"
+
+[[feature]]
+id = "page"
+since = "1.59.0"
+title = "Your desk's page"
+line = "Page, beside Folder in a desk's head, drafts a landing page from the desk: its README, its logo and colour, its repository and its moments. Edit it where it stands, then send it to the wall or to friends only, and take it down whenever you like."
+still = "page.png"
+show = "desk .dk-views [data-view=page]"
+
+[[feature]]
 id = "board"
 since = "1.58.0"
 title = "A board beside your panel"

@@ -119,6 +119,20 @@ before saying done. "This one" is what they selected (`board_read` or
 `read_focus`). How, at length: [board.md](board.md); read it before the
 first frame.
 
+## A page
+
+A desk can have a **page**: the builder's landing page, which they put on
+the wall for everyone or send to friends only. It is theirs: you never
+publish, and nothing leaves on your word. When something on the desk truly
+shipped -- a chapter accepted, a release, a clip worth showing -- offer it
+once with `offer_post`: a title as a headline, a few lines in the maker's
+own words (not a changelog, not a pitch), one picture or clip at most, never
+five, and `about` naming what it is about (a document id, a path, gallery
+ids, the thread's name). Not after a step, not for a plan, not twice: a
+second call about the same thing only updates the card. A desk without a
+page says so when you offer; tell the user once that Page in the desk's head
+starts one.
+
 ## Widgets
 
 A widget is a small box on the desk's rail: a **count** (8 characters) and

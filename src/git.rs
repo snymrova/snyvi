@@ -122,6 +122,15 @@ pub fn read(root: &Path, now: i64) -> Option<State> {
     Some(s)
 }
 
+/// The repository's page on the web and nothing else: what a desk's page
+/// drafts its GitHub link from (`page::draft`), without the log `read` runs.
+/// Read from the config, never asked of the remote.
+pub fn remote_web(root: &Path) -> Option<String> {
+    run(root, &["config", "--get-regexp", r"^remote\..*\.url$"])
+        .and_then(|out| remote(&out))
+        .and_then(|url| web_url(&url))
+}
+
 /// The URL of `origin`, or of the first remote when there is none, out of
 /// `git config --get-regexp` lines: `remote.<name>.url <url>`.
 fn remote(out: &str) -> Option<String> {

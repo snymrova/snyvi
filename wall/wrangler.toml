@@ -1,0 +1,80 @@
+# The wall (docs/WALL.md): every snyvi Home's "What people are building",
+# and snyvi.page/<slug>. One Worker, one D1 database and one R2 bucket. It
+# holds what a builder signed and pressed Publish on, in the clear, and the
+# hearts by key; nothing else. Reads come out of R2 through the cache, so
+# they cost no Worker time; writes are signed by a daemon's key.
+name = "snyvi-wall"
+main = "src/index.ts"
+compatibility_date = "2026-06-01"
+
+workers_dev = true
+routes = [
+  { pattern = "wall.snyvi.com", custom_domain = true },
+  { pattern = "snyvi.page", custom_domain = true },
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "snyvi-wall"
+database_id = "set-by-the-first-deploy"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "snyvi-wall"
+
+# The daily line: each page's hearts since the last, sealed to its daemon.
+[triggers]
+crons = ["0 9 * * *"]
+
+[vars]
+RELAY_URL = "https://relay.snyvi.com"
+RAW_BASE = "https://raw.githubusercontent.com"
+
+# No logs: a line per request would be a list of who looks at whom.
+[observability]
+enabled = false
+
+[[ratelimits]]
+name = "LIMIT_WRITE"   # by key, signed: a press is a handful of writes
+namespace_id = "3101"
+simple = { limit = 60, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_HEART"   # by key, signed
+namespace_id = "3102"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "LIMIT_FLOOD"   # by IP, everything not cached
+namespace_id = "3103"
+simple = { limit = 600, period = 60 }
+
+# `npm test` runs `wrangler dev --env test`: local D1 and R2 in memory, the
+# limits out of the way, the /_test routes on (WALL_TEST), and the relay
+# and GitHub's raw files pointed at the test's own server. Never deployed.
+[env.test]
+vars = { WALL_TEST = "1", RELAY_URL = "http://127.0.0.1:8796", RAW_BASE = "http://127.0.0.1:8796/raw" }
+
+[[env.test.d1_databases]]
+binding = "DB"
+database_name = "snyvi-wall-test"
+database_id = "test"
+
+[[env.test.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "snyvi-wall-test"
+
+[[env.test.ratelimits]]
+name = "LIMIT_WRITE"
+namespace_id = "4101"
+simple = { limit = 100000, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_HEART"
+namespace_id = "4102"
+simple = { limit = 100000, period = 60 }
+
+[[env.test.ratelimits]]
+name = "LIMIT_FLOOD"
+namespace_id = "4103"
+simple = { limit = 100000, period = 60 }

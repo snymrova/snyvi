@@ -33,6 +33,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, readdirSync, unlinkSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:http";
 import { join, resolve, basename } from "node:path";
 import { plan, flowchart } from "./fixture.mjs";
 import { launch, killTree, pageLoad, evaluate, sleep, tab } from "./chrome.mjs";
@@ -159,7 +160,10 @@ async function main() {
     if (git) symlinkSync(git, join(openers, "git"));
   }
   const path = [openers, ...(process.env.PATH ?? "").split(sep).filter(d => d && !existsSync(join(d, app)))].join(sep);
-  const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, PATH: path };
+  // The wall, stood in for (1.59): Home's section asks the daemon, and the
+  // daemon asks this, never wall.snyvi.com, so no run reaches the internet.
+  const wall = await fakeWall();
+  const env = { ...process.env, HOME: home, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, PATH: path, SNYVI_WALL: wall.url };
   const stub = join(bin, app);
   const base = `http://127.0.0.1:${PORT}`;
   let chromeProc = null, failed = false;
@@ -305,6 +309,8 @@ async function main() {
     await section("#188: files by name in ⌘K", () => findRows(cdp, base, token, env, tmp));
     await section("#214: a desk opens its own folder", () => deskFolderRows(cdp, base, token, env, tmp));
     await section("1.58: views over a desk, a board and the folder, a panel beside each", () => viewRows(cdp, base, token, env, tmp));
+    await section("1.59: a desk's page, drafted, kept, and the agent's card", () => pageRows(cdp, base, token, env, tmp));
+    await section("1.59: what people are building, on Home", () => wallRows(cdp, base));
     await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -4516,7 +4522,7 @@ async function viewRows(cdp, base, token, env, tmp) {
     const appeared = await until(`!!document.querySelector('.dk-views [data-view="board:home"]')`);
     const after = await p.ev(labels), x1 = await p.ev(folderX);
     rows.push(["a board the agent draws joins the switcher at its end, and nothing before it moves",
-      wrote === 201 && appeared && before === "panels folder" && after === "panels folder board:home" && x0 === x1 && x0 >= 0,
+      wrote === 201 && appeared && before === "panels folder page" && after === "panels folder page board:home" && x0 === x1 && x0 >= 0,
       wrote !== 201 ? `the frame write answered ${wrote}` : !appeared ? `the switcher still says "${after}"` : x0 !== x1 ? `Folder moved ${x0} → ${x1}` : `"${before}" → "${after}"`]);
 
     await p.clickOn(`${P_VIEW}[data-view="board:home"]`);
@@ -4574,6 +4580,183 @@ async function viewRows(cdp, base, token, env, tmp) {
   } finally {
     await post(`/api/desks/${desk}/delete`).catch(() => {});
     await post(`/api/browse/${rid}/close`, {}, TK).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** What reached the stand-in wall, in order: method, path, and whether it
+ *  came signed (`x-snyvi-from`, `x-snyvi-auth`), as the real one checks. */
+const wallSeen = [];
+
+/** A full wall, twelve pages (Home shows twelve), on a port of its own, shaped as wall/src/render.ts's
+ *  `card` and index.ts's heart answer. Nothing is checked here: the Worker's
+ *  own test (wall/test/wall.test.mjs) does that against the daemon's vectors. */
+function fakeWall() {
+  const page = { slug: "breeds-of-dogs", title: "Breeds of dogs", lede: "A field guide, one breed a chapter.", kind: "Book", tone: "book", stage: "drafting",
+    accent: "teal", wash: "#2a9d8f", logo: "", cover: "", checked_at: 1, moment: { id: 4, title: "Chapter 4 accepted", at: Math.floor(Date.now() / 1000) - 3600, file: "" } };
+  let hearts = 3, on = false;
+  const s = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      wallSeen.push({ method: req.method, path: req.url, signed: !!req.headers["x-snyvi-from"] && !!req.headers["x-snyvi-auth"] });
+      const json = (code, v) => res.writeHead(code, { "content-type": "application/json" }).end(JSON.stringify(v));
+      const more = Array.from({ length: 11 }, (_, i) => ({ ...page, slug: `page-${i + 2}`, title: `Page ${i + 2}`, accent: "violet", wash: "", hearts: i, moment: i % 2 ? null : page.moment }));
+      if (req.method === "GET" && req.url === "/wall.json") return json(200, { v: 1, at: Math.floor(Date.now() / 1000), pages: [{ ...page, hearts }, ...more] });
+      if (req.method === "POST" && req.url === `/pages/${page.slug}/hearts`) { on = !on; hearts += on ? 1 : -1; return json(200, { on, hearts }); }
+      json(404, { error: "not on this wall" });
+    });
+  });
+  return new Promise(ok => s.listen(0, "127.0.0.1", () => { s.unref(); ok({ url: `http://127.0.0.1:${s.address().port}` }); }));
+}
+
+/** 1.59 (plan 48ca2d5b9e): a desk's page. Page stands in the switcher after
+ *  Folder; pressed, it is a draft from the desk's own README with the chip
+ *  that says so, and nothing is kept until Make it your page. Publish waits
+ *  for who sees it. A field is edited where it stands, a moment shows on the
+ *  page, and an agent's offer_post is one card in the grid's corner that
+ *  moves no panel; Not now is final, through a reload and a second offer. */
+async function pageRows(cdp, base, token, env, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const TK = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const dir = join(tmp, "page-159");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "README.md"), "# Breeds of dogs\n\nA field guide, one breed a chapter, written with a Claude beside it.\n");
+  const rid = execFileSync(BIN, ["browse", dir, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop().match(/\/b\/([^/?#]+)/)[1];
+  const made = await post("/api/desks", { root: rid, path: "" }), desk = made.desk ? made.desk.id : made.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  for (const pane of [pa, pb]) await post(`/api/panes/${pane}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  const read = async (q = "") => (await (await fetch(`${base}/api/desks/${desk}/page${q}`, { headers: H })).json().catch(() => ({}))) || {};
+  const offer = async () => { const r = await fetch(`${base}/api/panes/${pa}/post`, { method: "POST", headers: TK, body: JSON.stringify({ title: "Chapter 5 is drafted", text: "The terriers, all eleven.", about: "chapter-5", by: "claude" }) }); return { status: r.status, said: ((await r.json().catch(() => ({}))).said) || "" }; };
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const untilAsync = async (fn, tries = 40) => { for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); } return null; };
+  const labels = `[...document.querySelectorAll(".dk-views [data-view]")].map(b => b.dataset.view).join(" ")`;
+  const panes = `[...document.querySelectorAll(".dk-grid > .pn")].map(e => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map(Math.round).join(","); }).join(" ")`;
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    const sw = await p.ev(labels);
+    rows.push(["Page stands in the switcher, after Folder", sw === "panels folder page", `"${sw}"`]);
+
+    await p.clickOn(`.dk-views [data-view="page"]`);
+    const open = await until(`!!document.querySelector(".dk-view .pg .pg-title") && !!document.querySelector(".dk-view .dk-dock-b > .pn")`);
+    const drafted = open && await p.ev(`({ title: document.querySelector(".pg-title").textContent, chip: document.querySelector(".pg-names .pg-chip")?.textContent || "" })`);
+    const none = (await read()).page == null;
+    rows.push(["pressed, it is a draft from the desk's README, its chip says so, and nothing is kept yet", !!drafted && drafted.title === "Breeds of dogs" && drafted.chip === "from README" && none,
+      !open ? "no page over the grid, or no panel beside it" : !none ? "a page was kept before the press" : `title "${drafted.title}", chip "${drafted.chip}"`]);
+
+    if (open) await p.ev(`document.querySelector(".pg-side [data-start]").click(); 1`);
+    const kept = open && await untilAsync(async () => { const r = await read(); return r.page && r.page.title === "Breeds of dogs" ? r : null; });
+    const side = kept && await until(`!!document.querySelector('.pg-side [data-who="off"][aria-pressed="true"]')`) &&
+      await p.ev(`({ disabled: document.querySelector(".pg-press[data-publish]")?.disabled, said: document.querySelector(".pg-said")?.textContent || "" })`);
+    rows.push(["Make it your page keeps it, Off, with Publish waiting for who sees it", !!side && side.disabled === true && /Choose who sees it/.test(side.said),
+      !kept ? `the daemon has ${JSON.stringify((await read()).page)}` : !side ? "the side has no Who sees it, set to Off" : `Publish ${side.disabled ? "disabled" : "pressable"}, the row says "${side.said}"`]);
+
+    const renamed = "Breeds of dogs, a field guide";
+    if (kept) await p.ev(`(() => { const t = document.querySelector(".pg-title"); t.focus(); t.textContent = ${JSON.stringify(renamed)}; t.blur(); return 1; })()`);
+    const edited = kept && await untilAsync(async () => { const r = await read(); return r.page && r.page.title === renamed ? r : null; });
+    const chipGone = edited && await until(`document.querySelector(".pg-title")?.textContent === ${JSON.stringify(renamed)} && !document.querySelector('.pg-names .pg-chip[data-redraft="title"]')`);
+    rows.push(["a field edited where it stands is kept, and is the builder's own: its chip goes", !!edited && chipGone,
+      !edited ? `the daemon kept "${((await read()).page || {}).title}"` : !chipGone ? "the drafted chip is still on the title" : `"${renamed}", no chip`]);
+
+    if (kept) await p.ev(`(() => { const f = document.querySelector(".pg-moment"); f.title.value = "Chapter 4 accepted"; f.body.value = "Working dogs, done."; f.requestSubmit(); return 1; })()`);
+    const moment = kept && await until(`[...document.querySelectorAll(".pg-moments li b")].some(b => b.textContent === "Chapter 4 accepted")`);
+    rows.push(["a moment kept shows on the page", !!moment, moment ? "Chapter 4 accepted is on it" : `moments: ${JSON.stringify(((await read()).moments || []).map(m => m.title))}`]);
+
+    await p.clickOn(`.dk-views [data-view="panels"]`);
+    const back = await until(`!document.querySelector(".dk-view") && document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    await sleep(300);
+    const before = await p.ev(panes);
+    const first = await offer();
+    const card = back && first.status === 201 && await until(`!!document.querySelector(".dk-grid > .pg-card [data-pgcard]")`);
+    const after = await p.ev(panes), says = card ? await p.ev(`document.querySelector(".pg-card-h")?.textContent || ""`) : "";
+    rows.push(["an agent's offer_post is one card in the grid's corner, and no panel moves", !!card && before === after && /Chapter 5 is drafted/.test(says),
+      !back ? "the page did not close" : first.status !== 201 ? `offer_post answered ${first.status}: "${first.said}"` : !card ? "no card came" : before !== after ? `the panels moved: ${before} → ${after}` : `the card says "${says}"`]);
+
+    if (card) await p.ev(`document.querySelector('.pg-card [data-pgcard="notnow"]').click(); 1`);
+    const gone = card && await until(`!document.querySelector(".pg-card")`);
+    const again = gone && await offer();
+    if (gone) { await p.reload(); await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`); await sleep(500); }
+    const stays = gone && !(await p.ev(`!!document.querySelector(".pg-card")`)) && ((await read("?offers=1")).offers || []).length === 0;
+    rows.push(["Not now is final: gone, not back after a reload, and the same offer again is told so", !!stays && /answered/.test(again.said),
+      !gone ? "the card stayed" : !stays ? "the card came back" : `the second offer was told "${again.said}"`]);
+  } finally {
+    for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await post(`/api/browse/${rid}/close`, {}, TK).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** 1.59: Home's "What people are building". The section holds its place
+ *  while the chunk and the wall load, so the cards fill in and nothing
+ *  after them moves; the window itself fetches nothing off this machine;
+ *  a heart goes through the daemon, signed, and the count follows. */
+async function wallRows(cdp, base) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const W = `.hm [data-w="wall"]`;
+  // What could move: the section's own height, Home's foot under the grid,
+  // and the side column, which is under the main one at 1000 px.
+  const box = `(() => { const s = document.querySelector('${W}'), y = sel => Math.round(document.querySelector(sel)?.getBoundingClientRect().top ?? -1); return s ? { h: Math.round(s.getBoundingClientRect().height), foot: y(".hm-foot"), side: y(".hm-side") } : null; })()`;
+  const same = (a, b) => !!a && !!b && a.h === b.h && a.foot === b.foot && a.side === b.side;
+  const says = (a, b) => `${a.h} px, foot at ${a.foot}, side at ${a.side} before the cards; ${b.h} px, ${b.foot}, ${b.side} after`;
+  try {
+    // The section as it stands before its chunk arrives: held back here.
+    await cdp.send("Network.enable", {}, sessionId);
+    await cdp.send("Network.setBlockedURLs", { urls: ["*/assets/wall.js*"] }, sessionId);
+    await p.goto(`${base}/#cap=${cap}`);
+    const slot = await until(`!!document.querySelector('${W} [data-wall]')`);
+    await sleep(300);
+    const held = await p.ev(box);
+    await p.width(1000);
+    const heldNarrow = await p.ev(box);
+    await p.wide();
+    await cdp.send("Network.setBlockedURLs", { urls: [] }, sessionId);
+    await p.reload();
+    const filled = await until(`!!document.querySelector('${W} .wl-card')`);
+    await sleep(300);
+    const after = await p.ev(box);
+    await p.width(1000);
+    const afterNarrow = await p.ev(box);
+    await p.wide();
+    rows.push(["the wall fills in place on Home: the section keeps its height, and the foot does not move", slot && filled && same(held, after),
+      !slot ? "no wall section on Home" : !filled ? "no card came" : says(held, after)]);
+    rows.push(["at 1000 px, one column, the side under it does not move either", slot && filled && same(heldNarrow, afterNarrow),
+      !slot || !filled ? "no wall, or no card" : says(heldNarrow, afterNarrow)]);
+
+    // Twelve cards are one row, which scrolls sideways inside the section.
+    const row = filled && await p.ev(`(() => { const cs = [...document.querySelectorAll('${W} .wl-card')], box = document.querySelector('${W} .wl-cards'), tops = new Set(cs.map(c => Math.round(c.getBoundingClientRect().top))), hs = new Set(cs.map(c => Math.round(c.getBoundingClientRect().height)));
+      return { n: cs.length, tops: tops.size, hs: [...hs].join(","), scrolls: box.scrollWidth > box.clientWidth, page: document.documentElement.scrollWidth <= document.documentElement.clientWidth }; })()`);
+    rows.push(["twelve cards are one row of one height that scrolls sideways, and the page itself does not", !!row && row.n === 12 && row.tops === 1 && !row.hs.includes(",") && row.scrolls && row.page,
+      row ? `${row.n} cards on ${row.tops} row(s), heights ${row.hs}, ${row.scrolls ? "scrolls" : "does not scroll"} sideways, the page ${row.page ? "does not" : "does"}` : "no card"]);
+    const card = filled && await p.ev(`(() => { const c = document.querySelector('${W} .wl-card'); return { t: c.querySelector(".wl-t b")?.textContent, m: c.querySelector(".wl-m span")?.textContent, h: c.querySelector(".wl-heart")?.textContent.trim() }; })()`);
+    rows.push(["a card says the page, its newest moment and its hearts", !!card && card.t === "Breeds of dogs" && card.m === "Chapter 4 accepted" && card.h === "♥ 3",
+      card ? `"${card.t}", "${card.m}", "${card.h}"` : "no card"]);
+
+    const off = await p.ev(`performance.getEntriesByType("resource").map(e => e.name).filter(u => !u.startsWith(location.origin))`);
+    rows.push(["the window fetches nothing off this machine: the wall comes through the daemon", filled && off.length === 0, off.length ? off.slice(0, 3).join(", ") : "every request was to the daemon"]);
+
+    const n0 = wallSeen.length;
+    if (filled) await p.ev(`document.querySelector('${W} .wl-heart').click(); 1`);
+    const on = filled && await until(`document.querySelector('${W} .wl-heart')?.getAttribute("aria-pressed") === "true"`);
+    const sent = wallSeen.slice(n0).find(r => r.method === "POST" && r.path === "/pages/breeds-of-dogs/hearts");
+    const shown = on && await p.ev(`document.querySelector('${W} .wl-heart').textContent.trim()`);
+    rows.push(["a heart goes to the wall through the daemon, signed, and the count follows", !!on && !!sent && sent.signed && shown === "♥ 4",
+      !on ? `the heart did not take; the card says "${await p.ev(`document.querySelector('${W} .wl-said')?.textContent || ""`)}"` : !sent ? "nothing reached the wall" : !sent.signed ? "it reached the wall unsigned" : `the heart says "${shown}"`]);
+  } finally {
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }
   return rows;

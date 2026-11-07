@@ -410,6 +410,8 @@ a.hm-panels:hover { color: var(--fg); }
  *  cannot: it is what the page is for. Threads and Keys were sections until
  *  1.32; a reader who hid them has nothing left to show. */
 const WIDGETS = [
+  // 1.59: the wall (ui/wall.js), fetched after Home draws.
+  ["wall", "What people are building"],
   ["desks", "Other desks"],
   ["claude", "Claude"],
   ["friends", "Friends"],
@@ -659,6 +661,22 @@ function touched(t) {
   return `touched yesterday ${clock(t)}`;
 }
 
+/** The wall's section (ui/wall.js): imported once Home has drawn, filled
+ *  in its place after every draw. Hidden, it is never fetched. */
+let wallMod = null, wallLoading = null;
+function wallFill() {
+  if (hidden().includes("wall")) return;
+  const el = () => c.docEl.querySelector("[data-wall]");
+  if (wallMod) { wallMod.fill(el(), c); return; }
+  let v = "";
+  try { v = JSON.parse(document.getElementById("boot").textContent || "{}").v || ""; } catch { /* unversioned */ }
+  wallLoading ||= import(`/assets/wall.js${v ? `?v=${v}` : ""}`).then(m => {
+    wallMod = m;
+    const at = el();
+    if (at) { at.outerHTML = m.html(c); m.fill(el(), c); }
+  }, () => { wallLoading = null; });
+}
+
 function resets(t) {
   const s = t - Date.now() / 1000;
   if (s <= 0) return "now";
@@ -689,10 +707,14 @@ function draw(j) {
   const side = waitBox(j) + arrived(j) + w("claude", "Claude", claude(j)) +
     (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "");
   const desks = j.desks ? w("desks", "Other desks", desksList(j)) : "";
+  // Last in the main column, and one height whatever it holds (ui/wall.js's
+  // WALL_H), so its cards filling in move nothing: not the foot, and not the
+  // side column under it at one column.
+  const wall = w("wall", "What people are building", wallMod ? wallMod.html(c) : `<div class="wl" data-wall style="height:178px"></div>`);
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span>${weekLine(j)}</header>` +
     `<div class="hm-st">${status(j)}${rsSheet()}</div>` +
-    `<div class="hm-grid"><div class="hm-main">${bar(j)}${yourWeek(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
+    `<div class="hm-grid"><div class="hm-main">${bar(j)}${yourWeek(j)}${pick(j)}${desks}${week(j)}${wall}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot"><button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
     (n ? ` · ${plural(n, "section")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p>` +
@@ -718,6 +740,7 @@ function draw(j) {
     if (el?.tagName === "INPUT") { const n = el.value.length; el.setSelectionRange(Math.min(sel?.[0] ?? n, n), Math.min(sel?.[1] ?? n, n)); }
   }
   wire();
+  wallFill();
   // The hand put back in the bar came before its listeners did.
   if (document.activeElement?.dataset?.hm === "bar") asks(document.activeElement);
   const up = c.docEl.querySelector(".hm-upd");

@@ -1272,6 +1272,35 @@ pub fn offer_document(paths: &Paths, pane: &str, to: &str, id: &str, by: &str) -
     }
 }
 
+/// Offer something that shipped to the desk's page, from this pane:
+/// `offer_post`. The daemon makes a card in the desk's corner and nothing
+/// more. What the daemon says back, for the agent.
+pub fn offer_post(
+    paths: &Paths,
+    pane: &str,
+    title: &str,
+    text: &str,
+    about: &str,
+    by: &str,
+) -> Result<String> {
+    let mut resp = pane_post(
+        paths,
+        &format!("{pane}/post"),
+        serde_json::json!({ "title": title, "text": text, "about": about, "by": by }),
+    )?;
+    match resp.status().as_u16() {
+        200 | 201 => {
+            let v: Value = resp.body_mut().read_json()?;
+            Ok(v.get("said")
+                .and_then(Value::as_str)
+                .unwrap_or("offered")
+                .to_string())
+        }
+        400 | 404 | 409 => bail!("{}", said(&mut resp)),
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// Offer a line to a friend, from this pane: `offer_line`. As with a
 /// document, the reader decides whether it goes.
 pub fn offer_line(paths: &Paths, pane: &str, to: &str, text: &str, by: &str) -> Result<Value> {
