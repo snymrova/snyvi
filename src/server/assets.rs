@@ -35,6 +35,10 @@ pub(crate) const BOARD_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/board.
 /// Page is pressed in its head, never before, on the same terms as the Board.
 pub(crate) const PAGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/page.js"));
 
+/// Home's "What people are building" (1.59): imported by Home after its
+/// first draw, never by first paint.
+pub(crate) const WALL_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/wall.js"));
+
 /// The window's frame -- the bar's three buttons and what drags -- fetched
 /// only inside the native window, since a tab has no window to frame.
 pub(crate) const FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frame.js"));
@@ -1066,6 +1070,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("desk.js", DESK_JS, JS),
     ("board.js", BOARD_JS, JS),
     ("page.js", PAGE_JS, JS),
+    ("wall.js", WALL_JS, JS),
     ("frame.js", FRAME_JS, JS),
     ("game.js", GAME_JS, JS),
     ("about.js", ABOUT_JS, JS),

@@ -54,6 +54,7 @@ fn strip_ui() {
         ("desk.js", strip::Lang::Js),
         ("board.js", strip::Lang::Js),
         ("page.js", strip::Lang::Js),
+        ("wall.js", strip::Lang::Js),
         ("frame.js", strip::Lang::Js),
         ("game.js", strip::Lang::Js),
         ("about.js", strip::Lang::Js),

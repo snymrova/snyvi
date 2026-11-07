@@ -571,6 +571,9 @@ fn board_routes() -> Router<Arc<App>> {
         .route("/api/desks/{id}/page/publish", post(desk_page_publish))
         .route("/api/desks/{id}/page/down", post(desk_page_down))
         .route("/api/panes/{id}/post", post(pane_post))
+        // Home's section: the wall, read and hearted through this daemon.
+        .route("/api/wall", get(wall_read))
+        .route("/api/wall/heart", post(wall_heart))
         .route("/api/desks/{id}/focus", post(set_desk_focus))
 }
 
@@ -719,6 +722,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/files/{id}/{*path}", get(doc_file))
         .route("/gallery/{file}", get(gallery_file))
         .route("/pages/{file}", get(page_file))
+        .route("/api/wall/file/{name}", get(wall_file))
         .route("/assets/mermaid.js", get(asset_mermaid))
         .route("/assets/{name}", get(asset_named))
         .route("/assets/fonts/{name}", get(asset_font))

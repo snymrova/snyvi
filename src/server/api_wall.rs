@@ -463,3 +463,236 @@ pub(crate) fn friend_page(
     );
     Ok(())
 }
+
+// ---- Home's section: the wall, read through this daemon (step 6) ----------
+//
+// The window never fetches the internet: Home asks `/api/wall`, and this
+// daemon reads wall.json from the wall, an hour in memory and on disk, so
+// a Home with no connection still shows the last wall it saw. Its files the
+// same, through `/api/wall/file/{name}`, kept up to 50 MB, oldest out. A
+// heart is signed here, by this daemon's key, minted on the first one.
+
+const WALL_FRESH: std::time::Duration = std::time::Duration::from_secs(3600);
+const WALL_FILES_MAX: u64 = 50 << 20;
+
+fn wall_dir(app: &App) -> std::path::PathBuf {
+    app.paths.data_dir.join("wall")
+}
+
+/// wall.json, from memory while fresh, else the wall, else the last on disk.
+fn wall_json(app: &App, again: bool) -> serde_json::Value {
+    use std::sync::Mutex;
+    static KEPT: Mutex<Option<(std::time::Instant, serde_json::Value)>> = Mutex::new(None);
+    if !again {
+        if let Some((at, v)) = KEPT.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            if at.elapsed() < WALL_FRESH {
+                return v.clone();
+            }
+        }
+    }
+    let disk = wall_dir(app).join("wall.json");
+    let got = crate::peer::http()
+        .get(&format!("{}/wall.json", wall::base()))
+        .call()
+        .ok()
+        .filter(|r| r.status().is_success())
+        .and_then(|mut r| {
+            r.body_mut()
+                .with_config()
+                .limit(4 << 20)
+                .read_json::<serde_json::Value>()
+                .ok()
+        });
+    let v = match got {
+        Some(v) => {
+            let _ = std::fs::create_dir_all(wall_dir(app));
+            let _ = std::fs::write(&disk, v.to_string());
+            v
+        }
+        None => std::fs::read(&disk)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_else(|| json!({ "pages": [], "offline": true })),
+    };
+    *KEPT.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), v.clone()));
+    v
+}
+
+/// This daemon's own pages that are up, with the wall's last line: Home's
+/// own-page row ("Breeds of dogs is on the wall · 41 ♥ since Thursday").
+fn mine(app: &App) -> Vec<serde_json::Value> {
+    let Ok(desks) = app.store.desks() else {
+        return Vec::new();
+    };
+    desks
+        .iter()
+        .filter_map(|d| {
+            app.store
+                .clocked(|c, _| {
+                    let Some(p) = page::get(c, d.id)? else {
+                        return Ok(None);
+                    };
+                    let h = page::hearts_of(c, p.id)?;
+                    Ok(p.is_up().then(|| {
+                        json!({ "desk": d.id, "slug": p.slug, "title": p.title, "visibility": p.visibility,
+                                "checked": p.checked_at > 0, "hearts": h.0, "names": h.1, "since": h.2 })
+                    }))
+                })
+                .ok()
+                .flatten()
+        })
+        .collect()
+}
+
+/// `GET /api/wall`: the wall, this daemon's own pages, and friends' pages.
+pub(crate) async fn wall_read(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let again = q.contains_key("again");
+    let a = app.clone();
+    let got = tokio::task::spawn_blocking(move || {
+        let friends = a
+            .store
+            .clocked(|c, _| page::friend_pages(c, 40))
+            .unwrap_or_default();
+        json!({ "wall": wall_json(&a, again), "mine": mine(&a), "friends": friends })
+    })
+    .await;
+    match got {
+        Ok(j) => Json(j).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// A wall file, kept on disk: fetched once, then served from there. The
+/// oldest go when what is kept passes `WALL_FILES_MAX`.
+fn wall_file_kept(app: &App, name: &str) -> Option<std::path::PathBuf> {
+    let dir = wall_dir(app).join("files");
+    let at = dir.join(name);
+    if at.is_file() {
+        return Some(at);
+    }
+    let mut r = crate::peer::http()
+        .get(&format!("{}/files/{name}", wall::base()))
+        .call()
+        .ok()
+        .filter(|r| r.status().is_success())?;
+    let bytes = r
+        .body_mut()
+        .with_config()
+        .limit(21 << 20)
+        .read_to_vec()
+        .ok()?;
+    // What the wall named by its content is that content, or it is not kept.
+    if !name.starts_with(&blake3::hash(&bytes).to_hex()[..16]) {
+        return None;
+    }
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::write(&at, &bytes).ok()?;
+    let mut kept: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = std::fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let m = e.metadata().ok()?;
+            Some((m.modified().ok()?, m.len(), e.path()))
+        })
+        .collect();
+    kept.sort();
+    let mut total: u64 = kept.iter().map(|k| k.1).sum();
+    for (_, len, p) in kept {
+        if total <= WALL_FILES_MAX || p == at {
+            break;
+        }
+        let _ = std::fs::remove_file(&p);
+        total -= len;
+    }
+    Some(at)
+}
+
+/// `GET /api/wall/file/{name}`: a picture on the wall, as an `<img>` asks.
+pub(crate) async fn wall_file(State(app): S, Path(name): Path<String>, req: HeaderMap) -> Response {
+    if !files::file_name_ok(&name) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let a = app.clone();
+    let n = name.clone();
+    let Ok(Some(at)) = tokio::task::spawn_blocking(move || wall_file_kept(&a, &n)).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let ext = crate::render::ext_of(&name);
+    let mut headers = HeaderMap::new();
+    if let Ok(v) =
+        HeaderValue::from_str(mime_guess::from_ext(&ext).first_or_octet_stream().as_ref())
+    {
+        headers.insert(header::CONTENT_TYPE, v);
+    }
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("sandbox; default-src 'none'; style-src 'unsafe-inline'"),
+    );
+    serve_file(&at, headers, &req).await
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct HeartBody {
+    pub(crate) slug: String,
+    pub(crate) moment: Option<i64>,
+}
+
+/// `POST /api/wall/heart`: the reader's heart, signed by this daemon's key.
+pub(crate) async fn wall_heart(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<HeartBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if !page::valid_slug(&b.slug) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let a = app.clone();
+    let sent = tokio::task::spawn_blocking(move || -> anyhow::Result<(u16, Vec<u8>)> {
+        let me = super::api_peer::identity_blocking(&a)?;
+        let path = match b.moment {
+            Some(m) => format!("/pages/{}/moments/{m}/hearts", b.slug),
+            None => format!("/pages/{}/hearts", b.slug),
+        };
+        signed(&me, "POST", &path, b"", "application/json")
+    })
+    .await;
+    match sent {
+        Ok(Ok((200, out))) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            out,
+        )
+            .into_response(),
+        Ok(Ok((status, out))) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": why(status, &out) })),
+        )
+            .into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("{e:#}") })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}

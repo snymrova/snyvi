@@ -41,6 +41,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("GET", "/files/nope/x.png", None, Gate::Open, true),
     ("GET", "/gallery/nope.png", None, Gate::Open, true),
     ("GET", "/pages/nope.png", None, Gate::Open, true),
+    ("GET", "/api/wall/file/nope.png", None, Gate::Open, true),
     ("GET", "/assets/mermaid.js", None, Gate::Open, true),
     ("GET", "/assets/app.js", None, Gate::Open, true),
     ("GET", "/assets/fonts/x.woff2", None, Gate::Open, true),
@@ -498,6 +499,9 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
+    // The wall through this daemon: reaches the internet, asked only to refuse.
+    ("GET", "/api/wall", None, Gate::Desk, false),
+    ("POST", "/api/wall/heart", Some("{}"), Gate::Desk, false),
     (
         "POST",
         "/api/desks/1/focus",
