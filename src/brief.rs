@@ -90,6 +90,24 @@ pub struct Work<'a> {
     /// (`focus::Foci::line`): the second line, so "this" means something.
     /// Nothing at all when unset, and the brief is as it was.
     pub focus: Option<String>,
+    /// 1.59: the desk's page, in a line (`page_line`), when it has one;
+    /// nothing at all when it has none, so the brief is as it was.
+    pub page: Option<String>,
+}
+
+/// The brief's line for a desk's page: where it is and who sees it, and
+/// the one thing an agent does for it.
+pub fn page_line(p: &crate::page::Page) -> String {
+    let who = match (p.visibility.as_str(), p.is_up()) {
+        ("everyone", true) => "on the wall for everyone",
+        ("friends", true) => "up for the user's friends",
+        (_, true) => "up",
+        _ => "not up yet",
+    };
+    format!(
+        "This desk has a page, \"{}\" (snyvi.page/{}, {who}). When something ships, offer_post it once; the user decides what goes on it.",
+        p.title, p.slug
+    )
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -185,6 +203,9 @@ pub fn brief_of(
         ));
     }
     // Who a document can be offered to. Names only; the reader presses Send.
+    if let Some(p) = &work.page {
+        lines.push(p.clone());
+    }
     if !friends.is_empty() {
         lines.push(format!(
             "The user's friends on snyvi, who can be offered a document with offer_document or a line with offer_line (the user decides whether it goes): {}.",
@@ -1215,6 +1236,32 @@ mod tests {
     /// A friend's line, kept, says whose it is: the agent reads someone
     /// else's words as theirs, not the user's.
     #[test]
+    fn a_desk_with_a_page_says_so_in_one_line_and_one_without_says_nothing() {
+        let mut p = crate::page::Page {
+            title: "Breeds of dogs".into(),
+            slug: "breeds-of-dogs".into(),
+            visibility: "everyone".into(),
+            ..Default::default()
+        };
+        assert!(page_line(&p).contains("not up yet"), "{}", page_line(&p));
+        p.up_at = 5;
+        let line = page_line(&p);
+        assert!(
+            line.contains("snyvi.page/breeds-of-dogs, on the wall for everyone"),
+            "{line}"
+        );
+        assert!(line.contains("offer_post it once"), "{line}");
+        let d = desk(1, None);
+        let with = Work {
+            page: Some(line.clone()),
+            ..Work::default()
+        };
+        assert!(brief_of(&d, 1, &with, &[], &[], None, 0).contains(&line));
+        let without = brief_of(&d, 1, &Work::default(), &[], &[], None, 0);
+        assert!(!without.contains("This desk has a page"), "{without}");
+    }
+
+    #[test]
     fn a_friends_line_says_who_sent_it() {
         let mut theirs = note(93, "water the beans", false);
         theirs.sent_by = "Trapti".into();
@@ -1589,6 +1636,7 @@ mod tests {
             nots: &[],
             grp: 0,
             focus: None,
+            page: None,
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
         assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");

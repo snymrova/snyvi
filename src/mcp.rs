@@ -18,6 +18,7 @@ use std::io::{self, BufRead, Write};
 mod board;
 mod cards;
 mod checks;
+mod page;
 mod threads;
 mod widgets;
 
@@ -219,6 +220,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("name_panel", Session::name_panel),
     ("offer_document", Session::offer_document),
     ("offer_line", Session::offer_line),
+    // 1.59: a card for the desk's page; the user publishes (`page`).
+    ("offer_post", Session::offer_post),
     ("start_thread", Session::start_thread),
     ("move_thread", Session::move_thread),
     ("ask", Session::ask),
@@ -309,6 +312,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
         tools.extend(cards::specs());
         tools.extend(checks::specs());
         tools.extend(board::specs());
+        tools.extend(page::specs());
         if friends != Some(false) {
             tools.push(offer_spec());
             tools.push(offer_line_spec());
@@ -1635,6 +1639,27 @@ mod tests {
         assert!(
             PROMPTS[0].text.contains("leave_off") && PROMPTS[0].text.contains("read_desk_notes")
         );
+    }
+
+    #[test]
+    fn offer_post_is_a_panels_and_publishes_nothing() {
+        let spec = &page::specs()[0];
+        assert_eq!(spec["name"], "offer_post");
+        assert_eq!(spec["inputSchema"]["required"], json!(["title", "about"]));
+        let d = spec["description"].as_str().unwrap();
+        assert!(d.contains("Nothing is published by this call"), "{d}");
+        assert!(d.contains("never twice for the same thing"), "{d}");
+        assert!(TOOLS.iter().any(|(n, _)| *n == "offer_post"));
+        let names = |panel, friends| -> Vec<String> {
+            tools(panel, friends)
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        // A page is the desk's, friends or none; outside a desk there is none.
+        assert!(names(true, Some(false)).contains(&"offer_post".into()));
+        assert!(names(true, Some(true)).contains(&"offer_post".into()));
+        assert!(!names(false, None).contains(&"offer_post".into()));
     }
 
     #[test]
