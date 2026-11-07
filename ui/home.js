@@ -710,7 +710,7 @@ function draw(j) {
   // Last in the main column, and one height whatever it holds (ui/wall.js's
   // WALL_H), so its cards filling in move nothing: not the foot, and not the
   // side column under it at one column.
-  const wall = w("wall", "What people are building", wallMod ? wallMod.html(c) : `<div class="wl" data-wall style="height:170px"></div>`);
+  const wall = w("wall", "What people are building", wallMod ? wallMod.html(c) : `<div class="wl" data-wall style="height:178px"></div>`);
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span>${weekLine(j)}</header>` +
     `<div class="hm-st">${status(j)}${rsSheet()}</div>` +

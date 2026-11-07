@@ -127,21 +127,23 @@ function style() {
 }
 
 /* One height, whatever is in it: WALL_H = the head's row (30) + its gap (8)
- * + the cards' row (132: a 118 px card and room for a scrollbar under it).
- * ui/home.js's placeholder says 170px too. A card wears its page's wash as
+ * + the cards' row (140: a 128 px card, whose lines need 124, and room for
+ * a thin scrollbar under it). ui/home.js's placeholder says 178px too. No
+ * line in a card may shrink to fit (flex: none): one that did was clipped. A card wears its page's wash as
  * a faint tint and its accent on the heart; the eight are app.css's, by name. */
 const WALL_CSS = `
-.wl { height: 170px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.wl { height: 178px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .wl-head { height: 30px; flex: none; display: flex; align-items: center; gap: 12px; min-width: 0; }
 .wl-quiet { margin: 8px 0; font-size: var(--fs-small); color: var(--fg-3); }
 .wl-mine { margin-left: auto; min-width: 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-segs { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-pill); background: var(--wash); }
 .wl-segs button { border: 0; background: none; padding: 2px var(--sp-4); border-radius: var(--r-pill); color: var(--fg-2); font: inherit; font-size: var(--fs-small); cursor: pointer; }
 .wl-segs button[aria-pressed="true"] { background: var(--bg-raise); color: var(--fg); box-shadow: var(--shadow-1); }
-.wl-cards { height: 132px; flex: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 280px); align-items: start; gap: 10px;
+.wl-cards { height: 140px; scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; flex: none; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 280px); align-items: start; gap: 10px;
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-snap-type: x proximity; }
 .wl-cards.wl-none { display: block; overflow: hidden; }
-.wl-card { height: 118px; box-sizing: border-box; overflow: hidden; scroll-snap-align: start; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--r-md); background: color-mix(in srgb, var(--wl-wash) 6%, var(--bg-raise)); }
+.wl-card { height: 128px; box-sizing: border-box; overflow: hidden; scroll-snap-align: start; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--r-md); background: color-mix(in srgb, var(--wl-wash) 6%, var(--bg-raise)); }
+.wl-card > * { flex: none; }
 .wl-card header { display: flex; gap: 8px; align-items: center; }
 .wl-logo { width: 28px; height: 28px; border-radius: var(--r-sm); object-fit: contain; flex: none; }
 .wl-i { display: grid; place-items: center; background: var(--rule); color: var(--fg-2); font-weight: 600; font-size: var(--fs-ui); }

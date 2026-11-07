@@ -39,10 +39,12 @@ const SOURCE: &str = include_str!("../features.toml");
 pub const STILLS: &[(&str, &[u8])] = &[
     ("dates.png", include_bytes!("../docs/features/dates.png")),
     ("inback.png", include_bytes!("../docs/features/inback.png")),
+    ("page.png", include_bytes!("../docs/features/page.png")),
     (
         "routines.png",
         include_bytes!("../docs/features/routines.png"),
     ),
+    ("wall.png", include_bytes!("../docs/features/wall.png")),
 ];
 
 const KEYS: [&str; 7] = ["id", "since", "title", "line", "still", "show", "small"];
