@@ -20,6 +20,7 @@ mod api_friend;
 mod api_gallery;
 mod api_groups;
 mod api_media;
+mod api_page;
 mod api_peer;
 mod api_pipeline;
 mod api_restore;
@@ -51,6 +52,7 @@ use api_friend::*;
 use api_gallery::*;
 use api_groups::*;
 use api_media::*;
+use api_page::*;
 use api_peer::*;
 use api_pipeline::*;
 use api_restore::*;
@@ -556,6 +558,15 @@ fn board_routes() -> Router<Arc<App>> {
         )
         .route("/api/panes/{id}/focus", get(pane_focus))
         .route("/api/desks/{id}/board/{board}", get(desk_board))
+        // 1.59: a desk's page (`api_page`), the window's; the agent's offer.
+        .route("/api/desks/{id}/page", get(desk_page).post(save_desk_page))
+        .route("/api/desks/{id}/page/moments", post(desk_page_moment))
+        .route(
+            "/api/desks/{id}/page/offers/{offer}/{answer}",
+            post(desk_page_offer),
+        )
+        .route("/api/desks/{id}/page/owner", post(desk_page_owner))
+        .route("/api/panes/{id}/post", post(pane_post))
         .route("/api/desks/{id}/focus", post(set_desk_focus))
 }
 
@@ -703,6 +714,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/b/{id}/{*path}", get(shell_browse_file))
         .route("/files/{id}/{*path}", get(doc_file))
         .route("/gallery/{file}", get(gallery_file))
+        .route("/pages/{file}", get(page_file))
         .route("/assets/mermaid.js", get(asset_mermaid))
         .route("/assets/{name}", get(asset_named))
         .route("/assets/fonts/{name}", get(asset_font))

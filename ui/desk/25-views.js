@@ -49,9 +49,10 @@ function viewsSlot(d) {
     // right after the tabs (05-desk.js), so before this either way.
     (hd.querySelector(".dk-left") || hd.querySelector(".dk-groups")).after(el);
   }
-  const on = viewOn && viewOn.desk === d.id ? `board:${viewOn.board}` : "panels";
+  const on = viewOn && viewOn.desk === d.id ? (viewOn.page ? "page" : `board:${viewOn.board}`) : "panels";
   const b = (v, label, tip) => `<button type="button" class="dk-vbtn${on === v ? " on" : ""}" data-view="${esc(v)}" aria-pressed="${on === v}" data-tip="${esc(tip)}">${esc(label)}</button>`;
   const html = b("panels", "Panels", "The desk's panels") + b("folder", "Folder", "The desk's folder, read over it") +
+    b("page", "Page", "This desk's page: what goes on the wall, and to friends") +
     boardsOf(d).map(n => b(`board:${n}`, n, `The board design/${n}/, with a panel beside it`)).join("");
   if (el.dataset.drawn !== html) { el.dataset.drawn = html; el.innerHTML = html; }
 }
@@ -59,14 +60,16 @@ function viewsSlot(d) {
 /** A click in the switcher, the dock's head or the rail's board section.
  *  True when it was one of theirs. */
 function viewClick(e) {
+  if (pageClick(e)) return true;
   const v = e.target.closest(".dk-views [data-view]");
   if (v) { e.preventDefault(); openView(v.dataset.view); return true; }
   const dk = e.target.closest("[data-dock]");
   if (dk) { e.preventDefault(); dockTo(dk.dataset.dock); return true; }
-  return !!(boardMod && viewOn && e.target.closest(".bd-rail") && boardMod.railClick(e));
+  return !!(boardMod && viewOn && !viewOn.page && e.target.closest(".bd-rail") && boardMod.railClick(e));
 }
 
-function openView(v) {
+/** `seed`: a card's words, for the page's moment form (27-page.js). */
+function openView(v, seed) {
   const d = current();
   if (!d) return;
   if (v === "panels") { closeView(); return; }
@@ -80,9 +83,19 @@ function openView(v) {
       .catch(e => ctx.toast("Could not open its folder", e));
     return;
   }
+  // The desk's page (1.59, 27-page.js): opened the way a board is.
+  if (v === "page") {
+    if (viewOn && viewOn.desk === d.id && viewOn.page) { if (seed) pageMod?.take(seed); return; }
+    if (viewOn) { boardMod?.close(); pageMod?.close(); }
+    viewOn = { desk: d.id, board: "", page: true, seed: seed || null };
+    docked = docked && d.panes.some(p => p.id === docked) ? docked : (focused || (gridPanes(d)[0] || {}).id || null);
+    tellFocus({ view: "page", path: "", items: [] });
+    layout();
+    return;
+  }
   const board = v.slice(6);
   if (viewOn && viewOn.desk === d.id && viewOn.board === board) return;
-  if (viewOn) boardMod?.close();
+  if (viewOn) { boardMod?.close(); pageMod?.close(); }
   viewOn = { desk: d.id, board };
   docked = docked && d.panes.some(p => p.id === docked) ? docked : (focused || (gridPanes(d)[0] || {}).id || null);
   tellFocus({ view: `board:${board}`, path: `design/${board}`, items: [] });
@@ -93,6 +106,7 @@ function openView(v) {
 function closeView() {
   if (!viewOn) return;
   boardMod?.close();
+  pageMod?.close();
   viewOn = null;
   const v = views.get(docked);
   docked = null;
@@ -116,6 +130,9 @@ function dockTo(id) {
 function viewsMount(d) {
   const grid = ctx.docEl.querySelector(".dk-grid");
   if (!grid) return;
+  // The page's card, in the grid's corner, on every layout (27-page.js).
+  pageOffers(d);
+  pageCard();
   if (!viewOn || viewOn.desk !== d.id) { grid.querySelector(".dk-view")?.remove(); return; }
   let el = grid.querySelector(":scope > .dk-view");
   if (!el) {
@@ -132,6 +149,7 @@ function viewsMount(d) {
   if (v && v.el.parentElement !== body) { body.replaceChildren(v.el); v.el.style.gridColumn = ""; v.behind = true; catchUp(v); }
   if (!v) body.innerHTML = `<p class="dk-none">No panel to dock. <button type="button" data-a="new">New panel</button></p>`;
   const surf = el.querySelector(".dk-vsurf");
+  if (viewOn.page) { pageMount(surf, d); return; }
   if (surf.dataset.board === viewOn.board && surf.childElementCount) return;
   surf.dataset.board = viewOn.board;
   const want = viewOn;
@@ -149,12 +167,13 @@ function boardUse() {
 }
 
 /** The rail's board section, at the rail's head while a board is open. */
-const viewRail = () => (viewOn && boardMod && viewOn.desk === deskId ? boardMod.railHtml() : "");
+const viewRail = () => (viewOn && !viewOn.page && boardMod && viewOn.desk === deskId ? boardMod.railHtml() : "");
 
 /** A `board` or `focus` event (app.js): a board on this desk moved, or a new
  *  one appeared, which the desks list does not know of yet. */
 export function viewSaid(n, j) {
   if (!ctx || !j || j.desk !== deskId) return;
+  if (n === "page") { pageSaid(j); return; }
   const d = current();
   if (n === "board" && d && j.board && !boardsOf(d).includes(j.board)) { ctx.refresh(); return; }
   if (n === "board" && boardMod && viewOn && viewOn.board === j.board) boardMod.changed(j);
@@ -162,7 +181,7 @@ export function viewSaid(n, j) {
 
 /** A desk swapped for another, or left: no view carried over. */
 function viewsReset() {
-  if (viewOn) { boardMod?.close(); unfocus(viewOn.desk); }
+  if (viewOn) { boardMod?.close(); pageMod?.close(); unfocus(viewOn.desk); }
   viewOn = null; docked = null;
   folderOff();
 }

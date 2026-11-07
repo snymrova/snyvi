@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 /// Where a drafted field came from: what its chip says.
 pub const FROM: [&str; 6] = ["readme", "icon", "git", "views", "thread", "desk"];
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 pub struct Draft {
     pub title: String,
     pub lede: String,

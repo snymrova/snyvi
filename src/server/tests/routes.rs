@@ -40,6 +40,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("GET", "/b/nope/x.md", None, Gate::Open, true),
     ("GET", "/files/nope/x.png", None, Gate::Open, true),
     ("GET", "/gallery/nope.png", None, Gate::Open, true),
+    ("GET", "/pages/nope.png", None, Gate::Open, true),
     ("GET", "/assets/mermaid.js", None, Gate::Open, true),
     ("GET", "/assets/app.js", None, Gate::Open, true),
     ("GET", "/assets/fonts/x.woff2", None, Gate::Open, true),
@@ -468,6 +469,32 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ),
     ("GET", "/api/panes/nope/focus", None, Gate::Token, true),
     ("GET", "/api/desks/1/board/home", None, Gate::Desk, true),
+    // 1.59: a desk's page (`api_page`), its file route and the agent's offer.
+    ("GET", "/api/desks/1/page", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/page", Some("{}"), Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/page/moments",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/page/offers/1/notnow",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    // Writes into a desk's folder with the daemon's key: asked only to refuse.
+    ("POST", "/api/desks/1/page/owner", None, Gate::Desk, false),
+    (
+        "POST",
+        "/api/panes/nope/post",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
     (
         "POST",
         "/api/desks/1/focus",

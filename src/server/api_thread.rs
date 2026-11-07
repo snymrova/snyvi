@@ -21,6 +21,8 @@ type Q = Query<std::collections::HashMap<String, String>>;
 /// question in the mod wakes on it too (`pane_wait_turn`).
 pub(crate) fn threads_moved(app: &App, desk: i64) {
     notes_moved(app, desk);
+    // A thread that shipped asks, once, whether it goes on the page (door (a)).
+    super::api_page::offer_shipped(app, desk);
 }
 
 fn refused(code: StatusCode, error: impl Into<String>) -> Response {

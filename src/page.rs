@@ -814,6 +814,18 @@ fn offer_row(r: &rusqlite::Row) -> rusqlite::Result<Offer> {
 
 const OFFER_COLS: &str = "id, desk_id, about, title, text, by, pane, state, created_at, updated_at";
 
+/// Whether a card about `about` was ever made on this desk, answered or not.
+pub fn offered(conn: &Connection, desk_id: i64, about: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM pageoffers WHERE desk_id = ?1 AND about = ?2",
+            params![desk_id, about.trim()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 /// The cards waiting on a desk, newest first.
 pub fn open_offers(conn: &Connection, desk_id: i64) -> Result<Vec<Offer>> {
     let mut st = conn.prepare(&format!(

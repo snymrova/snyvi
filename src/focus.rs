@@ -51,6 +51,7 @@ impl Focus {
     /// `panels`, the desk's own view, which is no focus at all.
     pub fn from_page(view: &str, path: &str, items: &[String], now: i64) -> Option<Focus> {
         let ok = view == "folder"
+            || view == "page"
             || view
                 .strip_prefix("board:")
                 .is_some_and(crate::board::valid_name);
@@ -86,6 +87,10 @@ impl Focus {
                     self.items.join(", ")
                 )
             };
+        }
+        if self.view == "page" {
+            // 1.59: the desk's page, which the reader alone publishes.
+            return "The reader is at this desk's page (the Page view); what goes on it is theirs to press, offer_post only offers.".to_string();
         }
         let lines = match self.items.first() {
             Some(l) if l.contains('-') => format!(", lines {}", l.replace('-', "–")),
