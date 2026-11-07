@@ -1283,7 +1283,7 @@ pub(crate) struct ApproveBody {
 
 /// Approve on a plan's head (`crate::waiting::approve_plan`): every open
 /// line on the desk whose plan the document is. Its panel hears it at its
-/// next prompt; snyvi starts nothing.
+/// next prompt, or the desk page types the go-ahead on the reader's Start (#223).
 pub(crate) async fn approve_plan(
     State(app): S,
     headers: HeaderMap,

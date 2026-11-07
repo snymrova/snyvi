@@ -1603,7 +1603,7 @@ async function waitClick(k, id, b) {
   try {
     if (k === "udone") { await api(`/api/desks/${id}/notes/${n}`, { done: true }); sayRow(key, { id, text }, "Ticked"); }
     else if (k === "ulater") { await api(`/api/desks/${id}/notes/${n}`, { due: "tomorrow 9" }); sayRow(key, { id, text }, "Moved to tomorrow, 9:00"); }
-    else if (k === "wplan") { await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, "Approved: its panel hears it next"); }
+    else if (k === "wplan") { await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, "Approved: if its panel is waiting, press Start on the line"); }
     else if (k === "wok") { await api(`/api/desks/${id}/leftoff`, { approve: true }); sayRow(key, { id, text }, "Approved: its panel hears it next"); }
     else if (k === "onme") await api(`/api/desks/${id}/leftoff`, { mark: n });
     else if (k === "wlater" && x) {

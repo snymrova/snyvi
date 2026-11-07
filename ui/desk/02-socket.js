@@ -180,7 +180,9 @@ function paint(v, f) {
       if (inSight) drawRow(v, y, x0, x);
     }
   }
-  if (inSight && v.stale.size && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
+  // A scroll alone brings the text pass too: it is what draws a scrolled
+  // pane whole once, after the blit (`up`, #224).
+  if (inSight && (v.stale.size || v.blitted) && !v.textT) v.textT = setTimeout(() => textSoon(v), TEXT_MS);
   if (CHECK && inSight) checked(v);
   if (f.c) v.cur = f.c;
   if (f.m) v.mode = f.m;

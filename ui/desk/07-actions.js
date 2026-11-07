@@ -180,6 +180,8 @@ async function act(b, byKey) {
  *  Approve there is the plan's own Approve (`/plans/{doc}/approve`); any
  *  other press closes it and goes on to what it was. */
 async function gateAct(a, b, d) {
+  // An approved line whose panel waits at its prompt: Start (#223).
+  if (a === "note-go") { goAhead(d, b.dataset.d); return true; }
   if (a !== "note-gate" && a !== "note-ok") { gateOpen = 0; return false; }
   const x = noteList.find(y => y.id === +b.dataset.n);
   if (a === "note-gate") {
@@ -194,7 +196,10 @@ async function gateAct(a, b, d) {
   x.ok_at = undo ? 0 : Date.now() / 1000;
   rail();
   if (await told(b.dataset, `n${x.id}`, undo ? "Could not take it back" : "Could not approve it", () => { x.ok_at = was; },
-    () => ctx.api(`/api/desks/${d.id}/plans/${encodeURIComponent(b.dataset.doc)}/approve`, { undo }))) await getNotes(d.id, true);
+    () => ctx.api(`/api/desks/${d.id}/plans/${encodeURIComponent(b.dataset.doc)}/approve`, { undo }))) {
+    await getNotes(d.id, true);
+    if (!undo) goAhead(d, b.dataset.doc);
+  }
   return true;
 }
 

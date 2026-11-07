@@ -112,6 +112,9 @@ function makeView(p) {
   v.io = new IntersectionObserver(e => reach(v, e), { root: body, rootMargin: "100% 0px" });
   claudeStrip(v, first);
   v.g = v.cv.getContext("2d");
+  // A canvas the engine took back (the GPU reset, memory short) comes back
+  // blank: every row again, in this palette (#224).
+  v.cv.addEventListener("contextrestored", () => { v.pal = null; drawAll(v); });
   watchLook();
 
   // Read where the reader is when they scroll, not on every frame: a read

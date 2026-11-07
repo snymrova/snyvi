@@ -782,7 +782,12 @@ function stageMark(x, esc) {
   const old = (st === "planned" || st === "read") && x.stage_at && Date.now() / 1000 - x.stage_at > STALE_S;
   const age = old ? ` · ${ctx.relShort(x.stage_at)}` : "", dim = old ? " stale" : "";
   // Approved by the reader on the plan's head (1.47): a tick after the word,
-  // and its panel goes ahead.
+  // and its panel goes ahead. Unless its Claude sits at its prompt: then it
+  // hears nothing until a next prompt (#223), so the same chip, in the same
+  // place, is Start, which types the go-ahead there (`goAhead`).
+  if (st === "planned" && x.stage_doc && x.ok_at && sendsHere(views.get(x.stage_pane))) {
+    return `<button type="button" class="dk-stage planned ok words" data-a="note-go" data-d="${esc(x.stage_doc)}" data-tip="Approved; ${who} waits at its prompt" data-tip-sub="Start types the go-ahead into its panel and presses Enter" aria-label="Start: tell ${who} to go ahead with ${esc(x.text)}">${ico("doc")}<span class="w">approved · start ${who}</span></button>`;
+  }
   if (st === "planned" && x.stage_doc && x.ok_at) {
     return `<button type="button" class="dk-stage planned ok words" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}, approved by you ${esc(ctx.relShort(x.ok_at))}" data-tip-sub="its panel goes ahead · click to open the plan" aria-label="Open the approved plan for ${esc(x.text)}">${ico("doc")}<span class="w">approved · ${who} goes ahead</span></button>`;
   }
@@ -871,7 +876,7 @@ function gatePop(x, esc) {
   const rows = [`<p class="dk-gate-w">${esc(where)}</p>`];
   if (st === "planned" && x.stage_doc) {
     rows.push(`<p class="dk-gate-acts">${act("note-doc", "Open the plan", ` data-d="${esc(x.stage_doc)}"`)}` +
-      (x.ok_at ? act("note-ok", "Take the approval back", ` data-doc="${esc(x.stage_doc)}" data-undo="1"`) : act("note-ok", "Approve", ` data-doc="${esc(x.stage_doc)}" data-undo="0" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt; snyvi starts nothing"`, true)) + `</p>`);
+      (x.ok_at ? act("note-ok", "Take the approval back", ` data-doc="${esc(x.stage_doc)}" data-undo="1"`) : act("note-ok", "Approve", ` data-doc="${esc(x.stage_doc)}" data-undo="0" data-tip="Approve the plan" data-tip-sub="a panel waiting at its prompt is told at once; one at work hears it at its next"`, true)) + `</p>`);
   }
   if (t) rows.push(`<p class="dk-gate-t">${esc(t.name)} · ${esc(t.stage)}${t.pr ? ` · PR ${esc(t.pr)}${t.ci ? ` ${esc(t.ci)}` : ""}` : ""}</p>`);
   if (sh && !atCheck(x)) rows.push(`<p class="dk-gate-acts">${act("note-works", "✓ works", "", true)}${act("note-broken", "not yet…")}</p>`);

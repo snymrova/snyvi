@@ -331,6 +331,7 @@ function textSoon(v) {
   v.textT = 0;
   if (v.holding) { v.textT = setTimeout(() => textSoon(v), TEXT_MS); return; }
   text(v);
+  if (v.blitted && seen(v)) { v.blitted = false; drawAll(v); }
 }
 function text(v) {
   for (const y of v.stale) if (v.scr.children[y]) v.scr.children[y].innerHTML = rowText(v.cells[y]);
@@ -528,13 +529,31 @@ function up(v, k, inSight) {
   // start on one would come out a pixel off, so that density draws whole.
   const d = k * LINE_PX * v.k, W = v.cv.width, H = v.cv.height;
   if (d !== Math.round(d)) { drawAll(v); return; }
-  const g = v.g;
-  g.save();
-  g.globalCompositeOperation = "copy";
-  g.drawImage(v.cv, 0, d, W, H - d, 0, 0, W, H - d);
-  g.restore();
-  g.clearRect(0, H - d, W, d);
+  // Through a pad, never the canvas drawn onto itself (#224). The Linux
+  // window's GPU canvas could drop a self-copy with "copy" without a word:
+  // the rows above then stood still while the new ones were drawn over
+  // them, and only a resize, which draws every row, put it right. Two
+  // plain copies cost the same and take no path WebKit treats as special.
+  const pad = upPad(W, H - d), pg = pad.getContext("2d"), g = v.g;
+  pg.clearRect(0, 0, W, H - d);
+  pg.drawImage(v.cv, 0, d, W, H - d, 0, 0, W, H - d);
+  g.clearRect(0, 0, W, H);
+  g.drawImage(pad, 0, 0, W, H - d, 0, 0, W, H - d);
+  // And a blit is trusted only for a moment: the text pass, a second after
+  // the output, draws a pane that scrolled whole once, so a copy the engine
+  // lost is wrong for a second at most, never until the next resize.
+  v.blitted = true;
   if (CHECK && v.drawn) { v.drawn.splice(0, k); v.drawn.length = v.rows; }
+}
+
+/** The pad `up` moves the screen through: one for every pane, grown to the
+ *  largest asked, never shrunk. */
+let upPadCv = null;
+function upPad(W, H) {
+  if (!upPadCv) upPadCv = document.createElement("canvas");
+  if (upPadCv.width < W) upPadCv.width = W;
+  if (upPadCv.height < H) upPadCv.height = H;
+  return upPadCv;
 }
 
 /** Every row again: the size, the theme, the font or the density changed. */

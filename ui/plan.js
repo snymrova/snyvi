@@ -5,14 +5,16 @@
  * for it but the line that fetches this on the first press.
  *
  * Approve marks those notes approved, and the panel that planned them reads
- * it with its next prompt (brief.rs `changes`): snyvi starts nothing. The
+ * it with its next prompt (brief.rs `changes`), or from Start on the line. The
  * button then says Approved ✓ and the line under it says so, and pressed
  * again takes it back. The page's copy of the document is dropped, so
  * coming back to it draws the head as it now is. */
 
 const SAY = {
-  0: ["Approve", "The go-ahead for this plan: its panel hears it at its next prompt", "Approve, and its panel hears it at its next prompt. snyvi starts nothing."],
-  1: ["Approved ✓", "Approved by you: its panel goes ahead. Click to take it back", "Approved by you just now · its panel goes ahead at its next prompt · press again to take it back"],
+  0: ["Approve", "The go-ahead for this plan: its panel hears it at its next prompt", "Approve, and its panel hears it at its next prompt."],
+  // A panel idle at its prompt has no next prompt of its own (#223): the
+  // note's line on the desk then reads "approved · start", which tells it.
+  1: ["Approved ✓", "Approved by you: its panel goes ahead. Click to take it back", "Approved by you just now · if its panel waits at its prompt, Start on the note's line tells it · press again to take it back"],
 };
 
 export async function press(b, api, cache) {

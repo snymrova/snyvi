@@ -25,6 +25,20 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "gostart"
+since = "1.59.1"
+title = "Approve starts a waiting panel"
+line = "Approve a plan on its desk and, if its Claude is waiting at its prompt, snyvi tells it to go ahead there and then. Approved from elsewhere, the note's line reads approved · start Claude: press it."
+small = "yes"
+
+[[feature]]
+id = "latersteps"
+since = "1.59.1"
+title = "Every step of a run card has Copy"
+line = "A run card's later steps have Copy and Done too, so you can take a command along or skip one you already did. Run stays on the step whose turn it is."
+small = "yes"
+
+[[feature]]
 id = "wall"
 since = "1.59.0"
 title = "What people are building"

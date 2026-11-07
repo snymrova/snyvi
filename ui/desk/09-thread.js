@@ -629,6 +629,25 @@ function notSent(pane, n, what) {
   rail();
 }
 
+/** Go ahead (#223): an approved plan's panel told so in its own prompt.
+ *  The daemon tells a panel of an Approve at its next prompt, but a Claude
+ *  that sent its plan and stopped has no next prompt until the reader gives
+ *  one: it sat there, approved and idle. So an Approve pressed on this desk,
+ *  and the approved line's Start, type the go-ahead as Send now types an
+ *  answer: only into a Claude at its prompt, only on the reader's press,
+ *  and only snyvi's own words with the plan's id and the lines' numbers,
+ *  never anything an agent wrote. A panel at work hears it at its next
+ *  prompt, as before, and the row says so. */
+function goAhead(d, doc) {
+  const xs = noteList.filter(x => x.stage_doc === doc && x.stage === "planned" && x.ok_at && !x.done);
+  const pane = xs[0]?.stage_pane, v = pane && views.get(pane), n = pane && slotOf(d, pane);
+  if (!xs.length || !v) return;
+  if (!sendsHere(v)) return notSent(pane, n, "It hears the approval");
+  const lines = xs.map(x => `#${x.id}`).join(" ");
+  input(v, bracket(v, oneLine(`Approved in snyvi: go ahead with the plan ${doc} for ${lines}.`)));
+  setTimeout(() => input(v, "\r"), 120);
+}
+
 /** An answer on one line: the reader's Other… is a field, but a pasted line
  *  break would submit half of it. */
 const oneLine = s => String(s).replace(/[\x00-\x1f\x7f]+/g, " ").trim();
