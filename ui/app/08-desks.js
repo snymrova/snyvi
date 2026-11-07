@@ -648,6 +648,8 @@
     es.addEventListener("widget", ev => { const j = parse(ev); if (!j) return; if (j.desk_id === 0) widgetSaid(j); else desk?.widgetSaid?.(j); });
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
+    // A board moved, or the reader's focus did (1.58): ui/desk/25-views.js's.
+    for (const n of ["board", "focus"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) desk?.viewSaid?.(n, j); });
     // An agent ticked a line on a desk's list.
     es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); });
     // A pane started, stopped, or rang for its reader: the dots, at once.

@@ -439,6 +439,8 @@ function focusPane(id) {
 }
 
 function click(e) {
+  // The views switcher, the dock, a board's rail rows (25-views.js).
+  if (viewClick(e)) return;
   // The foot's links: a ✕, an Undo, the +N (17-links.js).
   if (linkClick(e)) return;
   // A section's head, folded or opened where it is: no draw.
@@ -607,12 +609,15 @@ export function open(c) {
   const from = !c.slot && c.push && c.id === deskId && sentFrom();
   const slot = from ? from.pane.slot : c.slot, grp = from ? from.pane.grp : c.grp;
   const first = !ctx;
+  // Back to the panels: the Folder view's dock is over (25-views.js).
+  if (ctx) folderOff();
   detach();
   ctx = c;
   Object.assign(c.icons || {}, ICONS);
   style();
   if (first) measure();
   if (deskId !== c.id) {
+    viewsReset();
     for (const v of [...views.values()]) dropView(v);
     docList = []; docsAt = null; docsAll = false; claudeAsk = null; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
     focused = null; full = false; keysClose(); drawerOn = null; backField = false;
@@ -946,6 +951,7 @@ export function close() {
   say({ t: "watch", panes: [] });
   delete ctx.root.dataset.full;
   deskId = null; reading = null; readFrom = null;
+  viewsReset();
   fromBar();
   for (const v of [...views.values()]) dropView(v);
   focused = null;

@@ -189,6 +189,25 @@ folder and a strip over it says Claude was open, with Resume conversation,
 which types `claude --resume <id>` at the prompt without Enter. A crash or a
 `kill -9` hears nothing and marks nothing; the rail's ↻ is still there.
 
+**Views over a desk (1.58, plan 6ff79c55a7).** A desk has views, not kinds:
+Panels, Folder, and a Board for each `design/<board>/` its folder holds. The
+switcher in the head (`ui/desk/25-views.js`) is always there, Panels and
+Folder first, so a board appearing adds a button at the end and moves
+nothing. A board opens over the grid, inside it, and **docks one panel**
+beside it: the pane's own element moves into the dock, socket, scrollback and
+keys untouched, and `layout` leaves it out of the grid until Panels puts it
+back. Folder is #214's reader over the desk with a panel docked the same way:
+the reader draws each page into the doc whole, so a `MutationObserver` puts
+the dock back after every folder page, and its focus is the file and the
+lines marked (`#L4-L9`). Only the switcher's Folder docks; the desk row's
+folder button reads the folder as before. The open view sets the reader's
+**focus** (`src/focus.rs`, `POST /api/desks/{id}/focus`): one per desk, in
+memory, which the brief says as its second line for half an hour and
+`read_focus` reads, so "this one" names a file or the frames selected. It is a
+name, never input. The board itself is `docs/BOARD.md`. The studio this
+replaces failed for want of the dock, the tools and the focus; if a month in
+the board is not opened, the view goes and the folder stays.
+
 ## 2. The premises, and the line that enforces each
 
 1. **Panes run only in the desktop window, behind a capability.** A browser

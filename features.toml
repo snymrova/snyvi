@@ -25,6 +25,13 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "board"
+since = "1.58.0"
+title = "A board beside your panel"
+line = "Ask Claude to design something and it draws on a board in your desk's folder, frame by frame, while you watch. Pick a frame and say what to change: Claude reads what you picked. The panel you talk to stays docked beside the board."
+show = "desk .dk-views"
+
+[[feature]]
 id = "checks"
 since = "1.58.0"
 title = "Checks you hold on a note"

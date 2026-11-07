@@ -276,7 +276,8 @@ function rail() {
   const lay = ctx.layout ? ctx.layout() : null, off = new Set(lay ? lay.hidden : []);
   const order = (lay && lay.right.length ? lay.right : Object.keys(secs)).filter(id => secs[id] && !off.has(id) && !(id === "widgets" && off.has("right:widgets")));
   const backHad = backHeld();
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + order.map(id => secs[id]()).join("") + `</div>`);
+  // A board open over the desk puts its section first (25-views.js).
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + viewRail() + order.map(id => secs[id]()).join("") + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a

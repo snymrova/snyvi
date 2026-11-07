@@ -15,6 +15,7 @@ use crate::receive::Payload;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
+mod board;
 mod cards;
 mod checks;
 mod threads;
@@ -206,6 +207,13 @@ const TOOLS: &[(&str, Tool)] = &[
     ("mark_desk_note", Session::mark_desk_note),
     ("suggest_desk_note", Session::suggest_desk_note),
     ("suggest_check", Session::suggest_check),
+    // 1.58: a board in the desk's folder, and where the reader is (`board`).
+    ("board_read", Session::board_read),
+    ("frame_write", Session::frame_write),
+    ("board_arrange", Session::board_arrange),
+    ("frame_look", Session::frame_look),
+    ("board_export", Session::board_export),
+    ("read_focus", Session::read_focus),
     ("offer_routine", Session::offer_routine),
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
@@ -300,6 +308,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
         tools.extend(widgets::specs());
         tools.extend(cards::specs());
         tools.extend(checks::specs());
+        tools.extend(board::specs());
         if friends != Some(false) {
             tools.push(offer_spec());
             tools.push(offer_line_spec());

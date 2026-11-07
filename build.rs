@@ -52,6 +52,7 @@ fn strip_ui() {
         ("boot.js", strip::Lang::Js),
         ("mmd.js", strip::Lang::Js),
         ("desk.js", strip::Lang::Js),
+        ("board.js", strip::Lang::Js),
         ("frame.js", strip::Lang::Js),
         ("game.js", strip::Lang::Js),
         ("about.js", strip::Lang::Js),
@@ -81,7 +82,7 @@ fn strip_ui() {
         ("app.css", strip::Lang::Css),
         ("themes.css", strip::Lang::Css),
     ] {
-        // A script kept as parts (ui/app/, ui/desk/) is joined here, the way
+        // A script kept as parts (ui/app/, ui/desk/, ui/board/) is joined here, the way
         // the daemon joins it off disk under SNYVI_UI_DIR; every part, and
         // the directory a part could be added to, is watched.
         for from in strip::parts(&dir, name) {

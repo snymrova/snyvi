@@ -86,6 +86,10 @@ pub struct Work<'a> {
     /// 1.57: the tab the asking panel is in, or 0 on a desk with no tabs
     /// (`desk::groups`): the first line names it and counts its panels.
     pub grp: i64,
+    /// 1.58: where the reader is in the desk's view, when recent
+    /// (`focus::Foci::line`): the second line, so "this" means something.
+    /// Nothing at all when unset, and the brief is as it was.
+    pub focus: Option<String>,
 }
 
 /// How many threads the brief names, the most recently moved first.
@@ -151,6 +155,9 @@ pub fn brief_of(
     let notes = work.notes;
     let mut lines: Vec<String> = Vec::new();
     lines.push(opening(desk, slot, work.grp));
+    if let Some(f) = &work.focus {
+        lines.push(f.clone());
+    }
     if let Some(l) = &desk.left_off {
         let who = if l.by.is_empty() {
             "the user"
@@ -1099,6 +1106,36 @@ mod tests {
         assert!(!quiet.contains("updated"));
     }
 
+    /// The reader's focus (1.58) is the second line, before where the work
+    /// was left; with none, the brief is byte for byte what it was.
+    #[test]
+    fn the_brief_says_where_the_reader_is_and_nothing_when_nowhere() {
+        let left = LeftOff {
+            text: "ship it".into(),
+            at: 1000,
+            ..LeftOff::default()
+        };
+        let d = desk(1, Some(left));
+        let none = brief_of(&d, 1, &Work::default(), &[], &[], None, 2000);
+        let focus =
+            crate::focus::Focus::from_page("board:home", "design/home", &["cards".into()], 1990)
+                .unwrap()
+                .line();
+        let work = Work {
+            focus: Some(focus.clone()),
+            ..Work::default()
+        };
+        let with = brief_of(&d, 1, &work, &[], &[], None, 2000);
+        let lines: Vec<&str> = with.lines().collect();
+        assert_eq!(lines[1], focus);
+        assert!(lines[2].starts_with("Left off"), "{with}");
+        assert_eq!(
+            with.replacen(&format!("{focus}\n"), "", 1),
+            none,
+            "nothing else moves"
+        );
+    }
+
     fn note(id: i64, text: &str, done: bool) -> DeskNote {
         DeskNote {
             id,
@@ -1551,6 +1588,7 @@ mod tests {
             updated: None,
             nots: &[],
             grp: 0,
+            focus: None,
         };
         let b = brief_of(&d, 2, &work, &[], &[], None, 0);
         assert!(b.contains("Shipped, not told (1): \"1.47 dates\" (3 days ago). When the user says where it went out, move_thread told with url."), "{b}");

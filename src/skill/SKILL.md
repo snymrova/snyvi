@@ -110,6 +110,15 @@ notes, its threads, the user's On you list.
   When the brief says this panel is a routine, you are that run: when it says
   it is a try, the user is watching.
 
+## A board
+
+When the user asks you to design something they will look at -- a page, a
+screen, a card -- in a desk panel, draw it on a board: `board_read` first, then
+one `frame_write` per piece, variants as frames side by side, and look at each
+before saying done. "This one" is what they selected (`board_read` or
+`read_focus`). How, at length: [board.md](board.md); read it before the
+first frame.
+
 ## Widgets
 
 A widget is a small box on the desk's rail: a **count** (8 characters) and

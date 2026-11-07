@@ -40,11 +40,11 @@ const WRITE = process.argv.includes("--write");
 const SCALE = new Set([11, 12, 13, 14, 15, 17, 18, 20, 26, 34]);
 
 /* themes.css is where colours live; everything else reads them. */
-/* app.js and desk.js are kept as parts (ui/app/, ui/desk/; src/strip.rs
+/* app.js, desk.js and board.js are kept as parts (ui/app/, ui/desk/, ui/board/; src/strip.rs
  * joins them), so each part is read on its own and named by its path. */
 const FILES = [
   ...readdirSync(UI).filter(f => /\.(css|js)$/.test(f) && f !== "themes.css"),
-  ...["app", "desk"].flatMap(d => readdirSync(join(UI, d)).filter(f => f.endsWith(".js")).map(f => `${d}/${f}`)),
+  ...["app", "desk", "board"].flatMap(d => readdirSync(join(UI, d)).filter(f => f.endsWith(".js")).map(f => `${d}/${f}`)),
   "index.html",
 ].sort();
 

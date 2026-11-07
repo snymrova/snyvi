@@ -470,6 +470,8 @@ pub(crate) async fn desks(
     match (app.store.desks(), app.store.panes_open()) {
         (Ok(desks), Ok(panes)) => Json(json!({
             "desks": with_status(&app, &desks),
+            // Each desk's views, by id: Folder, and a board per design/*/ (1.58).
+            "views": super::api_board::views_by_desk(&desks),
             // So a pane's header can say `~/snyvi` rather than the whole path.
             "home": dirs::home_dir(),
             "panes": panes,

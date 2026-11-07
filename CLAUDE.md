@@ -22,6 +22,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | the desk socket · SSE · browse mode · restart, update, reset | `src/server/{ws,events,api_browse,lifecycle}.rs` | — |
 | the route table test | `src/server/tests.rs` | lag the router: the count must match |
 | documents on disk + SQLite index + FTS | `src/store.rs` | know about HTTP or panes |
+| a board: `design/<board>/`, its frames and `board.json` | `src/board.rs` (`docs/BOARD.md`) | build a path before the name is checked; write outside the desk's folder |
 | desks, panes rows, notes, keys (names) | `src/desk.rs` | run processes; `pane.rs` does |
 | a PTY, its process, its screen | `src/pane.rs`, `src/screen.rs` | touch the store |
 | every transport's way in | `src/receive.rs` → `render.rs` | be bypassed; hook, MCP, CLI, watch all call it |
@@ -34,7 +35,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | the window | `src/bin/app.rs` | hold daemon logic |
 | every message from outside: the corner's card, pill and tray (On you, Lately) | `ui/corner.js`, `src/lately.rs` (kept, `lately_log` beside each event), `ui/desk/10-onyou.js` (the desk's corner) | put a message anywhere else, or let one go on a timer (`docs/DESIGN.md` §4.5) |
 | first paint | `ui/index.html`, `ui/boot.js`, `ui/app/*.js` (joined into `app.js`), `ui/app.css`, `ui/themes.css` | grow past the budget (`bench/bytes.mjs`) |
-| lazy chunks | `ui/desk/*.js` (joined into `desk.js`), `ui/home.js`, `ui/about.js`, `ui/mmd.js`, `ui/menu.js`, `ui/peer.js`, … | be imported by first paint |
+| lazy chunks | `ui/desk/*.js` (joined into `desk.js`), `ui/board/*.js` (joined into `board.js`), `ui/home.js`, `ui/about.js`, `ui/mmd.js`, `ui/menu.js`, `ui/peer.js`, … | be imported by first paint |
 | the strip, the join, the embed | `build.rs`, `src/strip.rs` (`source` joins `ui/app/*.js` and `ui/desk/*.js` in name order; `SNYVI_UI_DIR` serves the same join) | serve a part on its own |
 
 ## The flows

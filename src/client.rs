@@ -935,6 +935,50 @@ pub fn desk_widgets(paths: &Paths, pane: &str) -> Result<Value> {
     pane_read(paths, pane, "widgets")
 }
 
+/// A board route of the desk `pane` is on (docs/BOARD.md): `GET` when
+/// `body` is `None`, else `POST`. The status and the JSON, whatever the
+/// status: a board says "no such board" (404) and "not yet" (501) in words
+/// the tool passes on, which a bare error would lose.
+pub fn pane_board(
+    paths: &Paths,
+    pane: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Result<(u16, Value)> {
+    let token = config::read_token(paths).ok_or_else(|| {
+        anyhow!(
+            "no token at {}; is the daemon running as this user?",
+            paths.token_path.display()
+        )
+    })?;
+    let url = format!("{}/api/panes/{pane}/{path}", config::base_url());
+    let auth = format!("Bearer {token}");
+    // A frame is rendered and filed before the answer: more than a read.
+    let wait = Some(Duration::from_secs(15));
+    let mut resp = match body {
+        None => agent()
+            .get(&url)
+            .header("Authorization", &auth)
+            .config()
+            .timeout_global(wait)
+            .http_status_as_error(false)
+            .build()
+            .call(),
+        Some(b) => agent()
+            .post(&url)
+            .header("Authorization", &auth)
+            .config()
+            .timeout_global(wait)
+            .http_status_as_error(false)
+            .build()
+            .send_json(b),
+    }
+    .context("asking snyvi")?;
+    let status = resp.status().as_u16();
+    let v = resp.body_mut().read_json::<Value>().unwrap_or(Value::Null);
+    Ok((status, v))
+}
+
 /// A read of the desk `pane` is on, by the pane route after its id.
 fn pane_read(paths: &Paths, pane: &str, what: &str) -> Result<Value> {
     let token = config::read_token(paths).ok_or_else(|| {

@@ -52,7 +52,7 @@ async function watch() {
  *  (23-groups.js). Its frames are taken in but not drawn (`paint`), and the
  *  daemon sends it one a second, not sixty: a desk left behind a document
  *  used to cost as much as one in view. */
-const seen = v => !document.hidden && reading == null && v.el.isConnected && (!isBack(v.pane) || drawerOn === v.id) && !v.el.parentElement?.classList.contains("dk-gbox");
+const seen = v => !document.hidden && (reading == null || fdock?.pane === v.id) && v.el.isConnected && (!isBack(v.pane) || drawerOn === v.id) && !v.el.parentElement?.classList.contains("dk-gbox");
 let paced = null;
 function pace() {
   const slow = [...views.values()].filter(v => !seen(v)).map(v => v.id).sort();

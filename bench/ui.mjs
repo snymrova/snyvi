@@ -304,6 +304,7 @@ async function main() {
     await section("#187: back from a page is back to the panel that sent it", () => senderRows(cdp, base, token));
     await section("#188: files by name in ⌘K", () => findRows(cdp, base, token, env, tmp));
     await section("#214: a desk opens its own folder", () => deskFolderRows(cdp, base, token, env, tmp));
+    await section("1.58: views over a desk, a board and the folder, a panel beside each", () => viewRows(cdp, base, token, env, tmp));
     await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -4472,6 +4473,111 @@ async function deskFolderRows(cdp, base, token, env, tmp) {
   return rows;
 }
 
+/** 1.58 (plan 6ff79c55a7): a desk's views. A board the agent draws in
+ *  `design/<board>/` adds a button at the end of the head's switcher and
+ *  moves none before it; it opens over the grid with one panel docked beside
+ *  it, a frame written after arrives on it, a pick in the rail is the
+ *  reader's focus the panel reads, and Panels puts everything back and
+ *  clears it. Folder reads the desk's folder with a panel docked beside it
+ *  too, its focus the file and the lines marked, and the ✕ goes back to the
+ *  panels with the docked one in its slot. */
+async function viewRows(cdp, base, token, env, tmp) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const TK = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const dir = join(tmp, "views-158");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "plan.py"), "one = 1\ntwo = 2\nthree = 3\nfour = 4\n");
+  const rid = execFileSync(BIN, ["browse", dir, "--no-open"], { env, cwd: tmp, encoding: "utf8" }).trim().split("\n").pop().match(/\/b\/([^/?#]+)/)[1];
+  const made = await post("/api/desks", { root: rid, path: "" }), desk = made.desk ? made.desk.id : made.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  for (const pane of [pa, pb]) await post(`/api/panes/${pane}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  const frame = (id, word) => fetch(`${base}/api/panes/${pa}/board/home/frames/${id}`, { method: "POST", headers: TK,
+    body: JSON.stringify({ html: `<div style="padding:24px;font:16px system-ui;background:#f4f1ea;color:#222">${word}: a frame the bench drew, to be looked at beside the panel that drew it.</div>`, w: 360, h: 200 }) }).then(r => r.status);
+  const focus = async () => (await (await fetch(`${base}/api/panes/${pa}/focus`, { headers: TK })).json().catch(() => ({}))) || {};
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  const untilAsync = async (fn, tries = 40) => { for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); } return null; };
+  const labels = `[...document.querySelectorAll(".dk-views [data-view]")].map(b => b.dataset.view).join(" ")`;
+  const folderX = `Math.round(document.querySelector('.dk-views [data-view="folder"]')?.getBoundingClientRect().left ?? -1)`;
+  const gridPanes = `[...document.querySelectorAll(".dk-grid > .pn")].map(e => e.dataset.id).join(" ")`;
+  const P_VIEW = ".dk-views ";
+  const dockedIn = sel => `document.querySelector("${sel} > .pn")?.dataset.id || ""`;
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    const before = await p.ev(labels), x0 = await p.ev(folderX);
+    const wrote = await frame("hero", "Hero");
+    const appeared = await until(`!!document.querySelector('.dk-views [data-view="board:home"]')`);
+    const after = await p.ev(labels), x1 = await p.ev(folderX);
+    rows.push(["a board the agent draws joins the switcher at its end, and nothing before it moves",
+      wrote === 201 && appeared && before === "panels folder" && after === "panels folder board:home" && x0 === x1 && x0 >= 0,
+      wrote !== 201 ? `the frame write answered ${wrote}` : !appeared ? `the switcher still says "${after}"` : x0 !== x1 ? `Folder moved ${x0} → ${x1}` : `"${before}" → "${after}"`]);
+
+    await p.clickOn(`${P_VIEW}[data-view="board:home"]`);
+    const open = appeared && await until(`!!document.querySelector('.dk-grid > .dk-view .bd-frame[data-id="hero"] iframe') && !!document.querySelector(".dk-dock-b > .pn")`);
+    const sat = { dock: await p.ev(dockedIn(".dk-view .dk-dock-b")), grid: await p.ev(gridPanes) };
+    rows.push(["the board opens over the grid with one panel docked beside it", open && !!sat.dock && sat.grid.split(" ").filter(Boolean).every(id => id !== sat.dock),
+      !open ? "no board, or no panel beside it" : `panel ${sat.dock} docked, the grid keeps ${sat.grid || "nothing"}`]);
+
+    const second = open && await frame("card", "Card");
+    const arrived = second === 201 && await until(`!!document.querySelector('.bd-frame[data-id="card"] iframe')`);
+    rows.push(["a frame written while it is open arrives on it", arrived, arrived ? "card is on the board" : `the write answered ${second}, and no card came`]);
+
+    const pick = arrived && await until(`!!document.querySelector('#toc [data-bd-pick="card"]')`);
+    if (pick) await p.clickOn(`#toc [data-bd-pick="card"]`);
+    const picked = pick && await untilAsync(async () => { const f = await focus(); return f.focus && f.focus.view === "board:home" && (f.focus.items || []).includes("card") ? f : null; });
+    rows.push(["a pick in the rail is the reader's focus, which the panel reads", !!picked && /card/.test(picked.line || ""),
+      !pick ? "no row for card in the rail" : !picked ? `the panel reads ${JSON.stringify((await focus()).focus)}` : `"${picked.line}"`]);
+
+    const other = sat.dock === pa ? pb : pa;
+    const atBtn = await p.ev(`(() => { const b = document.querySelector('.dk-dock-h [data-dock="${other}"]'); if (!b) return "no button"; const r = b.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e === b ? "" : (e ? e.tagName + "." + e.className : "nothing"); })()`);
+    if (open) await p.clickOn(`.dk-dock-h [data-dock="${other}"]`);
+    const swapped = open && await until(`(${dockedIn(".dk-view .dk-dock-b")}) === "${other}" && (${gridPanes}).includes("${sat.dock}")`);
+    rows.push(["another panel in the dock sends the one there back to the grid", swapped, swapped ? `panel ${other} docked, ${sat.dock} back in the grid` : `docked: ${await p.ev(dockedIn(".dk-view .dk-dock-b"))}${atBtn ? `, the click landed on ${atBtn}` : ""}`]);
+
+    await p.clickOn(`${P_VIEW}[data-view="panels"]`);
+    const back = await until(`!document.querySelector(".dk-view") && document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    const cleared = back && await untilAsync(async () => ((await focus()).focus == null ? true : null));
+    rows.push(["Panels closes the board, both panels in the grid, the focus cleared", back && !!cleared,
+      !back ? `the grid has ${await p.ev(gridPanes)}` : !cleared ? `the focus is still ${JSON.stringify((await focus()).focus)}` : "the panels as they were"]);
+
+    // Folder: the desk's own folder over the desk, a panel docked beside it.
+    await p.clickOn(`${P_VIEW}[data-view="folder"]`);
+    const folder = await until(`location.pathname.startsWith("/b/") && !!document.querySelector("#doc > .fp-split") && !!document.querySelector("#doc > .dk-fdock .dk-dock-b > .pn")`);
+    const side = await p.ev(`(() => { const a = document.querySelector("#doc > .fp-split")?.getBoundingClientRect(), b = document.querySelector("#doc > .dk-fdock")?.getBoundingClientRect(); return a && b ? { beside: b.left >= a.right - 1, w: Math.round(b.width) } : null; })()`);
+    rows.push(["Folder reads the desk's folder with a panel docked beside it", folder && !!side && side.beside && side.w >= 300,
+      !folder ? `the page is on ${await p.ev("location.pathname")}, docked: ${await p.ev(dockedIn("#doc > .dk-fdock .dk-dock-b"))}` : !side ? "no dock box" : !side.beside ? "the dock is over the folder" : `${side.w} px beside the tree`]);
+
+    if (folder) await p.clickOn(`.fp-l a[data-path="plan.py"]`);
+    const file = folder && await until(`!!document.querySelector(".fp-split.fp-file .ln") && !!document.querySelector("#doc > .dk-fdock .dk-dock-b > .pn")`);
+    const ln = file && await p.ev(`(() => { const l = document.querySelectorAll(".fp-r .ln")[1]?.getClientRects()[0]; return l ? { x: l.left + 3, y: l.top + l.height / 2 } : null; })()`);
+    if (ln) await p.click(ln.x, ln.y);
+    const read = file && await untilAsync(async () => { const f = await focus(); return f.focus && f.focus.view === "folder" && f.focus.path === "plan.py" && (f.focus.items || [])[0] === "2" ? f : null; });
+    rows.push(["the file read, and its line marked, are the focus; the dock stays through the page's redraw", !!read,
+      !file ? "plan.py did not open with the panel beside it" : !ln ? "no second line to mark" : `the panel reads ${JSON.stringify((await focus()).focus)}`]);
+
+    // A file's ✕ is back to its folder's page (#214), the dock still there;
+    // the folder page's ✕ is back to the panels.
+    if (folder) await p.clickOn("#chrome .over > :last-child");
+    const up = folder && await until(`location.pathname === "/b/${rid}/" && !!document.querySelector("#doc > .fp-split:not(.fp-file)") && !!document.querySelector("#doc > .dk-fdock .dk-dock-b > .pn")`);
+    if (up) await p.clickOn("#chrome .over > :last-child");
+    const home = up && await until(`location.pathname === "/desk/${desk}" && document.querySelectorAll(".dk-grid > .pn").length === 2 && !document.querySelector(".dk-fdock")`);
+    const gone = home && await untilAsync(async () => ((await focus()).focus == null ? true : null));
+    rows.push(["its ✕ goes back up to the folder, the dock kept, then to the panels, the docked one in its slot, the focus cleared", home && !!gone,
+      !up ? `the file's ✕ went to ${await p.ev("location.pathname")}, docked: ${await p.ev(dockedIn("#doc > .dk-fdock .dk-dock-b"))}` : !home ? `the grid has ${await p.ev(gridPanes)}` : !gone ? `the focus is still ${JSON.stringify((await focus()).focus)}` : "both panels in the grid"]);
+  } finally {
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await post(`/api/browse/${rid}/close`, {}, TK).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
 async function senderRows(cdp, base, token) {
   const rows = [];
   const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;

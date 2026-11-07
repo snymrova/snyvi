@@ -30,8 +30,9 @@ function noNew(d) {
 function layout() {
   const d = current(), grid = ctx.docEl.querySelector(".dk-grid");
   if (!d || !grid) return;
-  // The grid's panes; the back's are the drawer's (18-back.js).
-  const all = gridPanes(d).map(p => views.get(p.id)).filter(Boolean);
+  // The grid's panes; the back's are the drawer's (18-back.js), and the
+  // one docked beside a board is the board's (25-views.js).
+  const all = gridPanes(d).map(p => views.get(p.id)).filter(v => v && !(viewOn && v.id === docked));
   // The focused pane is always shown; the rest in slot order, while there is room.
   const n = full ? 1 : room(), f = all.find(v => v.id === focused);
   const shown = all.length <= n ? all : [f, ...all.filter(v => v !== f)].filter(Boolean).slice(0, n).sort((a, b) => a.pane.slot - b.pane.slot);
@@ -50,7 +51,7 @@ function layout() {
   // Moving an element blurs it, and this runs on every resize of the window:
   // the panes are put back only when the set changes, and the reader's focus
   // with them, or their next key would land on the reading view.
-  const keep = [...grid.querySelectorAll(":scope > .dk-div")], want = [...shown.map(v => v.el), ...keep];
+  const keep = [...grid.querySelectorAll(":scope > .dk-div, :scope > .dk-view")], want = [...shown.map(v => v.el), ...keep];
   if (want.length !== grid.children.length || want.some((el, i) => grid.children[i] !== el)) {
     const had = grid.contains(document.activeElement) ? document.activeElement : null;
     grid.replaceChildren(...want);
@@ -69,10 +70,12 @@ function layout() {
   backLayout(d);
   groupsMount(d);
   groupsHead(d);
-  if (!all.length) grid.innerHTML = `<p class="dk-none">${d.panes.length ? `Every panel in this ${d.grp ? "tab" : "desk"} is in the back.` : `No panels in this ${d.grp ? "tab" : "desk"}.`} <button type="button" data-a="new">New panel</button></p>`;
+  if (!all.length && !viewOn) grid.innerHTML = `<p class="dk-none">${d.panes.length ? `Every panel in this ${d.grp ? "tab" : "desk"} is in the back.` : `No panels in this ${d.grp ? "tab" : "desk"}.`} <button type="button" data-a="new">New panel</button></p>`;
   tabs(d, all, shown);
   leftOffSlot(d);
   keysSlot(d);
+  viewsSlot(d);
+  viewsMount(d);
 }
 
 /* Where the work on this desk was left: one quiet line in the head, in a slot

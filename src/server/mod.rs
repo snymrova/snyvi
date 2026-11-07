@@ -11,6 +11,7 @@
 
 mod api_accounts;
 mod api_agent;
+mod api_board;
 mod api_browse;
 mod api_checks;
 mod api_desk;
@@ -39,6 +40,7 @@ mod ws;
 
 use api_accounts::*;
 use api_agent::*;
+use api_board::*;
 use api_browse::*;
 use api_checks::*;
 use api_desk::*;
@@ -210,6 +212,9 @@ pub struct App {
     /// What the last update's page told (`crate::whats_new`), for the update
     /// block, `/api/guide` and a panel's brief.
     pub whats_new: std::sync::Mutex<Option<crate::whats_new::Said>>,
+    /// Where the reader is in each desk's view now (`crate::focus`): in
+    /// memory, so a restart forgets it as it forgets the live screen.
+    pub focus: crate::focus::Foci,
 }
 
 /// The daemon's own executable, stamped at start.
@@ -361,6 +366,7 @@ fn new_app(
         usage: Default::default(),
         peers: Default::default(),
         whats_new: std::sync::Mutex::new(crate::whats_new::read(&paths.data_dir)),
+        focus: Default::default(),
     })
 }
 
@@ -512,6 +518,38 @@ fn note_routes() -> Router<Arc<App>> {
         )
         .route("/api/desks/{id}/notes/{note}/images", post(set_note_images))
         .route("/api/desks/{id}/note-images/{name}", get(note_image))
+}
+
+/// A board (`api_board`, docs/BOARD.md) and the reader's focus: the agent's
+/// on the panel, behind the token; the page's on the desk.
+fn board_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/panes/{id}/board/{board}", get(pane_board))
+        .route(
+            "/api/panes/{id}/board/{board}/frames/{frame}",
+            post(pane_frame_write).layer(axum::extract::DefaultBodyLimit::max(
+                crate::board::MAX_FRAME_BYTES + 16 * 1024,
+            )),
+        )
+        .route(
+            "/api/panes/{id}/board/{board}/frames/{frame}/hide",
+            post(pane_frame_hide),
+        )
+        .route(
+            "/api/panes/{id}/board/{board}/arrange",
+            post(pane_board_arrange),
+        )
+        .route(
+            "/api/panes/{id}/board/{board}/look/{frame}",
+            post(pane_frame_look),
+        )
+        .route(
+            "/api/panes/{id}/board/{board}/export",
+            get(pane_board_export),
+        )
+        .route("/api/panes/{id}/focus", get(pane_focus))
+        .route("/api/desks/{id}/board/{board}", get(desk_board))
+        .route("/api/desks/{id}/focus", post(set_desk_focus))
 }
 
 /// Music, in the left rail (`api_media`, #204). The plays and the tracks are
@@ -730,6 +768,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/desks/{id}/docs/{doc}/remove", post(remove_desk_doc))
         .route("/api/desks/{id}/docs/{doc}/restore", post(restore_desk_doc))
         .merge(note_routes())
+        .merge(board_routes())
         .route("/api/desks/{id}/leftoff", post(desk_left_off))
         .route("/api/desks/{id}/keys", get(desk_keys).post(add_desk_key))
         .route("/api/desks/{id}/keys/{name}/remove", post(remove_desk_key))
