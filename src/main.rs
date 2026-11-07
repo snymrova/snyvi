@@ -27,6 +27,7 @@ mod links;
 mod mcp;
 mod music;
 mod onyou;
+mod page;
 mod pane;
 mod peer;
 mod pipeline;
