@@ -19,7 +19,7 @@ the questions the design left open.
 | A tab of a desk (1.57): its name, folder, place in the row, dividers, full view and focused panel | `desk_groups` table, `src/desk/groups.rs`; a pane's tab is `panes.grp`, a document's `docs.desk_grp` | yes |
 | A pane: slot 1–4, its name, the folder its shell was last in, the command it last ran | `panes` table, `src/desk.rs` | yes |
 | A closed pane, for Undo | `panes_closed` table, until `snyvi prune` | yes |
-| That Claude was open in a pane when the daemon stopped | `panes.resume_next`: 1 after a planned restart, 2 after any other stop | once, for the next daemon |
+| That Claude was open in a pane when the daemon stopped | `panes.resume_next`: 1 after a planned restart, 2 after any other stop, 3 while an agent is in it (so a crash leaves it), 4 an offer a crash left, 5 an offer a window has seen (`src/desk/marks.rs`) | until the panel starts, or the second start after a window saw it |
 | A pane's last screen, as plain text | `panes/<id>.txt` beside the store | yes, shown greyed |
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
@@ -186,8 +186,26 @@ restart`) marks the panes Claude was in, and the window starts them as
 `claude --resume` (1.7.0). Any other stop the daemon hears -- `snyvi stop`, a
 signal, a reboot -- marks them to be *offered*: the shell comes back in its
 folder and a strip over it says Claude was open, with Resume conversation,
-which types `claude --resume <id>` at the prompt without Enter. A crash or a
-`kill -9` hears nothing and marks nothing; the rail's ↻ is still there.
+which types `claude --resume <id>` at the prompt without Enter.
+
+**After a crash (1.58).** A crash or a `kill -9` hears nothing, so the mark
+is written before it: an agent coming into a running panel sets
+`resume_next = 3`, its going clears it, and every exit the daemon runs
+rewrites its 3s. A 3 still there at the next start is a daemon that died
+with Claude open, and the panel is offered back as one that "closed
+unexpectedly" (4). Home's status line says so first, with **Restore all**,
+**Choose…** and ✕; a desk with two or more on offer has **↻ All N here** in
+each panel's strip. Either queues the panels (`src/server/restore_run.rs`),
+this desk first, two at a time -- one, or none, while
+`/proc/pressure/memory` says memory is short -- each holding its slot
+until its agent reports, its process ends, or two minutes pass. The queue
+holds only what a click named, of what this start found on offer; it stops
+the shell an offer came back as once that shell is quiet, and leaves
+anything else the reader is running alone. An offer lapses at the second
+start after a window showed it, so a restore nobody wanted does not ask for
+ever; until a window has, an update's restart or a second crash keep it. A
+panel whose agent never reported -- `claude` started and gone before its
+first hook -- has nothing to bring back.
 
 **Views over a desk (1.58, plan 6ff79c55a7).** A desk has views, not kinds:
 Panels, Folder, and a Board for each `design/<board>/` its folder holds. The

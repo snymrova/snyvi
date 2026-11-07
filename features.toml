@@ -32,6 +32,12 @@ line = "Ask Claude to design something and it draws on a board in your desk's fo
 show = "desk .dk-views"
 
 [[feature]]
+id = "restore"
+since = "1.58.0"
+title = "Everything back after a crash"
+line = "When snyvi is killed with conversations open -- the system out of memory, a power cut -- the next start offers them back. Home says so in its first line, with Restore all and Choose…, and each panel's strip says Claude was open there. They come back two at a time, fewer when memory is short, the desk you are on first."
+
+[[feature]]
 id = "checks"
 since = "1.58.0"
 title = "Checks you hold on a note"

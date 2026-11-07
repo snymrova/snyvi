@@ -22,6 +22,7 @@ mod api_groups;
 mod api_media;
 mod api_peer;
 mod api_pipeline;
+mod api_restore;
 mod api_routine;
 mod api_thread;
 mod api_week;
@@ -32,6 +33,7 @@ mod events;
 mod lifecycle;
 mod peer_link;
 mod pipeline_run;
+mod restore_run;
 mod routine_run;
 #[cfg(test)]
 mod tests;
@@ -51,6 +53,7 @@ use api_groups::*;
 use api_media::*;
 use api_peer::*;
 use api_pipeline::*;
+use api_restore::*;
 use api_routine::*;
 use api_thread::*;
 use api_week::*;
@@ -196,6 +199,9 @@ pub struct App {
     /// Set when the window has been asked to quit so a newer one can be
     /// started in its place; acted on when its stream ends.
     pub relaunch_window: std::sync::atomic::AtomicBool,
+    /// 1.58: the offers this start found, and a restore under way
+    /// (`restore_run`).
+    pub(crate) restore: restore_run::Restore,
     /// Set once this daemon has decided to leave for a restart: what the
     /// pill says in the seconds before the stream drops, rather than
     /// going back to "Restart to update".
@@ -361,6 +367,7 @@ fn new_app(
         leaving: std::sync::Mutex::new(Leaving::Stopped),
         update,
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
+        restore: Default::default(),
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
         usage: Default::default(),
@@ -747,6 +754,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/resolve", post(resolve_path))
         .route("/api/find", get(find_files))
         .route("/api/find/open", post(find_open))
+        .route("/api/restore", get(get_restore).post(post_restore))
         .merge(browse_routes())
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/docs/{id}/blob", get(doc_blob))
@@ -862,9 +870,18 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // restart it was for never came, or came long ago -- is only an offer:
     // nothing types a conversation back on its own the next day.
     let planned = read_restart_marker(&paths);
-    let (mut resume, mut offer) = store.panes_resume().unwrap_or_default();
+    // 1.58: and a crash leaves the live marks no exit rewrote, which are
+    // offers now, each saying the last daemon died with Claude open there.
+    let marks = store.panes_resume().unwrap_or_default();
+    let (mut resume, mut offer) = (marks.planned.clone(), marks.offered.clone());
     if planned.is_none() {
         offer.append(&mut resume);
+    }
+    if !marks.crashed.is_empty() {
+        eprintln!(
+            "snyvi: the last daemon stopped unexpectedly; {} panel(s) had Claude open",
+            marks.crashed.len()
+        );
     }
     if let Some(apply) = planned {
         eprintln!(
@@ -898,7 +915,10 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // which panes come back as a conversation.
     app.panes.mark_resume(resume);
     app.panes.mark_offer(offer);
+    app.panes.mark_crashed(marks.crashed.clone());
     follow_cwd(&app);
+    // The marks' sink and the offers' queue, before any pane can start.
+    restore_run::start(&app, &marks);
     // Kept past the router, which takes its own: what the daemon does on the
     // way out needs the panes.
     let leaving = app.clone();
@@ -931,7 +951,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         }
     }
     drop_restart_marker(&paths);
-    let _ = leaving.store.clear_panes_resume();
+    let _ = leaving.store.settle_panes_resume();
     // After it: until then `ready` may still name the version now running,
     // and the watcher would apply it again.
     spawn_restart_watcher(leaving.clone());

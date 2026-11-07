@@ -191,6 +191,16 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    // 1.58: a restore after a crash (`api_restore`): what is on offer, and
+    // the click that starts it -- a desk's, never the token's.
+    ("GET", "/api/restore?panes=1", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/restore",
+        Some(r#"{"ids":["nope"]}"#),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/browse", None, Gate::Open, true),
     (
         "POST",

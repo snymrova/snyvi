@@ -86,6 +86,9 @@ pub(crate) async fn home(
         "quotas": home_quotas(&app),
         "quota": app.usage.least(crate::store::now()).map(|(_, q)| q),
         "version": VERSION,
+        // 1.58: what a crash or a stop left on offer, for the bar over
+        // Home (`restore_run`); absent when there is none.
+        "restore": if gated { super::restore_run::for_home(&app) } else { None },
     }))
     .into_response()
 }
@@ -496,6 +499,12 @@ pub(crate) async fn desks(
 pub(crate) fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json::Value {
     let mut v = serde_json::to_value(desks).unwrap_or_default();
     for d in v.as_array_mut().into_iter().flatten() {
+        // 1.58: how many conversations are on offer here, for the head's
+        // Resume (`restore_run`). Only when there are any.
+        let offers = super::restore_run::offers_on(app, d["id"].as_i64().unwrap_or(0));
+        if offers > 0 {
+            d["offers"] = json!(offers);
+        }
         for p in d["panes"].as_array_mut().into_iter().flatten() {
             let id = p["id"].as_str().unwrap_or_default().to_string();
             p["status"] = serde_json::to_value(app.panes.status(&id)).unwrap_or_default();
@@ -1937,7 +1946,10 @@ pub(crate) fn default_rows() -> u16 {
 
 /// Start a pane's process. The only way one starts: this request, from a
 /// click in a window holding the capability. Nothing on a timer, nothing at
-/// daemon start, and nothing derived from a document -- premise 3.
+/// daemon start, and nothing derived from a document -- premise 3. The
+/// other click-started paths are a routine's Run (`routine_run`) and, 1.58,
+/// a restore's (`POST /api/restore`, `restore_run`), which starts only the
+/// panes that click named, of the ones this start found on offer.
 pub(crate) async fn start_pane(
     State(app): S,
     headers: HeaderMap,

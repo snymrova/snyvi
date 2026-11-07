@@ -458,7 +458,7 @@
     peerUse().then(m => m.event(peerCtx, j), () => {});
   };
   /** Home shows a little of all of these; each one reads it again, soon. */
-  const HOME_EVENTS = ["panes", "ctx", "quota", "desks", "desknotes", "doc", "read", "update", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
+  const HOME_EVENTS = ["panes", "ctx", "quota", "desks", "desknotes", "doc", "read", "update", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing", "restore"];
   /** A document in, as the stream tells it (`doc_event`): a save in place,
    *  a draft the hook saved, or an arrival. Out of `connect`, which was long
    *  enough before drafts had a branch of their own. */
@@ -644,6 +644,8 @@
     // A desk was made, renamed, closed, or a pane opened or closed. The event
     // is empty on purpose -- it reaches tabs too -- so a window asks again.
     es.addEventListener("desks", () => loadDesks());
+    // 1.58: conversations coming back after a crash (src/server/restore_run.rs).
+    es.addEventListener("restore", ev => desk?.restoreSaid?.(parse(ev)));
     // A widget changed: a global one here, a desk's in its rail.
     es.addEventListener("widget", ev => { const j = parse(ev); if (!j) return; if (j.desk_id === 0) widgetSaid(j); else desk?.widgetSaid?.(j); });
     // The reader arranged the sidebars, here or in another window.

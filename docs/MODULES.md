@@ -24,6 +24,9 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/events.rs` | 249 | SSE: the stream, the window/agent mark, `resync`, focus |
 | `src/server/ws.rs` | 291 | the desk socket |
 | `src/server/lifecycle.rs` | 912 | health, about, restart and the planned exit, the update watcher, relaunch, reset |
+| `src/server/restore_run.rs` | 485 | after a crash or a stop (1.58): the offers this start found, the queue that brings them back two at a time under memory pressure, the marks' sink |
+| `src/server/api_restore.rs` | 75 | `GET`/`POST /api/restore`: what is on offer, Restore all, a desk's, Choose…, Stop, ✕ (capability) |
+| `src/desk/marks.rs` | 190 | `panes.resume_next`: the marks for the next start, the live mark a crash leaves, how an offer ages and lapses |
 | `src/server/tests.rs` | 830 | the route table every route must be in, and the rest of the server's tests |
 | `src/store.rs` | 2320 | documents on disk, SQLite index, FTS5, versions, projects, workflows, inbox |
 | `src/store/friends.rs` | 270 | the store's side of friends, thin over `peer`: moved out of `store.rs` at its 2,500 lines (1.49) |
