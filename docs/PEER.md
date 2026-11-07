@@ -4,7 +4,9 @@ Two people, each running snyvi, hand each other documents. Sunny sends the
 plan for the garden; it shows up on Trapti's Home and in her sidebar under
 **From Sunny**, and she reads it like any document. Trapti's agent can offer
 one back, and Trapti presses Send. Nothing else travels: no typing into a
-desk, no messages, no presence. This page writes down how it works and
+desk, no messages, no presence. (A desk's page, sent Friends only, goes the
+same sealed way as a document; one put on the wall is the wall's, and
+docs/WALL.md says what that is.) This page writes down how it works and
 what each party sees.
 
 ## The shape

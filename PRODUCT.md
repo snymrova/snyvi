@@ -20,7 +20,7 @@ snyvi gives each project a desk: its agents side by side in real shells, everyth
 
 ## Positioning
 
-The agents work where you can see them, and what they write lands where you can read it, on your machine. One static binary on 127.0.0.1, no account, nothing leaves the machine except a document the reader chose to send to a paired friend, sealed to their key.
+The agents work where you can see them, and what they write lands where you can read it, on your machine. One static binary on 127.0.0.1, no account, and nothing leaves your machine unless you press. A document goes sealed to a paired friend. A page goes to the wall, in the clear, signed by you, and you can take it down. What others say comes back to you as words you read; it never reaches an agent unless you make it a note (docs/WALL.md).
 
 ## Operating Context
 

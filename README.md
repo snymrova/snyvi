@@ -88,7 +88,9 @@ Pair once, with three words said over a call, and a document's menu gains
 **Send to…** It lands in your friend's sidebar under *From you* within a
 second, sealed to their key on the way; a relay holds the ciphertext for a
 week at most, reads none of it, and keeps it for a snyvi that is asleep. An agent can offer a document to a friend, and you press
-Send. Nothing else travels.
+Send. Nothing else travels, but your desk's page when you put it on the
+wall: Home's *What people are building*, and `snyvi.page/<you>`
+([docs/WALL.md](docs/WALL.md)).
 
 ## Room to focus
 
@@ -192,7 +194,7 @@ document sent from anywhere else lands in the inbox, under its project.
 ## Private, and fast
 
 - One static binary, and a small window that opens it, listening on `127.0.0.1` only.
-- No account, no telemetry, and nothing leaves your machine.
+- No account, no telemetry, and nothing leaves your machine unless you press: a document to a friend, sealed, or your desk's page to the wall, signed, and down again whenever you choose.
 - Up in 11 ms, and [every budget is checked](docs/GUIDE.md#measured-so-far) on every push.
 - Updates are signed, and checked before they're applied.
 
