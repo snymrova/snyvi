@@ -304,6 +304,7 @@ async function main() {
     await section("the keys sheet: Claude as, then keys", () => keysSheetRows(cdp, base));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
     await section("panels in the back: a chip, a drawer, one that dies", () => backPanelRows(cdp, base));
+    await section("#228: the lanes, a head's with its rows'", () => laneRows(cdp, base));
     await section("#217: tabs in a desk, made, named, stepped, closed", () => tabRows(cdp, base));
     await section("#187: back from a page is back to the panel that sent it", () => senderRows(cdp, base, token));
     await section("#188: files by name in ⌘K", () => findRows(cdp, base, token, env, tmp));
@@ -4204,9 +4205,12 @@ async function backPanelRows(cdp, base) {
     const grid2 = await q.ev(box(".dk-grid")), inBack2 = await q.ev(box(`.dk-drawer .pn[data-id="${server.id}"]`));
     rows.push(["the drawer opens over the grid and moves nothing", opened && !!inBack && grid2 === grid && inBack2 === inBack,
       !opened ? "the chip opened no drawer" : !inBack ? "the panel was not laid out in the drawer while it was shut" : grid2 !== grid ? `the grid moved: ${grid} to ${grid2}` : inBack2 !== inBack ? `the panel took a new size: ${inBack} to ${inBack2}` : `the grid at ${grid}, the panel at ${inBack}, before and after`]);
-    await q.ev(`document.querySelector(".dk-drawer .dk-dr-x")?.click(); 1`);
+    // One ✕ in the drawer, the panel's Close panel; the drawer is put down
+    // by ⌄ Hide in the panel's head (#229: a second ✕ over it hid it).
+    const xs = await q.ev(`[...document.querySelectorAll(".dk-drawer button")].filter(b => b.offsetParent && /✕|Close/.test((b.getAttribute("aria-label") || "") + b.textContent)).map(b => b.className).join(" ")`);
+    await q.ev(`document.querySelector(".dk-drawer .pn.cur .pn-hide")?.click(); 1`);
     const closed = await until(`!document.querySelector(".dk-drawer").classList.contains("open")`);
-    rows.push(["and its ✕ shuts it", closed, closed ? "shut, the chip still in the head" : "the drawer stayed open"]);
+    rows.push(["its ⌄ puts it down, and its one ✕ is the panel's", closed && xs === "pn-x", !closed ? "the drawer stayed open" : xs !== "pn-x" ? `the drawer's closing buttons: ${xs || "none"}` : "shut, the chip still in the head"]);
 
     // A dev server that falls over while nobody looks: the chip and the
     // desk's row say so, as any panel that needs its reader does.
@@ -4223,6 +4227,44 @@ async function backPanelRows(cdp, base) {
       !forward ? "it is still a chip, or not in the grid" : `in the grid at slot ${slot}`]);
   } finally {
     for (const pane of [front, server.id, dies]) if (pane) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/* #228: the lanes. Every control at a row's end stands in a lane of
+ * --lane counted from its side's one right edge, the head's with its rows':
+ * the Desks head's + over the desk rows' ✕, the top bar's Hide over both,
+ * the rail's + over its rows' ✕. Each was right where it was made and five
+ * columns apart together; this reads the centres and holds them to 1 px. */
+async function laneRows(cdp, base) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}) => (await fetch(base + path, { method: "POST", headers: H, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "lanes" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const pane = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  const { targetId, sessionId } = await tab(cdp);
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  // The centres of what matches, laid out or not (a row's ✕ is there at rest, unseen).
+  const xs = sel => q.ev(`[...document.querySelectorAll(${JSON.stringify(sel)})].map(e => e.getBoundingClientRect()).filter(r => r.width).map(r => Math.round(r.left + r.width / 2))`);
+  const one = (name, got) => { const all = got.flatMap(([, v]) => v), ok = got.every(([, v]) => v.length) && Math.max(...all) - Math.min(...all) <= 1;
+    rows.push([name, ok, got.map(([k, v]) => `${k} ${v.length ? [...new Set(v)].join("/") : "none"}`).join(" · ")]); };
+  try {
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`!!document.querySelector('.t-desk a[data-desk="${desk}"] .row-x') && !!document.querySelector(".dk-rail .dk-pane")`);
+    one("the sidebar's last lane: Hide, the Desks +, a desk's ✕, the Inbox's All", [
+      ["Hide", await xs("#btn-side-hide")], ["Desks +", await xs('[data-sec="desks"] .sec-acts > button:last-child')],
+      ["desk ✕", await xs(".t-desk > a > .row-x[data-dropdesk]")], ["All", await xs('[data-sec="inbox"] .sec-all')]]);
+    one("the sidebar's next lane: a desk's folder over the Inbox's filter", [
+      ["folder", await xs(".t-desk > a > .row-x[data-deskdir]")], ["filter", await xs('[data-sec="inbox"] .sec-acts > button')]]);
+    one("the rail's last lane: a head's +, a panel's ✕", [
+      ["head +", await xs(".dk-rail .sec-head .sec-acts > button:last-child")], ["panel ✕", await xs('.dk-rail .dk-pane .dk-tools > button[data-a="close"]')]]);
+  } finally {
+    await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
   }

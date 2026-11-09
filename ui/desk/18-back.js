@@ -67,7 +67,7 @@ function backHead(d) {
 }
 
 /** The drawer, drawn once with the desk; `backLayout` fills it. */
-const DRAWER = `<div class="dk-drawer" data-part="desk.drawer" aria-hidden="true" role="region" aria-label="In the back"><div class="dk-dr-head"></div><div class="dk-dr-body"></div><p class="dk-dr-foot"></p></div>`;
+const DRAWER = `<div class="dk-drawer" data-part="desk.drawer" aria-hidden="true" role="region" aria-label="In the back"><div class="dk-dr-body"></div><p class="dk-dr-foot"></p></div>`;
 
 /** The back's panels into the drawer, the one open on shown, every one
  *  sized: called by `layout`, as the grid's are put in the grid. */
@@ -87,13 +87,14 @@ function backLayout(d) {
   dr.classList.toggle("open", open);
   dr.setAttribute("aria-hidden", String(!open));
   for (const v of vs) v.el.classList.toggle("cur", v.id === drawerOn);
-  const v = views.get(drawerOn), { esc } = ctx;
+  const v = views.get(drawerOn);
   if (!v) return;
-  // With several in the back the drawer's head picks between them.
-  dr.querySelector(".dk-dr-head").innerHTML = (vs.length > 1 ? vs.map(x => `<button type="button" class="dk-dr-tab${x === v ? " on" : ""}${x.status.blocked ? " blk" : ""}" data-drawer-to="${x.id}">${x.pane.slot} ${esc(short(x))}</button>`).join("") : `<b class="dk-dr-name">${esc(short(v))}</b>`) +
-    `<span class="dk-dr-say">${esc(backSays(v))}</span>` +
-    `<button type="button" class="dk-dr-fwd" data-a="forward" data-p="${v.id}" data-tip="Bring forward" data-tip-sub="into the grid" data-key="ctrl+alt+shift+b">Bring forward</button>` +
-    `<button type="button" class="dk-dr-x" data-a="drawer-x" data-tip="Close the drawer" data-key="ctrl+alt+b" aria-label="Close the drawer">${ctx.glyph("x")}</button>`;
+  // The drawer has no head of its own: the panel's head is its head, with
+  // Bring forward, ⌄ Hide and the panel's own ✕ Close panel, shown in the
+  // drawer only (the style below), and the chips in the desk's head pick between
+  // several. It had a head with a ✕ that hid it, over the panel's ✕ that
+  // closed it: two crosses five pixels apart meaning two things (#229,
+  // 1.60.1), and a row of tabs the chips already were.
   // A shell snyvi does not dress says nothing of the commands in it: only
   // its own end is heard, and the drawer says so rather than pretend.
   dr.querySelector(".dk-dr-foot").textContent = !v.status.cmd && !v.status.accent && !v.pane.cmd ? "This shell’s prompt is its own, so only its end is heard, not a command failing in it." : "";
@@ -180,8 +181,6 @@ async function backNew(d, cmd) {
 function backClick(e) {
   const c = e.target.closest("[data-drawer]");
   if (c) { drawer(drawerOn === c.dataset.drawer ? null : c.dataset.drawer); return true; }
-  const t = e.target.closest("[data-drawer-to]");
-  if (t) { drawer(t.dataset.drawerTo); return true; }
   return false;
 }
 
@@ -189,7 +188,7 @@ function backAct(a, b, d) {
   const v = views.get(b.dataset.p);
   if (a === "forward" && v) sendBack(v, false);
   else if (a === "to-back" && v) sendBack(v, true);
-  else if (a === "drawer-x") drawer(null);
+  else if (a === "drawer-hide") drawer(null);
   else if (a === "back-new") { if (backViews(d).length < ctx.desks.in_back) { backField = true; rail(); ctx.tocEl.querySelector(".dk-backnew input")?.focus(); } else ctx.toast("New panel in the back", `The back holds ${ctx.desks.in_back}`); }
   else if (a === "back-new-x") { backField = false; backDraft = ""; rail(); }
   else return false;
@@ -234,18 +233,11 @@ const BACK_CSS = `
 .dk { position: relative; }
 .dk-drawer { position: absolute; left: 0; right: 0; bottom: 0; height: 42%; z-index: 5; display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow); visibility: hidden; pointer-events: none; }
 .dk-drawer.open { visibility: visible; pointer-events: auto; animation: dk-fade 120ms ease-out; }
-/* The head and foot keep their height whatever they say, so the box the
- * panels share is one size, open or shut, on one panel or another. */
-.dk-dr-head { display: flex; align-items: center; gap: 6px; min-width: 0; height: 24px; flex: none; font-size: 12px; }
-.dk-dr-name { font-family: var(--mono); font-weight: 600; }
-.dk-dr-tab { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border-radius: var(--r-xs); color: var(--fg-3); }
-.dk-dr-tab.on { color: var(--accent); background: var(--accent-bg); }
-.dk-dr-tab.blk { color: var(--warn); font-weight: 600; }
-.dk-dr-say { color: var(--fg-3); margin-right: auto; }
-.dk-dr-fwd { padding: 2px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-xs); color: var(--fg-2); }
-.dk-dr-fwd:hover { color: var(--fg); border-color: var(--accent); }
-.dk-dr-x { width: 22px; height: 22px; display: grid; place-items: center; border-radius: var(--r-xs); color: var(--fg-3); }
-.dk-dr-x:hover { background: var(--rule-2); color: var(--fg); }
+/* The foot keeps its height whatever it says, so the box the panels share
+ * is one size, open or shut, on one panel or another. */
+.dk-dr-body .pn-fwd { display: block; padding: 0 8px; height: 22px; margin: -4px 4px -4px 0; border: 1px solid var(--rule-2); border-radius: var(--r-xs); color: var(--fg-2); font-size: var(--fs-micro); }
+.dk-dr-body .pn-fwd:hover { color: var(--fg); border-color: var(--accent); }
+.dk-dr-body .pn-hide { display: grid; }
 .dk-dr-body { position: relative; flex: 1; min-height: 0; }
 /* Every panel in the back in one box, so each has the drawer's size; only
  * the one open on is seen, and only while the drawer is. */

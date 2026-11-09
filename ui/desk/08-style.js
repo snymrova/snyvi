@@ -219,7 +219,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    (app.css), on the corner, so a count arriving moves nothing. */
 .dk-strip .ds-open { margin-bottom: 4px; }
 .dk-strip .ds-panels.blk { color: var(--warn); }
-.pn-full:hover, .pn-ren:hover, .pn-x:hover { background: var(--rule-2); color: var(--fg); }
+.pn-full:hover, .pn-ren:hover, .pn-hide:hover, .pn-x:hover { background: var(--rule-2); color: var(--fg); }
 /* Full view and ✕ on the focused panel, or the one under the pointer (#227):
    four panels each showing both was eight controls for one decision. Their
    slots stay, so showing moves nothing; an armed ✕ stays in sight. */
@@ -227,7 +227,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The pen, full view and ✕, on every panel, in the grid and in full view
    alike: three slots of their own at the head's end, quiet at rest and --fg
    under the pointer, so none comes and goes nor lands on the state beside it. */
-:is(.pn-ren, .pn-full, .pn-x) { flex: none; align-self: center; width: 22px; height: 22px; margin: -4px 0; display: grid; place-items: center; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
+:is(.pn-ren, .pn-full, .pn-hide, .pn-x) { flex: none; align-self: center; width: 22px; height: 22px; margin: -4px 0; display: grid; place-items: center; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
+/* Bring forward and ⌄ Hide are the drawer's (18-back.js): a panel in the grid has neither. */
+.pn-fwd, .pn-hide { display: none; }
 /* The pen is by the name it changes (1.60, C8), over what follows the name
    rather than beside it -- its negative margin takes back its own width -- so
    it takes no room and its showing moves nothing; seen when the head is
@@ -428,18 +430,18 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-pane.sent { box-shadow: inset 2px 0 0 var(--accent); }
 #chrome .over-from { flex: none; max-width: 40%; font-size: var(--fs-ui); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-focus { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; align-self: stretch; text-align: left; padding: 0 8px; font: inherit; color: inherit; white-space: nowrap; overflow: hidden; }
-.dk-tools { display: flex; align-items: center; gap: 1px; flex: none; margin-left: auto; }
+.dk-tools { display: flex; align-items: center; gap: 0; flex: none; margin-left: auto; }
 :is(.dk-pane, .dk-doc:not(.on), .dk-row) { position: relative; }
 /* Over the end of the title, on a ground that fades in from it: the hover
    ground (--rule, see-through in the dark themes) laid over the rail's own. */
-:is(.dk-pane, .dk-doc:not(.on), .dk-row) > .dk-tools { position: absolute; top: 0; bottom: 0; right: 0; padding: 0 3px 0 14px; border-radius: 0 var(--r-sm) var(--r-sm) 0; opacity: 0; pointer-events: none; transition: opacity var(--t);
+:is(.dk-pane, .dk-doc:not(.on), .dk-row) > .dk-tools { position: absolute; top: 0; bottom: 0; right: 0; padding: 0 0 0 14px; border-radius: 0 var(--r-sm) var(--r-sm) 0; opacity: 0; pointer-events: none; transition: opacity var(--t);
   background: linear-gradient(90deg, transparent, var(--tools-bg, var(--rule)) 14px), linear-gradient(90deg, transparent, var(--bg-side) 14px); }
 .dk-pane.on > .dk-tools { --tools-bg: var(--accent-bg); }
 /* The desk's folder is the folder's own name, and a click opens it in the file manager. */
 .dk-folder { min-width: 0; padding: 0; text-align: left; font: inherit; color: inherit; overflow-wrap: anywhere; border-radius: 3px; }
 .dk-folder:hover { color: var(--accent); }
 :is(.dk-pane, .dk-doc, .dk-row):is(:hover, :focus-within) > .dk-tools, .dk-tools:has([data-armed]) { opacity: 1; pointer-events: auto; }
-.dk-tools button { display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
+.dk-tools button { display: grid; place-items: center; width: var(--lane); height: 20px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .dk-pane.on .dk-tools button { opacity: .8; }
 .dk-tools button:hover { background: var(--rule-2); color: var(--fg); opacity: 1; }
 .dk-sug-tools > button:not(.dk-keep) { display: grid; place-items: center; width: 20px; height: 20px; border-radius: var(--r-xs); color: var(--fg-3); }
@@ -473,7 +475,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-docs .age { flex: none; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 /* A head's count ends where the rows' times do: the rows sit 8px in, and the
    count carries 4px of its own. */
-.dk-rail > .sec > .sec-head { padding-right: 4px; }
+.dk-rail > .sec > .sec-head { padding-right: 0; }
+/* A head's + at rest, as the Desks head's is: hidden, its lane held a
+ * count one lane in from the next head's (#228). */
+.dk-rail > .sec > .sec-head > .sec-acts { opacity: 1; }
 .dk-docs a.new svg { color: var(--accent); }
 .dk-docs a.new .title { color: var(--fg); font-weight: 550; }
 /* The row, and not the link, carries the hover and the mark, so the copy
@@ -487,11 +492,13 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-doc.rose { box-shadow: inset 0 0 0 2px var(--accent); }
 #toc .dk-doc.on a, .dk-doc.on a svg, .dk-doc.on a .age { color: var(--accent); }
 .dk-doc.on .age { display: none; }
-.dk-doc.on .dk-tools { padding-right: 3px; }
+.dk-doc.on .dk-tools { padding-right: 0; }
 /* A document row's tools are drawn as small keys, on their own ground: the
  * marked row shows them at rest, and two bare glyphs beside a title would
  * read as part of it. The age steps aside for them on that row. */
-.dk-doc .dk-tools { gap: 3px; }
+/* Ringed, so a pixel apart inside their lanes rather than a gap that moves them off them. */
+.dk-doc .dk-tools { gap: 0; }
+.dk-doc .dk-tools button { width: 22px; margin: 0 1px; }
 .dk-doc .dk-tools button { background: var(--bg-raise); box-shadow: 0 0 0 1px var(--rule-2); }
 .dk-doc.on .dk-tools button { color: var(--accent); opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent); }
 .dk-doc .dk-tools button:hover { background: var(--accent); color: var(--on-accent); box-shadow: none; }
@@ -690,7 +697,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    width on every row, and room given only under the pointer rewrapped the
    row under the hand reaching for it. Over the text, it sits on the row's
    own hover colour, so the words under it fade out rather than show through. */
-.dk-tail { position: absolute; top: 3px; right: 3px; display: flex; }
+.dk-tail { position: absolute; top: 3px; right: 0; display: flex; }
 .dk-note .dk-tail button { background: var(--rule); box-shadow: -12px 0 8px -4px var(--rule); border-radius: var(--r-xs); }
 .dk-note .dk-tools { margin: 0; width: auto; padding: 0; opacity: 0; pointer-events: none; transition: opacity var(--t); }
 .dk-note:is(:hover, :focus-within) .dk-tools, .dk-note .dk-tools:has([data-armed]) { opacity: 1; pointer-events: auto; }
