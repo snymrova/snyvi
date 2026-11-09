@@ -29,6 +29,12 @@
    fetched once the page is idle; boot.js paints a returning reader's theme
    from a copy the app kept of it, so leaving them out costs no flash. */
 :root {
+  /* A lane (#228): the one width every action and status cell at a row's
+   * end takes, in both sidebars. Rows and their section's head are counted
+   * from one right edge in lanes of this width, so the head's + stands over
+   * the rows' ✕, the top bar's Hide over both. 24 is WCAG 2.2's least
+   * target. bench/ui.mjs holds the lanes ("the lanes"). */
+  --lane: 24px;
   --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --serif: "Source Serif 4", ui-serif, Georgia, "Times New Roman", serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -359,7 +365,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    same glyph as the button in #chrome that brings the pane back, with the
    pane's third filled while it is here and outlined once it is gone, so
    the two read as one control that flips. */
-#btn-side-hide { margin-left: 2px; }
 /* ---------- the rail ----------
    The sidebar folded (`\`, or the button at its top) is a 44 px column of
    its sections' icons, at every width; under 760 px it is only ever that
@@ -466,7 +471,8 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 @media (prefers-reduced-motion: reduce) { #main, #toc { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; animation: none !important; } }
 
 /* ---------- sidebar ---------- */
-.side-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 10px 16px; }
+.side-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px 16px; }
+:root:not([data-side="0"]) .side-head .icon { width: var(--lane); }
 .brand { font-weight: 600; letter-spacing: -.01em; color: var(--fg); display: inline-flex; align-items: center; gap: 8px; }
 .brand:hover { text-decoration: none; }
 /* On Home, the mark is the current row: the accent tint behind it, as a row's. */
@@ -535,7 +541,7 @@ html[data-link="off"] :is(.live, #rail-live .badge) { visibility: hidden; }
 .icon .aa { font-size: var(--fs-ui); font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
 :root[data-font="mono"] .icon .aa { font-size: var(--fs-micro); letter-spacing: -.06em; }
 
-.side-foot { display: flex; align-items: center; gap: 4px; height: var(--foot-h); flex: none; padding: 8px 12px 10px; margin-top: auto; border-top: 1px solid var(--rule); }
+.side-foot { display: flex; align-items: center; gap: 4px; height: var(--foot-h); flex: none; padding: 8px 16px 10px 12px; margin-top: auto; border-top: 1px solid var(--rule); }
 .side-foot { position: relative; }
 /* The version, quiet at the foot's end: a click is About, and an update
    waiting puts its dot on it. Gone when the sidebar is folded; the rule stays. */
@@ -626,7 +632,7 @@ html[data-link="off"] :is(.live, #rail-live .badge) { visibility: hidden; }
    under it, and every row is one shape: 28px tall, a 16px icon at the
    section label's edge, the name at 32px, and -- on a row that folds -- the
    heads' chevron right after the name. */
-.sec-head { display: flex; align-items: center; gap: var(--sp-2); height: var(--row-h); margin-top: var(--sp-7); padding-right: 2px; }
+.sec-head { display: flex; align-items: center; gap: 0; height: var(--row-h); margin-top: var(--sp-7); padding-right: 2px; }
 /* In the sidebar a head ends where its rows do, inside their 8px: its + and
    All stand in the rows' ✕ column, and its count on the rows' edge (#131). */
 #trees .sec-head { padding-right: 8px; }
@@ -642,16 +648,16 @@ button.sec-fold:hover { color: var(--fg-2); }
    still says it. One the open section says itself below says it only folded.
    Its slot stands empty at two figures' width, so a count coming or going
    moves nothing on the head. */
-.sec-n { flex: none; min-width: calc(2ch + 8px); padding: 0 4px; text-align: right; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0; color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sec-n { flex: none; min-width: var(--lane); padding: 0 4px; text-align: right; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0; color: var(--fg-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sec-n.accent { color: var(--accent); }
 .sec-n.warn { color: var(--warn); }
 .sec-fold[aria-expanded="true"] ~ .sec-n.fold-only { visibility: hidden; }
-.sec-acts { flex: none; display: flex; align-items: center; gap: var(--sp-1); opacity: 0; transition: opacity var(--t); }
+.sec-acts { flex: none; display: flex; align-items: center; gap: 0; opacity: 0; transition: opacity var(--t); }
 .sec-head:is(:hover, :focus-within, .empty) > .sec-acts { opacity: 1; }
 /* New desk is always there: the + in front of Desks is the way to a desk,
    not a thing to find by hovering. */
 .sec-head[data-sec="desks"] > .sec-acts { opacity: 1; }
-.sec-acts > button { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
+.sec-acts > button { display: grid; place-items: center; width: var(--lane); height: 22px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .sec-acts > button:hover { background: var(--rule-2); color: var(--fg); }
 /* The left's sections are in the reader's order (app.js `placeLeft`), so
    which comes first, and which follows a folded one, is a class on the
@@ -742,7 +748,7 @@ summary > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
 summary:is(:hover, :focus-visible) > .s-chev, details:not([open]) > summary > .s-chev { opacity: 1; }
 details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* All, at the Inbox head's right edge: the whole library, and its size. */
-.sec-all { flex: none; display: flex; align-items: baseline; gap: 5px; height: 22px; padding: 0 6px; border-radius: var(--r-sm); font-size: var(--fs-micro); font-weight: 600; line-height: 22px; color: var(--fg-3); transition: background var(--t), color var(--t); }
+.sec-all { flex: none; display: flex; align-items: baseline; justify-content: center; gap: 5px; min-width: var(--lane); height: 22px; padding: 0 4px; border-radius: var(--r-sm); font-size: var(--fs-micro); font-weight: 600; line-height: 22px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .sec-all .n { font-weight: 400; font-variant-numeric: tabular-nums; }
 .sec-all:hover { background: var(--rule); color: var(--fg); text-decoration: none; }
 .sec-all.active { color: var(--accent); }
@@ -873,7 +879,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desks .end { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
 .t-desks .ctx { font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }
-.t-desks .dot { flex: none; order: 1; display: grid; place-items: center; width: 22px; height: 10px; }
+.t-desks .dot { flex: none; order: 1; display: grid; place-items: center; width: var(--lane); height: 10px; }
 /* Running is green, as on Home and the panel's head; an agent at work wears
    Home's ring around it (DESIGN §5.2). */
 .t-desks .dot:is(.on, .run)::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
@@ -901,7 +907,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    and on its own would let the title show through. */
 :is(.t-doc, .t-desk) > a { --row: var(--rule); }
 :is(.t-doc, .t-desk) > a.active { --row: var(--accent-bg); }
-:is(.t-doc, .t-desk) > a > :is(.ren, .row-x) { position: absolute; top: 50%; translate: 0 -50%; right: 6px; width: auto; margin: 0; padding: 2px 4px; opacity: 0; pointer-events: none; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
+:is(.t-doc, .t-desk) > a > :is(.ren, .row-x) { position: absolute; top: 50%; translate: 0 -50%; right: 8px; width: auto; min-width: var(--lane); text-align: center; margin: 0; padding: 2px 4px; opacity: 0; pointer-events: none; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 .t-desk > a > .ren { right: 30px; }
 :is(.t-doc, .t-desk) > a:is(:hover, :focus-visible, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x):hover { background: linear-gradient(var(--rule-2) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
@@ -911,7 +917,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    stay where they are. Armed, "Close?" lays over the end as before. Inside
    the row's padding, where a project's ✕ is: 4px past it, it was a column of
    its own. */
-.t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0; display: grid; place-items: center; background: none; }
+.t-desk > a > .row-x { position: static; translate: none; flex: none; width: var(--lane); height: 22px; padding: 0; margin: 0 0 0 -8px; display: grid; place-items: center; background: none; }
 .t-desk > a > .row-x[data-armed] { position: absolute; right: 6px; width: auto; height: auto; padding: 2px 4px; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 /* A row lights the moment the pointer is on it, and only lets go slowly. */
 :is(.s-row, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }

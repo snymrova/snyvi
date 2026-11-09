@@ -671,8 +671,6 @@
     // closes again.
     const wb = !e.target.closest("a") && e.target.closest(".wg-body, .wg-why");
     if (wb) { seatOpen(wb); return; }
-    const so = e.target.closest("[data-desksort]");
-    if (so) { e.preventDefault(); e.stopPropagation(); askWhere(so, e.detail === 0); return; }
     const nd = e.target.closest("[data-newdesk]");
     if (nd) {
       // Inside a <summary> too: a click on the + is not a click on the folder.

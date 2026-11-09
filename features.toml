@@ -25,6 +25,20 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "drawerhead"
+since = "1.60.1"
+title = "One ✕ on a panel in the back"
+line = "A panel in the back opens with its own head: Bring forward, ⌄ to put the drawer down while it keeps running, and ✕ to close it. The drawer's second ✕ is gone."
+small = "yes"
+
+[[feature]]
+id = "lanes"
+since = "1.60.1"
+title = "Everything at a row's end in one lane"
+line = "The sidebar's and the desk rail's buttons, counts and dots stand in columns: a head's + over its rows' ✕, the top bar's icons over both. The Desks list keeps your own order, with no sort button."
+small = "yes"
+
+[[feature]]
 id = "viewsmenu"
 since = "1.60.0"
 title = "Views live in the desk's ⋯"
