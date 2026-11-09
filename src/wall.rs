@@ -39,12 +39,12 @@ pub fn base() -> String {
 }
 
 /// The wall's own keys' public halves, as the relay spells a key: minted
-/// once by `wall/scripts/mint.mjs`, whose secret halves are the Worker's
-/// `WALL_SIGN` and `WALL_BOX` and nowhere else. Empty until minted: then
-/// no frame is the wall's, and the daily line simply does not arrive.
-/// `SNYVI_WALL_KEY` and `SNYVI_WALL_BOX` override them, for a wall in a test.
-pub const WALL_KEY: &str = "";
-pub const WALL_BOX: &str = "";
+/// once by `wall/scripts/mint.mjs` (2026-11-09), whose secret half is the
+/// Worker's `WALL_SEED` and nowhere else. A new mint means a release with
+/// the new pair before the daily line opens again. `SNYVI_WALL_KEY` and
+/// `SNYVI_WALL_BOX` override them, for a wall in a test.
+pub const WALL_KEY: &str = "qDxoxRIm84H9m26B8tm3yOyXWgJj7J5Afq8OCXqSf7w";
+pub const WALL_BOX: &str = "_lwgrTlTgy0XdlWcvB4ZlGmnInXXsyHov8gw13jUbBk";
 
 fn env_or(name: &str, default: &str) -> String {
     std::env::var(name)

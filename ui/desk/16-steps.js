@@ -16,8 +16,8 @@
  * there, so a password is asked and answered where the command runs. Once
  * the walk has its shell, each later step runs in it too.
  *
- * Only the step whose turn it is can be pressed: one click, one line, the
- * one shown. Running a step does not finish it -- it may have failed, or be
+ * Only the step whose turn it is can be run: one click, one line, the
+ * one shown (a later one has Copy and Done, #225). Running a step does not finish it -- it may have failed, or be
  * waiting on a password -- so it stays lit, with Again, until the reader
  * says Done; nothing runs because another finished. A step's text is typed
  * only as Run types a single command, refused at the door if it held a
@@ -80,10 +80,16 @@ function stepsRow(d, w, n, from, esc) {
       `<button type="button" class="tn-opt quiet" data-a="tn-copy" data-w="${w.id}" data-c="${esc(s.cmd)}">Copy</button>` +
       btn("tn-step-done", i, "Done", "Done", ran ? "It worked: on to the next" : "You ran it yourself", !ran);
   };
+  // A step not yet its turn still has what runs nothing (#225): Copy, to
+  // take the command along, and Done, for one already done another way. Run
+  // and In a shell stay on the step whose turn it is: nothing runs out of
+  // its turn. Quiet, so the lit step is still the one the eye finds.
+  const later = (s, i) => (s.cmd ? `<button type="button" class="tn-opt quiet" data-a="tn-copy" data-w="${w.id}" data-c="${esc(s.cmd)}">Copy</button>` : "") +
+    btn("tn-step-done", i, "Done", "Done already", "You did this one another way; it is skipped", true);
   const rows = steps.map((s, i) => {
     const ok = st.done.has(i), on = i === next;
     const act = ok ? `<span class="tn-step-ok">done</span>`
-      : !on ? ""
+      : !on ? later(s, i)
       : s.cmd ? runs(s, i)
       : btn("tn-step-done", i, "Done", "Done", "You did this one by hand", false);
     return `<li class="tn-step${ok ? " ok" : on ? " on" : ""}"><span class="tn-step-n">${i + 1}</span>` +
@@ -162,9 +168,9 @@ async function stepShell(d, w, i, cmd) {
 async function stepDone(d, w, i) {
   // The last Done again, when its answer did not reach the daemon, is the
   // one way past the end: it answers again.
-  const next = stepsNext(w);
-  if (w.answered_at || (i !== next && next !== -1)) return;
-  const st = stepsAt(w.id), steps = stepsOf(w);
+  // A later step may be done first (#225); one already done is not again.
+  const next = stepsNext(w), st = stepsAt(w.id), steps = stepsOf(w);
+  if (w.answered_at || (next !== -1 && (!(i >= 0 && i < steps.length) || st.done.has(i)))) return;
   st.done.add(i);
   stepsKeep();
   if (st.done.size < steps.length) { rail(); return; }

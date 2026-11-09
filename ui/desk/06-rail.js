@@ -8,7 +8,14 @@
  *  own marks at the front of its title (Claude Code's ✳, a spinner) go too:
  *  the row's dot already says what the pane is doing, and the full title is
  *  the row's tooltip. */
-const short = v => { const t = what(v), m = /^[\w.-]+@[\w.-]+:(.+)$/.exec(t); return (m ? tilde(m[1]) : t).replace(/^(?:(?!~)[\p{S}\p{Co}\s])+/u, "") || t; };
+const short = v => {
+  const t = what(v), m = /^[\w.-]+@[\w.-]+:(.+)$/.exec(t), r = (m ? tilde(m[1]) : t).replace(/^(?:(?!~)[\p{S}\p{Co}\s])+/u, "") || t;
+  // Claude Code titles its session "ledger · panel 2" (brief.rs `title`), and
+  // the terminal's title is that: on the desk the desk is said already, so
+  // a panel with no name of its own is "panel 2" (1.60, C6).
+  const d = !v.pane.name && current(), pre = d ? `${d.name} · ` : "";
+  return pre && r.startsWith(pre) ? r.slice(pre.length) : r;
+};
 
 /** The rail's small controls, drawn as lines the way the sidebar's icons
  *  are: stop and start on a pane, close on a pane or the desk, a pen on the
@@ -277,7 +284,7 @@ function rail() {
   const order = (lay && lay.right.length ? lay.right : Object.keys(secs)).filter(id => secs[id] && !off.has(id) && !(id === "widgets" && off.has("right:widgets")));
   const backHad = backHeld();
   // A board open over the desk puts its section first (25-views.js).
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + viewRail() + order.map(id => secs[id]()).join("") + `</div>`);
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + order.map(id => secs[id]()).join("") + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a
@@ -782,7 +789,12 @@ function stageMark(x, esc) {
   const old = (st === "planned" || st === "read") && x.stage_at && Date.now() / 1000 - x.stage_at > STALE_S;
   const age = old ? ` · ${ctx.relShort(x.stage_at)}` : "", dim = old ? " stale" : "";
   // Approved by the reader on the plan's head (1.47): a tick after the word,
-  // and its panel goes ahead.
+  // and its panel goes ahead. Unless its Claude sits at its prompt: then it
+  // hears nothing until a next prompt (#223), so the same chip, in the same
+  // place, is Start, which types the go-ahead there (`goAhead`).
+  if (st === "planned" && x.stage_doc && x.ok_at && sendsHere(views.get(x.stage_pane))) {
+    return `<button type="button" class="dk-stage planned ok words" data-a="note-go" data-d="${esc(x.stage_doc)}" data-tip="Approved; ${who} waits at its prompt" data-tip-sub="Start types the go-ahead into its panel and presses Enter" aria-label="Start: tell ${who} to go ahead with ${esc(x.text)}">${ico("doc")}<span class="w">approved · start ${who}</span></button>`;
+  }
   if (st === "planned" && x.stage_doc && x.ok_at) {
     return `<button type="button" class="dk-stage planned ok words" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}, approved by you ${esc(ctx.relShort(x.ok_at))}" data-tip-sub="its panel goes ahead · click to open the plan" aria-label="Open the approved plan for ${esc(x.text)}">${ico("doc")}<span class="w">approved · ${who} goes ahead</span></button>`;
   }
@@ -871,7 +883,7 @@ function gatePop(x, esc) {
   const rows = [`<p class="dk-gate-w">${esc(where)}</p>`];
   if (st === "planned" && x.stage_doc) {
     rows.push(`<p class="dk-gate-acts">${act("note-doc", "Open the plan", ` data-d="${esc(x.stage_doc)}"`)}` +
-      (x.ok_at ? act("note-ok", "Take the approval back", ` data-doc="${esc(x.stage_doc)}" data-undo="1"`) : act("note-ok", "Approve", ` data-doc="${esc(x.stage_doc)}" data-undo="0" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt; snyvi starts nothing"`, true)) + `</p>`);
+      (x.ok_at ? act("note-ok", "Take the approval back", ` data-doc="${esc(x.stage_doc)}" data-undo="1"`) : act("note-ok", "Approve", ` data-doc="${esc(x.stage_doc)}" data-undo="0" data-tip="Approve the plan" data-tip-sub="a panel waiting at its prompt is told at once; one at work hears it at its next"`, true)) + `</p>`);
   }
   if (t) rows.push(`<p class="dk-gate-t">${esc(t.name)} · ${esc(t.stage)}${t.pr ? ` · PR ${esc(t.pr)}${t.ci ? ` ${esc(t.ci)}` : ""}` : ""}</p>`);
   if (sh && !atCheck(x)) rows.push(`<p class="dk-gate-acts">${act("note-works", "✓ works", "", true)}${act("note-broken", "not yet…")}</p>`);

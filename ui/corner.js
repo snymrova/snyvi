@@ -780,7 +780,7 @@ function oyAct(a, b) {
   const d = r.desk, t = r.turn;
   if (a === "cn-oy-done") return oyDo(key, `Done: ${r.text}`, `/api/desks/${d}/notes/${r.note}`, { done: true }, [`/api/desks/${d}/notes/${r.note}`, { done: false }]);
   if (a === "cn-oy-keep") return oyDo(key, `Kept on ${r.desk_name}`, `/api/desks/${d}/notes/${r.note}/keep`, {});
-  if (a === "cn-oy-approve") return oyDo(key, "Approved: its panel hears it next", `/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, {}, [`/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, { undo: true }]);
+  if (a === "cn-oy-approve") return oyDo(key, "Approved: if its panel is waiting, press Start on the line", `/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, {}, [`/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, { undo: true }]);
   if (a === "cn-oy-go") return oyDo(key, r.kind === "routine" ? `Go ahead: ${r.routine} resumes inside its Waits` : "Go ahead: its panel hears it next", `/api/desks/${d}/leftoff`, { go: true }, r.kind === "left" ? [`/api/desks/${d}/leftoff`, { approve: false }] : null);
   const v = b.dataset.v;
   if (a === "cn-oy-later") {

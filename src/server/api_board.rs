@@ -3,7 +3,8 @@
 //!
 //! The agent's routes are on the token, through `agent_pane`, and reach only
 //! the pane's own desk's folder: `board_read`, `frame_write` (and its hide),
-//! `board_arrange`, `frame_look`, `board_export`, `read_focus`. The page's
+//! `board_arrange`, `frame_look`, `board_export`, `read_focus`, and
+//! `open_view`, which opens a view on the reader's screen. The page's
 //! are on the capability, through `refuse_desk`: the same read, and setting
 //! the focus. A token still mints no capability and starts no command.
 //!
@@ -426,6 +427,87 @@ pub(crate) async fn set_desk_focus(
         emit(&app, "focus", json!({ "desk": id, "focus": f }));
     }
     Json(json!({ "focus": f })).into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ViewBody {
+    view: String,
+    #[serde(default)]
+    path: String,
+}
+
+/// `open_view` (1.60, plan 586c0491b6): a view of the pane's own desk opened
+/// on the reader's screen -- the panels, its folder (at a file in it), its
+/// page or one of its boards -- by an agent the reader said yes to; its tool
+/// says to ask first, every time. It is a view and only that: nothing is
+/// typed, run or sent, and the token still mints no capability. Only while
+/// a page shows that desk: anywhere else nothing opens, and the agent is
+/// told so. The page opens it (`view`, 25-views.js), once the reader has
+/// stopped typing.
+pub(crate) async fn pane_open_view(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<ViewBody>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let root = std::path::Path::new(&placed.root);
+    let view = b.view.trim();
+    let known = matches!(view, "panels" | "folder" | "page")
+        || (view.starts_with("board:") && board::views(root).iter().any(|v| v == view));
+    if !known {
+        return refused(anyhow::anyhow!(
+            "a view is panels, folder, page, or board:<name> for a board this desk has"
+        ));
+    }
+    let path = b.path.trim().trim_start_matches("./");
+    if !path.is_empty() {
+        let rel = std::path::Path::new(path);
+        if view != "folder" {
+            return refused(anyhow::anyhow!("a path goes with the folder view only"));
+        }
+        if !rel
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return refused(anyhow::anyhow!(
+                "a path is a file's, relative to the desk's folder, with no .."
+            ));
+        }
+        if !root.join(rel).is_file() {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": format!("there is no file {path} in the desk's folder") })),
+            )
+                .into_response();
+        }
+    }
+    if !in_view(&app, Some(placed.desk_id)) {
+        return Json(json!({
+            "opened": false,
+            "line": format!("The user is not looking at the desk {} now, so nothing opened. Say in your reply what you wanted to show them.", placed.desk_name),
+        }))
+        .into_response();
+    }
+    let by = format!("Claude in panel {}", placed.pane.slot);
+    emit(
+        &app,
+        "view",
+        json!({ "desk": placed.desk_id, "view": view, "path": path, "by": by, "pane": placed.pane.id }),
+    );
+    let at = if path.is_empty() {
+        String::new()
+    } else {
+        format!(" at {path}")
+    };
+    Json(json!({
+        "opened": true,
+        "line": format!("Opened {view}{at} on the user's desk; they go back with its chip or Esc. read_focus says where they are."),
+    }))
+    .into_response()
 }
 
 /// Each desk's views, for the desks list: Folder always, then one per

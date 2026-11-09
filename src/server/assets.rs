@@ -732,7 +732,7 @@ fn approve_block(doc: &Doc, talk: &Talk) -> String {
         (
             "Approve",
             "The go-ahead for this plan: its panel hears it at its next prompt",
-            format!("Approve, and {panel} hears it at its next prompt. snyvi starts nothing."),
+            format!("Approve, and {panel} hears it at its next prompt, or at once from Start on the line if it waits at its prompt."),
         )
     };
     format!(

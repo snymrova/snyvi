@@ -35,6 +35,13 @@ const FOCUS: &str = "Where the user is in this snyvi desk's view right now: the 
 the frames selected on a board. Read it before acting on \"this\", \"here\" or \"the left one\". Null when they are \
 on the panels.";
 
+/// 1.60 (plan 586c0491b6): a view opened for the reader, after they said yes.
+const OPEN_VIEW: &str = "Open a view of this snyvi desk on the user's screen: its panels, its folder (at a file in it, \
+`path`), its page, or a board (board:<name>). Ask the user first, every time, and call this only after they said yes in \
+this conversation: a yes is for that one opening, not the rest of the session. Use it when they would need the view to \
+follow you -- a file you changed, a board you drew. It opens only while they are looking at this desk; it types, runs and \
+sends nothing.";
+
 fn board_prop() -> Value {
     json!({ "type": "string", "description": "The board's name: design/<board>/. Default home." })
 }
@@ -78,6 +85,12 @@ pub(super) fn specs() -> Vec<Value> {
         json!({ "name": "read_focus", "title": "Where the user is", "description": FOCUS,
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "annotations": annotations(true) }),
+        json!({ "name": "open_view", "title": "Open a view, once asked", "description": OPEN_VIEW,
+            "inputSchema": { "type": "object", "properties": {
+                "view": { "type": "string", "description": "panels, folder, page, or board:<name>." },
+                "path": { "type": "string", "description": "With folder: a file, relative to the desk's folder (src/limit.rs)." } },
+                "required": ["view"], "additionalProperties": false },
+            "annotations": annotations(false) }),
     ]
 }
 
@@ -313,6 +326,31 @@ impl Session {
                     v["path"].as_str().unwrap_or("")
                 ),
                 false,
+            ),
+            Ok((s, v)) => said(refusal(s, &v), true),
+            Err(e) => said(format!("snyvi did not answer: {e}"), true),
+        }
+    }
+
+    pub(super) fn open_view(&self, args: &Value) -> Value {
+        let Some(p) = self.pane.as_deref() else {
+            return said("This session is not running in a snyvi desk.", true);
+        };
+        let s = |k: &str| {
+            args.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        let body = json!({ "view": s("view"), "path": s("path") });
+        match client::pane_board(&self.paths, p, "view", Some(body)) {
+            Ok((200, v)) => said(
+                v["line"]
+                    .as_str()
+                    .unwrap_or("Asked snyvi to open it.")
+                    .to_string(),
+                v["opened"] == json!(false),
             ),
             Ok((s, v)) => said(refusal(s, &v), true),
             Err(e) => said(format!("snyvi did not answer: {e}"), true),

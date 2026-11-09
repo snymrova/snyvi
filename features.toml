@@ -25,6 +25,52 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "viewsmenu"
+since = "1.60.0"
+title = "Views live in the desk's ⋯"
+line = "Panels, Folder, Page and your boards are in the desk's ⋯ menu now, so the head stays quiet. While one is open, a chip in the head takes you back; Ctrl Alt F opens Folder."
+show = "desk .dk-head .dk-menu"
+
+[[feature]]
+id = "dockbelow"
+since = "1.60.0"
+title = "Your panel below the view"
+line = "In Folder, a board and Page your panel sits below, so files and frames get the width. Fold it to its head and click it to bring it back, drag its edge, or put it beside; each desk remembers."
+
+[[feature]]
+id = "folderroom"
+since = "1.60.0"
+title = "Folder keeps the desk around it"
+line = "Folder keeps the desk's head, tabs and edges where the desk has them, and a board's own folder offers Open as board. A board's frames and colours sit on the board itself."
+
+[[feature]]
+id = "openview"
+since = "1.60.0"
+title = "Claude can show you a file"
+line = "Ask Claude to show you what it changed, and once you say yes it opens Folder at that file, with its panel below it."
+
+[[feature]]
+id = "quiethead"
+since = "1.60.0"
+title = "A quieter desk head"
+line = "Where you left off sits in a box of its own and says whose the next step is, a panel shows its full view and close only when it has the focus, + tab and + panel say which is which, and you rename a panel by double-clicking its name."
+small = "yes"
+
+[[feature]]
+id = "gostart"
+since = "1.59.1"
+title = "Approve starts a waiting panel"
+line = "Approve a plan on its desk and, if its Claude is waiting at its prompt, snyvi tells it to go ahead there and then. Approved from elsewhere, the note's line reads approved · start Claude: press it."
+small = "yes"
+
+[[feature]]
+id = "latersteps"
+since = "1.59.1"
+title = "Every step of a run card has Copy"
+line = "A run card's later steps have Copy and Done too, so you can take a command along or skip one you already did. Run stays on the step whose turn it is."
+small = "yes"
+
+[[feature]]
 id = "wall"
 since = "1.59.0"
 title = "What people are building"
@@ -38,14 +84,14 @@ since = "1.59.0"
 title = "Your desk's page"
 line = "Page, beside Folder in a desk's head, drafts a landing page from the desk: its README, its logo and colour, its repository and its moments. Edit it where it stands, then send it to the wall or to friends only, and take it down whenever you like."
 still = "page.png"
-show = "desk .dk-views [data-view=page]"
+show = "desk .dk-head .dk-menu"
 
 [[feature]]
 id = "board"
 since = "1.58.0"
 title = "A board beside your panel"
-line = "Ask Claude to design something and it draws on a board in your desk's folder, frame by frame, while you watch. Pick a frame and say what to change: Claude reads what you picked. The panel you talk to stays docked beside the board."
-show = "desk .dk-views"
+line = "Ask Claude to design something and it draws on a board in your desk's folder, frame by frame, while you watch. Pick a frame and say what to change: Claude reads what you picked. The panel you talk to stays docked with the board."
+show = "desk .dk-head .dk-menu"
 
 [[feature]]
 id = "restore"

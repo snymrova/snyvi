@@ -77,14 +77,22 @@ function groupsHead(d) {
   const gs = d && d.groups || [], { esc } = ctx, at = gs.findIndex(x => x.id === d.grp);
   // The key that reaches a tab from the one shown: the next ], the one before [.
   const key = i => i === (at + 1) % gs.length ? "ctrl+alt+shift+]" : i === (at + gs.length - 1) % gs.length ? "ctrl+alt+shift+[" : "";
+  // A tab just closed keeps its place for BACK_MS, in its own width, with
+  // Undo where its ✕ was: the eye stays where the click was, and nothing
+  // after it in the row moves until the offer is gone.
+  const gone = tabGone && tabGone.desk === d.id ? tabGone : null, many = gs.length + (gone ? 1 : 0) > 1;
   // One tab left reads as none: the + alone, as on a desk that never had two.
-  const html = (gs.length < 2 ? [] : gs).map((g, i) => {
+  const tabs = (many ? gs : []).map((g, i) => {
     const on = g.id === d.grp, need = !on && allPanes(d).some(p => p.grp === g.id && needsYou(views.get(p.id)));
     return `<span class="dk-gt${on ? " on" : ""}"><button type="button" class="dk-group${on ? " on" : ""}${need ? " blk" : ""}" data-grp="${g.id}" role="tab" aria-selected="${on}" ` +
       `data-tip="${esc(g.name)}${need ? " · needs you" : ""}" data-tip-sub="${on ? "double-click to rename" : "show it"}"${on ? "" : ` data-key="${key(i)}"`}>` +
       `${esc(g.name)}<i class="dk-group-mark" aria-hidden="true">${need ? "!" : ""}</i></button>` +
-      (gs.length > 1 ? `<button type="button" class="dk-group-x" data-grp-x="${g.id}" data-tip="Close ${esc(g.name)}" data-tip-sub="its panels are kept, stopped" aria-label="Close tab ${esc(g.name)}">×</button>` : "") + `</span>`;
-  }).join("") + `<button type="button" class="dk-group-new" data-tip="New tab" data-tip-sub="more panels, in this desk's folder" aria-label="New tab">+</button>`;
+      (gs.length > 1 ? `<button type="button" class="dk-group-x" data-grp-x="${g.id}" data-tip="Close ${esc(g.name)}" data-tip-sub="its panels are kept, stopped" aria-label="Close tab ${esc(g.name)}">×</button>` : many ? `<i class="dk-group-x" aria-hidden="true"></i>` : "") + `</span>`;
+  });
+  if (gone) tabs.splice(Math.min(gone.at, tabs.length), 0,
+    `<span class="dk-gt gone"><button type="button" class="dk-group" data-grp-back data-tip="Closed · its panels are kept, stopped" data-tip-sub="Undo brings it back" aria-label="Undo closing tab ${esc(gone.name)}">${esc(gone.name)}<i class="dk-group-mark" aria-hidden="true"></i></button>` +
+    `<button type="button" class="dk-group-x" data-grp-back data-tip="Undo" aria-label="Undo closing tab ${esc(gone.name)}">↶</button></span>`);
+  const html = tabs.join("") + `<button type="button" class="dk-group-new" data-tip="New tab" data-tip-sub="more panels, in this desk's folder" aria-label="New tab">+ tab</button>`;
   if (el.dataset.drawn === html) return;
   el.dataset.drawn = html;
   el.innerHTML = html;
@@ -173,6 +181,7 @@ function groupStep(by) {
 /** A click in the tab row: a tab's name shows it, a second click on the shown
  *  one renames it there; its ✕ closes it; the + makes the next. */
 function groupClick(e) {
+  if (e.target.closest("[data-grp-back]")) { tabGone?.undo(); return true; }
   const x = e.target.closest(".dk-group-x[data-grp-x]");
   if (x) { const g = current()?.groups?.find(t => t.id === +x.dataset.grpX); if (g) closeGroup(g); return true; }
   if (e.target.closest(".dk-group-new")) { newGroup(); return true; }
@@ -289,18 +298,29 @@ async function regroup(v, grp) {
   catch (e) { ctx.toast("Could not move the panel", e); }
 }
 
+/** A tab just closed -- { desk, at: its place in the row, name, undo } --
+ *  while its Undo stands, in that place (`groupsHead`). Only the newest. */
+let tabGone = null, tabTimer = 0;
+
 /** A tab closed with its panels, stopped and kept, and an Undo for
  *  `BACK_MS` where the click was: the tab's own place in the row. */
 async function closeGroup(g) {
   let j;
+  const d = current(), at = d?.groups?.findIndex(t => t.id === g.id) ?? -1;
   try { j = await ctx.api(`/api/desks/${deskId}/groups/${g.id}/close`, {}); }
   catch (e) { ctx.toast("Could not close the tab", e); return; }
   if (shownBy.get(deskId) === g.id) shownBy.delete(deskId);
+  clearTimeout(tabTimer);
+  const desk = deskId, end = () => { if (tabGone?.desk === desk && tabGone.name === g.name) { tabGone = null; const c = current(); if (c) groupsHead(c); } };
+  tabGone = { desk, at: Math.max(at, 0), name: g.name, undo: async () => {
+    clearTimeout(tabTimer); tabGone = null;
+    try { await ctx.api(j.restore, {}); shownBy.set(desk, g.id); }
+    catch (e) { ctx.toast("Could not bring the tab back", e); }
+    await ctx.refresh();
+  } };
+  tabTimer = setTimeout(end, BACK_MS);
   await ctx.refresh();
   views.get(focused)?.body.focus({ preventScroll: true });
-  ctx.toast(`Closed ${g.name}`, "Its panels are kept, stopped", null, { label: "Undo", run: async () => {
-    await ctx.api(j.restore, {}); shownBy.set(deskId, g.id); await ctx.refresh();
-  } });
 }
 
 const GROUPS_CSS = `
@@ -316,12 +336,17 @@ const GROUPS_CSS = `
 .dk-group-x { flex: none; width: 16px; height: 16px; margin-right: 3px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); font-size: 13px; line-height: 1; cursor: pointer; visibility: hidden; }
 .dk-gt:hover .dk-group-x, .dk-gt.on .dk-group-x, .dk-group-x:focus-visible { visibility: visible; }
 .dk-group-x:hover { color: var(--fg); background: var(--rule-2); }
+/* A tab just closed: its name struck, dimmed, and ↶ in its ✕'s room, so the
+ * row keeps its width while the Undo stands. */
+.dk-gt.gone .dk-group { color: var(--fg-3); text-decoration: line-through; opacity: .7; }
+.dk-gt.gone .dk-group-x { visibility: visible; color: var(--accent); }
+.dk-gt.gone:hover .dk-group { opacity: 1; }
 .dk-groups .dk-group { flex: none; padding: 2px 6px 3px 8px; border-radius: var(--r-xs) var(--r-xs) 0 0; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; }
 .dk-groups .dk-group:hover { color: var(--fg); }
 .dk-groups .dk-group.on { color: var(--fg); }
 .dk-groups .dk-group.blk { color: var(--warn); font-weight: 600; }
 .dk-group-mark { display: inline-block; width: 1ch; font-style: normal; text-align: center; }
-.dk-group-new { flex: none; padding: 2px 6px; border-radius: var(--r-xs); color: var(--fg-3); }
+.dk-group-new { flex: none; white-space: nowrap; font-size: var(--fs-small); padding: 2px 6px; border-radius: var(--r-xs); color: var(--fg-3); }
 .dk-group-new:hover { color: var(--fg); background: var(--rule); }
 .dk-group.pn-drop { outline: 2px solid var(--accent); outline-offset: -2px; }
 .dk-group-in { width: 14ch; }

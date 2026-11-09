@@ -469,6 +469,14 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("GET", "/api/panes/nope/focus", None, Gate::Token, true),
+    // 1.60: a view of the pane's own desk opened for the reader (`open_view`).
+    (
+        "POST",
+        "/api/panes/nope/view",
+        Some(r#"{"view":"folder"}"#),
+        Gate::Token,
+        true,
+    ),
     ("GET", "/api/desks/1/board/home", None, Gate::Desk, true),
     // 1.59: a desk's page (`api_page`), its file route and the agent's offer.
     ("GET", "/api/desks/1/page", None, Gate::Desk, true),

@@ -16,7 +16,7 @@ routes = [
 [[d1_databases]]
 binding = "DB"
 database_name = "snyvi-wall"
-database_id = "set-by-the-first-deploy"
+database_id = "918159e9-d63a-4529-be27-44a06398da11"
 
 [[r2_buckets]]
 binding = "BUCKET"

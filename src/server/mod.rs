@@ -559,6 +559,7 @@ fn board_routes() -> Router<Arc<App>> {
             get(pane_board_export),
         )
         .route("/api/panes/{id}/focus", get(pane_focus))
+        .route("/api/panes/{id}/view", post(pane_open_view))
         .route("/api/desks/{id}/board/{board}", get(desk_board))
         // 1.59: a desk's page (`api_page`), the window's; the agent's offer.
         .route("/api/desks/{id}/page", get(desk_page).post(save_desk_page))

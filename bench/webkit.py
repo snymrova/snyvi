@@ -1118,6 +1118,51 @@ def canvas_rows(env, base):
     return rows
 
 
+# Output that scrolls, as an agent's does: a line a tick and a spinner
+# redrawn on the line under it with \r. Each scroll is an `up` frame, the
+# screen moved on the canvas and only the new rows drawn (#224).
+CANVAS_SCROLL = ("i=0; while true; do i=$((i+1)); echo \"line $i abcdefghijklmnopqrstuvwxyz\"; "
+                 "printf '\\r\u280b working %s' $i; sleep 0.03; done\n")
+
+
+def canvas_scroll_row(env, base):
+    """A scrolling screen stays the screen: sampled while it scrolls, the
+    canvas against itself drawn whole. On the Linux window a blit of the
+    canvas onto itself could be lost, and the rows above then stood still
+    under new text until a resize (#224). A sample can land between a blit
+    and the second's whole redraw that heals one, so a lost blit shows."""
+    token = open(f"{env['SNYVI_CONFIG_DIR']}/token").read().strip()
+    cap = post(base, "/api/capability", {}, {"authorization": f"Bearer {token}"})["capability"]
+    H = {"x-snyvi-capability": cap}
+    d = post(base, "/api/desks", {"name": "scroll"}, H)
+    desk = (d.get("desk") or d)["id"]
+    load = f"{env['HOME']}/canvas-scroll.sh"
+    with open(load, "w") as f:
+        f.write(CANVAS_SCROLL)
+    pane = post(base, f"/api/desks/{desk}/panes", {}, H)["pane"]["id"]
+    post(base, f"/api/panes/{pane}/start", {"cmd": f"sh {load}"}, H)
+    v = View(f"{base}/desk/{desk}#cap={cap}", (1280, 900))
+    try:
+        for _ in range(200):
+            if v.js("[...document.querySelectorAll('.pn-scr > div')].some(r => /line [0-9]+ abc/.test(r.textContent))") == "true":
+                break
+            v.wait(100)
+        v.wait(1500)
+        bad = []
+        for _ in range(12):
+            v.js(CANVAS_WHOLE)
+            v.wait(30)
+            n = v.js("window.__whole")
+            if n not in ("0", None, "undefined"):
+                bad.append(n)
+            v.wait(140)
+        return ("a screen that scrolls, drawn as it is", not bad,
+                f"{len(bad)} of 12 samples off ({', '.join(bad[:3])} bytes)" if bad else "12 samples while it scrolled, each the screen drawn whole")
+    finally:
+        v.win.destroy()
+        stop(base, H, [pane])
+
+
 def xdo(*a):
     subprocess.run(["xdotool", *a], check=False)
 
@@ -1256,6 +1301,7 @@ def main():
                      f"the match {deep['find']['top']} px away"))
         v.win.destroy()
         rows += canvas_rows(env, base)
+        rows.append(canvas_scroll_row(env, base))
         rows += idle_rows(env, base)
         rows.append(desk_row(env, base))
         rows.append(desk_tabs_row(env, base))

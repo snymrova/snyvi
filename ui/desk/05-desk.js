@@ -87,18 +87,50 @@ let leftField = null, leftGone = null, leftTimer = 0;
 function leftOffSlot(d) {
   const head = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
   if (!head) return;
-  let el = head.querySelector(".dk-left");
-  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-groups").after(el); }
+  const el = leftBox(head);
   if (leftField === d.id && el.querySelector("input")) return;
   const l = d.left_off;
   if (leftGone && leftGone.desk === d.id) {
-    el.innerHTML = `<span class="dk-left-b" role="status"><span class="dk-left-k">Left off</span> cleared</span><button type="button" class="dk-undo" data-a="left-back">Undo</button>`;
+    el.innerHTML = `<span class="dk-left-b" role="status">Left off cleared</span><button type="button" class="dk-undo" data-a="left-back">Undo</button>`;
     return;
   }
   el.innerHTML = launchMark(d, esc) + (l
-    ? `<button type="button" class="dk-left-b" data-a="left-edit" data-tip="${esc(l.text)}" data-tip-sub="${esc(l.by || "you")} · ${ctx.relShort(l.at)} · click to rewrite" data-tip-overflow><span class="dk-left-k">Left off</span> ${esc(l.text)}</button>`
+    ? `<button type="button" class="dk-left-b" data-a="left-edit" data-tip="${esc(l.text)}" data-tip-sub="left off · ${esc(l.by || "you")} · ${ctx.relShort(l.at)} · click to rewrite" data-tip-overflow><span class="dk-left-k" aria-hidden="true">↳</span><span class="vh">Left off:</span>${needsWord(l.needs)}<span class="dk-left-t">${esc(l.text)}</span></button>`
     : `<button type="button" class="dk-left-b none" data-a="left-edit" data-tip="Where did you leave off?" data-tip-sub="one line, for the next session on this desk">Left off…</button>`);
+  leftCut(el);
 }
+
+/* The slot is a box of its own (1.60, #227): a view's chip and the line in
+ * one quiet frame, so the line reads as a note on the desk and not as more
+ * of the head's controls. `.dk-left` keeps the head's free middle; the box in
+ * it is only as wide as what it holds, up to 460 px. The chip (25-views.js)
+ * stands first in the box, the line after it in `.dk-left-c`, which is the
+ * only part this file writes, so a redraw of the line never drops the chip. */
+function leftBox(head) {
+  let el = head.querySelector(".dk-left");
+  if (!el) {
+    el = Object.assign(document.createElement("span"), { className: "dk-left" });
+    el.innerHTML = `<span class="dk-lbox"><span class="dk-left-c"></span></span>`;
+    head.querySelector(".dk-groups").after(el);
+    leftSeen.observe(el.firstChild);
+  }
+  return el.querySelector(".dk-left-c");
+}
+
+/** Whose the next step is, as `leave_off` said (`crate::waiting::NEEDS`): a
+ *  small word before the line; nothing when no one said. */
+const needsWord = n => {
+  const w = { you: "yours", claude: "Claude's", time: "waiting" }[n];
+  return w ? `<span class="dk-left-n">${w}</span>` : "";
+};
+
+/** A line longer than its box fades at its end instead of a "…": the cut is
+ *  marked only when there is one, so a short line keeps its last letters. */
+function leftCut(c) {
+  const b = c && c.querySelector(".dk-left-b");
+  if (b) b.classList.toggle("cut", b.scrollWidth > b.clientWidth + 1);
+}
+const leftSeen = new ResizeObserver(es => { for (const e of es) leftCut(e.target.querySelector(".dk-left-c")); });
 
 /* A launch on the desk (1.48, src/launch.rs): the thread with the most dated
  * lines -- three or more, one still open and due within two weeks -- as
@@ -442,7 +474,7 @@ function accBack(d) { if (!accGone) return; clearTimeout(accGone.timer); accGone
 /** The line, as a field in its own place. Enter or leaving it keeps what was
  *  typed; Escape leaves it as it was. */
 function leftOffEdit(d) {
-  const el = ctx.docEl.querySelector(".dk-head .dk-left");
+  const el = ctx.docEl.querySelector(".dk-head .dk-left-c");
   if (!el) return;
   leftField = d.id;
   const was = d.left_off ? d.left_off.text : "";
@@ -533,7 +565,7 @@ function draw() {
   }
   document.title = `${d.name} · desk`;
   docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-groups" data-part="desk.groups"></span><span class="dk-tabs"></span>` +
-    `<button type="button" class="icon" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">${head("plus")}</button>` +
+    `<button type="button" class="icon dk-plus" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">+ panel</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div>${DRAWER}<div class="dk-live vh" aria-live="polite"></div></div>`;
   docEl.querySelector(".dk-name").textContent = d.name;

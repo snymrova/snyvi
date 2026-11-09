@@ -1,9 +1,9 @@
 # A board
 
 A board is a view over a desk (1.58, plan 6ff79c55a7): frames an agent draws,
-which the reader watches arrive with the panel they talk to docked beside
-them. It is a folder in the desk's folder, not a kind of desk. The view
-appears in the desk's switcher when the folder exists.
+which the reader watches arrive with the panel they talk to docked with
+them, below the board or beside it. It is a folder in the desk's folder, not a kind of desk. The view
+appears in the desk's ⋯ menu, under Views, when the folder exists (1.60).
 
 ```mermaid
 flowchart LR
