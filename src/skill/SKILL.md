@@ -1,6 +1,6 @@
 ---
 name: snyvi
-description: How to work with snyvi, the user's local document viewer with desks. Use when sending the user a plan, report, review, mockup or picture (send_document); when working in a snyvi desk panel (desk notes, threads, On you, leave_off); and whenever the user asks for a widget, a status box, or to keep a figure such as CI, a deploy or a dev server in view on the desk.
+description: How to work with snyvi, the user's local document viewer with desks. Use when sending the user a plan, report, review, mockup or picture (send_document); when working in a snyvi desk panel (desk notes, threads, On you, leave_off); whenever the user asks for a widget, a status box, or to keep a figure such as CI, a deploy or a dev server in view on the desk; and when the user wants to launch, post, get users or grow what they built (Show HN, Reddit, a release post, a page).
 ---
 <!-- snyvi init-claude wrote this; snyvi uninstall-claude takes it out, and an update rewrites it. -->
 
@@ -46,7 +46,7 @@ notes, its threads, the user's On you list.
   is due today. A due note is still acted on only when asked.
   `suggest_desk_note` takes `due` in the user's words when a line has a
   natural day: a launch step, a follow-up. A launch is several dated lines
-  as one set (`lines`): read [launch.md](launch.md) first.
+  as one set, `suggest_launch`: read [launch.md](launch.md) first.
 - A tick shows what it rests on: the `commit`, the document (`about`) or a
   URL (`evidence`). A tick with none of them reads "needs a look".
 - When a thread ships by a merge, snyvi asks the user who should know. You
@@ -127,6 +127,22 @@ Ask first, every time, and call it only after they say yes; a yes is for that
 one opening. Offer it when they would need the view to follow you -- a file
 you changed, a board you drew -- never on a whim. It opens only while they
 are looking at this desk, and it types, runs and sends nothing.
+
+## After it ships
+
+When the user wants people to hear of what they built -- "help me get
+users", "I shipped, now what?", "write my Show HN" -- the desk holds it in
+three pieces, and you never post any of them:
+
+1. **The launch**: `suggest_launch`, the steps as dated lines counted from
+   the day it goes out ([launch.md](launch.md)). The user keeps them.
+2. **The drafts**: when they set you on a post's line, the post as a
+   document, by that channel's rules. Read [grow.md](grow.md) before the
+   first draft: the hour, the title's length, the disclosure.
+3. **The page**: `offer_post`, once, when it truly shipped (below).
+
+The user posts. When they say where, tick the line with the URL as
+`evidence`.
 
 ## A page
 

@@ -177,7 +177,8 @@ function byHtml(w, d, esc, extra = "") {
   const panel = (v?.pane?.name) || (n ? `panel ${n}` : "");
   const who = /^claude/i.test(w.by || "") ? "Claude" : w.by || "an agent";
   // A tell card is snyvi's own, after a merge (src/told.rs): on no panel.
-  const where = w.kind === "tell" ? "snyvi · after the merge" : w.via === "dialog" ? `Claude asks in ${panel || "a panel"}` : `${who} · ${panel || "panel closed"}`;
+  // 1.61 (C6): the card says a panel can draft what it asks for.
+  const where = w.kind === "tell" ? "snyvi · after the merge · a panel drafts it: /snyvi:post" : w.via === "dialog" ? `Claude asks in ${panel || "a panel"}` : `${who} · ${panel || "panel closed"}`;
   const tip = `${w.kind === "decide" ? "A decision" : w.kind} · ${fromOf(d, w)}${n ? ` · panel ${n}` : ""}`;
   return `<p class="tn-by"><span data-tip="${esc(tip)}">${esc(where)} · ${esc(ctx.relShort(w.created_at))}</span>${extra}</p>`;
 }

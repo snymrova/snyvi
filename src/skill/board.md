@@ -57,6 +57,29 @@ first: `board_read` carries it, and `read_focus` does from any view (the
 Folder view's file and lines too). Act on what is selected, and name it back:
 "Rewrote cards (v3)."
 
+## A live frame
+
+A frame can show numbers snyvi already holds, kept current without a
+redraw. Give it a source with `board_arrange` (`{"id": "numbers", "source":
+"threads"}`); today there is one, `threads`: how many shipped threads this
+desk has, how many were told, the share told, the median hours from merge
+to told, and the last eight with both stamps. snyvi posts them into the
+frame after it loads and whenever they move, and `board_read` says them too.
+
+Draw the frame with placeholders the numbers fill, and listen:
+
+    <b data-live="shipped">–</b> shipped · <b data-live="share">–</b>% told
+    <script>
+    addEventListener("message", e => {
+      if (e.data?.snyvi !== "live") return;
+      for (const el of document.querySelectorAll("[data-live]"))
+        el.textContent = e.data.data[el.dataset.live] ?? "–";
+    });
+    </script>
+
+Never fetch: a frame has no network. Keep what it shows before the first
+message (the placeholders) the same size as after, so nothing moves.
+
 ## Never delete
 
 `frame_write` with `html: null` hides a frame: it leaves the board, its file

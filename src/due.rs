@@ -136,17 +136,40 @@ pub fn parse_at(words: &str, now: i64, off: UtcOffset) -> Option<i64> {
     {
         w.remove(0);
     }
-    if w.is_empty() || w.len() > TAIL_MAX {
+    // An agent planning a post writes the hour where the post lands:
+    // `wed 11 nov 13:00 UTC`. The zone is said, so it is the one counted.
+    let mut off = off;
+    if w.last()
+        .is_some_and(|l| matches!(l.to_lowercase().as_str(), "utc" | "gmt" | "z"))
+    {
+        w.pop();
+        off = UtcOffset::UTC;
+    }
+    if w.is_empty() || w.len() > TAIL_MAX + 1 {
         return None;
     }
-    when(&w, now, off).map(|(at, _)| at).filter(|&at| at > now)
+    let said = |w: &[&str]| (w.len() <= TAIL_MAX).then(|| when(w, now, off)).flatten();
+    // `tue 17 nov 18:00`: the weekday only names the date after it, which
+    // is the one counted.
+    let named = || {
+        let first = w[0].to_lowercase();
+        weekday(first.trim_end_matches(',')).and_then(|_| said(&w[1..]))
+    };
+    said(&w)
+        .or_else(named)
+        .map(|(at, _)| at)
+        .filter(|&at| at > now)
 }
 
 /// When a tail of words says, and what it needs before it.
 fn when(tail: &[&str], now: i64, off: UtcOffset) -> Option<(i64, Needs)> {
     let t: Vec<String> = tail
         .iter()
-        .map(|w| w.to_lowercase().trim_end_matches(['.', '!']).to_string())
+        .map(|w| {
+            w.to_lowercase()
+                .trim_end_matches(['.', '!', ','])
+                .to_string()
+        })
         .collect();
     let t: Vec<&str> = t.iter().map(String::as_str).collect();
     let local = OffsetDateTime::from_unix_timestamp(now)
@@ -224,22 +247,13 @@ fn when(tail: &[&str], now: i64, off: UtcOffset) -> Option<(i64, Needs)> {
             Some((at, Needs::Nothing))
         }
         [a, b, rest @ ..] if dated(a, b, today).is_some() => {
-            let d = dated(a, b, today)?;
-            let hm = if rest.is_empty() {
-                (9, 0)
-            } else {
-                clock(rest)?
-            };
-            Some((at(d, hm)?, Needs::Nothing))
+            let (d, rest) = with_year(dated(a, b, today)?, rest, today)?;
+            Some((on_date(d, rest, today, now, off)?, Needs::Nothing))
         }
-        [iso, rest @ ..] if iso_date(iso).is_some() => {
-            let hm = if rest.is_empty() {
-                (9, 0)
-            } else {
-                clock(rest)?
-            };
-            Some((at(iso_date(iso)?, hm)?, Needs::Nothing))
-        }
+        [iso, rest @ ..] if iso_date(iso).is_some() => Some((
+            on_date(iso_date(iso)?, rest, today, now, off)?,
+            Needs::Nothing,
+        )),
         hour => {
             let hm = clock(hour)?;
             let first = at(today, hm)?;
@@ -313,6 +327,48 @@ fn dated(a: &str, b: &str, today: Date) -> Option<Date> {
     } else {
         Date::from_calendar_date(today.year() + 1, m, d).ok()
     }
+}
+
+/// A date at the hour said after it. Without one it is its morning; today's,
+/// once the morning has gone, is the rest of today the way `today` reads,
+/// then its last minute.
+fn on_date(d: Date, rest: &[&str], today: Date, now: i64, off: UtcOffset) -> Option<i64> {
+    let at = |(h, m): (u8, u8)| -> Option<i64> {
+        Some(
+            PrimitiveDateTime::new(d, Time::from_hms(h, m, 0).ok()?)
+                .assume_offset(off)
+                .unix_timestamp(),
+        )
+    };
+    if !rest.is_empty() {
+        return at(clock(rest)?);
+    }
+    [(9, 0), (17, 0), (23, 59)]
+        .into_iter()
+        .filter_map(at)
+        .find(|&t| d != today || t > now)
+}
+
+/// `9 nov 2026`, `9 nov 26`: a year said after a date is the year counted.
+fn with_year<'a>(d: Date, rest: &'a [&'a str], today: Date) -> Option<(Date, &'a [&'a str])> {
+    match rest.split_first() {
+        Some((y, more)) if year(y, today).is_some() => {
+            Some((d.replace_year(year(y, today)?).ok()?, more))
+        }
+        _ => Some((d, rest)),
+    }
+}
+
+/// A year after a date: `2026`, or `26` for this year or next. A two-digit
+/// one is never an hour, since the years it reads as are past 23.
+fn year(w: &str, today: Date) -> Option<i32> {
+    let n: i32 = w.parse().ok()?;
+    let y = match w.len() {
+        4 => n,
+        2 => 2000 + n,
+        _ => return None,
+    };
+    (today.year()..=today.year() + 1).contains(&y).then_some(y)
 }
 
 /// `2026-11-01`.

@@ -20,7 +20,8 @@ within 20 s is the same version. Show options as several frames side by side (he
 (frame_look).";
 
 const ARRANGE: &str =
-    "Move, reorder or name frames on a board in this snyvi desk, or name the board. Only \
+    "Move, reorder or name frames on a board in this snyvi desk, or name the board, or make a frame \
+live with `source` (`threads`: what shipped and what was told, posted into the frame by snyvi). Only \
 frames already on it; an unknown id is refused.";
 
 const LOOK: &str = "See a frame on a board in this snyvi desk as the window draws it. Until snyvi can, it answers \
@@ -72,7 +73,8 @@ pub(super) fn specs() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": { "board": board_prop(),
                 "frames": { "type": "array", "maxItems": 100, "items": { "type": "object", "properties": {
                     "id": frame_prop(), "x": { "type": "integer" }, "y": { "type": "integer" },
-                    "order": { "type": "integer" }, "name": { "type": "string" } },
+                    "order": { "type": "integer" }, "name": { "type": "string" },
+                    "source": { "type": "string", "enum": ["threads", ""], "description": "A live frame: snyvi posts this source's numbers into it (board.md, A live frame); empty takes it off." } },
                     "required": ["id"], "additionalProperties": false } },
                 "name": { "type": "string", "description": "The board's title." } },
                 "additionalProperties": false }, "annotations": annotations(false) }),
@@ -140,6 +142,22 @@ fn say_board(v: &Value) -> String {
                 ""
             },
         ));
+    }
+    // A live frame's numbers (1.61, C7), the same the window posts into it,
+    // so a digest says real ones.
+    if let Some(live) = v["live"].as_object() {
+        for (id, n) in live {
+            out.push_str(&format!(
+                "Live in {id} (threads): {} shipped, {} told ({}%){}.\n",
+                n["shipped"],
+                n["told"],
+                n["share"],
+                n["median_hours"]
+                    .as_i64()
+                    .map(|h| format!(", median {h} h from merge to told"))
+                    .unwrap_or_default()
+            ));
+        }
     }
     let picked: Vec<String> = v["focus"]["items"]
         .as_array()

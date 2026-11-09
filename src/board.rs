@@ -70,6 +70,11 @@ pub struct Frame {
     pub order: i64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// Where a live frame's numbers come from (1.61, C7): one of
+    /// `told::SOURCES`, which the daemon reads and the window posts into the
+    /// frame. Empty for a frame that only shows its file.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -454,10 +459,14 @@ pub struct Place {
     pub y: Option<i64>,
     pub order: Option<i64>,
     pub name: Option<String>,
+    /// A live frame's source, `threads`; empty takes it off (1.61, C7).
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
-/// Move frames, reorder them, name them, and name the board. A frame it
-/// does not know is refused, so a typo is said rather than dropped.
+/// Move frames, reorder them, name them, give one a source, and name the
+/// board. A frame it does not know is refused, and so is a source snyvi
+/// does not have, so a typo is said rather than dropped.
 pub fn arrange(root: &Path, board: &str, places: &[Place], name: Option<&str>) -> Result<Board> {
     let d = dir(root, board, false)?.with_context(|| format!("no board {board:?}"))?;
     load(&d)?;
@@ -471,6 +480,16 @@ pub fn arrange(root: &Path, board: &str, places: &[Place], name: Option<&str>) -
         f.order = p.order.unwrap_or(f.order);
         if let Some(n) = &p.name {
             f.name = n.trim().chars().take(80).collect();
+        }
+        if let Some(src) = &p.source {
+            let src = src.trim();
+            if !src.is_empty() && !crate::told::SOURCES.contains(&src) {
+                bail!(
+                    "no source {src:?}: a frame can read {}",
+                    crate::told::SOURCES.join(", ")
+                );
+            }
+            f.source = src.to_string();
         }
     }
     if let Some(n) = name {

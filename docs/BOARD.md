@@ -72,6 +72,24 @@ The reader's hands are select, pan and zoom. The iframes take no pointer, so
 a click on a frame selects it. Selecting is the reader's focus: the agent
 reads it in the brief and through `board_read` or `read_focus`.
 
+## Live (1.61)
+
+A frame can name a `source` in `board.json` (`board_arrange` sets it; today
+`threads`, `told::SOURCES`). The board's read then carries `live: {"<frame
+id>": {...}}`, from `told::health`: shipped, told, the share told, the
+median hours from merge to told, and the last eight threads with both
+stamps. The read's hash covers them, so a board whose numbers did not move
+reads as unchanged.
+
+`ui/board/02-frames.js` posts `{snyvi: "live", source, data}` into the
+frame's iframe after it loads and again only when the numbers moved; a
+thread moving on the desk (the `desknotes` event) has an open board read
+again. The target origin is `"*"`, because a sandboxed frame without
+`allow-same-origin` has an opaque origin and no other target reaches it.
+That is safe for what goes: only numbers the window already holds, only into
+a frame it made, and the window listens to nothing a frame posts. The CSP,
+the sandbox and no network are as in Shown.
+
 ## The agent
 
 The skill's `board.md` is what the agent is told. In short: read DESIGN.md

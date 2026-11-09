@@ -118,12 +118,38 @@ async fn board_read(
     let read = tokio::task::spawn_blocking(move || {
         let (b, frames, files) = board::frames(&dir);
         let vs = versions(&held, desk, &root, &name, &dir, &frames, pane.as_deref());
-        // The read's hash is the folder's and the versions': a frame put
-        // into the store just now changes it, though no file did.
+        // A live frame's numbers (1.61, C7): read here, from what snyvi
+        // already holds, for the window to post into the frame and for
+        // the agent's board_read. Only `threads` today (`told::SOURCES`).
+        let live: serde_json::Map<String, serde_json::Value> =
+            if frames.iter().any(|f| f.frame.source == "threads") {
+                let health = held
+                    .store
+                    .clocked(|c, _| crate::told::health(c, desk))
+                    .map(|h| json!(h))
+                    .unwrap_or(serde_json::Value::Null);
+                frames
+                    .iter()
+                    .filter(|f| f.frame.source == "threads" && !health.is_null())
+                    .map(|f| (f.frame.id.clone(), health.clone()))
+                    .collect()
+            } else {
+                serde_json::Map::new()
+            };
+        // The read's hash is the folder's, the versions' and the live
+        // numbers': a frame put into the store just now changes it, though no
+        // file did, and so does a thread told.
         let mut h = blake3::Hasher::new();
         h.update(files.as_bytes());
         for (doc, n) in &vs {
             h.update(format!("{}:{n};", doc.as_deref().unwrap_or("")).as_bytes());
+        }
+        if !live.is_empty() {
+            h.update(
+                serde_json::Value::Object(live.clone())
+                    .to_string()
+                    .as_bytes(),
+            );
         }
         let hash = h.finalize().to_hex()[..16].to_string();
         if since.as_deref() == Some(hash.as_str()) {
@@ -147,6 +173,7 @@ async fn board_read(
             "frames": frames,
             "tokens": board::tokens(std::path::Path::new(&root)),
             "focus": held.focus.get(desk),
+            "live": live,
         })
     })
     .await;

@@ -13,9 +13,10 @@ day.
 
 ## The set
 
-One `suggest_desk_note` call with `lines`, each `{ "text", "due" }`, `due`
-in the user's words. Count back from the day they name (T0); leave out a
-line that does not fit this launch, and add one that does:
+One `suggest_launch` call with `lines`, each `{ "text", "due" }`, `due`
+in the user's words. Count back from the day they name (T0), and name T0 in
+the first line; leave out a line that does not fit this launch, and add one
+that does. Which channels, and when in the day, are in [grow.md](grow.md):
 
 | When | The line |
 |---|---|

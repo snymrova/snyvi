@@ -111,8 +111,22 @@ shows as a suggestion beside their list, with Keep and a remove button, and is o
 keep it. Suggest rarely and only what the user would want to track themselves; never your own next steps \
 or a to-do for this session. A desk holds only a few suggestions waiting at once. One short line, at most \
 200 characters. When the line has a natural day -- a launch step, a follow-up -- pass `due` in the user's words \
-(`fri 10`); at that hour snyvi raises one card on their On you list. A launch is `lines`: several dated lines as one \
-set. Something that should come back on its own at a time is a routine: offer_routine, not this.";
+(`fri 10`); at that hour snyvi raises one card on their On you list. A launch is suggest_launch, not this. \
+Something that should come back on its own at a time is a routine: offer_routine, not this.";
+
+/// `suggest_launch` (1.61, C2): a tool of its own, where a launch was
+/// `suggest_desk_note`'s `lines` -- the split `offer_routine` got in 1.53.1,
+/// for its reason: Claude Code defers tool descriptions, so the name is all
+/// an agent sees until it searches, and "help me get users" found nothing
+/// named for it. The same route and the same set as `lines` (`launch.rs`);
+/// a session from before the upgrade still has `lines`.
+const LAUNCH_DESCRIPTION: &str = "Put a launch on this snyvi desk: telling people about something that \
+shipped, as dated lines in one set -- the release note, a post for each channel, the follow-ups -- each due \
+a day counted back from, or on from, the day it goes out (T0), by the table in the skill's launch.md; name \
+T0 in the first line. Use it when the user wants to launch, announce, post, get users or grow what they \
+built. The lines show as suggestions with Keep all, and are on the user's list only when they keep them. \
+When the user sets you on a post's line, draft the post as a document by the channel's rules in the skill's \
+grow.md; you never post, the user does.";
 
 /// `offer_routine` (1.53.1, audit 566d17f746 A3): a tool of its own, where
 /// it was the last clause of `suggest_desk_note`'s -- Claude picks a tool by
@@ -155,8 +169,11 @@ something in the work genuinely deserves a word, leave them a short personal asi
 /// in the system prompt, so it survives a compaction, which is why the desk
 /// brief (`crate::brief`) does not repeat it -- except on a resume, which
 /// replays the rules the conversation began with (`hook::with_rules`).
-const PANEL_INSTRUCTIONS: &str = "You are in a panel of a snyvi desk: this project's, with its own notes \
-and documents. Write a plan as a document and send it to snyvi before you start (a plan you present for \
+///
+/// It is at Claude Code's 2,048-character cut, so a new rule pays for itself
+/// in words (1.61: the desk "with its own notes and documents" and a shorter
+/// aside made room for the after-the-ship sentence).
+const PANEL_INSTRUCTIONS: &str = "You are in a panel of a snyvi desk: this project's. Write a plan as a document and send it to snyvi before you start (a plan you present for \
 approval is sent for you). Name the panel with \
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan with \
 send_document's notes (that marks it planned), wait for their Approve in snyvi or go-ahead here, mark it \
@@ -171,8 +188,10 @@ your question tool when they are at this panel, never only as a list in your rep
 A figure the user asks to keep in view (CI, a deploy): read_widgets, then set_widget, or propose_widget \
 for one snyvi runs on its own; never unasked. \
 Work the user wants on a schedule is a routine: offer_routine, never cron, /loop or /schedule. \
-An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
-away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
+After a ship, its launch is suggest_launch and its page offer_post; draft posts by the skill's grow.md; \
+you never post. \
+An aside is earned by a moment, not a step (the last note ticked, a release, a return, a late hour); with \
+nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief is context from snyvi, not \
 a request.";
 
@@ -207,6 +226,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("tick_desk_note", Session::tick_desk_note),
     ("mark_desk_note", Session::mark_desk_note),
     ("suggest_desk_note", Session::suggest_desk_note),
+    // 1.61: a launch by its own name, where it was `suggest_desk_note`'s `lines`.
+    ("suggest_launch", Session::suggest_launch),
     ("suggest_check", Session::suggest_check),
     // 1.58: a board in the desk's folder, and where the reader is (`board`).
     ("board_read", Session::board_read),
@@ -305,6 +326,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
             mark_spec(),
             tick_spec(),
             suggest_spec(),
+            launch_spec(),
             routine_spec(),
             leave_off_spec(),
             name_spec(),
@@ -321,6 +343,48 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
         }
     }
     tools
+}
+
+/// What the agent hears for a set of lines it suggested: how many, and the
+/// ones whose `due` was not a date.
+/// The lines of a launch whose `due` snyvi can't read as a time ahead.
+fn undated(lines: &Value) -> Option<String> {
+    let now = crate::store::now();
+    let bad: Vec<String> = lines
+        .as_array()?
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let due = l.get("due").and_then(Value::as_str).unwrap_or("");
+            crate::due::parse(due, now)
+                .is_none()
+                .then(|| format!("line {} ({due:?})", i + 1))
+        })
+        .collect();
+    (!bad.is_empty()).then(|| {
+        format!(
+            "{} {} not a date ahead.",
+            bad.join(", "),
+            if bad.len() == 1 { "is" } else { "are" }
+        )
+    })
+}
+
+fn said_set(v: &Value) -> String {
+    let n = v["notes"].as_array().map_or(0, Vec::len);
+    let undated: Vec<&str> = v["undated"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let also = if undated.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " These went without a date, as their `due` was not one: {}.",
+            undated.join("; ")
+        )
+    };
+    format!("Suggested {n} lines as one set; the user keeps them with Keep all, or one by one.{also} Mention it in your reply.")
 }
 
 /// A tool's answer: one text for the agent, and whether it is an error.
@@ -649,12 +713,7 @@ impl Session {
                     let name = v["routine"]["name"].as_str().unwrap_or_default();
                     said(format!("Offered. The user sees it under Routines as `{name} · {} offers`. Accept… opens its sheet, with Try once now and Start it; it runs on its own only after their Start. Tell them in one line, and what the command does when they answer its questions.", self.by()), false)
                 }
-                Ok(v) if v.get("notes").is_some() => {
-                    let n = v["notes"].as_array().map_or(0, Vec::len);
-                    let undated: Vec<&str> = v["undated"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-                    let also = if undated.is_empty() { String::new() } else { format!(" These went without a date, as their `due` was not one: {}.", undated.join("; ")) };
-                    said(format!("Suggested {n} lines as one set; the user keeps them with Keep all, or one by one.{also} Mention it in your reply."), false)
-                }
+                Ok(v) if v.get("notes").is_some() => said(said_set(&v), false),
                 Ok(v) if v.get("doc_error").and_then(Value::as_str).is_some() => {
                     said(format!("Suggested, without its document: {}. It waits beside the user's notes until they keep it or remove it; mention it in your reply.", v["doc_error"].as_str().unwrap_or_default()), false)
                 }
@@ -664,6 +723,36 @@ impl Session {
                 },
                 Err(e) => said(format!("snyvi did not take the suggestion: {e}"), true),
             },
+        }
+    }
+
+    /// `suggest_launch`: the set `suggest_desk_note`'s `lines` writes, by the
+    /// same route, and only a set.
+    fn suggest_launch(&self, args: &Value) -> Value {
+        let Some(p) = self.pane.as_deref() else {
+            return said(
+                "This session is not running in a snyvi desk, so there is no desk to write to.",
+                true,
+            );
+        };
+        let Some(lines) = args
+            .get("lines")
+            .filter(|l| l.as_array().is_some_and(|a| !a.is_empty()))
+        else {
+            return said("A launch needs `lines`: each step with its `due`, counted from the day it goes out (launch.md in the skill).", true);
+        };
+        // The set is checked whole before it is written: one written with a
+        // date dropped can't be resent, since its lines wait on the user.
+        if let Some(bad) = undated(lines) {
+            return said(format!("snyvi wrote nothing: {bad} Say each `due` as `17 nov 18:00`, `mon 9 nov`, `11 nov 13:00 UTC` or `in 3 days`, and send the set again."), true);
+        }
+        match client::suggest_desk_note(&self.paths, p, "", "", lines, &json!({}), self.by()) {
+            Ok(v) if v.get("notes").is_some() => said(
+                format!("{} When the user sets you on a post's line, draft it as a document by the channel's rules in the skill's grow.md; the posting is theirs.", said_set(&v)),
+                false,
+            ),
+            Ok(_) => said("snyvi took one line, not a set: this daemon is older than the tool.", true),
+            Err(e) => said(format!("snyvi did not take the launch: {e}"), true),
         }
     }
 
@@ -845,7 +934,7 @@ fn suggest_spec() -> Value {
             "type": "object",
             "properties": {
                 "text": { "type": "string", "description": "One short line, at most 200 characters. Or pass lines instead." },
-                "lines": { "type": "array", "maxItems": 12, "description": "Several dated lines as one set, a launch's: see launch.md in the skill.",
+                "lines": { "type": "array", "maxItems": 12, "description": "Several dated lines as one set. A launch is suggest_launch.",
                     "items": { "type": "object", "properties": {
                         "text": { "type": "string" },
                         "due": { "type": "string", "description": "In the user's words: `28 oct 10`." }
@@ -853,6 +942,28 @@ fn suggest_spec() -> Value {
                 "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." },
                 "doc": { "type": "string", "description": "Optional: the id of a document you sent on this desk that the line is about (the post, the run sheet). Its row and its due card open and copy it." }
             },
+            "additionalProperties": false
+        },
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
+    })
+}
+
+fn launch_spec() -> Value {
+    json!({
+        "name": "suggest_launch",
+        "title": "Suggest a launch for what shipped",
+        "description": LAUNCH_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "lines": { "type": "array", "minItems": 1, "maxItems": crate::launch::LINES_MAX,
+                    "description": "The launch, a line a step, in the order they fall due; the first names T0.",
+                    "items": { "type": "object", "properties": {
+                        "text": { "type": "string", "description": "One short line: `post murmur 0.4 on Show HN`." },
+                        "due": { "type": "string", "description": "In the user's words: `tue 15:00`, `11 nov 10`, `in 3 days`." }
+                    }, "required": ["text", "due"], "additionalProperties": false } }
+            },
+            "required": ["lines"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
@@ -919,7 +1030,7 @@ struct Prompt {
     text: &'static str,
 }
 
-const PROMPTS: [Prompt; 5] = [
+const PROMPTS: [Prompt; 7] = [
     Prompt {
         name: "wrap-up",
         title: "Wrap up",
@@ -978,6 +1089,33 @@ JSON ({\"body\",\"tone\",\"count\"}) or Markdown into a folder of your own with 
 snyvi widget check NAME --dir FOLDER (it runs as snyvi would, with the same environment; a key it needs is \
 named in keys, never read with snyvi key), then propose_widget with the script, any settings I would want to \
 change, and why. Tell me in one line which you did; the card on my On you list is where I allow it.",
+    },
+    // 1.61 (C4): the after-build in the `/` menu, where a builder looks
+    // first. Both use the desk's tools, so only in a panel.
+    Prompt {
+        name: "launch",
+        title: "Plan the launch",
+        description: "Put the launch of what shipped on this desk as dated lines, counted from the day it goes out.",
+        panel: true,
+        arg: Some(("what", "The thread or release, and the day it goes out (T0); leave empty for the last shipped thread.")),
+        text: "Plan the launch of what shipped. First read_desk_notes and the desk brief: which thread shipped, \
+and what is already dated. Read the snyvi skill's launch.md and grow.md. Count back from the day it goes out \
+(T0; ask me if I haven't said it) with launch.md's table, keep only the channels that fit this project, and put \
+the set on the desk with one suggest_launch call, T0 named in its first line. Don't post anything and don't draft \
+the posts yet. Tell me in two lines what the set holds, and that Keep all is mine.",
+    },
+    Prompt {
+        name: "post",
+        title: "Draft the post",
+        description: "Draft the post for what shipped, by the channel's rules, as a document; you post it.",
+        panel: true,
+        arg: Some(("channel", "Show HN, Reddit, X, the blog, the release note; leave empty for the next due post line.")),
+        text: "Draft the post for what shipped. Read the snyvi skill's grow.md first. Find the shipped thread \
+and the post's line on the desk (read_desk_notes), and the facts in the README, the changelog and the commits; \
+don't invent users, numbers or quotes. Draft it for that channel by grow.md's rules and check them: the hour in my \
+time and in UTC, the title's length counted, the disclosure, one link. Send it with send_document and say which \
+rules you checked. If the desk has a page (the brief says so), offer_post once. You never post: leave the line \
+for me to tick with the post's URL when I have posted it.",
     },
 ];
 
@@ -1450,6 +1588,72 @@ mod tests {
     /// 566d17f746 A1, A3); suggest_desk_note points there and no longer
     /// takes `every`. The desk's routines close read_desk_notes (A4).
     #[test]
+    fn a_launch_is_suggested_with_its_own_tool() {
+        // C1: every panel hears it, and that the posting is the user's.
+        let i = instructions(true);
+        assert!(
+            i.contains("suggest_launch") && i.contains("you never post"),
+            "{i}"
+        );
+        assert!(i.contains("grow.md"));
+        assert!(!instructions(false).contains("suggest_launch"));
+        // C2: the tool by its name, the same set as `lines`, and only a set.
+        let names: Vec<String> = tools(true, Some(false))
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"suggest_launch".into()));
+        assert!(!tools(false, None)
+            .iter()
+            .any(|t| t["name"] == "suggest_launch"));
+        let spec = launch_spec();
+        assert_eq!(spec["inputSchema"]["required"], json!(["lines"]));
+        assert_eq!(
+            spec["inputSchema"]["properties"]["lines"]["maxItems"],
+            json!(crate::launch::LINES_MAX)
+        );
+        assert_eq!(
+            spec["inputSchema"]["properties"]["lines"]["items"]["required"],
+            json!(["text", "due"])
+        );
+        assert!(
+            LAUNCH_DESCRIPTION.contains("never post") && LAUNCH_DESCRIPTION.contains("grow.md")
+        );
+        assert!(LAUNCH_DESCRIPTION.contains("get users"));
+        assert!(SUGGEST_DESCRIPTION.contains("A launch is suggest_launch"));
+        // A session from before the upgrade keeps `lines` on the old tool.
+        assert!(suggest_spec()["inputSchema"]["properties"]
+            .get("lines")
+            .is_some());
+        // No lines is no launch, said before anything reaches the daemon.
+        let s = Session {
+            paths: crate::config::paths(),
+            cwd: None,
+            key: String::new(),
+            pane: Some("0".repeat(32)),
+            sender: None,
+        };
+        let out = s.suggest_launch(&json!({ "lines": [] }));
+        assert_eq!(out["isError"], true);
+        assert!(out["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("needs `lines`"));
+        // A date snyvi can't read stops the whole set, before the daemon.
+        let out = s.suggest_launch(&json!({ "lines": [
+            { "text": "Post on X", "due": "in 2 days" },
+            { "text": "Show HN", "due": "sometime soon" },
+        ] }));
+        assert_eq!(out["isError"], true);
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains("wrote nothing") && text.contains("line 2 (\"sometime soon\") is"),
+            "{text}"
+        );
+        assert!(!text.contains("line 1"));
+    }
+
+    #[test]
     fn a_routine_is_offered_with_its_own_tool() {
         assert!(
             instructions(true).contains("a routine: offer_routine, never cron, /loop or /schedule")
@@ -1623,12 +1827,34 @@ mod tests {
     /// Five prompts; the three that use a desk's tools only in a panel, and
     /// an argument only where one helps.
     #[test]
-    fn the_loop_kit_is_five_prompts() {
+    fn the_loop_kit_is_seven_prompts() {
         let names: Vec<&str> = PROMPTS.iter().map(|p| p.name).collect();
         assert_eq!(
             names,
-            ["wrap-up", "plan", "catch-up", "explain-back", "widget"]
+            [
+                "wrap-up",
+                "plan",
+                "catch-up",
+                "explain-back",
+                "widget",
+                "launch",
+                "post"
+            ]
         );
+        // C4: the after-build, a panel's, and the posting is the user's.
+        let (launch, post) = (&PROMPTS[5], &PROMPTS[6]);
+        assert!(launch.panel && post.panel);
+        assert!(launch.text.contains("suggest_launch") && launch.text.contains("Don't post"));
+        for w in [
+            "send_document",
+            "offer_post",
+            "You never post",
+            "grow.md",
+            "UTC",
+        ] {
+            assert!(post.text.contains(w), "{w}");
+        }
+        assert_eq!(prompt_spec(post)["arguments"][0]["name"], "channel");
         assert!(PROMPTS[4]
             .text
             .starts_with("Make me a widget on this desk for this. First read_widgets"));

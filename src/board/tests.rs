@@ -209,6 +209,7 @@ fn arrange_moves_names_and_refuses_an_unknown_frame() {
         y: Some(900),
         order: Some(-1),
         name: Some("Bee".into()),
+        source: Some("threads".into()),
     }];
     let b = arrange(&d.path, "home", &places, Some("Home page")).unwrap();
     assert_eq!(b.name, "Home page");
@@ -226,8 +227,33 @@ fn arrange_moves_names_and_refuses_an_unknown_frame() {
         y: None,
         order: None,
         name: None,
+        source: None,
     }];
     assert!(arrange(&d.path, "home", &bad, None).is_err());
+    // A live frame's source (C7): a known one is kept, another refused,
+    // and an empty one takes it off.
+    assert_eq!(b.frames[0].source, "threads");
+    let wrong = [Place {
+        id: "b".into(),
+        x: None,
+        y: None,
+        order: None,
+        name: None,
+        source: Some("stars".into()),
+    }];
+    assert!(arrange(&d.path, "home", &wrong, None).is_err());
+    let off = [Place {
+        id: "b".into(),
+        x: None,
+        y: None,
+        order: None,
+        name: None,
+        source: Some(String::new()),
+    }];
+    assert_eq!(
+        arrange(&d.path, "home", &off, None).unwrap().frames[0].source,
+        ""
+    );
     assert!(arrange(&d.path, "nope", &[], None).is_err());
 }
 

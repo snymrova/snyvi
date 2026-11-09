@@ -614,13 +614,15 @@ from every desk* puts its desks and panels back on your login and forgets
 the token, with Undo first; panels still running as it say *a removed
 account* until they restart.
 
-The server also offers five prompts, the loop's own commands, listed in the
+The server also offers seven prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
 finished and checked and says where the work was left, `plan` writes the
 plan as a document and waits, `catch-up` says where the desk stands in five
-lines, `explain-back` says what was just done and why, and `widget` keeps a
-figure you name in view on the desk's rail (`docs/WIDGETS.md`). Nothing is
-written into your `CLAUDE.md` for them.
+lines, `explain-back` says what was just done and why, `widget` keeps a
+figure you name in view on the desk's rail (`docs/WIDGETS.md`), `launch`
+puts the launch of what shipped on the desk as dated lines, and `post`
+drafts one post by its channel's rules, as a document you post yourself.
+Nothing is written into your `CLAUDE.md` for them.
 
 It writes a skill too, `~/.claude/skills/snyvi/`: how to send a document in
 the form you'll read it in, how a desk's notes and On you work, and how
@@ -1258,8 +1260,9 @@ Suggested in the rail's corner, where nothing they do moves the page.
   Claude's `read_desk_notes` ends with the desk's routines, so it can say
   what runs here on its own.
 - **A launch is a list.** When you say *launch*, Claude suggests its steps
-  as one set of dated lines (`suggest_desk_note`'s `lines`, from the skill's
-  `launch.md`): pictures and copy a week out, the site, the post, Show HN,
+  as one set of dated lines (`suggest_launch`, from the skill's `launch.md`;
+  each post it drafts follows the channel's rules in `grow.md`, and the
+  posting stays yours): pictures and copy a week out, the site, the post, Show HN,
   and what happened a week after. **Keep all** on the set's first row keeps
   them; each row keeps or goes on its own too. While a thread has three
   dated lines or more and one is due within two weeks, the desk's head

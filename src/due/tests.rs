@@ -125,6 +125,42 @@ fn a_date_said_alone_takes_every_form() {
     assert_eq!(parse_at("today 10", n, ist()), None);
 }
 
+/// How the eval's launch sets wrote their dates (1.61): a weekday before
+/// the date, a year after it, the hour in UTC. Each went undated before.
+#[test]
+fn a_launch_date_is_read_with_its_weekday_year_and_zone() {
+    let n = now();
+    let utc = |d: u8, h: u8| at(d, 11, h, 0) + 5 * 3600 + 1800;
+    assert_eq!(
+        parse_at("tue 17 nov 18:00", n, ist()),
+        Some(at(17, 11, 18, 0))
+    );
+    assert_eq!(parse_at("Tue, 17 Nov", n, ist()), Some(at(17, 11, 9, 0)));
+    assert_eq!(parse_at("mon 9 nov", n, ist()), Some(at(9, 11, 9, 0)));
+    assert_eq!(parse_at("9 nov 26", n, ist()), Some(at(9, 11, 9, 0)));
+    assert_eq!(
+        parse_at("17 nov 2026 18:00", n, ist()),
+        Some(at(17, 11, 18, 0))
+    );
+    assert_eq!(
+        parse_at("wed 11 nov 13:00 UTC", n, ist()),
+        Some(utc(11, 13))
+    );
+    assert_eq!(parse_at("11 nov 13:00 utc", n, ist()), Some(utc(11, 13)));
+    // Today's date without an hour: today, as `today` reads, then its last
+    // minute. The eval ran at 19:40 and "9 nov" was refused as past.
+    assert_eq!(parse_at("22 oct", n, ist()), Some(at(22, 10, 17, 0)));
+    assert_eq!(parse_at("thu 22 oct", n, ist()), Some(at(22, 10, 17, 0)));
+    let late = at(22, 10, 19, 40);
+    assert_eq!(parse_at("22 oct", late, ist()), Some(at(22, 10, 23, 59)));
+    assert_eq!(parse_at("22 oct 10:00", n, ist()), None);
+    assert_eq!(parse_at("2026-10-22", n, ist()), Some(at(22, 10, 17, 0)));
+    // What read before still reads the same.
+    assert_eq!(parse_at("mon 9", n, ist()), Some(at(26, 10, 9, 0)));
+    assert_eq!(parse_at("9 nov 2025", n, ist()), None);
+    assert_eq!(parse_at("tue soon", n, ist()), None);
+}
+
 #[test]
 fn a_date_is_said_the_way_the_reader_says_it() {
     let n = now();
