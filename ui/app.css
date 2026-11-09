@@ -29,16 +29,17 @@
    fetched once the page is idle; boot.js paints a returning reader's theme
    from a copy the app kept of it, so leaving them out costs no flash. */
 :root {
-  /* A lane (#228): the one width every action and status cell at a row's
-   * end takes, in both sidebars. Rows and their section's head are counted
-   * from one right edge in lanes of this width, so the head's + stands over
-   * the rows' ✕, the top bar's Hide over both. 24 is WCAG 2.2's least
-   * target. bench/ui.mjs holds the lanes ("the lanes"). */
-  --lane: 24px;
   --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --serif: "Source Serif 4", ui-serif, Georgia, "Times New Roman", serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --body: var(--sans);
+  /* A lane (#228): the one width every action and status cell at a row's
+   * end takes, in both sidebars. Rows and their section's head are counted
+   * from one right edge in lanes of this width, so the head's + stands over
+   * the rows' ✕, the top bar's Hide over both. 24 is WCAG 2.2's least
+   * target. bench/ui.mjs holds the lanes ("the lanes"). Not first in
+   * the block: site/build.mjs finds it by `:root {` and `--sans`. */
+  --lane: 24px;
 
   /* Paper: the warm near-white, the default light theme. */
   color-scheme: light;
