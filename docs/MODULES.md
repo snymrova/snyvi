@@ -86,7 +86,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |
 | `src/agents.rs` | 1157 | the registry: claude, codex, cursor, gemini; what each has |
 | `src/client.rs` | 1153 | CLI/MCP → daemon over HTTP with the token; starts the daemon if needed |
-| `src/setup.rs` | 1,049 | `init-claude`, undo, PATH, the skill in `src/skill/` |
+| `src/setup.rs` | 1,049 | `init-claude`, undo, PATH, the skill in `src/skill/` (SKILL.md, widgets.md, board.md, launch.md, grow.md); `sync_skill` writes it only from the binary Claude Code runs |
 
 ## Lifecycle
 

@@ -218,6 +218,21 @@ pub fn brief_of(
         .collect();
     lines.extend(loose_ends(&open));
     lines.extend(dated(&open, now));
+    // Up here since 1.61 (C5), before the open notes and the threads: the cap
+    // cuts from the end, and on a busy desk it took this line first, though
+    // it is the one that says what to do after a ship.
+    if !work.untold.is_empty() {
+        let named: Vec<String> = work
+            .untold
+            .iter()
+            .map(|(name, at)| format!("\"{}\" ({})", cut(name, 60), ago(now - at)))
+            .collect();
+        lines.push(format!(
+            "Shipped, not told ({}): {}. When the user says where it went out, move_thread told with url. To tell people, if they ask: suggest_launch, and drafts by the skill's grow.md; the posting is theirs.",
+            named.len(),
+            named.join(", ")
+        ));
+    }
     if !open.is_empty() {
         let named: Vec<String> = open
             .iter()
@@ -269,18 +284,6 @@ pub fn brief_of(
             "This week the user said they'd ship: \"{}\" (due {}).",
             cut(text, LINE_CHARS),
             crate::due::label(*due, now)
-        ));
-    }
-    if !work.untold.is_empty() {
-        let named: Vec<String> = work
-            .untold
-            .iter()
-            .map(|(name, at)| format!("\"{}\" ({})", cut(name, 60), ago(now - at)))
-            .collect();
-        lines.push(format!(
-            "Shipped, not told ({}): {}. When the user says where it went out, move_thread told with url.",
-            named.len(),
-            named.join(", ")
         ));
     }
     let cards: Vec<String> = work
@@ -523,28 +526,45 @@ fn left_needs(l: &LeftOff, now: i64) -> String {
     }
 }
 
+/// What a post or release-note line's sentence ends with (1.61, C5): how to
+/// draft it, and that the posting is the user's. A friend's line is told by
+/// the user in their own words, so it gets none.
+const DRAFT_IT: &str = "; a post or release-note line: if they set you on it, draft it as a document by the channel's rules (the skill's grow.md), and leave the posting to them";
+
+fn drafts(text: &str) -> bool {
+    matches!(crate::told::kind_of(text), Some("post" | "release note"))
+}
+
 /// What the dates on the list say: the lines due by the end of the user's
 /// day, overdue ones with them (`crate::due`), and the plans the user
 /// approved, which are the go-ahead to start (`crate::waiting`).
 fn dated(open: &[&DeskNote], now: i64) -> Vec<String> {
     let mut lines = Vec::new();
     let end = crate::due::end_of_day(now);
-    let due: Vec<String> = open
+    let due: Vec<&&DeskNote> = open
         .iter()
         .filter(|n| n.due_at > 0 && n.due_at <= end)
+        .collect();
+    let said: Vec<String> = due
+        .iter()
         .map(|n| {
+            // A line's kind, when it is a telling (1.61, C5).
+            let kind = crate::told::kind_of(&n.text)
+                .map(|k| format!(", a {k} line"))
+                .unwrap_or_default();
             format!(
-                "#{} {} ({})",
+                "#{} {} ({}{kind})",
                 n.id,
                 cut(&n.text, OLDER_CHARS),
                 crate::due::label(n.due_at, now)
             )
         })
         .collect();
-    if !due.is_empty() {
+    if !said.is_empty() {
         lines.push(format!(
-            "Due today on this desk, by the dates the user gave them: {}. Still the user's to set you on.",
-            due.join("; ")
+            "Due today on this desk, by the dates the user gave them: {}. Still the user's to set you on{}.",
+            said.join("; "),
+            if due.iter().any(|n| drafts(&n.text)) { DRAFT_IT } else { "" }
         ));
     }
     let mut plans: Vec<(&str, Vec<String>, i64)> = Vec::new();
@@ -706,7 +726,12 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
                 "tell" if a == crate::told::NO_ONE => {
                     format!("You answered \"{q}\": no one; it counts as told.")
                 }
-                "tell" => format!("You answered \"{q}\": {a}. A dated line for it is on the desk."),
+                "tell" if a.starts_with("Tell ") => {
+                    format!("You answered \"{q}\": {a}. A dated line for it is on the desk.")
+                }
+                // A post or a release note (1.61, C5): the agent may be the
+                // one set on it, so it hears how it is drafted.
+                "tell" => format!("You answered \"{q}\": {a}. A dated line for it is on the desk; draft it when the user asks (the skill's grow.md)."),
                 _ => format!("You answered \"{q}\": {a}."),
             }
         })
@@ -977,16 +1002,24 @@ pub fn changes(c: &Changes) -> String {
 /// plan approved, a left-off approved from Home. Each once, as `since` moves.
 fn dated_news(c: &Changes) -> Vec<String> {
     let mut lines = Vec::new();
-    let rang: Vec<String> = c
+    let rang: Vec<&DeskNote> = c
         .notes
         .iter()
         .filter(|n| !n.done && n.due_rang_at > c.since)
-        .map(|n| format!("#{} \"{}\"", n.id, cut(&n.text, LINE_CHARS)))
         .collect();
     if !rang.is_empty() {
+        let named: Vec<String> = rang
+            .iter()
+            .map(|n| format!("#{} \"{}\"", n.id, cut(&n.text, LINE_CHARS)))
+            .collect();
         lines.push(format!(
-            "Came due, by the date the user gave it: {}.",
-            rang.join("; ")
+            "Came due, by the date the user gave it: {}{}.",
+            named.join("; "),
+            if rang.iter().any(|n| drafts(&n.text)) {
+                DRAFT_IT
+            } else {
+                ""
+            }
         ));
     }
     let mut plans: Vec<(&str, Vec<String>)> = Vec::new();
@@ -1645,6 +1678,85 @@ mod tests {
         ));
         assert!(b.contains("On the user (their On you list in snyvi): #0 try: Try it on 7871."));
         assert!(!b.contains("Old"));
+    }
+
+    /// 1.61 (C5): on a busy desk the cap cuts from the end, and the line
+    /// that says what to do after a ship is no longer what it cuts.
+    #[test]
+    fn a_busy_desk_still_hears_what_shipped_untold() {
+        let d = desk(3, None);
+        let long = "a line long enough to fill the brief with what the user wrote down for later on this desk";
+        let notes: Vec<DeskNote> = (1..=12)
+            .map(|i| note(i, &format!("{long} {i}"), false))
+            .collect();
+        let threads: Vec<Thread> = (1..=6)
+            .map(|i| Thread {
+                name: format!("a thread with a long name, number {i}, still being built"),
+                stage: "building".into(),
+                branch: format!("claude/a-long-branch-name-{i}"),
+                ..Thread::default()
+            })
+            .collect();
+        let work = Work {
+            notes: &notes,
+            threads: &threads,
+            waiting: &[],
+            cards: &[],
+            untold: &[("murmur --watch".into(), -3600)],
+            ship: None,
+            routines: &[],
+            updated: None,
+            nots: &[],
+            grp: 0,
+            focus: None,
+            page: None,
+        };
+        let b = brief_of(
+            &d,
+            1,
+            &work,
+            &[],
+            &["Trapti".into(), "Asha".into()],
+            None,
+            0,
+        );
+        assert!(b.len() <= BRIEF_BYTES, "{}", b.len());
+        assert!(
+            b.contains("Shipped, not told (1): \"murmur --watch\""),
+            "{b}"
+        );
+        assert!(
+            b.contains("suggest_launch, and drafts by the skill's grow.md"),
+            "{b}"
+        );
+    }
+
+    /// 1.61 (C5): a post line due today says its kind, and how to draft it.
+    #[test]
+    fn a_due_post_line_says_how_it_is_drafted() {
+        let now = 1_800_000_000;
+        let mut post = note(218, "post murmur 0.4 (X · HN · the blog)", false);
+        post.due_at = now - 6 * 3600;
+        let mut chore = note(219, "post office hours", false);
+        chore.due_at = now - 3600;
+        let b = brief(&desk(1, None), 1, &[post.clone()], &[], &[], None, now);
+        assert!(b.contains(", a post line)"), "{b}");
+        assert!(b.contains("if they set you on it, draft it as a document by the channel's rules (the skill's grow.md), and leave the posting to them."), "{b}");
+        let b = brief(&desk(1, None), 1, &[chore], &[], &[], None, now);
+        assert!(!b.contains("a post line") && !b.contains("grow.md"), "{b}");
+        // An answer to the card: a post's line, and how it is drafted.
+        let t = Turn {
+            kind: "tell".into(),
+            text: "Shipped: murmur --watch. Who should know?".into(),
+            answer: crate::told::POST.into(),
+            answered_at: now,
+            ..Turn::default()
+        };
+        let said = answer_lines(&[t]).join("\n");
+        assert!(
+            said.contains("draft it when the user asks (the skill's grow.md)"),
+            "{said}"
+        );
     }
 
     /// 1.50: the routine's own panel is told what this run is and what

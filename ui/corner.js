@@ -1131,7 +1131,7 @@ async function answer(id, v) {
   const w = L.turns.find(x => x.id === id);
   if (!w) return;
   // A due card is snyvi's (1.47): Done ticks its line, a time moves it.
-  sayIn(`t${id}`, w.kind === "due" ? (v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`) : w.kind === "tell" ? (v === "No one" ? "Told no one: it counts as told" : `${v}: a dated line is on its desk`) : `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
+  sayIn(`t${id}`, w.kind === "due" ? (v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`) : w.kind === "tell" ? (v === "No one" ? "Told no one: it counts as told" : `${v}: a dated line is on its desk${v === "A post" || v === "Release note" ? " · a panel drafts it when you ask" : ""}`) : `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
   try { await c.deskApi(`/api/desks/${w.desk_id}/turns/${id}/answer`, { answer: v }); }
   catch (e) { sayIn(`t${id}`, `Could not answer it: ${c.sayErr(e).why}`); }
   if (L.card?.key === `t${id}`) settle();

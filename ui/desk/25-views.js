@@ -264,6 +264,13 @@ export function viewSaid(n, j) {
   if (n === "board" && boardMod && viewOn && viewOn.board === j.board) boardMod.changed(j);
 }
 
+/* A thread moved on this desk (it rides the `desknotes` event): a board open
+ * here reads again, so a live frame (1.61, C7) gets the new numbers. The read
+ * carries its hash, so a board whose numbers did not move redraws nothing. */
+function boardLive(id) {
+  if (boardMod && viewOn && viewOn.board && viewOn.desk === id) boardMod.changed({ desk: id, board: viewOn.board });
+}
+
 /* An agent's `open_view` (1.60), said by the daemon only for a desk a page
  * shows: opened here, but never under the reader's hands -- a key pressed in
  * the last 2 s holds it until they stop, for 10 s at most. The chip says who

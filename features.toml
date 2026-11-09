@@ -25,6 +25,19 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "draftpost"
+since = "1.61.0"
+title = "Claude drafts the post"
+line = "After something ships, ask Claude in a panel to plan the launch or draft the post: /snyvi:launch puts the steps on the desk as dated lines, and /snyvi:post drafts Show HN, Reddit or the release note by that channel's rules, with the hour and the title's length checked. Claude never posts; you do, and tick the line with the link."
+
+[[feature]]
+id = "liveframe"
+since = "1.61.0"
+title = "A board frame with live numbers"
+line = "A frame on a board can show what this desk shipped and told, kept current by snyvi as threads move. Ask Claude to make one; it never reaches the network."
+small = "yes"
+
+[[feature]]
 id = "drawerhead"
 since = "1.60.1"
 title = "One ✕ on a panel in the back"

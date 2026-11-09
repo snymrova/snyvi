@@ -185,3 +185,67 @@ fn a_told_url_is_one_web_line() {
     assert!(url_ok("javascript:alert(1)").is_none());
     assert!(url_ok("https://a b").is_none());
 }
+
+#[test]
+fn a_lines_kind_is_read_from_its_own_words() {
+    let now = 1_800_000_000;
+    // The three shapes `line_for` writes.
+    let (post, _) = line_for(POST, "murmur 0.4", now).unwrap();
+    let (release, _) = line_for(RELEASE, "murmur 0.4", now).unwrap();
+    let (friend, _) = line_for(&format!("{TELL}Trapti"), "murmur 0.4", now).unwrap();
+    assert_eq!(kind_of(&post), Some("post"));
+    assert_eq!(kind_of(&release), Some("release note"));
+    assert_eq!(kind_of(&friend), Some("friend"));
+    // A channel by its name, as a whole word.
+    for t in [
+        "Show HN for 0.4, tue 15:00",
+        "post on Hacker News",
+        "r/rust thread",
+        "answer the Reddit comments",
+        "Product Hunt listing",
+    ] {
+        assert_eq!(kind_of(t), Some("post"), "{t}");
+    }
+    // "post" alone, or a word that only starts like one, is not a post.
+    for t in [
+        "post office hours",
+        "postgres backup",
+        "repost the logo",
+        "the hnsw index",
+        "write the tests",
+    ] {
+        assert_eq!(kind_of(t), None, "{t}");
+    }
+}
+
+#[test]
+fn a_desks_health_is_counted_from_its_threads() {
+    let conn = db();
+    conn.execute(
+        "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'w', '/w', 0)",
+        [],
+    )
+    .unwrap();
+    // Three shipped: two told (after 2 h and 10 h), one not; and one open.
+    for (name, merged, told) in [
+        ("a", 1_000, 1_000 + 2 * 3600),
+        ("b", 2_000, 2_000 + 10 * 3600),
+        ("c", 3_000, 0),
+        ("d", 0, 0),
+    ] {
+        conn.execute(
+            "INSERT INTO threads(desk_id, name, stage, merged_at, told_at, created_at, moved_at) VALUES(1, ?1, 'shipped', ?2, ?3, 1, 1)",
+            params![name, merged, told],
+        )
+        .unwrap();
+    }
+    let h = health(&conn, 1).unwrap();
+    assert_eq!((h.shipped, h.told, h.share), (3, 2, 66));
+    assert_eq!(h.median_hours, Some(10));
+    assert_eq!(
+        h.last.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        ["c", "b", "a"]
+    );
+    let none = health(&conn, 2).unwrap();
+    assert_eq!((none.shipped, none.share, none.median_hours), (0, 0, None));
+}

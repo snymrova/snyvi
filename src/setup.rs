@@ -258,8 +258,24 @@ pub fn refresh_claude() -> Result<()> {
 /// connected it, which is what the skill is for -- our files are written or
 /// brought up to date; a `snyvi` skill of the reader's own is left as it is;
 /// and with no entry nothing is written: an update signs nobody up.
+///
+/// Only the binary Claude Code runs as `snyvi` writes it (1.61, C8). A
+/// review daemon started from a checkout on a spare port shares the
+/// reader's HOME, and its first start wrote that checkout's skill over the
+/// installed one: on 9 Nov the reader's skill named a tool their 1.59 did
+/// not have. The SessionStart hook runs this too, as the installed binary,
+/// so whatever wrote the skill, the next session puts the right one back.
 pub fn sync_skill() -> Result<Option<PathBuf>> {
-    sync_skill_in(&claude_dir()?.join("skills"), registered().is_some())
+    let ours = registered().is_some_and(|(command, _)| runs_this(&command));
+    sync_skill_in(&claude_dir()?.join("skills"), ours)
+}
+
+/// Whether Claude Code's `snyvi` is this very file. A spelling that does
+/// not resolve -- a bare name on a PATH without it, as a launchd daemon has
+/// -- is not this binary: the hook, which runs where that name does
+/// resolve, keeps the skill current instead.
+fn runs_this(command: &str) -> bool {
+    std::env::current_exe().is_ok_and(|me| same_program(command, &me.to_string_lossy()))
 }
 
 fn sync_skill_in(skills: &Path, connected: bool) -> Result<Option<PathBuf>> {
@@ -332,11 +348,13 @@ fn claude_md_path() -> Result<PathBuf> {
 /// Claude reads when the work calls for it -- a document to send, a desk
 /// note, a widget. In the binary, so an update keeps it in step with the
 /// tools it describes.
-const SKILL: [(&str, &str); 4] = [
+const SKILL: [(&str, &str); 5] = [
     ("SKILL.md", include_str!("skill/SKILL.md")),
     ("widgets.md", include_str!("skill/widgets.md")),
     ("board.md", include_str!("skill/board.md")),
     ("launch.md", crate::launch::TEMPLATE),
+    // 1.61: the channels' rules a post is drafted by (C3).
+    ("grow.md", include_str!("skill/grow.md")),
 ];
 
 /// The line every file of the skill carries: ours to rewrite and to take
@@ -1158,9 +1176,24 @@ mod skill_tests {
     fn the_skill_says_when_claude_should_read_it() {
         let main = SKILL[0].1;
         assert!(main.starts_with("---\nname: snyvi\ndescription: "));
-        for word in ["send_document", "widget", "desk"] {
+        for word in ["send_document", "widget", "desk", "get users", "launch"] {
             assert!(main.lines().nth(2).unwrap().contains(word), "{word}");
         }
+        // C3: the description stays short enough for Claude Code's listing.
+        assert!(main.lines().nth(2).unwrap().chars().count() < 500);
+        // After it ships: the launch, the drafts by grow.md, and never posting.
+        assert!(main.contains("suggest_launch") && main.contains("[grow.md](grow.md)"));
+        let grow = SKILL.iter().find(|(n, _)| *n == "grow.md").unwrap().1;
+        for rule in [
+            "You never post",
+            "12:00-17:00 UTC",
+            "80 characters",
+            "offer_post",
+            "evidence",
+        ] {
+            assert!(grow.contains(rule), "{rule}");
+        }
+        assert!(crate::launch::TEMPLATE.contains("suggest_launch"));
         // Every tool the skill names is one the server has.
         for tool in [
             "read_widgets",

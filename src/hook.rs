@@ -250,6 +250,7 @@ pub fn run(paths: &Paths) -> Result<()> {
             crate::session::record(paths, cwd, sid, pane.as_deref());
         }
     }
+    keep_skill(name);
     if let Some(pane) = &pane {
         let state = agent_state(&event);
         let session = event
@@ -387,6 +388,19 @@ fn with_rules(event: &Event, brief: String) -> String {
         rules
     } else {
         format!("{rules}\n\n{brief}")
+    }
+}
+
+/// The skill, at every session's start, from the binary Claude Code runs
+/// (1.61, C8): five reads and a compare when it is current, and the
+/// installed version's copy back when something else wrote it. Never on
+/// stdout, which is the hook's answer to Claude.
+fn keep_skill(event: &str) {
+    if event != "SessionStart" {
+        return;
+    }
+    if let Err(e) = crate::setup::sync_skill() {
+        eprintln!("snyvi: could not check the snyvi skill: {e:#}");
     }
 }
 

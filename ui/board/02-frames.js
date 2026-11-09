@@ -33,8 +33,9 @@ function paintFrame(el, f) {
     return;
   }
   const src = frameSrc(f);
-  if (sheet.dataset.src === src) return;
+  if (sheet.dataset.src === src) { postLive(sheet, f); return; }
   sheet.dataset.src = src;
+  sheet.dataset.live = "";
   const frame = document.createElement("iframe");
   frame.setAttribute("sandbox", "allow-scripts");
   frame.setAttribute("referrerpolicy", "no-referrer");
@@ -44,6 +45,14 @@ function paintFrame(el, f) {
   frame.width = String(f.w);
   frame.height = String(f.h);
   frame.src = src;
+  // A live frame gets its numbers once its page has loaded, from the board as
+  // read now: a reload may have come in while it was loading.
+  frame.addEventListener("load", () => {
+    frame.dataset.loaded = "1";
+    sheet.dataset.live = "";
+    const now = shown().find(x => x.id === f.id);
+    if (now) postLive(sheet, now);
+  });
   sheet.replaceChildren(frame);
   // A frame that arrives, or is rewritten, says so once; the first paint of
   // a board does not flash every frame.
@@ -51,6 +60,21 @@ function paintFrame(el, f) {
   el.classList.remove("bd-new");
   void el.offsetWidth;
   el.classList.add("bd-new");
+}
+
+/** A live frame's numbers (1.61, C7, `source` in board.json): posted into
+ *  its iframe after it loads, and again only when they moved. The frame is
+ *  sandboxed without allow-same-origin, so its origin is opaque and "*" is
+ *  the only target that reaches it; what goes is numbers this page already
+ *  holds, and nothing the frame posts back is listened to. */
+function postLive(sheet, f) {
+  const data = board?.live?.[f.id];
+  const frame = sheet.querySelector("iframe");
+  if (!data || !frame || !frame.dataset.loaded) return;
+  const said = JSON.stringify(data);
+  if (sheet.dataset.live === said) return;
+  sheet.dataset.live = said;
+  frame.contentWindow?.postMessage({ snyvi: "live", source: f.source, data }, "*");
 }
 
 /** Every shown frame, in order: new ones made, gone ones taken out, the rest

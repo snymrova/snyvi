@@ -1299,7 +1299,7 @@ async function sendLine(x, f) {
  *  window wrote on it: read this desk's list again if it is that desk. A field being typed in is left be --
  *  the list is read, and the rail redraws around it, as after a tick here. */
 export function notesChanged(id) {
-  if (ctx && id === deskId) { getNotes(id, true); getFiled(id, true); }
+  if (ctx && id === deskId) { getNotes(id, true); getFiled(id, true); boardLive(id); }
 }
 
 /** Put the open field back after a redraw, with what was typed into it and the

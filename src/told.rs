@@ -217,6 +217,35 @@ pub fn line_for(answer: &str, name: &str, now: i64) -> Option<(String, i64)> {
     }
 }
 
+/// What kind of telling a line on the desk is (1.61, C5), so the brief can
+/// say how to draft it: the three shapes `line_for` writes, and a channel by
+/// its name as a whole word (Show HN, HN, Hacker News, Reddit, r/<name>,
+/// Product Hunt). Nothing is stored: it reads its own words. "post" alone
+/// is not enough -- "post office hours", "postgres backup" stay plain.
+pub fn kind_of(text: &str) -> Option<&'static str> {
+    let t = text.trim().to_lowercase();
+    if t.starts_with("write the release note for ") {
+        return Some("release note");
+    }
+    if t.starts_with("post ") && t.ends_with("(x · hn · the blog)") {
+        return Some("post");
+    }
+    if t.starts_with("tell ") && t.ends_with(" is out") {
+        return Some("friend");
+    }
+    let words: Vec<&str> = t
+        .split(|c: char| !(c.is_alphanumeric() || c == '/'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let pair = |a: &str, b: &str| words.windows(2).any(|p| p[0] == a && p[1] == b);
+    let channel = words
+        .iter()
+        .any(|w| *w == "hn" || *w == "reddit" || (w.starts_with("r/") && w.len() > 2))
+        || pair("hacker", "news")
+        || pair("product", "hunt");
+    channel.then_some("post")
+}
+
 /// The reader answers a tell card. A release note, a post or a friend
 /// becomes a dated line in the thread; No one marks it told, with nothing
 /// to say where. `None` when it is no tell card or was answered; the line
@@ -329,6 +358,62 @@ pub fn untold(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<(String, 
         })?
         .collect::<rusqlite::Result<_>>()?)
 }
+
+/// The numbers a live frame on the Board draws from this desk's threads
+/// (1.61, C7): what shipped, what was told, the share told, the median hours
+/// from merge to told, and the last eight shipped threads with both stamps.
+/// Only numbers snyvi already holds; nothing is fetched.
+#[derive(Clone, Debug, Default, serde::Serialize, PartialEq)]
+pub struct Health {
+    pub shipped: i64,
+    pub told: i64,
+    /// Told of shipped, 0-100; 0 with nothing shipped.
+    pub share: i64,
+    /// Hours from merge to told, the median of the told ones; None when none.
+    pub median_hours: Option<i64>,
+    pub last: Vec<Shipped>,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, PartialEq)]
+pub struct Shipped {
+    pub name: String,
+    pub merged_at: i64,
+    pub told_at: i64,
+}
+
+pub fn health(conn: &Connection, desk_id: i64) -> Result<Health> {
+    let rows: Vec<Shipped> = conn
+        .prepare_cached(
+            "SELECT name, merged_at, told_at FROM threads WHERE desk_id = ?1 AND removed_at = 0
+               AND merged_at != 0 ORDER BY merged_at DESC, id DESC",
+        )?
+        .query_map(params![desk_id], |r| {
+            Ok(Shipped {
+                name: r.get(0)?,
+                merged_at: r.get(1)?,
+                told_at: r.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let shipped = rows.len() as i64;
+    let mut hours: Vec<i64> = rows
+        .iter()
+        .filter(|t| t.told_at > 0)
+        .map(|t| (t.told_at - t.merged_at).max(0) / 3600)
+        .collect();
+    hours.sort_unstable();
+    let told = hours.len() as i64;
+    Ok(Health {
+        shipped,
+        told,
+        share: if shipped > 0 { told * 100 / shipped } else { 0 },
+        median_hours: (!hours.is_empty()).then(|| hours[hours.len() / 2]),
+        last: rows.into_iter().take(8).collect(),
+    })
+}
+
+/// The sources a frame may name in `board.json`, and what each one is.
+pub const SOURCES: &[&str] = &["threads"];
 
 #[cfg(test)]
 mod tests;
