@@ -3552,7 +3552,7 @@ async function deskLossRows(cdp, base, token) {
     // where it stands in the head.
     await p.clickOn(".dk-head [data-desk-menu]");
     await until(`!document.querySelector("#ctx")?.hidden`, 20);
-    await p.clickOn(`#ctx button[data-i="${await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.startsWith("Rename"))`)}"]`);
+    await p.clickOn(`#ctx button[data-i="${await p.ev(`[...document.querySelectorAll("#ctx button")].find(b => b.textContent.startsWith("Rename"))?.dataset.i ?? -1`)}"]`);
     await until(`!!document.querySelector(".dk-head .ren-in")`);
     await p.type("a name the daemon refuses");
     await refuse(p, "POST", /\/rename$/, 400, { error: "that name is taken" });
@@ -4292,7 +4292,8 @@ async function tabRows(cdp, base) {
     if (back2) {
       await p.clickOn(".dk-head [data-desk-menu]");
       await until(`!document.querySelector("#ctx")?.hidden`, 20);
-      const i = await p.ev(`[...document.querySelectorAll("#ctx button")].findIndex(b => b.textContent.startsWith("New panel"))`);
+      // data-i counts the menu's entries, its heading and rules among them.
+      const i = await p.ev(`+([...document.querySelectorAll("#ctx button")].find(b => b.textContent.startsWith("New panel"))?.dataset.i ?? -1)`);
       if (i >= 0) await p.clickOn(`#ctx button[data-i="${i}"]`);
     }
     const menuNew = back2 && await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
@@ -4309,12 +4310,13 @@ async function tabRows(cdp, base) {
     const rang = menuNew && await until(`!!document.querySelector('.dk-groups .dk-group.blk[data-grp="${t1}"]') && document.querySelector('.dk-groups .dk-group[data-grp="${t1}"] .dk-group-mark')?.textContent === "!"`, 100);
     rows.push(["a hidden tab whose panel rings wears a !", rang, rang ? "Tab 1!, amber" : `Tab 1 is "${await p.ev(`document.querySelector('.dk-groups .dk-group[data-grp="${t1}"]')?.className || "gone"`)}"`]);
 
-    // ✕ on the shown tab: closed, its panels kept; the lone tab left hides
-    // its name; the toast's Undo brings it back with both panels.
+    // ✕ on the shown tab: closed, its panels kept; for BACK_MS it keeps its
+    // place in the row, struck, with ↶ where its ✕ was, and no toast; the
+    // ↶ brings it back with both panels.
     if (menuNew) await p.clickOn(`.dk-groups .dk-group-x[data-grp-x="${t2}"]`);
-    const closed = menuNew && await until(`!document.querySelector(".dk-groups .dk-group") && !!document.querySelector("#toasts .toast .act")`);
-    rows.push(["✕ closes a tab, and one left reads as none", closed, closed ? "the + alone, and an Undo" : `the row holds ${await p.ev(`document.querySelectorAll(".dk-groups .dk-group").length`)} names`]);
-    if (closed) await p.clickOn("#toasts .toast .act");
+    const closed = menuNew && await until(`!!document.querySelector(".dk-groups .dk-gt.gone .dk-group-x[data-grp-back]") && !document.querySelector(".dk-groups .dk-group-x[data-grp-x]") && !document.querySelector("#toasts .toast .act")`);
+    rows.push(["✕ closes a tab, its Undo standing in its place", closed, closed ? "the tab struck, ↶ where its ✕ was, no toast" : `the row holds ${await p.ev(`document.querySelectorAll(".dk-groups .dk-group").length`)} names, ${await p.ev(`document.querySelectorAll("#toasts .toast .act").length`)} toasts`]);
+    if (closed) await p.clickOn(".dk-groups .dk-gt.gone .dk-group-x[data-grp-back]");
     const undone = closed && await until(`document.querySelectorAll(".dk-groups .dk-group").length === 2 && document.querySelector(".dk-groups .dk-group.on")?.dataset.grp === "${t2}"`);
     d = await deskNow(desk);
     rows.push(["its Undo brings the tab back, with its panels", undone && inGrp(d, t2).length === 2,
@@ -4442,14 +4444,14 @@ async function deskFolderRows(cdp, base, token, env, tmp) {
       left.folders ? "#browse-nav is still in the sidebar" : left.icon ? "the rail still has the folder icon" : "Inbox, Desks, Widgets"]);
     if (door) await p.clickOn(dirSel);
     const over = door && await until(`location.pathname.startsWith("/b/") && !!document.querySelector('${sub}')`);
-    const seen = await p.ev(`({ x: !document.querySelector("#chrome .over").hidden, tip: document.querySelector("#chrome .over")?.lastChild?.dataset.tip || "", rail: !!document.querySelector('#toc [data-sec="panels"]') })`);
+    const seen = await p.ev(`({ x: !!document.querySelector("#doc > .dk-fhead .dk-vchip:not(.dk-vboard)"), tip: document.querySelector("#doc > .dk-fhead .dk-vchip:not(.dk-vboard)")?.textContent.trim() || "", rail: !!document.querySelector('#toc [data-sec="panels"]') })`);
     rows.push(["the desk row's folder opens the desk's folder over the desk", over && seen.x && seen.rail,
-      !door ? "no folder button on the desk's row" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "no ✕ in the head" : `the tree, the desk's rail, and "${seen.tip}"`]);
+      !door ? "no folder button on the desk's row" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "no chip in the desk's head" : `the tree, the desk's rail, and the chip "${seen.tip}"`]);
     if (over) await p.clickOn(`${sub} > summary`);
     const opened = over && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
-    if (over) await p.clickOn("#chrome .over > :last-child");
+    if (over) await p.clickOn("#doc > .dk-fhead .dk-vchip:not(.dk-vboard)");
     const back = over && await until(`location.pathname === "/desk/${desk}" && !!document.querySelector(".dk-grid")`);
-    rows.push(["its ✕ goes back to the panels", back, back ? "the desk, as it was" : `the page is on ${await p.ev("location.pathname")}`]);
+    rows.push(["its chip goes back to the panels", back, back ? "the desk, as it was" : `the page is on ${await p.ev("location.pathname")}`]);
     if (back) await p.clickOn(dirSel);
     const kept = back && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
     const mem = await p.ev(`(() => { try { return Object.values(JSON.parse(localStorage.getItem("snyvi.folders") || "{}")).some(m => (m.open || []).includes("sub")); } catch { return false; } })()`);
@@ -5075,11 +5077,11 @@ async function footRows(cdp, base, token) {
     const bad = await agent(pa, "handover", { kind: "run", text: "bench: a bad step", options: ["$ echo one\necho two"] });
     await q.ev(`document.querySelector('[data-a="oy-open"]')?.click(); 1`);
     const card = await until(`document.querySelectorAll(".tn-walk .tn-step").length === 3`, 40);
-    const first = await q.ev(`(() => { const s = [...document.querySelectorAll(".tn-walk .tn-step")]; return { on: s[0]?.classList.contains("on"), done: !!s[0]?.querySelector('[data-a="tn-step-done"]'), later: !!s[2]?.querySelector('[data-a="tn-step-done"], [data-a="tn-step-run"]') }; })()`);
+    const first = await q.ev(`(() => { const s = [...document.querySelectorAll(".tn-walk .tn-step")]; return { on: s[0]?.classList.contains("on"), done: !!s[0]?.querySelector('[data-a="tn-step-done"]'), later: !!s[2]?.querySelector('[data-a="tn-step-run"]'), laterDone: !!s[2]?.querySelector('[data-a="tn-step-done"]') }; })()`);
     await q.ev(`document.querySelector('.tn-walk .tn-step.on [data-a="tn-step-done"]')?.click(); 1`);
     const moved = await until(`document.querySelectorAll(".tn-walk .tn-step")[1]?.classList.contains("on") && document.querySelectorAll(".tn-walk .tn-step")[0]?.classList.contains("ok")`, 20);
-    rows.push(["a run in steps is one card, the next step the only one to press", steps.status < 300 && bad.status === 400 && card && first.on && first.done && !first.later && moved,
-      steps.status >= 300 ? `the route answered ${steps.status}` : bad.status !== 400 ? "a step with a newline was taken" : !card ? "no card of three steps" : !first.on || first.later ? JSON.stringify(first) : !moved ? "Done did not move it on" : "step 1 done, step 2 lit"]);
+    rows.push(["a run in steps is one card, the next step the only one to run", steps.status < 300 && bad.status === 400 && card && first.on && first.done && !first.later && first.laterDone && moved,
+      steps.status >= 300 ? `the route answered ${steps.status}` : bad.status !== 400 ? "a step with a newline was taken" : !card ? "no card of three steps" : !first.on || first.later || !first.laterDone ? JSON.stringify(first) : !moved ? "Done did not move it on" : "step 1 done, step 2 lit"]);
   } finally {
     for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});
