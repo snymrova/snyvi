@@ -308,7 +308,8 @@ async function dropDesk(ctx, id) {
 
 /** What a right-click can be asked about, one list per kind of thing, and
  *  the one menu that draws them. An entry is `{ label, key, danger, sure,
- *  run }`, and `RULE` between two is a rule; anything falsy is an entry
+ *  run }`, with `about` for a line under the label on what it is; a
+ *  `{ section }` names the entries after it, and `RULE` between two is a rule; anything falsy is an entry
  *  that does not apply here, and is left out. What an entry does is the same
  *  code its button already runs -- the row's ✕, the rail's Close, the desk
  *  glyph -- reached through `ctx`, so the menu cannot drift into a second
@@ -476,13 +477,18 @@ function entries(ctx, el, byKey = false) {
     const here = el.matches("[data-desk-menu]"), dk = here && ctx.desk;
     const id = +(el.dataset.desk || el.dataset.deskMenu), d = ctx.state.desks && ctx.state.desks.desks.find(x => x.id === id);
     if (!d || !capability) return null;
+    // 1.60: the desk's views lead its own ⋯ -- the head no longer carries a
+    // switcher (plan 586c0491b6) -- the one on screen ticked, Folder with its key.
+    const vs = (dk && dk.viewsHere && dk.viewsHere()) || [];
     return { head: d.name, items: [
+      vs.length && { section: "Views of this desk" },
+      ...vs.map(x => ({ label: x.label, about: x.about, on: x.on, key: x.v === "folder" ? ctx.keyHint("ctrl+alt+f") : "", run: () => dk.viewHere(x.v) })), vs.length && RULE,
       !here && { label: "Show", run: () => ctx.show(id, true) },
       // On the desk shown, its own: in the tab on screen, which says why when
       // that tab is full (#217); a desk elsewhere, the tab it reopens on.
       (dk ? dk.newHere : d.panes.filter(p => p.slot <= ctx.state.desks.per_desk).length < ctx.state.desks.per_desk) && { label: "New panel", key: here ? ctx.keyHint("ctrl+alt+n") : "", run: () => dk ? dk.newHere() : newPanel(ctx, id) },
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
-      dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
+      dk && d.panes.length && (!vs.length || vs[0].on) && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       dk && { label: "Keys…", run: () => dk.keysHere() },
       // 1.57: more panels on this desk, in its folder (#217): the head's + too.
@@ -732,11 +738,17 @@ export function open(ctx, el, x, y, byKey = false) {
   // key; for a pointer, the row that was right-clicked (or the nearest
   // thing in it that takes focus), so a keyboard picks up where it was.
   opener = byKey ? document.activeElement : el.closest("a[href], button, summary, [tabindex]") || el;
+  if (asked && asked.el !== el) expanded(asked.el, false);
   asked = { el, x, y, byKey, opener };
+  // A button that opens this menu says so while it is open: its tip then
+  // stays away instead of lying over the menu's head (views audit V7).
+  expanded(el, true);
   menu.style.maxHeight = "";
   menu.innerHTML = `<div class="ctx-head">${ctx.esc(m.head)}</div>` + items.map((e, i) => e === RULE ? `<hr role="separator">`
+    // A few entries of one kind under a name: what they are, said once.
+    : e.section ? `<div class="ctx-sec" role="presentation">${ctx.esc(e.section)}</div>`
     // `on`, where there is one: a choice of several, the one in use ticked.
-    : `<button type="button" role="${e.on == null ? "menuitem" : `menuitemradio" aria-checked="${e.on}`}" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.hint ? `<small>${ctx.esc(e.hint)}</small>` : ""}${e.key || e.on ? `<kbd>${ctx.esc(e.on ? "✓" : e.key)}</kbd>` : ""}</button>`).join("");
+    : `<button type="button" role="${e.on == null ? "menuitem" : `menuitemradio" aria-checked="${e.on}`}" data-i="${i}"${e.danger ? ' class="danger"' : ""}><span>${ctx.esc(e.label)}</span>${e.hint ? `<small>${ctx.esc(e.hint)}</small>` : ""}${e.key || e.on ? `<kbd>${ctx.esc(e.on ? "✓" : e.key)}</kbd>` : ""}${e.about ? `<i class="ctx-about">${ctx.esc(e.about)}</i>` : ""}</button>`).join("");
   menu.hidden = false;
   // Below the point when it fits, above it when it does not, and scrolled
   // when the window is shorter than the menu.
@@ -745,6 +757,12 @@ export function open(ctx, el, x, y, byKey = false) {
   menu.style.top = (y + h <= innerHeight - 8 ? y : Math.max(4, y - h)) + "px";
   menu.querySelector("button").focus({ preventScroll: true });
   return true;
+}
+
+/** `aria-expanded` on the opener, when it is a button that has a popup. */
+function expanded(el, on) {
+  const b = el && el.closest && el.closest("[aria-haspopup]");
+  if (b) b.setAttribute("aria-expanded", String(on));
 }
 
 /** The entries the menu on screen was drawn from, and the element that had
@@ -769,6 +787,7 @@ function reopen(ctx, at) {
 const close = (back = false) => {
   if (!menu || menu.hidden) return;
   menu.hidden = true; shown = [];
+  if (asked) expanded(asked.el, false);
   if (back && opener && opener.isConnected) opener.focus({ preventScroll: true });
   opener = null;
 };
@@ -806,6 +825,11 @@ const CSS = `
 #ctx button:focus { background: var(--accent-bg); color: var(--accent); outline: none; }
 #ctx button.danger { color: var(--danger); }
 #ctx button.danger:hover, #ctx button.danger:focus, #ctx button[data-armed] { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+#ctx .ctx-sec { padding: 4px 10px 2px; font-size: var(--fs-small); font-weight: 600; color: var(--fg-3); }
+/* The line on what an entry is: its own row under the label, the key kept on the first. */
+#ctx button:has(.ctx-about) { flex-wrap: wrap; row-gap: 1px; }
+#ctx button .ctx-about { order: 2; flex: 1 0 100%; font-style: normal; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ctx button:focus .ctx-about { color: inherit; opacity: .75; }
 #ctx hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
 `;
 

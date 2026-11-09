@@ -18,7 +18,8 @@ async function load() {
   paintFrames();
   paintBar();
   if (!fitted && shown().length) { fit(); fitted = true; }
-  if (o.rail) o.rail();
+  paintList();
+  if (o.named) o.named();
 }
 
 /** A `board` event ({desk, board}): a frame of a board was written, hidden
@@ -31,7 +32,7 @@ export function changed(ev) {
 }
 
 /** Open a board in `opts.host`: everything it needs is in `opts`
- *  ({host, desk, board, api, esc, focus, rail}). Opening another board, or
+ *  ({host, desk, board, api, esc, focus, named}). Opening another board, or
  *  the same one again, starts clean. */
 export function open(opts) {
   close();
@@ -39,11 +40,14 @@ export function open(opts) {
   host = opts.host;
   host.classList.add("bd");
   host.tabIndex = 0;
-  host.innerHTML = `<div class="bd-world"></div><div class="bd-bar" aria-live="polite"></div>` +
+  host.innerHTML = `<div class="bd-world"></div><div class="bd-list" aria-label="Frames on this board"></div><div class="bd-bar" aria-live="polite"></div>` +
     `<p class="bd-off" role="alert" hidden>Could not reach snyvi.</p>` +
     `<p class="bd-hint">Nothing on this board yet. Ask the panel beside it to draw a frame.</p>`;
   world = host.querySelector(".bd-world");
   bar = host.querySelector(".bd-bar");
+  list = host.querySelector(".bd-list");
+  list.addEventListener("click", listClick);
+  lookOpen = false;
   view = { x: 0, y: 0, k: 1 };
   picked = [];
   fitted = false;
@@ -59,8 +63,16 @@ export function open(opts) {
  *  not removed. */
 export function close() {
   if (host) { host.classList.remove("bd", "bd-none", "bd-panning"); host.replaceChildren(); }
-  o = null; host = null; world = null; bar = null; board = null; picked = [];
+  o = null; host = null; world = null; bar = null; list = null; board = null; picked = []; lookOpen = false;
 }
 
 /** What is picked now, for the views part to carry when the dock changes. */
 export const selected = () => picked.slice();
+
+/** The board's name as `board.json` gives it, for the head's chip: the
+ *  folder's name until the board is read. */
+export const name = () => (board ? board.name || board.id : "");
+
+/** Fit the frames again: the dock beside the board moved or changed shape,
+ *  and what fitted a tall canvas is lost in a wide one. */
+export function refit() { if (host && shown().length) fit(); }

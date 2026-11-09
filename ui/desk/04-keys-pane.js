@@ -82,7 +82,7 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-acc"></span><span class="pn-git"></span><span class="pn-ctx"></span><a class="pn-page" hidden></a><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-tip-sub="or double-click its name" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><span class="pn-acc"></span><span class="pn-git"></span><span class="pn-ctx"></span><a class="pn-page" hidden></a><span class="pn-state"></span><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Panel ${p.slot}"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<div class="pn-offer" hidden role="status"><span>${offerSays(p.status)}</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="all" hidden></button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-switch" hidden role="status"><span></span></div>` +
@@ -135,12 +135,12 @@ function makeView(p) {
     v.dragged = false;
   });
   // A double-click on the head, not the body: there it selects a word.
-  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full, .pn-ren, .pn-x, .pn-page")) { focused = v.id; zoom(); } });
+  hd.addEventListener("dblclick", e => headTwice(v, e));
   hd.addEventListener("pointerdown", e => drag(v, e));
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
     // and the zoom.
-    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWRB]|Bracket(Left|Right))$/.test(e.code))) return;
+    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWRBF]|Bracket(Left|Right))$/.test(e.code))) return;
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
@@ -543,10 +543,28 @@ function accountOf(v) {
   return accounts().find(a => a.id === id) || { id, label: "a removed account", removed: true };
 }
 
+/** The account most of the desk's panels in this tab are on: what a panel's
+ *  head is measured against to say "as X". A tie goes to the desk's own. */
+function usualAccount(v) {
+  const n = new Map(), mine = current()?.account || 0;
+  for (const w of views.values()) if ((w.pane.grp || 0) === (v.pane.grp || 0)) { const id = accountOf(w).id; n.set(id, (n.get(id) || 0) + 1); }
+  let best = mine, most = n.get(mine) || 0;
+  for (const [id, k] of n) if (k > most) { best = id; most = k; }
+  return best;
+}
+
+/** A double-click in a panel's head: on the name it renames it there, as a
+ *  tab's does (1.60, C8); anywhere else but its buttons it is full view. */
+function headTwice(v, e) {
+  if (e.target.closest(".pn-cmd")) { e.preventDefault(); renamePanel(v); return; }
+  if (!e.target.closest(".pn-full, .pn-ren, .pn-x, .pn-page")) { focused = v.id; zoom(); }
+}
+
 function header(v) {
   const s = v.status, $ = q => v.el.querySelector(q);
   const sl = $(".pn-slot");
-  if (sl.textContent !== `[${v.pane.slot}]`) { sl.textContent = `[${v.pane.slot}]`; sl.dataset.key = `ctrl+alt+${v.pane.slot}`; }
+  // The number alone, in its own small box (#227); the brackets read as code.
+  if (sl.textContent !== String(v.pane.slot)) { sl.textContent = String(v.pane.slot); sl.dataset.key = `ctrl+alt+${v.pane.slot}`; }
   // Which Claude account, once there is more than one: what a running panel
   // started as, or what a stopped one will start as.
   const acc = (ctx.desks.accounts || []).length || accountOf(v).removed ? accountOf(v) : null;
@@ -559,7 +577,10 @@ function header(v) {
   if ((sl.dataset.tipSub || "") !== away) { if (away) sl.dataset.tipSub = away; else delete sl.dataset.tipSub; }
   // And in the head itself, beside the command, once the panel is not on
   // your login or its desk is not: a tip was the only place it was said.
-  const pa = $(".pn-acc"), says = acc && (acc.id || current()?.account) ? acc.label : "";
+  // Only when it differs from the desk's other panels (1.60, C4, #227): four
+  // panels on one account say nothing, whichever account it is, and the one
+  // that is on another says so.
+  const pa = $(".pn-acc"), says = acc && acc.id !== usualAccount(v) ? acc.label : "";
   if (pa.textContent !== says) pa.textContent = says;
   const c = $(".pn-cmd");
   // Its title as the rail writes it: Claude Code puts its spinner's frame at
@@ -572,7 +593,12 @@ function header(v) {
   if (c) { put(c, short(v)); tipOf(c, v.pane.name && v.status.title ? v.status.title : ""); }
   // The branch and whether the tree is modified: snyvi's own answer, not the
   // prompt's, so a pane whose shell it cannot dress says both too.
-  put($(".pn-git"), s.branch ? s.branch + (s.dirty ? "*" : "") : "");
+  // A dot for changes not committed, said in its tip (1.60, C6): the star
+  // read as part of the branch's name.
+  const gt = $(".pn-git");
+  put(gt, s.branch ? s.branch + (s.dirty ? " ●" : "") : "");
+  tipOf(gt, s.branch ? `${s.branch}${s.dirty ? " · changes not committed" : ""}` : "");
+  if (gt && s.branch && here) { if (gt.dataset.tipSub !== tilde(here)) gt.dataset.tipSub = tilde(here); } else if (gt) delete gt.dataset.tipSub;
   // An agent that reports through its hooks (Claude Code) says what it is
   // doing; anything else is only running, ringing, or ended.
   // The context window, in the header only once it is filling (70%): its

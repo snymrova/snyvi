@@ -3,8 +3,8 @@
 # Drawing on a board
 
 A board is a desk's design surface: frames you draw, one HTML file each, in
-`design/<board>/` in the desk's folder. The reader has it open beside your
-panel and watches each frame arrive. They select frames, pan and zoom; they
+`design/<board>/` in the desk's folder. The reader has it open with your
+panel docked below it (or beside) and watches each frame arrive. They select frames, pan and zoom; they
 never edit. You draw, snyvi shows.
 
 The tools are `board_read`, `frame_write`, `board_arrange`, `frame_look` and

@@ -45,7 +45,9 @@ const STILLS = {
   // A window tall enough for the whole page beside its docked panel.
   "page.png": {
     part: ".dk-view .pg-page", vh: 1400,
-    first: `document.querySelector('.dk-views [data-view="page"]')?.click();
+    // 1.60: Page is in the desk's ⋯ menu.
+    first: `document.querySelector(".dk-head .dk-menu")?.click(); await new Promise(r => setTimeout(r, 200));
+      [...document.querySelectorAll("#ctx [role=menuitemradio]")].find(b => b.querySelector("span").textContent === "Page")?.click();
       for (let i = 0; i < 40 && !document.querySelector(".pg-moments li"); i++) await new Promise(r => setTimeout(r, 100));
       // The page as a reader meets it: from its head, with its newest moment.
       document.head.insertAdjacentHTML("beforeend", "<style>.pg-moments li + li { display: none }</style>");

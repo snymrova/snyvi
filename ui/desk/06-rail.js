@@ -8,7 +8,14 @@
  *  own marks at the front of its title (Claude Code's ✳, a spinner) go too:
  *  the row's dot already says what the pane is doing, and the full title is
  *  the row's tooltip. */
-const short = v => { const t = what(v), m = /^[\w.-]+@[\w.-]+:(.+)$/.exec(t); return (m ? tilde(m[1]) : t).replace(/^(?:(?!~)[\p{S}\p{Co}\s])+/u, "") || t; };
+const short = v => {
+  const t = what(v), m = /^[\w.-]+@[\w.-]+:(.+)$/.exec(t), r = (m ? tilde(m[1]) : t).replace(/^(?:(?!~)[\p{S}\p{Co}\s])+/u, "") || t;
+  // Claude Code titles its session "ledger · panel 2" (brief.rs `title`), and
+  // the terminal's title is that: on the desk the desk is said already, so
+  // a panel with no name of its own is "panel 2" (1.60, C6).
+  const d = !v.pane.name && current(), pre = d ? `${d.name} · ` : "";
+  return pre && r.startsWith(pre) ? r.slice(pre.length) : r;
+};
 
 /** The rail's small controls, drawn as lines the way the sidebar's icons
  *  are: stop and start on a pane, close on a pane or the desk, a pen on the
@@ -277,7 +284,7 @@ function rail() {
   const order = (lay && lay.right.length ? lay.right : Object.keys(secs)).filter(id => secs[id] && !off.has(id) && !(id === "widgets" && off.has("right:widgets")));
   const backHad = backHeld();
   // A board open over the desk puts its section first (25-views.js).
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + viewRail() + order.map(id => secs[id]()).join("") + `</div>`);
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + order.map(id => secs[id]()).join("") + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a

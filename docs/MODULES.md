@@ -109,11 +109,11 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/app/01-shell.js` … `10-boot.js` | 119–871 each | first paint | `app.js`, as ten parts in one function scope: shell and helpers, tree, queue and what moved, documents and connect, notes and live refresh, the rail, navigation, desks, what snyvi says back, boot. `build.rs` joins them in name order |
 | `ui/desk/01-head.js` … `08-style.js` | 123–882 each | lazy | `desk.js`, as eight parts of one module: head, socket, screen, keys and a pane, the desk, the rail, actions and the seam, style |
 | `ui/desk/23-groups.js` | 330 | lazy | 1.57: a desk's tabs -- `inTab` (the desk as the shown tab sees it, through `current()`), the head's row, the hidden boxes the other tabs' panels run in, switching, the tab's menu |
-| `ui/desk/27-page.js` | 100 | lazy | 1.59: Page in the switcher, the card in the grid's corner, `page.js` loaded on the first press |
+| `ui/desk/27-page.js` | 100 | lazy | 1.59: Page (in the desk's ⋯ since 1.60), the card in the grid's corner, `page.js` loaded on the first press |
 | `ui/page.js` | 340 | lazy | the Page view: the page in its tone, edited in place, its chips, and the side with the press |
 | `ui/wall.js` | 150 | lazy | Home's *What people are building*: Everyone, Following, Friends, hearts |
-| `ui/desk/25-views.js` | 190 | lazy | 1.58: views over a desk -- the head's switcher, a board over the grid with one panel docked, focus told on open and close |
-| `ui/board/01-canvas.js` … `06-style.js` | 30–90 each | lazy | `board.js` (1.58), imported by the desk's views part when a board opens: the world under a transform, frames as sandboxed iframes by `src`, the rail's section, selection as the reader's focus, live redraw, style |
+| `ui/desk/25-views.js` | 190 | lazy | 1.58: views over a desk -- in the ⋯ with the head's chip (1.60), the folder's head and dock, `open_view`, a board over the grid with one panel docked, focus told on open and close |
+| `ui/board/01-canvas.js` … `06-style.js` | 30–90 each | lazy | `board.js` (1.58), imported by the desk's views part when a board opens: the world under a transform, frames as sandboxed iframes by `src`, the board's own bar of frames and tokens (03-list.js, 1.60), selection as the reader's focus, live redraw, style |
 | `ui/home.js` | 1330 | lazy | Home, with Friends |
 | `ui/peer.js` | 237 | lazy | pairing, Send to…, a line for a friend, an agent's offer |
 | `ui/friend.js` | 250 | lazy | a friend's page: everything between you, both ways, and a foot that sends (1.49) |

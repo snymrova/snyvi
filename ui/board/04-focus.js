@@ -11,7 +11,7 @@ function pick(id, add) {
   paintFrames();
   paintBar();
   if (o && o.focus) o.focus({ view: `board:${board.id}`, path: `${o.dir || "design"}/${board.id}`, items: picked.slice() });
-  if (o && o.rail) o.rail();
+  paintList();
 }
 
 /** The bar at the foot of the board: what the agent will read as "this". It

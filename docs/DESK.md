@@ -208,17 +208,41 @@ panel whose agent never reported -- `claude` started and gone before its
 first hook -- has nothing to bring back.
 
 **Views over a desk (1.58, plan 6ff79c55a7).** A desk has views, not kinds:
-Panels, Folder, and a Board for each `design/<board>/` its folder holds. The
-switcher in the head (`ui/desk/25-views.js`) is always there, Panels and
-Folder first, so a board appearing adds a button at the end and moves
-nothing. A board opens over the grid, inside it, and **docks one panel**
-beside it: the pane's own element moves into the dock, socket, scrollback and
-keys untouched, and `layout` leaves it out of the grid until Panels puts it
-back. Folder is #214's reader over the desk with a panel docked the same way:
-the reader draws each page into the doc whole, so a `MutationObserver` puts
-the dock back after every folder page, and its focus is the file and the
-lines marked (`#L4-L9`). Only the switcher's Folder docks; the desk row's
-folder button reads the folder as before. The open view sets the reader's
+Panels, Folder, Page, and a Board for each `design/<board>/` its folder
+holds. Since 1.60 (plan 586c0491b6) they are the head of the desk's ⋯ menu,
+the one on screen ticked, and the head keeps one chip while a view is open
+(`Folder ✕`, `Board · Pricing ✕` by the name its `board.json` gives), before
+the left-off line, whose room it takes from; ✕, Esc on a board or the page,
+or ⌃⌥F for Folder go back (`ui/desk/25-views.js`).
+
+Every view **docks one panel** the same way (1.60, views audit a5057fcd18):
+the pane's own element moves into the dock, socket, scrollback and keys
+untouched, and `layout` leaves it out of the grid until Panels puts it back.
+The dock is **below** the view by default -- frames and files get the width,
+and a wide, short terminal still holds the prompt and the last reply -- and
+beside it on its own button; its edge drags; its fold leaves the panel's head
+(below) or a strip with its name (beside), and a click on either brings it
+back. The panel's ⛶ and ✕ give way to the dock's controls, and with two or
+more panels a picker swaps which one is docked. Each desk keeps its own, per
+view, in `localStorage` (`snyvi.dock`); under 900 px of view the dock is below
+whatever was asked. A board's frames and tokens are its own bar over the
+canvas, not a section of the rail.
+
+Board and Page open over the grid, inside it. Folder is #214's reader, at
+`/b/…`, so a file's place, its lines and Back keep working: the reader draws
+each page into the doc whole, so a `MutationObserver` puts the dock back after
+every folder page, and the desk's frame is drawn round it -- the desk's head
+again at the top of each page (`folderHead`), sticky, where the desk has it,
+with its tabs, left-off box, keys, + panel and ⋯; the page's own bar and its
+waiting pill step aside; the same 16 px gutters as the desk. Its focus is the
+file and the lines marked (`#L4-L9`); inside `design/<board>/` the head offers
+**Open as board**. Beside a code file, and only beside, the dock folds by
+itself until the reader says. The desk row's folder button opens the same
+Folder view, docked, and reads the folder bare only where the desk cannot be
+drawn (a browser tab). An agent opens a view with `open_view`
+(`POST /api/panes/{id}/view`, token) after the reader said yes: its own desk
+only, only while a page shows that desk, and the page waits for the reader to
+stop typing. The open view sets the reader's
 **focus** (`src/focus.rs`, `POST /api/desks/{id}/focus`): one per desk, in
 memory, which the brief says as its second line for half an hour and
 `read_focus` reads, so "this one" names a file or the frames selected. It is a

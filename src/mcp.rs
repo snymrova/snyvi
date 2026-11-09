@@ -95,8 +95,8 @@ already done.";
 
 const LEAVE_OFF_DESCRIPTION: &str = "Say where the work on this snyvi desk stands, in one sentence, for \
 whoever picks it up next -- the user, or the next Claude in a panel here, which is handed it when it starts. \
-Write it as the next step with its condition: \"If the migration tests pass, ship it; if not, the failing \
-case is in orders.rs.\" Call it when a stretch of work ends -- the user is wrapping up, a task is done, or \
+Write it as the next step with its condition, the step first and the facts after it, since a narrow \
+window cuts the end: \"If the migration tests pass, ship it; if not, the failing case is in orders.rs.\" Call it when a stretch of work ends -- the user is wrapping up, a task is done, or \
 you are stopping partway -- not after every step. It replaces the one before (the user can undo that), \
 shows in the desk's head and on snyvi's Home, and is at most 200 characters. Pass `about` with a document's \
 id from send_document when the next step is written up there. Pass `needs` when it is plain whose the next step \
@@ -215,6 +215,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("frame_look", Session::frame_look),
     ("board_export", Session::board_export),
     ("read_focus", Session::read_focus),
+    // 1.60: a view opened on the reader's screen, after they said yes.
+    ("open_view", Session::open_view),
     ("offer_routine", Session::offer_routine),
     ("leave_off", Session::leave_off),
     ("name_panel", Session::name_panel),
@@ -884,7 +886,7 @@ fn leave_off_spec() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "One short sentence, best under 80 characters (at most 200): the next step and its condition. The desk's head shows about 40." },
+                "text": { "type": "string", "description": "One short sentence, best under 80 characters (at most 200): the next step first, then its condition. The desk's head shows what fits and cuts the rest." },
                 "about": { "type": "string", "description": "Optional id of a document sent with send_document that the next step is written up in." },
                 "needs": { "type": "string", "enum": ["you", "claude", "time"], "description": "Whose the next step is: `you` when it is the user's (approve, commit, add a key, try it), `claude` when it is an agent's, `time` when it waits on something outside both (a review, a store, a friend). Leave it out when unsure." }
             },
@@ -1458,6 +1460,11 @@ mod tests {
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
         assert!(names.contains(&"offer_routine".into()));
+        // 1.60: every listed tool has its handler; open_view is one of them.
+        assert!(names.contains(&"open_view".into()));
+        for n in &names {
+            assert!(TOOLS.iter().any(|(t, _)| t == n), "{n} has no handler");
+        }
         assert!(TOOLS.iter().any(|(n, _)| *n == "offer_routine"));
         let spec = routine_spec();
         assert_eq!(spec["inputSchema"]["required"], json!(["command", "every"]));

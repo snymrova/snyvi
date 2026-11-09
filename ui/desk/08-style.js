@@ -67,22 +67,41 @@ const CSS = `
 :root[data-rail="0"] .dk-head, #app:has(#rail.empty) .dk-head { padding-right: 30px; }
 @media (max-width: 1100px) { .dk-head { padding-right: 30px; } }
 .dk-name { font-weight: 600; }
-/* Left off: one short line, cut with an ellipsis at 320 px; its whole text
-   is its tip. It took the rest of the head once, and the head is the
-   window's drag grip: a button there left nothing to drag by. Now the space
-   after it is the head's own, and the keys, tabs and buttons keep the right.
-   The slot is there with nothing said, so its coming moves nothing; empty,
-   it shows only when the head is hovered or focused. Rewritten, the field
-   takes the width it needs. */
-.dk-left { flex: 0 1 auto; max-width: 320px; min-width: 0; margin-right: auto; display: flex; align-items: center; gap: 6px; }
-.dk-left:has(.dk-left-in) { flex: 1 1 0; max-width: none; }
+/* + panel: a word beside the +, as + tab has, so the two read as two things. */
+.dk-head .icon.dk-plus { width: auto; padding: 0 8px; font: inherit; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; }
+.dk-head .icon.dk-plus:hover { color: var(--fg); }
+/* Left off: the head's free middle, all of it (1.60, C2). Cut at 320 px it
+   lost the half that mattered beside 600 px of nothing; agents are asked to
+   put the next step first, and the line now has the room to say the rest.
+   Its whole text is still its tip. The button is only as wide as its text,
+   so the room after it is the window's drag grip, as it was. An ↳ says it
+   is a note and not a control; the slot is there with nothing said, so its
+   coming moves nothing, and empty it shows only when the head is hovered or
+   focused. A view's chip (25-views.js) comes in before it and takes from its
+   text, never from the controls on either side. */
+.dk-left { flex: 1 1 0; min-width: 0; display: flex; align-items: center; }
+/* Its own quiet box (#227): one hairline round the chip and the line, as wide
+   as they are and no wider than 460 px, so a long line stops short of the
+   tabs and keys instead of running at them. Nothing said and no view open,
+   the frame is there but clear, and shows with the empty line on hover. */
+.dk-lbox { flex: 0 1 auto; min-width: 0; max-width: 460px; display: flex; align-items: center; gap: 4px; padding: 0 2px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); }
+.dk-lbox:has(.dk-left-b.none):not(:has(.dk-vchip)) { border-color: transparent; }
+.dk-head:is(:hover, :focus-within) .dk-lbox:has(.dk-left-b.none) { border-color: var(--rule-2); }
+.dk-lbox:has(.dk-left-in) { flex: 1 1 auto; border-color: transparent; padding: 0; }
+.dk-left-c { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.dk-left-c:has(.dk-left-in) { flex: 1 1 auto; }
 .dk-head .dk-left ~ .dk-tabs { margin-left: 0; }
 /* Left off takes the free space, and only it: a second auto margin on the
    tabs split that space and stood the key in the middle of the head. */
-.dk-left-b { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border: 0; border-radius: var(--r-sm);
+.dk-left-b { min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; padding: 1px 6px; border: 0; border-radius: var(--r-xs);
   background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); text-align: left; cursor: text; }
+/* Cut, its end fades rather than stopping on a "…"; the whole line is its tip. */
+.dk-left-b.cut { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
 button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
-.dk-left-k { color: var(--fg-3); }
+/* The ↳ in the accent says "a note", where the words "Left off" said it before. */
+.dk-left-k { color: var(--accent); margin-right: 4px; }
+/* Whose the next step is, from leave_off's needs: one small grey word. */
+.dk-left-n { margin-right: 6px; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-3); }
 /* A launch's count: tabular, so 9/11 and 10/11 are one width. */
 .dk-launch { flex: none; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 600; line-height: 16px; font-variant-numeric: tabular-nums; color: var(--fg-2); }
 .dk-left-b.none { color: var(--fg-3); opacity: 0; }
@@ -201,11 +220,22 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-strip .ds-open { margin-bottom: 4px; }
 .dk-strip .ds-panels.blk { color: var(--warn); }
 .pn-full:hover, .pn-ren:hover, .pn-x:hover { background: var(--rule-2); color: var(--fg); }
+/* Full view and ✕ on the focused panel, or the one under the pointer (#227):
+   four panels each showing both was eight controls for one decision. Their
+   slots stay, so showing moves nothing; an armed ✕ stays in sight. */
+.pn:not(.on):not(:hover):not(:focus-within) :is(.pn-full, .pn-x:not([data-armed])) { opacity: 0; }
 /* The pen, full view and ✕, on every panel, in the grid and in full view
    alike: three slots of their own at the head's end, quiet at rest and --fg
    under the pointer, so none comes and goes nor lands on the state beside it. */
 :is(.pn-ren, .pn-full, .pn-x) { flex: none; align-self: center; width: 22px; height: 22px; margin: -4px 0; display: grid; place-items: center; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
-.pn-ren { margin-left: -2px; }
+/* The pen is by the name it changes (1.60, C8), over what follows the name
+   rather than beside it -- its negative margin takes back its own width -- so
+   it takes no room and its showing moves nothing; seen when the head is
+   under the pointer or holds the focus. The right keeps only the window's
+   two: full view and close. */
+.pn-ren { position: relative; z-index: 1; margin: -4px -22px -4px -4px; opacity: 0; background: var(--pn-bg); }
+.pn-head:is(:hover, :focus-within) .pn-ren, .pn-ren:focus-visible { opacity: 1; }
+.pn-cmd { cursor: text; }
 .pn-x { margin-right: -4px; }
 /* Armed, the ✕ asks "Close?" over the head's end, to its left, rather than
    growing and pushing the state along: nothing in the head moves. */
@@ -252,14 +282,19 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn-ul i { position: absolute; height: 1px; background: var(--accent); }
 .pn.pn-drop, .dk-tabs .pn-drop { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pn-head { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px; font-size: 11.5px; color: var(--fg-3); border-bottom: 1px solid var(--rule); cursor: default; white-space: nowrap; flex: none; }
-.pn-slot { font-family: var(--mono); color: var(--fg-2); }
+/* The panel's number in a small box of its own (#227), as the rail's rows
+   have it: a number to press with Ctrl+Alt, not a bracket of code. */
+.pn-slot { flex: none; align-self: center; display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: var(--r-xs); background: var(--rule); font-size: var(--fs-micro); font-weight: 600; line-height: 1; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.pn.on .pn-slot { color: var(--accent); }
 .pn-start[hidden], .pn-connect[hidden] { display: none; }
-.pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
+.pn-cmd { color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 /* The account a panel runs as, after its command, when that is worth saying. */
 .pn-acc { flex: none; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; color: var(--fg-3); }
 .pn-acc:empty { display: none; }
 .pn-acc::before { content: "as "; }
-.pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
+/* The branch in the head's own face, marked ⎇ (#227): mono made it read as a command. */
+.pn-git { color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
+.pn-git:not(:empty)::before { content: "⎇ "; }
 .pn-state { margin-left: auto; padding-left: 8px; }
 /* The context window, before the state: quiet, warmer from 70%, the waiting
    amber from 85%. The rail's row and the meta's line wear the same three.
@@ -281,7 +316,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-focus .ctx { margin-left: auto; padding-left: 6px; font-size: 11px; }
 .pn.blk .pn-head { border-bottom: 2px solid var(--warn); }
 .pn.blk .pn-state { color: var(--warn); font-weight: 600; animation: pn-need .8s ease-out; }
-.pn.done .pn-state { color: var(--accent); }
+/* Done is grey with a green tick (1.60, C5): pink is for "you are here" alone. */
+.pn.done .pn-state { color: var(--fg-2); }
+.pn.done .pn-state::first-letter { color: var(--ok); }
 @keyframes pn-need { 0%, 60% { background: color-mix(in srgb, var(--warn) 18%, transparent); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .pn.blk .pn-state { animation: none; } }
 /* The scrollbar's room is kept whether or not there is one: a panel whose
@@ -413,6 +450,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-panes .run .dot { color: var(--ok); }
 .dk-panes .blk .dot { color: var(--warn); font-weight: 700; font-size: 11px; }
 .dk-panes .slot, .dk-docs .slot { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
+/* The rail's panel rows number as the panel heads do (#227): a small box. */
+.dk-panes .slot { display: inline-grid; place-items: center; align-self: center; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; border-radius: var(--r-xs); background: var(--rule); font-family: inherit; font-size: var(--fs-micro); font-weight: 600; line-height: 1; color: var(--fg-2); }
 .dk-panes .on .slot { color: var(--accent); }
 .dk-panes .nm { overflow: hidden; text-overflow: ellipsis; }
 .dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: var(--fs-small); border-radius: var(--r-sm); }
@@ -467,7 +506,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-link:hover { color: var(--accent); }
 .dk-doc.off a { opacity: .7; }
 .dk-doc.off .dk-undo { margin-right: 3px; }
-.dk-panes .slot::before { content: "["; } .dk-panes .slot::after { content: "]"; }
+
 .dk-docs .k { font-family: var(--mono); font-size: 10px; color: var(--fg-3); flex: none; min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
 #toc .dk-empty { margin: 2px 8px 0; padding: 0; text-indent: 0; font-size: 12px; line-height: 1.5; color: var(--fg-3); }
 /* The desk's name carries its two tools; the row is a little taller than

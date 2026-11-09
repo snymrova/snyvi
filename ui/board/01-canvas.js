@@ -4,9 +4,10 @@
  * Not on the wire until a board is opened: ui/desk's views part imports this
  * on the first open, the way the desk itself is imported by app.js. The seam
  * is three calls wide -- `open` with everything it needs in one argument,
- * `changed` when a document event names this board, and `close` -- and the
- * rail's section is one more, `railHtml`, which the desk's rail calls while
- * a board is open.
+ * `changed` when a document event names this board, and `close` -- with
+ * `name` and `refit` for the views part's chip and dock. The board's frames
+ * and tokens are its own bar, top left over the canvas (03-list.js), not a
+ * section of the desk's rail: a folded rail took them away.
  *
  * The reader's hands are select, pan and zoom. Nothing here edits a frame:
  * the agent draws, snyvi shows. A frame is a document, shown exactly the way
@@ -25,7 +26,7 @@ const ZOOM_MIN = 0.05, ZOOM_MAX = 4;
 /** The margin `fit` leaves round what it fits, in screen pixels. */
 const FIT_PAD = 48;
 let o = null;            // what `open` was handed
-let host = null, world = null, bar = null;
+let host = null, world = null, bar = null, list = null;
 let board = null;        // the last read: {id, name, hash, frames, tokens, focus}
 let view = { x: 0, y: 0, k: 1 };
 /** What the reader has selected, by frame id, in the order they picked. */
@@ -70,7 +71,7 @@ function fit(frames) {
 function wire() {
   let drag = null;
   host.addEventListener("pointerdown", e => {
-    if (e.button !== 0 || e.target.closest(".bd-bar")) return;
+    if (e.button !== 0 || e.target.closest(".bd-bar, .bd-list")) return;
     drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false, on: e.target.closest(".bd-frame") };
     host.setPointerCapture(e.pointerId);
   });
@@ -103,6 +104,7 @@ function wire() {
     else if (e.key === "f") fit(shown().filter(f => picked.includes(f.id)));
     else if (e.key === "+" || e.key === "=") zoomAt(1.25, cx, cy);
     else if (e.key === "-") zoomAt(0.8, cx, cy);
+    else if (e.key === "Escape" && lookOpen) { lookOpen = false; paintList(); }
     else if (e.key === "Escape" && picked.length) pick(null, false);
     else return;
     e.preventDefault();

@@ -200,9 +200,14 @@
     if (deskNav.$head !== head) { deskNav.firstElementChild.outerHTML = head; deskNav.$head = head; }
     rows.forEach((r, i) => { if (lis[i].$e !== r[1]) { lis[i].querySelector(".end").outerHTML = r[1]; lis[i].$e = r[1]; } });
   }
-  /** A desk's folder, read over it (#214): its row's folder button. A folder
-   *  gone from disk says so; the desk is kept. */
+  /** A desk's folder, read over it (#214): its row's folder button. Since
+   *  1.60 the same Folder view as the desk's ⋯ opens, a panel with it (views
+   *  audit V11): two ways into one place had two results. Where the desk
+   *  cannot be drawn -- a browser tab -- the folder is read bare, as before.
+   *  A folder gone from disk says so; the desk is kept. */
   async function deskDir(id) {
+    if (state.view !== "desk" || state.deskId !== id) await showDesk(id, true);
+    if (desk && desk.viewHere && state.view === "desk" && state.deskId === id && docEl.querySelector(".dk")) { desk.viewHere("folder"); return; }
     try { const j = await deskApi(`/api/desks/${id}/folder`, {}); await showBrowse(j.root.id, "", true, false, { over: id, root: j.root }); }
     catch (e) { toast("Could not open its folder", { sub: e }); }
   }
@@ -649,7 +654,7 @@
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
     // A board moved, the reader's focus did, a crash's conversations came back (1.58), or a page did (1.59).
-    for (const n of ["board", "focus", "restore", "page"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
+    for (const n of ["board", "focus", "restore", "page", "view"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
     // An agent ticked a line on a desk's list.
     es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); });
     // A pane started, stopped, or rang for its reader: the dots, at once.

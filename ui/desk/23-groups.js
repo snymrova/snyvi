@@ -92,7 +92,7 @@ function groupsHead(d) {
   if (gone) tabs.splice(Math.min(gone.at, tabs.length), 0,
     `<span class="dk-gt gone"><button type="button" class="dk-group" data-grp-back data-tip="Closed · its panels are kept, stopped" data-tip-sub="Undo brings it back" aria-label="Undo closing tab ${esc(gone.name)}">${esc(gone.name)}<i class="dk-group-mark" aria-hidden="true"></i></button>` +
     `<button type="button" class="dk-group-x" data-grp-back data-tip="Undo" aria-label="Undo closing tab ${esc(gone.name)}">↶</button></span>`);
-  const html = tabs.join("") + `<button type="button" class="dk-group-new" data-tip="New tab" data-tip-sub="more panels, in this desk's folder" aria-label="New tab">+</button>`;
+  const html = tabs.join("") + `<button type="button" class="dk-group-new" data-tip="New tab" data-tip-sub="more panels, in this desk's folder" aria-label="New tab">+ tab</button>`;
   if (el.dataset.drawn === html) return;
   el.dataset.drawn = html;
   el.innerHTML = html;
@@ -346,7 +346,7 @@ const GROUPS_CSS = `
 .dk-groups .dk-group.on { color: var(--fg); }
 .dk-groups .dk-group.blk { color: var(--warn); font-weight: 600; }
 .dk-group-mark { display: inline-block; width: 1ch; font-style: normal; text-align: center; }
-.dk-group-new { flex: none; padding: 2px 6px; border-radius: var(--r-xs); color: var(--fg-3); }
+.dk-group-new { flex: none; white-space: nowrap; font-size: var(--fs-small); padding: 2px 6px; border-radius: var(--r-xs); color: var(--fg-3); }
 .dk-group-new:hover { color: var(--fg); background: var(--rule); }
 .dk-group.pn-drop { outline: 2px solid var(--accent); outline-offset: -2px; }
 .dk-group-in { width: 14ch; }

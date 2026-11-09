@@ -118,6 +118,6 @@ snyvi.page, and its owner can take it down for good.
 | `src/server/api_page.rs` | the Page view's routes, `offer_post`'s, `/pages/{file}`, door (a) |
 | `src/wall.rs`, `src/server/api_wall.rs` | signing, the outbox, the press, the daily line, Home's `/api/wall` |
 | `src/mcp/page.rs` | `offer_post` |
-| `ui/desk/27-page.js`, `ui/page.js` | Page in the switcher, the card, the view |
+| `ui/desk/27-page.js`, `ui/page.js` | Page in the desk's ⋯, the card, the view |
 | `ui/wall.js` | Home's section |
 | `wall/` | the service |
