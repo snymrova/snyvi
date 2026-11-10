@@ -465,9 +465,42 @@ it or runs it now; an agent may only suggest it.
   (`routine::waits::matches`, Claude Code's prefix rule) and two, Run
   anyway, for any other
 
+1.63 (plan d621276291) keeps every line above and adds:
+
+- a routine has up to six times (`routine_times`), each with the words that
+  hour adds to its prompt and an Only if tick; `routines.due_at` is their
+  soonest, 0 with none, and a draft may have none. The clock takes one set
+  of words a look, and a running routine is passed over, not re-armed
+- the prompt is `/<cmd> <a time's words> <ids>`, the ids joined by ` ; `:
+  lines its own watch or gate printed, each in the shape the reader allowed
+  (`src/routine/events.rs`: words and holes, `tag <number>`, at most 64
+  characters). A line out of its shape is dropped and counted, never cut
+  to fit; a run takes at most 20, used at its start whether it runs or not
+- the gate (Only if) and the watch (Wakes on) are commands the reader
+  allowed, run as a widget's command is (`src/server/routine_gate.rs`): a
+  cleared environment with the routine's scripts folder first on PATH and
+  only the desk's keys their text names, never the token or a panel's
+  environment; output capped, a minute at most for a gate, the whole
+  process group ended. The gate answers the clock only: exit 1 is a quiet
+  run with no session. The watch is one child per live routine
+  (`src/server/routine_watch.rs`), in its own process group, with a pidfile
+  so a killed daemon's leftover is ended at the next start
+- the scripts folder (`.claude/routines/<cmd>/`) is hashed with the command
+  file into `cmd_hash`, all but its `state/` (what scripts remember
+  between runs); a changed script stops the routine, and its watch at the
+  next half-minute check, until the reader allows it again
+- one start of a routine at a time: the clock, a watch's batch and Run now
+  are separate looks, and a second start while one is under way (a gate's
+  minute included) reads as running
+- a run's model, effort and slim context (`claudeMdExcludes`) come before
+  `--`, on a resumed answer run too
+- a session run no hook word has come from 90 s after its start is ended,
+  `didn't start`; Stop is one more act on the routine's route
+
 What it does not change: no token route makes, saves or runs a routine,
-nothing received is ever a routine's prompt, and bytes reach a PTY's input
-from the reader's keys alone.
+and an agent's offer, which may carry times, a gate, a watch and a shape,
+never runs; nothing received is ever a routine's prompt but ids in the
+reader's shape; and bytes reach a PTY's input from the reader's keys alone.
 
 ## 10. Retired: Open terminal here (1.16)
 

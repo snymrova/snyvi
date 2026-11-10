@@ -225,6 +225,7 @@ pub(crate) async fn pane_agent(
         }
     }
     let (session, stopped) = (b.session.as_deref(), b.stopped.as_deref());
+    super::routine_run::stamp(&id);
     super::routine_run::heard(&app, &id, stopped, b.stop.as_ref());
     if let Some(handoff) = super::pipeline_run::heard(&app, &id, session, stopped, b.stop.as_ref())
     {
@@ -259,6 +260,8 @@ fn agent_said(app: &App, id: &str, q: &AgentQ) -> Result<serde_json::Value, Box<
     if !agent_said_ok(q.state.as_deref(), q.session.as_deref()) {
         return Err(Box::new(StatusCode::BAD_REQUEST.into_response()));
     }
+    // A hook spoke from the panel: a routine's session there is up (R9).
+    super::routine_run::stamp(id);
     match &q.state {
         Some(state) => {
             app.panes.set_agent(id, state);
@@ -335,7 +338,7 @@ pub(crate) async fn pane_notes(
                     json!({
                         "name": r.name, "cmd": r.cmd, "every": r.every, "state": r.state(),
                         "next": if r.state() == "live" && r.due_at > 0 { crate::due::label(r.due_at, now) } else { String::new() },
-                        "last_state": r.last_state, "runs": r.runs, "by": r.suggested_by,
+                        "last_state": r.last_state, "runs": r.runs, "by": r.suggested_by, "watch": r.watch,
                     })
                 })
                 .collect();
@@ -997,6 +1000,19 @@ pub(crate) struct SuggestBody {
     pub(crate) every: Option<String>,
     #[serde(default)]
     pub(crate) waits: Option<Vec<String>>,
+    /// 1.63: more of a routine's When, its gate, watch, shape and model.
+    #[serde(default)]
+    pub(crate) times: Option<Vec<super::api_routine::TimeBody>>,
+    #[serde(default)]
+    pub(crate) gate: Option<String>,
+    #[serde(default)]
+    pub(crate) watch: Option<String>,
+    #[serde(default)]
+    pub(crate) shape: Option<String>,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+    #[serde(default)]
+    pub(crate) effort: Option<String>,
     /// The document the line is about, by id (1.54): one of this desk's.
     #[serde(default)]
     pub(crate) doc: Option<String>,
@@ -1008,18 +1024,54 @@ pub(crate) struct SuggestBody {
 /// name must resolve to one of the project's or the user's commands or
 /// skills (`routine::places`): an agent never offers its own words as a
 /// prompt, only a file the reader can read before they start it.
+///
+/// 1.63: it may carry its times with their words, a gate, a watch and its
+/// shape, a model and an effort -- all on the offer row, which never runs,
+/// and all the reader's to read in the sheet before Start. `every` may be
+/// left out when a watch wakes it.
 fn suggest_routine(
     app: &App,
     placed: &crate::desk::Placed,
     pane: &str,
     b: &SuggestBody,
-    every: &str,
 ) -> Response {
     let no = |code: StatusCode, why: String| (code, Json(json!({ "error": why }))).into_response();
     let text = b.text.trim().trim_start_matches('/');
-    let Some(line) = crate::routine::from_line(&format!("/{text} · {every}")) else {
-        return no(StatusCode::BAD_REQUEST, format!("\"{text}\" with \"{every}\" is not a routine: `text` starts with a slash command's or skill's name and `every` says when, like `every day 07:30`"));
+    let line = crate::routine::from_line(&format!("/{text}")).filter(|l| l.every.is_none());
+    let Some(line) = line else {
+        return no(StatusCode::BAD_REQUEST, format!("\"{text}\" is not a routine: `command` is a slash command's or skill's name and its words, and `every` says when, like `every day 07:30`"));
     };
+    let mut sent: Vec<super::api_routine::TimeBody> = b.times.clone().unwrap_or_default();
+    if let Some(every) = b.every.as_deref().filter(|e| !e.trim().is_empty()) {
+        sent.insert(
+            0,
+            super::api_routine::TimeBody {
+                every: every.to_string(),
+                ..Default::default()
+            },
+        );
+    }
+    let when = match super::api_routine::read_times(&sent) {
+        Ok(w) => w,
+        Err(why) => return no(StatusCode::BAD_REQUEST, why),
+    };
+    let o = |v: &Option<String>| v.clone().unwrap_or_default();
+    let t = match super::api_routine::triggers_ok(
+        &o(&b.gate),
+        &o(&b.watch),
+        &o(&b.shape),
+        &o(&b.model),
+        &o(&b.effort),
+    ) {
+        Ok(t) => t,
+        Err(why) => return no(StatusCode::BAD_REQUEST, why),
+    };
+    if when.is_empty() && t.watch.is_empty() {
+        return no(
+            StatusCode::BAD_REQUEST,
+            "a routine needs a when: `every`, `times`, or a `watch` that wakes it".into(),
+        );
+    }
     let file = match crate::routine::resolve(std::path::Path::new(&placed.root), &line) {
         crate::routine::Made::File(p, _) => p.file,
         crate::routine::Made::Two(a, b) => {
@@ -1051,10 +1103,16 @@ fn suggest_routine(
         b.by.as_str()
     };
     let offer = crate::routine::Offer { by, pane };
-    match app
-        .store
-        .clocked(|c, now| crate::routine::add(c, placed.desk_id, &line, &waits, &file, &offer, now))
-    {
+    match app.store.clocked(|c, now| {
+        let added = crate::routine::add(c, placed.desk_id, &line, &waits, &file, &offer, now)?;
+        if let crate::routine::Added::Routine(r) = &added {
+            crate::routine::offered(c, r.id, &when, &t, now)?;
+            if let Some(again) = crate::routine::get(c, r.id)? {
+                return Ok(crate::routine::Added::Routine(Box::new(again)));
+            }
+        }
+        Ok(added)
+    }) {
         Ok(crate::routine::Added::Routine(r)) => {
             super::routine_run::changed(app, placed.desk_id);
             (
@@ -1106,8 +1164,9 @@ pub(crate) async fn pane_suggest_note(
     if !b.lines.is_empty() {
         return suggest_set(&app, placed.desk_id, &placed.desk_name, &id, &b);
     }
-    if let Some(every) = b.every.as_deref().filter(|e| !e.trim().is_empty()) {
-        return suggest_routine(&app, &placed, &id, &b, every);
+    let some = |v: &Option<String>| v.as_deref().is_some_and(|e| !e.trim().is_empty());
+    if some(&b.every) || some(&b.watch) || b.times.as_ref().is_some_and(|t| !t.is_empty()) {
+        return suggest_routine(&app, &placed, &id, &b);
     }
     match app.store.suggest_desk_note(placed.desk_id, &b.text, &b.by) {
         Ok(crate::desk::Suggested::Note(mut note)) => {

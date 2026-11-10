@@ -7,6 +7,10 @@
 //! The forms, each with an hour or 09:00 without one: `every day`, `daily`,
 //! `every weekday`, `weekdays`, `every mon`, `every 1st` (to the 28th, so
 //! every month has one). `at` before the hour is allowed and dropped.
+//!
+//! 1.63: one line may name several hours, `every day 09:30 13:00 17:30`
+//! (`Times`), up to `HOURS_MAX`; the sheet keeps each hour as a time of its
+//! own (`crate::routine::times`), so each has its own next.
 
 use super::{clock, weekday};
 use time::{Date, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset, Weekday};
@@ -28,11 +32,33 @@ pub struct Every {
     pub at: (u8, u8),
 }
 
-/// The most words a tail is read over: `every day at 7:30 pm`.
-const TAIL_MAX: usize = 5;
+/// The most words a tail is read over: `every day 09:30 13:00 17:30 19:00`.
+const TAIL_MAX: usize = 8;
+/// The most hours one line names.
+pub const HOURS_MAX: usize = 6;
 
-/// The words alone, `every day 07:30`: what the sheet's When field holds.
+/// One cadence and its hours, in order: a line of the sheet's When.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Times {
+    pub cadence: Cadence,
+    pub at: Vec<(u8, u8)>,
+}
+
+/// One hour alone, `every day 07:30`: what a time of a routine keeps.
 pub fn every(words: &str) -> Option<Every> {
+    let t = every_times(words)?;
+    match t.at.as_slice() {
+        [at] => Some(Every {
+            cadence: t.cadence,
+            at: *at,
+        }),
+        _ => None,
+    }
+}
+
+/// A cadence and one or more hours: `every day 09:30 13:00`, `weekdays 9`,
+/// `every mon at 7:30 pm`.
+pub fn every_times(words: &str) -> Option<Times> {
     let t: Vec<String> = words
         .split_whitespace()
         .map(|w| w.to_lowercase().trim_end_matches(['.', '!']).to_string())
@@ -54,11 +80,43 @@ pub fn every(words: &str) -> Option<Every> {
         rest => rest,
     };
     let at = if rest.is_empty() {
-        (9, 0)
+        vec![(9, 0)]
+    } else if let Some(one) = clock(rest) {
+        vec![one]
     } else {
-        clock(rest)?
+        hours(rest)?
     };
-    Some(Every { cadence, at })
+    Some(Times { cadence, at })
+}
+
+/// Several hours, `09:30 13:00`, `9 1 pm`, `9:30, 13:00 and 17:30`: each one
+/// a clock, sorted, each once.
+fn hours(rest: &[&str]) -> Option<Vec<(u8, u8)>> {
+    let w: Vec<&str> = rest
+        .iter()
+        .map(|w| w.trim_end_matches(','))
+        .filter(|w| !w.is_empty() && *w != "and")
+        .collect();
+    let mut v = Vec::new();
+    let mut i = 0;
+    while i < w.len() {
+        let half = w
+            .get(i + 1)
+            .filter(|h| matches!(**h, "am" | "pm" | "a" | "p"));
+        match half {
+            Some(h) => {
+                v.push(clock(&[w[i], h])?);
+                i += 2;
+            }
+            None => {
+                v.push(clock(&[w[i]])?);
+                i += 1;
+            }
+        }
+    }
+    v.sort_unstable();
+    v.dedup();
+    (!v.is_empty() && v.len() <= HOURS_MAX).then_some(v)
 }
 
 /// `1st`, `2nd`, `3rd`, `4th` … `28th`.
@@ -79,18 +137,20 @@ fn suffix_of(d: u8) -> &'static str {
 }
 
 /// A line with a cadence at its end: the words before it, and the cadence.
-/// `None` when the tail is not one or is all there is.
-pub fn every_tail(text: &str) -> Option<(String, Every)> {
+/// `None` when the tail is not one or is all there is. The tail starts at
+/// the *last* `every` in reach, so a head that ends in an hour of its own
+/// (`post at 9 · every day 10`) keeps it.
+pub fn every_tail(text: &str) -> Option<(String, Times)> {
     let words: Vec<&str> = text.split_whitespace().collect();
     let n = words.len();
     let first = n.saturating_sub(TAIL_MAX);
-    let start = (first..n).find(|&i| {
+    let start = (first..n).rfind(|&i| {
         matches!(
             words[i].to_lowercase().as_str(),
             "every" | "daily" | "weekdays"
         )
     })?;
-    let e = every(&words[start..].join(" "))?;
+    let e = every_times(&words[start..].join(" "))?;
     let mut head = &words[..start];
     if head
         .last()
@@ -103,6 +163,41 @@ pub fn every_tail(text: &str) -> Option<(String, Every)> {
         .trim_end_matches([',', '·', ';', '-', '—', '|', ' '])
         .to_string();
     (!rest.is_empty()).then_some((rest, e))
+}
+
+impl Times {
+    /// Each hour as one `Every`.
+    pub fn each(&self) -> Vec<Every> {
+        self.at
+            .iter()
+            .map(|at| Every {
+                cadence: self.cadence,
+                at: *at,
+            })
+            .collect()
+    }
+
+    /// Said back the one way: `every day 09:30 13:00`.
+    pub fn words(&self) -> String {
+        let mut each = self.each().into_iter();
+        let Some(first) = each.next() else {
+            return String::new();
+        };
+        let mut s = first.words();
+        for e in each {
+            s.push_str(&format!(" {:02}:{:02}", e.at.0, e.at.1));
+        }
+        s
+    }
+
+    /// The soonest next hour of all of them.
+    pub fn next_after(&self, now: i64, off: UtcOffset) -> i64 {
+        self.each()
+            .iter()
+            .map(|e| e.next_after(now, off))
+            .min()
+            .unwrap_or(now + 86_400)
+    }
 }
 
 impl Every {
@@ -208,6 +303,7 @@ mod tests {
     #[test]
     fn the_tail_comes_off_a_line_and_the_rest_is_its_name() {
         let (name, e) = every_tail("newsroom · every day 07:30").unwrap();
+        assert_eq!(e.at.len(), 1);
         assert_eq!(
             (name.as_str(), e.words().as_str()),
             ("newsroom", "every day 07:30")
@@ -224,6 +320,58 @@ mod tests {
         );
         assert_eq!(every_tail("rerun every time the build fails"), None);
         assert_eq!(every_tail("post the note by fri 10"), None);
+        // A head that ends in an hour of its own keeps it: the tail is the
+        // last `every` in reach.
+        let (name, e) = every_tail("post at 9 · every day 10").unwrap();
+        assert_eq!(
+            (name.as_str(), e.words().as_str()),
+            ("post at 9", "every day 10:00")
+        );
+        let (name, e) = every_tail("standup, every day notes · every day 09:30").unwrap();
+        assert_eq!(
+            (name.as_str(), e.words().as_str()),
+            ("standup, every day notes", "every day 09:30")
+        );
+        let (name, e) = every_tail("pro-forum · every day 09:30 13:00 17:30 21:00").unwrap();
+        assert_eq!(name, "pro-forum");
+        assert_eq!(e.words(), "every day 09:30 13:00 17:30 21:00");
+    }
+
+    #[test]
+    fn a_line_may_name_several_hours_and_each_is_its_own() {
+        let t = every_times("every day 13:00 09:30").unwrap();
+        assert_eq!(t.at, vec![(9, 30), (13, 0)], "sorted");
+        assert_eq!(t.words(), "every day 09:30 13:00");
+        assert_eq!(
+            every_times("weekdays 9 1 pm").unwrap().at,
+            vec![(9, 0), (13, 0)]
+        );
+        assert_eq!(
+            every_times("every mon 9:30, 13:00 and 17:30")
+                .unwrap()
+                .words(),
+            "every mon 09:30 13:00 17:30"
+        );
+        // Still one hour where one was meant.
+        assert_eq!(
+            every_times("every day at 7:30 pm").unwrap().at,
+            vec![(19, 30)]
+        );
+        assert_eq!(
+            every_times("every day 9 9").unwrap().at,
+            vec![(9, 0)],
+            "once"
+        );
+        assert_eq!(every_times("every day 1 2 3 4 5 6 7"), None, "six at most");
+        assert_eq!(every_times("every day 09:30 lunch"), None);
+        // `every` alone is one hour, as a time keeps it.
+        assert_eq!(every("every day 09:30 13:00"), None);
+        assert!(every("every day 09:30").is_some());
+        let off = ist();
+        assert_eq!(
+            t.next_after(at(2026, 10, 24, 10, 0), off),
+            at(2026, 10, 24, 13, 0)
+        );
     }
 
     #[test]

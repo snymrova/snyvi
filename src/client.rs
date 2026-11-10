@@ -1207,6 +1207,9 @@ pub fn suggest_desk_note(
         &format!("{pane}/suggest"),
         serde_json::json!({ "text": text, "due": due, "lines": lines, "by": by,
             "every": routine.get("every").unwrap_or(&Value::Null), "waits": routine.get("waits").unwrap_or(&Value::Null),
+            "times": routine.get("times").unwrap_or(&Value::Null), "gate": routine.get("gate").unwrap_or(&Value::Null),
+            "watch": routine.get("watch").unwrap_or(&Value::Null), "shape": routine.get("shape").unwrap_or(&Value::Null),
+            "model": routine.get("model").unwrap_or(&Value::Null), "effort": routine.get("effort").unwrap_or(&Value::Null),
             "doc": routine.get("doc").unwrap_or(&Value::Null) }),
     )?;
     match resp.status().as_u16() {

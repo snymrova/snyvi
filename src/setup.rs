@@ -348,13 +348,15 @@ fn claude_md_path() -> Result<PathBuf> {
 /// Claude reads when the work calls for it -- a document to send, a desk
 /// note, a widget. In the binary, so an update keeps it in step with the
 /// tools it describes.
-const SKILL: [(&str, &str); 5] = [
+const SKILL: [(&str, &str); 6] = [
     ("SKILL.md", include_str!("skill/SKILL.md")),
     ("widgets.md", include_str!("skill/widgets.md")),
     ("board.md", include_str!("skill/board.md")),
     ("launch.md", crate::launch::TEMPLATE),
     // 1.61: the channels' rules a post is drafted by (C3).
     ("grow.md", include_str!("skill/grow.md")),
+    // 1.63: what a routine's command, gate and watch hold to.
+    ("routine.md", include_str!("skill/routine.md")),
 ];
 
 /// The line every file of the skill carries: ours to rewrite and to take

@@ -11,8 +11,8 @@
 //! reader watches; Start it allows the file as it is and gives it its hour.
 
 use super::*;
-use crate::due::every::every;
-use crate::routine::{self, places, waits, Added, Made, Routine};
+use crate::due::every::every_times;
+use crate::routine::{self, events, places, times, waits, Added, Made, Routine};
 
 type Q = Query<std::collections::HashMap<String, String>>;
 
@@ -29,6 +29,10 @@ fn row_json(r: &Routine, root: &std::path::Path) -> serde_json::Value {
     let mut v = json!(r);
     v["file"] = json!(routine::file_state(root, r));
     v["state"] = json!(r.state());
+    // 1.63: its watch as it stands, for the row's line.
+    if !r.watch.is_empty() {
+        v["watch_live"] = json!(super::routine_watch::live(r.id));
+    }
     v
 }
 
@@ -94,36 +98,39 @@ pub(crate) async fn desk_commands(
 
 /// What a line would become, said as the chip says it: the daemon's own
 /// grammar, so the window has none of its own (D7).
+///
+/// 1.63: the field is what-only, so a line needs no when; one it ends in is
+/// still read, and a tail snyvi cannot read is a hint, not an error.
 fn read_json(root: &std::path::Path, text: &str, now: i64) -> serde_json::Value {
     let text = text.trim();
     let Some(line) = routine::from_line(text) else {
-        // A command named, and no time yet.
         let first = text
             .trim_start_matches('/')
             .split_whitespace()
             .next()
             .unwrap_or("");
         if text.starts_with('/') && !first.is_empty() {
-            if let places::Resolved::One(p) = places::resolve(root, first) {
-                return json!({ "when": true, "cmd": p.name, "where": p.tag(), "about": p.about });
-            }
             return json!({ "error": format!("no /{first} here: no command or skill by that name") });
-        }
-        let low = text.to_ascii_lowercase();
-        let tail = ["every ", "daily", "weekdays"]
-            .iter()
-            .filter_map(|w| low.rfind(w))
-            .max();
-        if tail.is_some_and(|i| text.len() - i <= 24) {
-            return json!({ "error": "every day · every weekday · every mon · every 1st, and a time: 07:30" });
         }
         return json!({});
     };
-    let mut v = json!({
-        "every": line.every.words(),
-        "next": line.every.next_after(now, crate::due::offset()),
-        "name": line.name,
-    });
+    let mut v = json!({ "name": line.name });
+    match &line.every {
+        Some(t) => {
+            v["every"] = json!(t.words());
+            v["next"] = json!(t.next_after(now, crate::due::offset()));
+        }
+        None => {
+            let low = text.to_ascii_lowercase();
+            let tail = ["every ", "daily", "weekdays"]
+                .iter()
+                .filter_map(|w| low.rfind(w))
+                .max();
+            if tail.is_some_and(|i| text.len() - i <= 24) {
+                v["hint"] = json!("its when goes in its sheet: every day · every weekday · every mon · every 1st, and a time: 07:30");
+            }
+        }
+    }
     match routine::resolve(root, &line) {
         Made::File(p, _) => {
             v["cmd"] = json!(line.cmd);
@@ -191,7 +198,7 @@ pub(crate) async fn new_routine(
     let Some(line) = routine::from_line(&b.text) else {
         return refused(
             StatusCode::BAD_REQUEST,
-            "a routine is a line and when: /newsroom · every day 07:30, or your own words · every weekday 9",
+            "a routine is a command or your own words: /newsroom, or open PRs, summarise",
         );
     };
     let root = std::path::PathBuf::from(&desk.root);
@@ -253,14 +260,20 @@ pub(crate) async fn routine_sheet(
 }
 
 /// The text of the file a routine's name resolves to now, and where.
+/// With its scripts' text after it (1.63, R6), so the diff and the keys
+/// cover them too.
 fn file_now(root: &std::path::Path, r: &Routine) -> Option<(places::Place, String)> {
     match routine::now_of(root, r) {
-        Made::File(p, _) => {
-            let text = std::fs::read_to_string(&p.path).unwrap_or_default();
-            Some((p, text))
-        }
+        Made::File(p, _) => Some(text_of(&p, &r.cmd)).map(|t| (p, t)),
         _ => None,
     }
+}
+
+/// A command's text as allowed: its file, then its scripts.
+fn text_of(p: &places::Place, cmd: &str) -> String {
+    let mut text = std::fs::read_to_string(&p.path).unwrap_or_default();
+    text.push_str(&places::scripts_text(p, cmd));
+    text
 }
 
 async fn sheet_json(app: &Arc<App>, r: &Routine, desk: &crate::desk::Desk) -> serde_json::Value {
@@ -302,11 +315,23 @@ async fn sheet_json(app: &Arc<App>, r: &Routine, desk: &crate::desk::Desk) -> se
         String::new()
     };
     let ready = ready(r, desk, text, state).await;
-    let runs = app
+    let (runs, when, waiting) = app
         .store
-        .clocked(|c, _| routine::runs_of(c, r.id, 30))
+        .clocked(|c, _| {
+            Ok((
+                routine::runs_of(c, r.id, 30)?,
+                times::lines(&times::times_of(c, r.id)?),
+                events::waiting(c, r.id)?,
+            ))
+        })
         .unwrap_or_default();
+    let scripts = scripts_json(&root, r).await;
     json!({
+        "times": when,
+        "waiting": waiting,
+        "scripts": scripts,
+        "models": routine::MODELS,
+        "efforts": routine::EFFORTS,
         "routine": row_json(r, &root),
         "place": place.map(|p| json!({ "file": p.file, "where": p.tag(), "large": found.1 })),
         "about": place.map(|p| p.about.clone()).unwrap_or_default(),
@@ -318,6 +343,39 @@ async fn sheet_json(app: &Arc<App>, r: &Routine, desk: &crate::desk::Desk) -> se
         "diff": diff,
         "runs": runs,
     })
+}
+
+/// The routine's scripts folder and what is in it (R6), as the sheet lists
+/// them; `null` for words, `{ folder, files: [] }` when there is none yet.
+async fn scripts_json(root: &std::path::Path, r: &Routine) -> serde_json::Value {
+    if r.words() {
+        return json!(null);
+    }
+    let (root, rr) = (root.to_path_buf(), r.clone());
+    tokio::task::spawn_blocking(move || {
+        let Some(p) =
+            places::from_file(&root, &rr.file).or_else(|| match routine::now_of(&root, &rr) {
+                Made::File(p, _) => Some(p),
+                _ => None,
+            })
+        else {
+            return json!(null);
+        };
+        let folder = places::scripts_said(&p, &rr.cmd);
+        let files: Vec<String> = places::scripts(&p, &rr.cmd)
+            .and_then(|d| {
+                places::script_files(&d).map(|v| {
+                    v.iter()
+                        .filter_map(|f| f.strip_prefix(&d).ok())
+                        .map(|f| f.to_string_lossy().replace('\\', "/"))
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        json!({ "folder": folder, "files": files })
+    })
+    .await
+    .unwrap_or(json!(null))
 }
 
 /// The lines to paste into a command's file for a `continue:` form: what
@@ -498,7 +556,7 @@ fn diff_of(data_dir: &std::path::Path, r: &Routine, now: &str) -> String {
 /// block's `"key":"SHORT_KEY"` is an example's text, and a "not on this
 /// desk" for it taught the reader to pass over the real ones (audit
 /// 566d17f746, R6).
-fn key_names(text: &str) -> Vec<String> {
+pub(crate) fn key_names(text: &str) -> Vec<String> {
     let keyish = |w: &str| {
         w.len() >= 6
             && w.starts_with(|c: char| c.is_ascii_uppercase())
@@ -536,10 +594,112 @@ fn key_names(text: &str) -> Vec<String> {
 #[serde(default)]
 pub(crate) struct SaveBody {
     name: String,
+    /// Before 1.63, the one when; still read when `times` is not sent.
     every: String,
+    /// 1.63: the When, whole. Absent keeps the times as they are.
+    times: Option<Vec<TimeBody>>,
+    gate: Option<String>,
+    watch: Option<String>,
+    shape: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+    slim: Option<bool>,
     waits: String,
     minutes: i64,
     five_hour: i64,
+}
+
+/// One line of a When, as the sheet or an agent's offer sends it.
+#[derive(Deserialize, Default, Clone)]
+#[serde(default)]
+pub(crate) struct TimeBody {
+    pub(crate) every: String,
+    pub(crate) words: String,
+    pub(crate) gated: Option<bool>,
+}
+
+/// The longest gate or watch line.
+const LINE_MAX: usize = 400;
+
+/// A gate's or watch's line: one line, not too long.
+fn command_ok(what: &str, line: &str) -> Result<String, String> {
+    let line = line.trim();
+    if line.chars().any(char::is_control) || line.chars().count() > LINE_MAX {
+        return Err(format!("{what} is one line, {LINE_MAX} characters at most"));
+    }
+    Ok(line.to_string())
+}
+
+/// The When as the sheet sent it, read: each line a cadence and hours,
+/// its words, its tick. A time with words is not gated unless ticked (C1).
+fn times_ok(b: &SaveBody) -> Result<Option<Vec<times::Line>>, String> {
+    let sent: Vec<TimeBody> = match &b.times {
+        Some(t) => t.clone(),
+        None if b.every.trim().is_empty() => return Ok(None),
+        None => vec![TimeBody {
+            every: b.every.clone(),
+            ..TimeBody::default()
+        }],
+    };
+    read_times(&sent).map(Some)
+}
+
+/// Lines of a When read: each a cadence and its hours, its words, its tick.
+pub(crate) fn read_times(sent: &[TimeBody]) -> Result<Vec<times::Line>, String> {
+    let mut v = Vec::new();
+    for t in sent.iter().filter(|t| !t.every.trim().is_empty()) {
+        let Some(times) = every_times(&t.every) else {
+            return Err(format!("\"{}\" is not a time snyvi reads: try every day 07:30, every weekday 9 13:00, every mon 09:00, every 1st", t.every.trim()));
+        };
+        let Some(words) = times::words_ok(&t.words) else {
+            return Err(format!(
+                "a time's words are one short line, {} characters at most, not starting with /",
+                times::WORDS_CHARS
+            ));
+        };
+        let gated = t.gated.unwrap_or(words.is_empty());
+        v.push(times::Line {
+            times,
+            words,
+            gated,
+        });
+    }
+    if times::count(&v) > times::MAX {
+        return Err(format!("a routine has {} times at most", times::MAX));
+    }
+    Ok(v)
+}
+
+/// A routine's gate, watch, shape, model and effort, each read.
+pub(crate) fn triggers_ok(
+    gate: &str,
+    watch: &str,
+    shape: &str,
+    model: &str,
+    effort: &str,
+) -> Result<routine::Triggers, String> {
+    let gate = command_ok("Only if", gate)?;
+    let watch = command_ok("Wakes on", watch)?;
+    let shape = shape.trim().to_string();
+    if !events::shape_ok(&shape) {
+        return Err(
+            "a shape is words and holes: tag <number>, id <number>, <word>, several joined by |"
+                .into(),
+        );
+    }
+    let (model, effort) = (model.trim().to_lowercase(), effort.trim().to_lowercase());
+    if !routine::MODELS.contains(&model.as_str()) || !routine::EFFORTS.contains(&effort.as_str()) {
+        return Err(
+            "a model is haiku, sonnet, opus or fable, an effort low, medium or high".into(),
+        );
+    }
+    Ok(routine::Triggers {
+        gate,
+        watch,
+        shape,
+        model,
+        effort,
+    })
 }
 
 /// The name a Save keeps: a command's line starts with its command; the
@@ -577,11 +737,20 @@ pub(crate) async fn save_routine(
     let Some((r, desk)) = on_desk(&app, id, row) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(e) = every(&b.every) else {
-        return refused(
-            StatusCode::BAD_REQUEST,
-            format!("\"{}\" is not a time snyvi reads: try every day 07:30, every weekday 9, every mon 09:00, every 1st", b.every.trim()),
-        );
+    let when = match times_ok(&b) {
+        Ok(w) => w,
+        Err(why) => return refused(StatusCode::BAD_REQUEST, why),
+    };
+    let pick = |sent: &Option<String>, was: &str| sent.clone().unwrap_or_else(|| was.to_string());
+    let t = match triggers_ok(
+        &pick(&b.gate, &r.gate),
+        &pick(&b.watch, &r.watch),
+        &pick(&b.shape, &r.shape),
+        &pick(&b.model, &r.model),
+        &pick(&b.effort, &r.effort),
+    ) {
+        Ok(t) => t,
+        Err(why) => return refused(StatusCode::BAD_REQUEST, why),
     };
     let name = b.name.trim();
     let name = match name_ok(
@@ -607,7 +776,7 @@ pub(crate) async fn save_routine(
     } else {
         match routine::now_of(&root, &r) {
             Made::File(p, h) => {
-                let text = std::fs::read_to_string(&p.path).unwrap_or_default();
+                let text = text_of(&p, &r.cmd);
                 (h, p.file, text)
             }
             _ => {
@@ -618,9 +787,27 @@ pub(crate) async fn save_routine(
             }
         }
     };
+    // A live routine keeps a when (C3): saved with no time and no watch, it
+    // would never run, and Start refused it for that.
+    let kept_times = match &when {
+        Some(t) => !t.is_empty(),
+        None => app
+            .store
+            .clocked(|c, _| times::times_of(c, r.id))
+            .map(|t| !t.is_empty())
+            .unwrap_or(true),
+    };
+    if r.started_at != 0 && !kept_times && t.watch.is_empty() {
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "a started routine needs a when: a time, or Wakes on -- or Pause it",
+        );
+    }
     let s = routine::Save {
         name,
-        every: e,
+        times: when,
+        triggers: t,
+        slim: b.slim.unwrap_or(r.slim),
         waits,
         minutes: if b.minutes > 0 { b.minutes } else { r.minutes },
         five_hour: if b.five_hour > 0 {
@@ -636,6 +823,7 @@ pub(crate) async fn save_routine(
             if r.started_at != 0 && !r.words() {
                 keep_allowed(&app.paths.data_dir, r.id, &text);
             }
+            super::routine_watch::forgive(r.id);
             super::routine_run::changed(&app, id);
             Json(json!({ "ok": true })).into_response()
         }
@@ -652,7 +840,7 @@ fn allow_now(app: &App, r: &Routine, root: &std::path::Path, start: bool) -> Res
     } else {
         match routine::now_of(root, r) {
             Made::File(p, h) => {
-                let text = std::fs::read_to_string(&p.path).unwrap_or_default();
+                let text = text_of(&p, &r.cmd);
                 (h, p.file, text)
             }
             Made::Two(a, b) => return Err(format!("two /{}: {a} and {b} -- rename one", r.cmd)),
@@ -664,6 +852,14 @@ fn allow_now(app: &App, r: &Routine, root: &std::path::Path, start: bool) -> Res
             }
         }
     };
+    if start
+        && !app
+            .store
+            .clocked(|c, _| routine::has_when(c, r))
+            .unwrap_or(false)
+    {
+        return Err("give it a when first: a time, or Wakes on".into());
+    }
     let done = app
         .store
         .clocked(|c, now| {
@@ -674,20 +870,42 @@ fn allow_now(app: &App, r: &Routine, root: &std::path::Path, start: bool) -> Res
             }
         })
         .map_err(|e| format!("{e:#}"))?;
+    super::routine_watch::forgive(r.id);
     if done && !r.words() {
         keep_allowed(&app.paths.data_dir, r.id, &text);
     }
     Ok(done)
 }
 
+/// The words a try is given (1.63): what a time's words would be.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct ActBody {
+    words: String,
+}
+
+/// A try's words (B6) are held to what a run could be woken with: a line
+/// in the routine's shape, as its watch's would be, or the words of one of
+/// its times. None is always fine.
+fn try_words_ok(app: &App, r: &Routine, words: &str) -> bool {
+    words.is_empty()
+        || events::ok(&r.shape, words)
+        || app
+            .store
+            .clocked(|c, _| times::times_of(c, r.id))
+            .is_ok_and(|ts| ts.iter().any(|t| t.words == words))
+}
+
 /// The row's menu and the sheet's acts: `run` (Run now), `try` (Try once
-/// now), `start` (Start it), `allow`, `pause`, `resume`, `remove` (Cancel,
-/// on a draft), `restore`.
+/// now, with `{ words }` in its body when the sheet has them), `start`
+/// (Start it), `allow`, `pause`, `resume`, `remove` (Cancel, on a draft),
+/// `restore`, `stop` (1.63: the run under way).
 pub(crate) async fn routine_act(
     State(app): S,
     headers: HeaderMap,
     Path((id, row, act)): Path<(i64, i64, String)>,
     Query(q): Q,
+    body: axum::body::Bytes,
 ) -> Response {
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
@@ -698,10 +916,36 @@ pub(crate) async fn routine_act(
     let root = std::path::PathBuf::from(&desk.root);
     let done = match act.as_str() {
         "run" | "try" => {
-            let why = if act == "run" { "you" } else { "try" };
-            return match super::routine_run::start(&app, r.id, why).await {
+            let words = serde_json::from_slice::<ActBody>(&body)
+                .map(|b| b.words)
+                .unwrap_or_default();
+            let Some(words) = times::words_ok(&words) else {
+                return refused(
+                    StatusCode::BAD_REQUEST,
+                    "a try's words are one short line, not starting with /",
+                );
+            };
+            if !try_words_ok(&app, &r, &words) {
+                return refused(
+                    StatusCode::BAD_REQUEST,
+                    "not in its shape: a try's words are what its watch would print, or one of its times' words",
+                );
+            }
+            let ran = if act == "run" {
+                super::routine_run::start(&app, r.id, "you").await
+            } else {
+                super::routine_run::try_with(&app, r.id, &words).await
+            };
+            return match ran {
                 Ok(()) => Json(json!({ "ok": true })).into_response(),
                 Err(why) => refused(StatusCode::CONFLICT, why),
+            };
+        }
+        "stop" => {
+            return if super::routine_run::stop(&app, &r) {
+                Json(json!({ "ok": true })).into_response()
+            } else {
+                refused(StatusCode::CONFLICT, "nothing is running")
             };
         }
         "start" | "allow" => match allow_now(&app, &r, &root, act == "start") {
@@ -709,7 +953,12 @@ pub(crate) async fn routine_act(
             Err(why) => return refused(StatusCode::CONFLICT, why),
         },
         word => match routine::Act::of(word) {
-            Some(a) => app.store.clocked(|c, now| routine::act(c, r.id, a, now)),
+            Some(a) => {
+                if a == routine::Act::Resume || a == routine::Act::Restore {
+                    super::routine_watch::forgive(r.id);
+                }
+                app.store.clocked(|c, now| routine::act(c, r.id, a, now))
+            }
             None => return StatusCode::NOT_FOUND.into_response(),
         },
     };
@@ -767,15 +1016,22 @@ mod tests {
             (v["words"].as_bool(), v["name"].as_str()),
             (Some(true), Some("open PRs, summarise"))
         );
-        assert_eq!(read_json(&dir.path, "/zz-snyvi-read", now)["when"], true);
+        let v = read_json(&dir.path, "/zz-snyvi-read", now);
+        assert_eq!(
+            (v["cmd"].as_str(), v.get("every")),
+            (Some("zz-snyvi-read"), None),
+            "a what with no when"
+        );
         assert!(
             read_json(&dir.path, "/zz-snyvi-gone · every day", now)["error"]
                 .as_str()
                 .unwrap()
                 .starts_with("no /zz-snyvi-gone here")
         );
-        assert!(read_json(&dir.path, "news every fortnight", now)["error"].is_string());
-        assert_eq!(read_json(&dir.path, "buy milk", now), json!({}));
+        assert!(read_json(&dir.path, "news every fortnight", now)["hint"].is_string());
+        assert_eq!(read_json(&dir.path, "buy milk", now)["words"], true);
+        let v = read_json(&dir.path, "zz-snyvi-read · every day 09:30 13:00", now);
+        assert_eq!(v["every"], "every day 09:30 13:00");
     }
 
     #[test]
@@ -811,5 +1067,55 @@ mod tests {
         keep_allowed(&dir.path, 3, "# News\nfetch\npublish\n");
         let d = diff_of(&dir.path, &r, "# News\nfetch\npublish --all\n");
         assert!(d.contains("-publish\n+publish --all"), "{d}");
+    }
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::*;
+
+    fn body(times: serde_json::Value) -> SaveBody {
+        serde_json::from_value(json!({ "times": times })).unwrap()
+    }
+
+    #[test]
+    fn the_when_is_read_line_by_line_and_a_time_with_words_is_not_gated() {
+        let t = times_ok(&body(json!([
+            { "every": "every day 09:30 13:00 17:30" },
+            { "every": "every mon 09:30", "words": "case" },
+            { "every": "every fri 18:00", "words": "week", "gated": true },
+            { "every": "  " }
+        ])))
+        .unwrap()
+        .unwrap();
+        assert_eq!(t.len(), 3, "an empty line is no time");
+        assert_eq!((t[0].times.at.len(), t[0].gated), (3, true));
+        assert_eq!((t[1].words.as_str(), t[1].gated), ("case", false));
+        assert!(t[2].gated, "ticked by the reader");
+        assert!(
+            times_ok(&body(
+                json!([{ "every": "every day 1 2 3 4" }, { "every": "every mon 1 2 3" }])
+            ))
+            .is_err(),
+            "six at most"
+        );
+        assert!(times_ok(&body(json!([{ "every": "every fortnight" }]))).is_err());
+        assert!(times_ok(&body(json!([{ "every": "every day", "words": "/rm" }]))).is_err());
+        // An older window sends `every` alone; nothing sent keeps them.
+        let old: SaveBody = serde_json::from_value(json!({ "every": "every day 07:30" })).unwrap();
+        assert_eq!(times_ok(&old).unwrap().unwrap().len(), 1);
+        assert_eq!(times_ok(&SaveBody::default()).unwrap(), None);
+        assert_eq!(
+            times_ok(&body(json!([]))).unwrap(),
+            Some(vec![]),
+            "a draft with no when"
+        );
+    }
+
+    #[test]
+    fn a_gate_or_watch_is_one_line() {
+        assert_eq!(command_ok("Only if", " gate.sh ").unwrap(), "gate.sh");
+        assert!(command_ok("Only if", "a\nb").is_err());
+        assert!(command_ok("Wakes on", &"x".repeat(401)).is_err());
     }
 }

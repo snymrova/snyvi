@@ -6,16 +6,17 @@
  * draft, 1.53, plan f30461f2c1). Its own section under Notes, always there:
  * one line when empty, the field, so the way in is in sight on every desk.
  *
- * The field takes `/newsroom · every day 7:30` or the reader's own words
- * with a cadence. `/` lists the project's and the reader's commands and
- * skills (src/routine/places.rs); the chip says what the daemon reads in
- * the line (`GET …/routines/read`), never a grammar of its own. Enter makes
- * a draft and opens its sheet (21-routine-sheet.js): Try once now, then
- * Start it. Nothing runs on its own before Start.
+ * The field takes what runs, and only that (1.63, U1): `/newsroom`, a
+ * skill, or the reader's own words. `/` lists the project's and the
+ * reader's commands and skills (src/routine/places.rs). Enter, or a pick
+ * from the list, makes a draft and opens its sheet (21-routine-sheet.js),
+ * where When, Only if and Wakes on are asked for, with room for them
+ * (28-routine-when.js): Try once now, then Start it. Nothing runs on its
+ * own before Start.
  *
  * A row is drawn like a note's with a clock ring in the circle's place, the
  * ⋯ menu every row has, and arrives at the list's foot, so nothing above it
- * moves. The chip, the list under the field and an error all overlay. */
+ * moves. The list under the field and an error overlay. */
 
 /** This desk's routines, as the daemon last said them, and which desk. */
 let rts = [], rtsAt = null;
@@ -28,10 +29,9 @@ let rtGone = null;
 /** Just started: the row says so until then (ms), by id. */
 const rtStarted = new Map();
 /** The field, open: what is typed, the caret, why Enter was refused, the
- *  daemon's read of it, the picked line of the list, and whether the
- *  focus left it (a redraw then leaves the focus where it went). */
+ *  picked line of the list, and whether the focus left it (a redraw then
+ *  leaves the focus where it went). */
 let rtField = null;
-let rtReadT = 0, rtReadN = 0;
 
 /** Read again: on open, and on the `desknotes` event (`routine_run::changed`). */
 async function routinesGet(id) {
@@ -72,7 +72,7 @@ function routineSec(d) {
   const acts = `<button type="button" data-a="rt-new" data-tip="New routine" aria-label="New routine">${ico("plus")}</button>`;
   return sec("routines", "rail.routines", "Routines", {
     cls: "dk-notes dk-rts", part: "rail.routines.head", empty: !mine.length, acts,
-    tip: "Routines", sub: "Lines that come back: a /command or your own words, and when. Try one once, then Start it, and snyvi runs it at its hour in a panel in the back.",
+    tip: "Routines", sub: "Lines that come back: a /command or your own words, at its hours or when its watch wakes it. Try one once, then Start it, and snyvi runs it in a panel in the back.",
     count: running ? `● ${mine.length}` : mine.length || "", tone: running ? "accent" : "", countTip: running ? `${running} running` : "",
   }, (rows ? `<ul class="dk-list">${rows}</ul>` : "") + rtFieldHtml(esc));
 }
@@ -80,30 +80,23 @@ function routineSec(d) {
 /* Short enough for the rail's width. It was `/command · every day 9`,
  * which read as a syntax to copy (audit 566d17f746, R3): the list that
  * opens on focus now shows the `/` and the when. */
-const RT_HOLD = "Something to run on its own…";
+const RT_HOLD = "New routine…";
 
 /** The field at the list's foot: quiet until clicked, then live, in the
- *  same room, so nothing under it moves as it opens and shuts. Live, it
- *  is two fields, what and when (1.56, audit B7): one field held a
- *  command palette and a "then when:" hint for a second language, and a
- *  routine is two things. The when offers the cadences the sheet does. */
+ *  same room, so nothing under it moves as it opens and shuts. One field,
+ *  the row's whole width, for what runs (1.63, U1): beside a when field
+ *  in 230 px, neither had room, and a when typed here met a grammar the
+ *  sheet now asks for in its own part, with its preview (U2, U3). */
 function rtFieldHtml(esc) {
   const lead = `<span class="dk-lead"><span class="dk-tick dk-ring ghost" aria-hidden="true">${RT_HANDS}</span></span>`;
-  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="what runs: a /command, a skill or your own words; then when" spellcheck="false"></div>`;
+  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="what runs: a /command, a skill or your own words; its sheet asks when" spellcheck="false"></div>`;
   return `<div class="dk-note new rt-new">${lead}<input class="rt-in" placeholder="/command or your words" aria-label="What runs: a /command, a skill, or your own words" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="rt-comp" aria-expanded="false">` +
-    `<input class="rt-in rt-when" list="rt-whens" placeholder="every weekday 9" aria-label="When it runs" data-tip="When" data-tip-sub="every day 9 · every weekday 9 · every mon 9:00 · every 1st" spellcheck="false" autocomplete="off" value="${esc(rtField.when || "")}">` +
-    `<datalist id="rt-whens">${RT_WHENS.map(w => `<option value="${w}">`).join("")}</datalist>` +
-    `<span class="dk-due-guess rt-chip" aria-hidden="true" hidden></span>` +
     (rtField.err ? `<span class="field-err" role="alert">${esc(rtField.err)}</span>` : "") + `</div>`;
 }
 
-/** The line the daemon reads: what, and when, joined as a line says it.
- *  A when the reader wrote into the what field is left as it is. */
-const rtLine = () => {
-  if (!rtField) return "";
-  const what = rtField.text.trim(), when = (rtField.when || "").trim();
-  return !what ? "" : when ? `${what} · ${when}` : what;
-};
+/** The line the daemon reads: what runs. A when written into it anyway is
+ *  read as one still (`routine::from_line`), for a reader used to 1.62. */
+const rtLine = () => rtField ? rtField.text.trim() : "";
 
 /** What the list shows for what is typed: while the field is empty or a
  *  name is being typed (`/new`, no space yet). A name that starts with what
@@ -134,7 +127,7 @@ const rtListing = t => t === "" || /^\/[\w-]*$/.test(t);
 function rtCompDraw() {
   const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)");
   const ms = rtMatches(), e = ctx.esc;
-  const open = !!(inp && rtField && !rtField.away && rtField.at !== "when") && rtListing(rtField.text) && rtCmds.at === deskId;
+  const open = !!(inp && rtField && !rtField.away) && rtListing(rtField.text) && rtCmds.at === deskId;
   inp?.setAttribute("aria-expanded", String(open));
   let el = document.getElementById("rt-comp");
   if (!open) { el?.remove(); return; }
@@ -164,39 +157,11 @@ function rtCompDraw() {
   const none = !rtCmds.list.length ? "No commands or skills in this project or yours yet: write your own words instead."
     : "No command or skill by that name: words without a / are your own.";
   el.innerHTML = (rows || `<p class="rt-o-none">${none}</p>`) +
-    `<p class="rt-o-foot">or your own words instead of a /command · when it runs goes in the field beside</p>`;
+    `<p class="rt-o-foot">or your own words instead of a /command · its sheet asks when</p>`;
   inp.setAttribute("aria-activedescendant", ms.length && rtField.moved ? `rt-o${rtField.pick}` : "");
   // Up, the list's foot is nearest the field: start it scrolled there.
   if (up && !rtField.moved) el.scrollTop = 0;
   el.querySelector("[aria-selected=true]")?.scrollIntoView({ block: "nearest" });
-}
-
-/** The chip under the field: what the daemon read, there or not. It
- *  overlays, so it moves nothing, and the field keeps its whole width for
- *  the line, which the rail's width needs. */
-function rtChipDraw() {
-  const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)"), el = inp?.parentElement?.querySelector(".rt-chip");
-  if (!el || !rtField) return;
-  const j = rtField.read || {};
-  const said = j.error ? j.error
-    : j.when ? `when? · ${j.where} · every day 9`
-    : j.every ? `↻ ${j.every} · ${j.words ? "your words" : j.where} · first ${dueWord(j.next).w.replace(/^due /, "")}` : "";
-  el.textContent = said;
-  el.classList.toggle("warn", !!j.error);
-  el.hidden = !said || !!rtField.err;
-}
-
-/** Ask the daemon what the line would become, 120 ms after the last key. */
-function rtRead(d) {
-  clearTimeout(rtReadT);
-  const n = ++rtReadN, text = rtLine();
-  if (!text || /^\/[\w-]*$/.test(rtField.text.trim())) { if (rtField) rtField.read = null; rtChipDraw(); return; }
-  rtReadT = setTimeout(async () => {
-    let j;
-    try { j = await ctx.api(`/api/desks/${d.id}/routines/read?text=${encodeURIComponent(text)}`); } catch { return; }
-    if (n !== rtReadN || !rtField) return;
-    rtField.read = j; rtChipDraw();
-  }, 120);
 }
 
 /** Enter: the line made a draft, and its sheet open with the same reply.
@@ -204,9 +169,6 @@ function rtRead(d) {
 async function rtAdd(d) {
   const text = rtLine();
   if (!text) return;
-  // No when yet, and the daemon's read asked for one: the when field is
-  // the answer, so the hand goes there instead of a no.
-  if (!(rtField.when || "").trim() && rtField.read && rtField.read.when) { rtField.at = "when"; ctx.tocEl.querySelector(".rt-when")?.focus(); return; }
   let j;
   try { j = await ctx.api(`/api/desks/${d.id}/routines`, { text }); }
   catch (e) { if (rtField) { rtField.err = ctx.sayErr(e).why; rail(); } return; }
@@ -223,33 +185,22 @@ function rtFocus() {
   const d = current();
   if (!rtField) document.getElementById("rt-comp")?.remove();
   ctx.tocEl.querySelector(".rt-in.idle")?.addEventListener("focus", () => {
-    rtField = { text: "", caret: 0, err: "", read: null, pick: 0, away: false };
+    rtField = { text: "", caret: 0, err: "", pick: 0, away: false };
     if (d && rtCmds.at !== d.id) rtCmdsGet(d.id);
     rail();
   }, { once: true });
-  const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)"), whenIn = ctx.tocEl.querySelector(".rt-when");
+  const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)");
   if (!inp || !rtField || !d) return;
   inp.value = rtField.text;
-  // Leaving both fields empty shuts them; a Tab from one to the other is
-  // not leaving, so the check waits for the focus to land.
+  // Leaving it empty shuts it; the check waits for the focus to land.
   const left = () => { const was = drawing; setTimeout(() => {
     if (was || !rtField || ctx.tocEl.querySelector(".rt-new")?.contains(document.activeElement)) return;
-    if (!rtField.text.trim() && !(rtField.when || "").trim()) { rtField = null; rail(); } else { rtField.away = true; rtCompDraw(); }
+    if (!rtField.text.trim()) { rtField = null; rail(); } else { rtField.away = true; rtCompDraw(); }
   }, 0); };
-  if (whenIn) {
-    whenIn.addEventListener("input", () => { rtField.when = whenIn.value; if (rtField.err) { rtField.err = ""; whenIn.parentElement?.querySelector(".field-err")?.remove(); } rtRead(d); });
-    whenIn.addEventListener("keydown", e => {
-      e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); rtAdd(d); }
-      else if (e.key === "Escape") { e.preventDefault(); rtField = null; rail(); }
-    });
-    whenIn.addEventListener("focus", () => { if (rtField) { rtField.away = false; rtField.at = "when"; rtCompDraw(); } });
-    whenIn.addEventListener("blur", left);
-  }
   const typed = () => {
     rtField.text = inp.value; rtField.caret = inp.selectionStart; rtField.pick = 0; rtField.moved = false;
     if (rtField.err) { rtField.err = ""; inp.parentElement?.querySelector(".field-err")?.remove(); }
-    rtCompDraw(); rtRead(d);
+    rtCompDraw();
   };
   inp.addEventListener("input", typed);
   for (const e of ["keyup", "click"]) inp.addEventListener(e, () => { if (rtField) rtField.caret = inp.selectionStart; });
@@ -266,22 +217,20 @@ function rtFocus() {
     }
     // A name being typed takes the first match; an empty field only the
     // line the arrows chose, so Enter on nothing never picks for the reader.
-    if (ms.length && (rtField.moved || rtField.text) && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); return rtPick(ms[rtField.moved ? rtField.pick : 0].name); }
+    // Tab only completes the name, for words after it; Enter makes it.
+    if (ms.length && (rtField.moved || rtField.text) && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); return rtPick(ms[rtField.moved ? rtField.pick : 0].name, e.key === "Enter"); }
     if (e.key === "Enter") { e.preventDefault(); rtAdd(d); }
     else if (e.key === "Escape") {
       e.preventDefault();
       // The list goes first, as a space would take it: the field stays.
-      if (ms.length && rtField.text) { rtField.text += " "; inp.value = rtField.text; rtCompDraw(); return rtRead(d); }
+      if (ms.length && rtField.text) { rtField.text += " "; inp.value = rtField.text; return rtCompDraw(); }
       rtField = null; rail();
     }
   });
   inp.addEventListener("blur", left);
-  inp.addEventListener("focus", () => { if (rtField) { rtField.away = false; rtField.at = "what"; rtCompDraw(); } });
-  rtCompDraw(); rtChipDraw();
-  if (rtField.read == null && rtField.text) rtRead(d);
+  inp.addEventListener("focus", () => { if (rtField) { rtField.away = false; rtCompDraw(); } });
+  rtCompDraw();
   if (rtField.away) return;
-  // The hand goes back to the field it was in.
-  if (rtField.at === "when" && whenIn) { whenIn.focus(); return; }
   inp.focus();
   const at = Math.min(rtField.caret, inp.value.length);
   inp.setSelectionRange(at, at);
@@ -294,15 +243,20 @@ function rtFocus() {
 /** Whether the rail's scroll is heard for the list yet: once a page. */
 let rtScrollHeard = false;
 
-/** A name from the list: the line takes it and waits for when. */
-function rtPick(name) {
+/** A name from the list makes the draft, as Enter does (1.63, U1): what
+ *  runs is all the field asks, and the sheet that opens asks the rest. A
+ *  Tab only completes it, for words after the name. */
+function rtPick(name, make = true) {
   if (!rtField) return;
-  rtField.text = `/${name} `; rtField.caret = rtField.text.length; rtField.pick = 0; rtField.moved = false; rtField.away = false;
-  const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)");
-  if (inp) { inp.value = rtField.text; inp.focus(); inp.setSelectionRange(rtField.caret, rtField.caret); }
-  rtCompDraw();
+  rtField.text = make ? `/${name}` : `/${name} `; rtField.caret = rtField.text.length; rtField.pick = 0; rtField.moved = false; rtField.away = false;
+  if (!make) {
+    const inp = ctx.tocEl.querySelector(".rt-in:not(.idle)");
+    if (inp) { inp.value = rtField.text; inp.focus(); inp.setSelectionRange(rtField.caret, rtField.caret); }
+    return rtCompDraw();
+  }
+  document.getElementById("rt-comp")?.remove();
   const d = current();
-  if (d) rtRead(d);
+  if (d) rtAdd(d);
 }
 
 /** How long ago, in the rail's words. */
@@ -312,31 +266,57 @@ const rtLong = s => s < 3600 ? `${Math.max(1, s / 60 | 0)} min` : s < 86400 ? `$
 /** When next, in the rail's words. */
 const rtNext = at => dueWord(at).w.replace(/^due /, "");
 
-/** A row's one line of state: the whole of it, as the plan counts it. */
-function rtMeta(r) {
-  const now = Date.now() / 1000;
-  if (r.state === "offer") return `${r.suggested_by} offers · ${r.every}`;
-  if (r.state === "draft") return r.running_since ? "draft · trying" : `draft · ${r.every} · Start it to run`;
-  if (rtStarted.get(r.id) > Date.now()) return `started · it runs on its own from ${rtNext(r.due_at)}`;
+/** An hour, as the row says it: `14:32`. */
+const rtHour = at => new Date(at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/** The routine's cards on this desk's On you, not yet answered (U5). */
+const rtOnYou = r => r.pane && filedAt === r.desk_id ? filed.turns.filter(w => w.pane === r.pane && !w.answered_at).length : 0;
+
+/** Its when, as the row says it: its times, or its watch, or a question. */
+function rtWhen(r) {
+  const w = r.watch_live;
+  const watch = !r.watch ? "" : !w ? "a watch" : w.stopped ? `watch stopped${w.said ? `: ${w.said}` : ""}`
+    : w.watching ? `watching${w.heard_at ? ` · last heard ${rtHour(w.heard_at)}` : ""}` : `watch starting${w.said ? `: ${w.said}` : ""}`;
+  return [r.every, watch].filter(Boolean).join(" · ");
+}
+
+/** A row's one line of state, the whole of it, and its tone: `warn` when
+ *  it asks the reader to look, `accent` when something waits on them. */
+function rtMetaTone(r) {
+  const now = Date.now() / 1000, mine = rtOnYou(r);
+  const wait = mine ? ` · ${mine} wait${mine === 1 ? "s" : ""} on you` : "";
+  if (r.state === "offer") return [`${r.suggested_by} offers · ${rtWhen(r) || "no when yet"}`, ""];
+  if (r.state === "draft") {
+    if (r.running_since) return [`draft · trying${wait}`, mine ? "accent" : ""];
+    return [rtWhen(r) ? `draft · ${rtWhen(r)} · Start it to run` : "draft · when? · Try it, or set a when to Start", ""];
+  }
+  if (rtStarted.get(r.id) > Date.now()) return [r.due_at ? `started · it runs on its own from ${rtNext(r.due_at)}` : "started · it runs when its watch wakes it", ""];
   // A run's minutes are the ones it ran: a laptop asleep mid-run is said
   // apart, and does not use them up (#198, `server::routine_run::over`).
-  if (r.running_since) return `running ${Math.max(1, (now - r.running_since - (r.slept_s || 0)) / 60 | 0)} min${r.slept_s ? ` · slept ${rtLong(r.slept_s)}` : ""}${r.running !== "session" ? ` · ${r.running}` : ""}`;
-  if (r.file === "gone") return "command gone";
-  if (r.file === "two") return "two files hold it: rename one";
-  if (r.file === "changed") return "changed since you allowed it";
-  if (r.paused_at) return `paused · ${r.every}`;
+  if (r.running_since) return [`running ${Math.max(1, (now - r.running_since - (r.slept_s || 0)) / 60 | 0)} min${r.slept_s ? ` · slept ${rtLong(r.slept_s)}` : ""}${r.running !== "session" ? ` · ${r.running}` : ""}${wait}`, mine ? "accent" : ""];
+  if (r.file === "gone") return ["command gone", "warn"];
+  if (r.file === "two") return ["two files hold it: rename one", "warn"];
+  if (r.file === "changed") return ["changed since you allowed it", "warn"];
+  if (r.paused_at) return [`paused · ${rtWhen(r)}`, ""];
+  // A run that could not reach its Claude, a watch that keeps stopping
+  // and a gate that fails are the reader's to look at (U4).
+  if (/^didn't start/.test(r.last_state)) return ["didn't start: look at its panel", "warn"];
+  if (r.watch_live && r.watch_live.stopped) return [rtWhen(r), "warn"];
   // A clock's catch-up says how late it ran: only a clock start is late,
-  // and an hour that never ran leaves the last run's word (#198).
-  const last = r.last_at ? ` · ran ${rtAgo(now - r.last_at)}${r.late_s ? ` · ${rtLong(r.late_s)} late` : ""}` : "";
-  const st = r.last_state && !["done", "running"].includes(r.last_state) ? ` · ${r.last_state}` : "";
-  return `${r.every} · next ${rtNext(r.due_at)}${last}${st}`;
+  // and an hour that never ran leaves the last run's word (#198). A quiet
+  // run is its gate's no: said by its hour, as the grey line it is.
+  const quiet = r.last_state === "quiet" && r.last_at;
+  const last = quiet ? ` · quiet ${rtHour(r.last_at)}` : r.last_at ? ` · ran ${rtAgo(now - r.last_at)}${r.late_s ? ` · ${rtLong(r.late_s)} late` : ""}` : "";
+  const st = r.last_state && !["done", "running", "quiet"].includes(r.last_state) ? ` · ${r.last_state}` : "";
+  const next = r.due_at ? ` · next ${rtNext(r.due_at)}` : "";
+  return [`${rtWhen(r)}${next}${last}${st}${wait}`, mine ? "accent" : /^gate failed/.test(r.last_state) ? "warn" : ""];
 }
 
 /** What a row is called in a tip: `/newsroom`, or the words themselves. */
 const rtSaid = r => r.cmd ? `/${r.name}` : r.name;
 
 function rtRow(r, esc) {
-  const offer = r.state === "offer", meta = rtMeta(r);
+  const offer = r.state === "offer", [meta, tone] = rtMetaTone(r);
   const tools = offer
     ? `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="rt-sheet" data-r="${r.id}" aria-label="Look at ${esc(r.name)} and accept it">Accept…</button>` +
       `<button type="button" data-a="rt-x" data-r="${r.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(r.name)}">${ico("x")}</button></span>`
@@ -346,25 +326,28 @@ function rtRow(r, esc) {
     `<span class="dk-lead"><span class="dk-tick dk-ring" aria-hidden="true">${RT_HANDS}</span></span>` +
     `<button type="button" class="nm" data-a="rt-sheet" data-r="${r.id}" data-tip="${esc(rtSaid(r))}" data-tip-sub="${esc(meta)} · click for its sheet"><span class="nm-t" data-tip-cut>${esc(r.name)}</span></button>` +
     tools +
-    `<span class="dk-meta"><span class="rt-meta">${esc(meta)}</span>${allow}</span>` +
+    // What waits on the reader opens On you, where it is (U5).
+    `<span class="dk-meta">${tone === "accent" ? `<button type="button" class="rt-meta accent" data-a="rt-onyou" data-r="${r.id}" data-tip="On you" data-tip-sub="its questions and commands, on this desk">${esc(meta)}</button>` : `<span class="rt-meta${tone ? ` ${tone}` : ""}">${esc(meta)}</span>`}${allow}</span>` +
     (rtMenu === r.id ? rtPop(r, esc) : "") + `</li>` + errLine(`r${r.id}`, esc);
 }
 
 /** A clock's two hands, in the circle a note's tick draws: the ring. */
 const RT_HANDS = '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M6 3.2V6l2 1.3"/></svg>';
 
-/** The ⋯ menu. A draft's: Open · Try once now · Start it · Remove. A live
- *  one's: Run now · Pause or Resume · Change… · History · Remove. */
+/** The ⋯ menu. A draft's: Open · Try once now (or Stop) · Start it ·
+ *  Remove. A live one's: Run now or Stop · Pause or Resume · Change… ·
+ *  History · Remove. Stop ends the run under way, as its minutes would
+ *  (1.63, U6). */
 function rtPop(r, esc) {
   const item = (a, l, tip = "") => `<button type="button" role="menuitem" data-a="${a}" data-r="${r.id}"${tip ? ` data-tip="${esc(tip)}"` : ""}>${l}</button>`;
   const x = item("rt-x", "Remove from view", "nothing is deleted");
   if (r.state === "draft") {
     return `<span class="dk-due-pop rt-pop" role="menu" aria-label="${esc(r.name)}">` + item("rt-sheet", "Open") +
-      (r.running_since ? "" : item("rt-try", "Try once now", "one run in its panel in the back, while you watch")) +
+      (r.running_since ? item("rt-stop", "Stop", "ends the try under way") : item("rt-try", "Try once now", "one run in its panel in the back, while you watch")) +
       item("rt-start", "Start it", "allows the file as it is now; it runs on its own from its next hour") + x + `</span>`;
   }
   return `<span class="dk-due-pop rt-pop" role="menu" aria-label="${esc(r.name)}">` +
-    (r.running_since ? "" : item("rt-run", "Run now", `${rtSaid(r)} in its panel in the back`)) +
+    (r.running_since ? item("rt-stop", "Stop", "ends the run under way, as its minutes would") : item("rt-run", "Run now", `${rtSaid(r)} in its panel in the back`)) +
     item(r.paused_at ? "rt-resume" : "rt-pause", r.paused_at ? "Resume" : "Pause") +
     item("rt-sheet", "Change…") + item("rt-history", "History") + x + `</span>`;
 }
@@ -383,7 +366,7 @@ async function routineAct(a, b, d) {
   // The head's + is the way to the field when the rail is scrolled away
   // from it, at the foot of a long list of notes (R4).
   if (a === "rt-new") {
-    if (!rtField) rtField = { text: "", caret: 0, err: "", read: null, pick: 0, away: false };
+    if (!rtField) rtField = { text: "", caret: 0, err: "", pick: 0, away: false };
     rtField.away = false; if (rtCmds.at !== d.id) rtCmdsGet(d.id); rail();
     ctx.tocEl.querySelector(".rt-new")?.scrollIntoView({ block: "nearest" }); rtCompDraw();
     return true;
@@ -391,12 +374,13 @@ async function routineAct(a, b, d) {
   if (a === "rt-menu") { rtMenu = rtMenu === id ? 0 : id; rail(); if (rtMenu) ctx.tocEl.querySelector(".rt-pop button")?.focus(); return true; }
   rtMenu = 0;
   if (a === "rt-sheet" || a === "rt-history") { rtSheetGet(id, a === "rt-history" ? "runs" : ""); rail(); return true; }
+  if (a === "rt-onyou") { openTray(); return true; }
   if (a === "rt-back") { rtGone = null; rail(); if (await call("restore", "Could not bring it back")) routinesGet(d.id); return true; }
   if (!r) return true;
   if (a === "rt-x") { rtRemove(d, r, b.dataset); return true; }
-  const act = { "rt-run": "run", "rt-try": "try", "rt-start": "start", "rt-pause": "pause", "rt-resume": "resume" }[a];
+  const act = { "rt-run": "run", "rt-try": "try", "rt-start": "start", "rt-pause": "pause", "rt-resume": "resume", "rt-stop": "stop" }[a];
   if (act) {
-    const why = { run: "Could not run it", try: "Could not try it", start: "Could not start it", pause: "Could not pause it", resume: "Could not resume it" }[act];
+    const why = { run: "Could not run it", try: "Could not try it", start: "Could not start it", pause: "Could not pause it", resume: "Could not resume it", stop: "Could not stop it" }[act];
     if (act === "run" || act === "try") r.running_since = Date.now() / 1000;
     rail();
     if (await call(act, why, () => { r.running_since = 0; }) && act === "start") rtSaidStarted(id);
@@ -419,7 +403,7 @@ function rtStyle() {
   if (document.getElementById("rt-css")) return;
   const s = document.createElement("style");
   s.id = "rt-css";
-  s.textContent = RT_CSS + RT_SHEET_CSS;
+  s.textContent = RT_CSS + RT_SHEET_CSS + RT_WHEN_CSS;
   document.head.append(s);
 }
 
@@ -434,16 +418,16 @@ const RT_CSS = `
 .dk-rt.paused .nm-t, .dk-rt.paused .rt-meta, .dk-rt.draft .nm-t { color: var(--fg-3); }
 .dk-tick.dk-ring svg { width: 12px; height: 12px; }
 .rt-meta { color: var(--fg-3); font-size: var(--fs-micro); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rt-meta.warn { color: var(--warn); }
+button.rt-meta { background: none; border: 0; padding: 0; font: inherit; font-size: var(--fs-micro); text-align: left; cursor: pointer; }
+.rt-meta.accent { color: var(--accent-d); }
+button.rt-meta:hover { text-decoration: underline; }
 .dk-rt .rt-allow { margin-left: 6px; }
 .dk-rt > .rt-pop { left: 27px; }
 .rt-in { flex: 1; min-width: 0; margin: 2px 8px 2px 0; padding: 2px 6px; font: inherit; font-size: 12px; line-height: 1.5; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: var(--r-xs); }
 .rt-in::placeholder { color: var(--fg-3); }
 .rt-in.idle { border-color: var(--rule-2); background: transparent; cursor: text; }
 .rt-in.idle:hover { border-color: var(--fg-3); }
-/* When, beside what: narrow, since a cadence is a few words. */
-.rt-in.rt-when { flex: 0 1 7.5em; }
-.rt-new .rt-chip { top: calc(100% + 1px); left: 27px; right: 8px; transform: none; width: fit-content; max-width: calc(100% - 35px); z-index: var(--z-pop, 30); line-height: 15px; padding: 1px 6px; white-space: normal; box-shadow: var(--shadow); border-radius: var(--r-xs); }
-.rt-chip.warn { background: color-mix(in srgb, var(--warn) 16%, var(--bg)); }
 .rt-comp { position: fixed; z-index: var(--z-pop, 30); max-height: 300px; overflow: auto; box-sizing: border-box; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-xs); box-shadow: var(--shadow); padding: 3px 0; }
 .rt-comp button { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; width: 100%; text-align: left; background: none; border: 0; padding: 3px 8px; font: inherit; font-size: 12px; color: var(--fg); cursor: pointer; }
 .rt-comp button[aria-selected=true], .rt-comp button:hover { background: color-mix(in srgb, var(--accent) 12%, var(--bg-raise)); }

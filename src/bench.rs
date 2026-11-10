@@ -638,6 +638,9 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// (src/page.rs and src/page/, src/wall.rs, src/server/api_page.rs and
 /// api_wall.rs, their thirteen routes, and two features stills of 55 KB)
 /// took the musl build from 22.1 to 22.6 and 22.7 MB, with no crate added.
+/// 1.63's routines that wake (times, the gate, the watch's supervisor, the
+/// shape, src/skill/routine.md compiled in) are about 0.15 MB of it, with
+/// no route and no crate added; the budget holds.
 const BINARY_MB: f64 = 23.0;
 
 /// Returns whether any row was over budget.

@@ -31,9 +31,16 @@
 //!   `continue:` form starts fresh as `/<cmd> continue: …`; any other, and
 //!   the reader's own words, resume the run's own session with the answers
 //!   (`--resume`, spike S4, 26 Oct: the session went on with what it had).
+//! - **1.63: what wakes it.** A time's words and the lines its watch or
+//!   gate printed, in the reader's shape, are added to its prompt; nothing
+//!   else is (`Routine::prompt_with`). The gate is asked for a clock run at
+//!   a ticked time only (C2): an answer and an event never meet it. A run
+//!   no hook has spoken from in 90 s did not start, and says so (R9).
 
 use super::*;
-use crate::routine::{self, Routine};
+use crate::routine::{self, events, times, Routine};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 /// How often runs under way are looked at.
@@ -46,6 +53,72 @@ const STOP_WAIT: Duration = Duration::from_secs(10);
 /// box or a held store lock keeps a tick back a few seconds; half a minute
 /// is longer than any of that and shorter than any sleep worth counting.
 const ASLEEP_AFTER_S: i64 = 30;
+/// A session no hook has spoken from this long after its start did not
+/// start: a sign-in, a trust question, a crash. Not 60: a start with a few
+/// hundred skills is slow on a small box.
+const START_S: i64 = 90;
+/// An event run that could not start waits this long before trying again,
+/// so a limit or a sign-in is said once, not every tick.
+const EVENT_HOLD_S: i64 = 300;
+/// A five-hour reading older than this is not kept on a run (R12).
+const FRESH_S: i64 = 300;
+
+/// The last time any hook spoke from each panel, in memory (R9), and
+/// whether one ever has since the daemon started: on a machine whose hook
+/// is not set up, no run is ended for its silence.
+static HEARD: LazyLock<Mutex<(bool, HashMap<String, i64>)>> =
+    LazyLock::new(|| Mutex::new((false, HashMap::new())));
+/// Event runs held after a start that could not happen, until when.
+static EVENT_HOLD: LazyLock<Mutex<HashMap<i64, i64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Routines a start is under way for: from its checks to its run written
+/// down, a gate's minute included. The clock, a watch's batch and Run now
+/// are separate looks, and two starts of one routine at once would each
+/// pass `blocked` and the second would stop the first's panel.
+static STARTING: LazyLock<Mutex<std::collections::HashSet<i64>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// A routine claimed for one start, let go when the start is over.
+struct Starting(i64);
+
+impl Starting {
+    fn claim(id: i64) -> Option<Starting> {
+        // The lock is let go before a `Starting` exists: one made and
+        // dropped under it would take it again, and free the other's claim.
+        let took = STARTING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id);
+        took.then(|| Starting(id))
+    }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        STARTING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+    }
+}
+
+/// A hook spoke from `pane`: its session is up.
+pub(crate) fn stamp(pane: &str) {
+    if let Ok(mut h) = HEARD.lock() {
+        h.0 = true;
+        h.1.insert(pane.to_string(), crate::store::now());
+    }
+}
+
+/// Whether a session in `pane` started at `since` has not been heard from,
+/// on a machine whose hook speaks.
+fn unheard(pane: &str, since: i64) -> bool {
+    HEARD
+        .lock()
+        .map(|h| h.0 && h.1.get(pane).is_none_or(|t| *t < since))
+        .unwrap_or(false)
+}
 
 /// The runner, on its own task, from the daemon's start: a run that was
 /// under way when the last daemon stopped is over, and says so.
@@ -64,6 +137,7 @@ pub(crate) fn spawn(app: Arc<App>) {
             let slept = asleep(crate::store::now() - last);
             if slept > 0 {
                 let _ = app.store.clocked(|c, _| routine::slept(c, slept));
+                super::routine_watch::woke();
             }
             tick(&app).await;
             last = crate::store::now();
@@ -88,16 +162,52 @@ pub(crate) fn changed(app: &App, desk: i64) {
     emit(app, "desknotes", json!({ "desk": desk, "routines": true }));
 }
 
+/// Raise one card on the reader's On you list about a routine: a watch that
+/// gave up, failed gates, a run that did not start.
+pub(crate) fn card(app: &App, r: &Routine, text: &str) {
+    let ask = crate::thread::Ask {
+        kind: "do".into(),
+        text: crate::thread::line(text, 400),
+        by: "snyvi".into(),
+        pane: r.pane.clone(),
+        ..Default::default()
+    };
+    if let Ok(crate::thread::Asked::Turn(t)) = app
+        .store
+        .clocked(|c, now| crate::thread::ask(c, r.desk_id, &ask, now))
+    {
+        super::api_thread::threads_moved(app, r.desk_id);
+        notify_turn(app, &t, 0);
+    }
+}
+
+/// What woke a run besides its line: a time's words and whether its gate
+/// is asked, and the hour, as History and the brief say it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Wake {
+    pub words: String,
+    pub gated: bool,
+    pub at: String,
+}
+
 /// The clock's half-minute look (`lifecycle::ring_due`): each routine whose
-/// hour has come is set to its next first, then started.
+/// hour has come has its earliest set of words taken (R3), those times set
+/// to their next first, then started.
 pub(crate) fn ring(app: &Arc<App>) {
     let due = match app.store.clocked(|c, now| {
         routine::pass_closed(c, now)?;
-        let due = routine::due(c, now)?;
-        for r in &due {
-            routine::rearm(c, r, now)?;
+        let mut out = Vec::new();
+        for r in routine::due(c, now)? {
+            match times::fired(c, r.id, now)? {
+                Some(f) => {
+                    routine::rearm(c, &r, &f, now)?;
+                    out.push((r.id, f));
+                }
+                // The cached soonest was stale: read again.
+                None => times::sync(c, r.id)?,
+            }
         }
-        Ok(due)
+        Ok(out)
     }) {
         Ok(d) => d,
         Err(e) => {
@@ -105,10 +215,15 @@ pub(crate) fn ring(app: &Arc<App>) {
             return;
         }
     };
-    for r in due {
+    for (id, f) in due {
         let app = app.clone();
+        let wake = Wake {
+            words: f.words,
+            gated: f.gated,
+            at: f.at,
+        };
         tokio::spawn(async move {
-            let _ = start(&app, r.id, "clock").await;
+            let _ = start_with(&app, id, "clock", None, wake).await;
         });
     }
 }
@@ -139,7 +254,7 @@ async fn blocked(app: &App, r: &Routine, desk: &crate::desk::Desk, why: &str) ->
     if draft && why != "try" && why != "answer" {
         return Some("a draft: Start it first".into());
     }
-    if desk.parked.is_some() && why == "clock" {
+    if desk.parked.is_some() && (why == "clock" || why == "event") {
         return Some("desk parked".into());
     }
     if !r.words() {
@@ -194,7 +309,98 @@ fn hm(at: i64) -> String {
 /// reader's answers (`answer`, with `prompt` the continue line). A start
 /// that cannot happen is a skip on the row, and the reason is the answer.
 pub(crate) async fn start(app: &Arc<App>, id: i64, why: &str) -> Result<(), String> {
-    start_with(app, id, why, None).await
+    start_with(app, id, why, None, Wake::default()).await
+}
+
+/// Try once now with words (1.63): the words as a time's would be.
+pub(crate) async fn try_with(app: &Arc<App>, id: i64, words: &str) -> Result<(), String> {
+    let wake = Wake {
+        words: words.to_string(),
+        ..Wake::default()
+    };
+    start_with(app, id, "try", None, wake).await
+}
+
+/// Stop, from the row's menu (1.63, R15): the run under way ends, said so,
+/// its panel's program stopped.
+pub(crate) fn stop(app: &App, r: &Routine) -> bool {
+    if r.running_since == 0 {
+        return false;
+    }
+    if !r.pane.is_empty() {
+        app.panes.get(&r.pane).stop();
+    }
+    let done = app
+        .store
+        .clocked(|c, now| routine::act(c, r.id, routine::Act::Stop, now))
+        .unwrap_or(false);
+    changed(app, r.desk_id);
+    done
+}
+
+/// The five-hour window's use for a desk's account, when the reading is fresh.
+fn five_now(app: &App, desk: &crate::desk::Desk) -> Option<f64> {
+    let account = crate::accounts::effective(desk.account, None);
+    app.usage
+        .five_hour_fresh(account, crate::store::now(), FRESH_S)
+}
+
+/// What woke a run, said once: `at its hour (13:00) · case`, or `tag 5304 ; tag 5311`.
+fn woke_words(why: &str, wake: &Wake, ids: &[String]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match why {
+        "clock" if !wake.at.is_empty() => parts.push(format!("at its hour ({})", wake.at)),
+        "try" if !wake.words.is_empty() => parts.push("a try with words".into()),
+        _ => {}
+    }
+    if !wake.words.is_empty() {
+        parts.push(wake.words.clone());
+    }
+    if !ids.is_empty() {
+        parts.push(ids.join(" ; "));
+    }
+    parts.join(" · ")
+}
+
+/// The gate's answer for a clock run at a ticked time (C2): `None` to go
+/// on, or the reason it does not, already kept on the row.
+async fn gated(
+    app: &Arc<App>,
+    r: &Routine,
+    desk: &crate::desk::Desk,
+    woke: &str,
+) -> Option<String> {
+    match super::routine_gate::ask(app, r, desk).await {
+        super::routine_gate::Said::Yes(_) => None,
+        super::routine_gate::Said::No => {
+            let _ = app
+                .store
+                .clocked(|c, now| routine::quiet(c, r.id, woke, now));
+            changed(app, r.desk_id);
+            Some("quiet".into())
+        }
+        super::routine_gate::Said::Failed(why) => {
+            let states = app
+                .store
+                .clocked(|c, now| {
+                    routine::gate_failed(c, r.id, &why, woke, now)?;
+                    routine::last_states(c, r.id, 4)
+                })
+                .unwrap_or_default();
+            if super::routine_gate::fails_to_card(&states) {
+                card(
+                    app,
+                    r,
+                    &format!(
+                        "The gate of routine \"{}\" failed three times in a row: {why}. Look at its sheet.",
+                        r.name
+                    ),
+                );
+            }
+            changed(app, r.desk_id);
+            Some(format!("gate failed: {why}"))
+        }
+    }
 }
 
 /// Go ahead on a routine's line in On you (1.54, `crate::onyou`): its own
@@ -221,7 +427,7 @@ pub(crate) async fn go_ahead(app: &Arc<App>, id: i64, line: &str) -> Result<(), 
     } else {
         Begin::Resume(session, said)
     };
-    start_with(app, id, "answer", Some(begin)).await
+    start_with(app, id, "answer", Some(begin), Wake::default()).await
 }
 
 async fn start_with(
@@ -229,6 +435,7 @@ async fn start_with(
     id: i64,
     why: &str,
     begin: Option<Begin>,
+    wake: Wake,
 ) -> Result<(), String> {
     let Ok(Some(r)) = app.store.clocked(|c, _| routine::get(c, id)) else {
         return Err("no such routine".into());
@@ -239,13 +446,32 @@ async fn start_with(
     if r.removed_at != 0 {
         return Err("removed".into());
     }
-    if let Some(no) = blocked(app, &r, &desk, why).await {
+    // Another start of it under way reads as a run: it is one, a moment
+    // early.
+    let claim = Starting::claim(id);
+    let no = match claim {
+        None => Some("running".to_string()),
+        Some(_) => blocked(app, &r, &desk, why).await,
+    };
+    if let Some(no) = no {
         // Run now refused is said where it was clicked; an hour passed by
         // is kept on the row and in the history.
-        if no != "running" && why != "you" && why != "try" {
+        if why == "event" {
+            // Held, and said once: the lines wait, and the row does not say
+            // the same thing again every few minutes.
+            if let Ok(mut h) = EVENT_HOLD.lock() {
+                h.insert(id, crate::store::now() + EVENT_HOLD_S);
+            }
+            if no != "running" && r.last_state != format!("skipped: {no}") {
+                let _ = app
+                    .store
+                    .clocked(|c, now| routine::skipped(c, id, why, &no, now));
+                changed(app, r.desk_id);
+            }
+        } else if no != "running" && why != "you" && why != "try" {
             let _ = app
                 .store
-                .clocked(|c, now| routine::skipped(c, id, &no, now));
+                .clocked(|c, now| routine::skipped(c, id, why, &no, now));
             changed(app, r.desk_id);
         } else if why == "clock" {
             // An hour that came while its last run was still under way:
@@ -254,15 +480,38 @@ async fn start_with(
         }
         return Err(no);
     }
+    if let Ok(mut h) = EVENT_HOLD.lock() {
+        h.remove(&id);
+    }
+    if why == "clock" && wake.gated && !r.gate.trim().is_empty() {
+        let woke = woke_words(why, &wake, &[]);
+        if let Some(no) = gated(app, &r, &desk, &woke).await {
+            return Err(no);
+        }
+    }
     if why != "clock" {
         let _ = app.store.clocked(|c, _| routine::not_late(c, id));
     }
-    let begin = begin.unwrap_or_else(|| Begin::Prompt(r.prompt()));
+    // What waits from its watch or gate rides a clock run after its words,
+    // and is an event run's reason; taken now, and not put back.
+    let ids = if why == "clock" || why == "event" {
+        app.store
+            .clocked(|c, _| events::take(c, id))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let woke = woke_words(why, &wake, &ids);
+    let _ = app.store.clocked(|c, _| routine::waking(c, id, &woke));
+    let begin = begin.unwrap_or_else(|| Begin::Prompt(r.prompt_with(&wake.words, &ids)));
+    let five = five_now(app, &desk);
     match start_now(app, &r, &desk, &begin).await {
         Ok(()) => {
             let what = begin.what();
             let _ = app.store.clocked(|c, now| {
-                routine::began(c, id, why, &what, routine::SESSION, now).map(|_| ())
+                let run = routine::began(c, id, why, &what, routine::SESSION, now)?;
+                events::bind(c, id, run)?;
+                routine::woke(c, run, &woke, five)
             });
             changed(app, r.desk_id);
             Ok(())
@@ -271,7 +520,7 @@ async fn start_with(
             let no = format!("{e:#}");
             let _ = app
                 .store
-                .clocked(|c, now| routine::skipped(c, id, &no, now));
+                .clocked(|c, now| routine::skipped(c, id, why, &no, now));
             changed(app, r.desk_id);
             Err(no)
         }
@@ -321,18 +570,26 @@ pub(crate) async fn stop_then(app: &App, pane: &str) -> anyhow::Result<()> {
 }
 
 /// The run's settings, written by snyvi beside its store at each start.
-fn settings_file(data_dir: &std::path::Path, r: &Routine) -> anyhow::Result<std::path::PathBuf> {
+/// A slim routine's leave out the reader's global CLAUDE.md (S2).
+fn settings_file(
+    data_dir: &std::path::Path,
+    r: &Routine,
+    home: Option<&std::path::Path>,
+) -> anyhow::Result<std::path::PathBuf> {
     let dir = data_dir.join("routines").join(r.id.to_string());
     std::fs::create_dir_all(&dir)?;
     let f = dir.join("settings.json");
     let deny: Vec<&str> = super::pipeline_run::DENY.to_vec();
-    std::fs::write(&f, routine::settings(&deny, &r.waits).to_string())?;
+    let slim = home.filter(|_| r.slim);
+    std::fs::write(&f, routine::settings(&deny, &r.waits, slim).to_string())?;
     Ok(f)
 }
 
-/// The arguments a session starts with: its settings, then the prompt or
-/// the answers as one argument after `--`, never typed.
-fn args_of(settings: &std::path::Path, begin: &Begin) -> Vec<String> {
+/// The arguments a session starts with: its settings, its model and effort
+/// when it has them -- on a resume too, so a run does not change model
+/// halfway (S1) -- then the prompt or the answers as one argument after
+/// `--`, never typed.
+fn args_of(settings: &std::path::Path, begin: &Begin, r: &Routine) -> Vec<String> {
     let mut args: Vec<String> = Vec::new();
     if let Begin::Resume(session, _) = begin {
         args.extend(["--resume".into(), session.clone()]);
@@ -342,8 +599,14 @@ fn args_of(settings: &std::path::Path, begin: &Begin) -> Vec<String> {
         "auto".into(),
         "--settings".into(),
         settings.to_string_lossy().into_owned(),
-        "--".into(),
     ]);
+    if routine::MODELS.contains(&r.model.as_str()) && !r.model.is_empty() {
+        args.extend(["--model".into(), r.model.clone()]);
+    }
+    if routine::EFFORTS.contains(&r.effort.as_str()) && !r.effort.is_empty() {
+        args.extend(["--effort".into(), r.effort.clone()]);
+    }
+    args.push("--".into());
     args.push(match begin {
         Begin::Prompt(p) => p.clone(),
         Begin::Resume(_, said) => said.clone(),
@@ -360,10 +623,10 @@ async fn start_now(
     use anyhow::Context;
     let pane = panel(app, r, desk).await?;
     let placed = app.store.pane(&pane)?.context("its panel is gone")?;
-    let settings = settings_file(&app.paths.data_dir, r)?;
+    let settings = settings_file(&app.paths.data_dir, r, dirs::home_dir().as_deref())?;
     let mut env = super::api_desk::pane_env(app, &placed).await.env;
     env.push(("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE".into(), "85".into()));
-    process(app, &placed, "claude", &args_of(&settings, begin), &env).await
+    process(app, &placed, "claude", &args_of(&settings, begin, r), &env).await
 }
 
 /// Start `cmd` as the panel's process, its last one stopped first.
@@ -423,9 +686,16 @@ pub(crate) fn heard(
             last_line(&stop.map(|s| s.reply.clone()).unwrap_or_default()),
         ),
     };
-    let _ = app
+    let five = app
         .store
-        .clocked(|c, now| routine::ended(c, r.id, &state, &line, now));
+        .desk(r.desk_id)
+        .ok()
+        .flatten()
+        .and_then(|d| five_now(app, &d));
+    let _ = app.store.clocked(|c, now| {
+        routine::ended(c, r.id, &state, &line, now)?;
+        routine::five_after(c, r.id, five)
+    });
     changed(app, r.desk_id);
 }
 
@@ -474,7 +744,7 @@ pub(crate) async fn answered(app: &Arc<App>, turn: &crate::thread::Turn) {
         Err(e) => {
             let _ = app
                 .store
-                .clocked(|c, now| routine::skipped(c, r.id, &format!("{e:#}"), now));
+                .clocked(|c, now| routine::skipped(c, r.id, "card", &format!("{e:#}"), now));
         }
     }
     changed(app, r.desk_id);
@@ -579,6 +849,11 @@ async fn tick(app: &Arc<App>) {
         return;
     };
     let now = crate::store::now();
+    for r in &all {
+        if r.running_since == 0 && r.state() == "live" {
+            event_run(app, r, now);
+        }
+    }
     for r in all.into_iter().filter(|r| !r.pane.is_empty()) {
         if r.running_since != 0 {
             watch(app, &r, now);
@@ -610,9 +885,38 @@ async fn tick(app: &Arc<App>) {
         let _ = app.store.clocked(|c, now| routine::told(c, &ids, now));
         let app = app.clone();
         tokio::spawn(async move {
-            let _ = start_with(&app, r.id, "answer", Some(begin)).await;
+            let _ = start_with(&app, r.id, "answer", Some(begin), Wake::default()).await;
         });
     }
+}
+
+/// A live, idle routine whose watch's lines have waited out their batch
+/// starts a run woken by them (1.63). Held a while after one that could
+/// not start, so it is said once.
+fn event_run(app: &Arc<App>, r: &Routine, now: i64) {
+    let held = EVENT_HOLD
+        .lock()
+        .map(|h| h.get(&r.id).is_some_and(|until| *until > now))
+        .unwrap_or(false);
+    if held {
+        return;
+    }
+    let ready = app
+        .store
+        .clocked(|c, now| events::ready(c, r.id, now))
+        .unwrap_or(false);
+    if !ready || (!r.pane.is_empty() && app.panes.status(&r.pane).agent == "working") {
+        return;
+    }
+    // Held at once, so the next tick does not start it twice while this
+    // one is on its way; a start lets go of the hold.
+    if let Ok(mut h) = EVENT_HOLD.lock() {
+        h.insert(r.id, now + 30);
+    }
+    let (app, id) = (app.clone(), r.id);
+    tokio::spawn(async move {
+        let _ = start_with(&app, id, "event", None, Wake::default()).await;
+    });
 }
 
 /// A run under way: over its minutes, taken over, or gone?
@@ -639,6 +943,28 @@ fn watch(app: &App, r: &Routine, now: i64) {
     }
     if r.running == routine::SESSION && status.entered_at > r.running_since {
         return end(format!("taken over {}", hm(status.entered_at)));
+    }
+    if r.running == routine::SESSION
+        && now - r.running_since >= START_S
+        && unheard(&r.pane, r.running_since)
+    {
+        let why = app
+            .store
+            .clocked(|c, _| routine::last_why(c, r.id))
+            .unwrap_or_default();
+        end("didn't start: look at its panel".into());
+        // A try is watched; any other start was not, so the reader is told.
+        if why != "try" {
+            card(
+                app,
+                r,
+                &format!(
+                    "Routine \"{}\" didn't start: its panel is waiting on something. Look at it in the desk's back.",
+                    r.name
+                ),
+            );
+        }
+        return;
     }
     if over(r, now) {
         app.panes.get(&r.pane).stop();
@@ -704,7 +1030,7 @@ mod tests {
             waits: vec!["python3 -I newsroom/publish.py *".into()],
             ..Routine::default()
         };
-        let f = settings_file(&dir.path, &r).unwrap();
+        let f = settings_file(&dir.path, &r, Some(&dir.path)).unwrap();
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         let deny = v["permissions"]["deny"].as_array().unwrap();
@@ -713,14 +1039,24 @@ mod tests {
             .iter()
             .any(|x| x == "Bash(python3 -I newsroom/publish.py *)"));
         assert!(f.ends_with("routines/4/settings.json"));
+        assert!(v.get("claudeMdExcludes").is_none(), "everything, as before");
+        // Slim: the reader's global CLAUDE.md is left out, nothing else.
+        let slim = Routine { slim: true, ..r };
+        let f = settings_file(&dir.path, &slim, Some(&dir.path)).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        let home_md = dir.path.join(".claude").join("CLAUDE.md");
+        assert_eq!(v["claudeMdExcludes"], json!([home_md.to_string_lossy()]));
     }
 
     #[test]
     fn answers_resume_the_runs_session_as_one_argument() {
         let f = std::path::Path::new("/d/routines/4/settings.json");
+        let plain = Routine::default();
         let a = args_of(
             f,
             &Begin::Resume("abc".into(), "1. approve; 2. skip".into()),
+            &plain,
         );
         assert_eq!(
             a,
@@ -735,7 +1071,11 @@ mod tests {
                 "1. approve; 2. skip"
             ]
         );
-        let a = args_of(f, &Begin::Prompt("/newsroom continue: approve".into()));
+        let a = args_of(
+            f,
+            &Begin::Prompt("/newsroom continue: approve".into()),
+            &plain,
+        );
         assert_eq!(a.first().map(String::as_str), Some("--permission-mode"));
         assert_eq!(
             a.last().map(String::as_str),
@@ -745,5 +1085,62 @@ mod tests {
             Begin::Resume("x".into(), "yes".into()).what(),
             "resumed: yes"
         );
+    }
+
+    #[test]
+    fn a_routines_model_and_effort_go_before_its_prompt_on_a_resume_too() {
+        let f = std::path::Path::new("/d/s.json");
+        let r = Routine {
+            model: "haiku".into(),
+            effort: "low".into(),
+            ..Routine::default()
+        };
+        let a = args_of(f, &Begin::Resume("abc".into(), "yes".into()), &r);
+        let at = |w: &str| a.iter().position(|x| x == w).unwrap();
+        assert_eq!(a[at("--model") + 1], "haiku");
+        assert_eq!(a[at("--effort") + 1], "low");
+        assert!(at("--effort") < at("--"));
+        assert_eq!(a.last().map(String::as_str), Some("yes"));
+        // A value snyvi does not know is never passed.
+        let odd = Routine {
+            model: "--dangerously".into(),
+            ..Routine::default()
+        };
+        assert!(!args_of(f, &Begin::Prompt("/x".into()), &odd).contains(&"--model".to_string()));
+    }
+
+    #[test]
+    fn what_woke_a_run_is_said_once() {
+        let w = Wake {
+            words: "case".into(),
+            gated: true,
+            at: "09:30".into(),
+        };
+        assert_eq!(woke_words("clock", &w, &[]), "at its hour (09:30) · case");
+        assert_eq!(
+            woke_words(
+                "event",
+                &Wake::default(),
+                &["tag 5304".into(), "tag 5311".into()]
+            ),
+            "tag 5304 ; tag 5311"
+        );
+        let t = Wake {
+            words: "tag 5304".into(),
+            ..Wake::default()
+        };
+        assert_eq!(woke_words("try", &t, &[]), "a try with words · tag 5304");
+    }
+
+    /// The clock and a watch's batch came due in one moment on the 1.63
+    /// stage, and the second start stopped the first's panel: one start of
+    /// a routine at a time.
+    #[test]
+    fn a_routine_starts_once_at_a_time() {
+        let first = Starting::claim(-41).expect("free");
+        assert!(Starting::claim(-41).is_none(), "taken while it starts");
+        assert!(Starting::claim(-42).is_some(), "another routine is not");
+        drop(first);
+        assert!(Starting::claim(-41).is_some(), "let go when it is over");
     }
 }

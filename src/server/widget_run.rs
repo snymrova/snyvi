@@ -585,7 +585,10 @@ pub(crate) async fn run_once(
 /// At most `cap` bytes of stderr, and the rest read and let go: a run
 /// that chatters there (node's warnings, git's progress) and prints its
 /// body fine is not killed by a closed pipe. The timeout still ends it.
-async fn read_drained<R: tokio::io::AsyncRead + Unpin>(p: Option<R>, cap: u64) -> Vec<u8> {
+pub(crate) async fn read_drained<R: tokio::io::AsyncRead + Unpin>(
+    p: Option<R>,
+    cap: u64,
+) -> Vec<u8> {
     let mut buf = Vec::new();
     if let Some(mut p) = p {
         let _ = AsyncReadExt::take(&mut p, cap).read_to_end(&mut buf).await;
@@ -606,7 +609,7 @@ async fn read_cap<R: tokio::io::AsyncRead + Unpin>(p: Option<R>, cap: u64) -> Ve
 
 /// End a run and everything it started: a `git` under `sh` does not live
 /// on past its widget's timeout.
-fn stop_group(pid: Option<u32>) {
+pub(crate) fn stop_group(pid: Option<u32>) {
     let Some(pid) = pid else { return };
     #[cfg(unix)]
     unsafe {

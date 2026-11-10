@@ -25,6 +25,27 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "routine-wakes"
+since = "1.63.0"
+title = "Routines that wake when something happens"
+line = "A routine can wake on a watch -- a command that prints a line when you're tagged, a build fails or a message arrives -- and run about a minute later with just those ids. Give it several times, each with its own words, and an Only if check that keeps a quiet day quiet, with no session at all."
+show = "desk .dk-rts .rt-in"
+
+[[feature]]
+id = "routine-runs-with"
+since = "1.63.0"
+title = "Pick a routine's model and effort"
+line = "A routine's sheet has Runs with: its model, its effort, and a lighter context that leaves your global notes out, about half the tokens a run starts with."
+small = "yes"
+
+[[feature]]
+id = "routine-field"
+since = "1.63.0"
+title = "A new routine is one field"
+line = "Type what runs, a command or your own words, and its sheet asks when, with when it first runs. Try once now takes words too, and a run that can't reach Claude says so in 90 seconds."
+small = "yes"
+
+[[feature]]
 id = "share"
 since = "1.62.0"
 title = "Your page, shared where your people are"

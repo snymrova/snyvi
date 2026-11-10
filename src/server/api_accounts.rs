@@ -131,6 +131,15 @@ impl Usage {
         all.get(&account).and_then(|q| q.five_hour)
     }
 
+    /// An account's five-hour use, when it was heard within `max_age` and
+    /// the window has not reset (1.63, R12): what a routine's run keeps.
+    pub(crate) fn five_hour_fresh(&self, account: i64, now: i64, max_age: i64) -> Option<f64> {
+        let all = self.quotas.lock().unwrap_or_else(|e| e.into_inner());
+        let q = all.get(&account)?;
+        let l = q.five_hour?;
+        (now - q.at <= max_age && l.resets_at > now).then_some(l.used)
+    }
+
     pub(crate) fn broken(&self) -> serde_json::Value {
         let all = self.broken.lock().unwrap_or_else(|e| e.into_inner());
         all.iter()
