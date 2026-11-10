@@ -1,8 +1,16 @@
 /*
- * What a page looks like at snyvi.page/<slug>: one fixed template in three
- * tones (Software · Book · Design), the page's accent and its wash,
- * following the reader's light or dark (design round 40303cb7e4). Rendered
- * once at each write and kept in R2, so a read costs no Worker time.
+ * What a page looks like at snyvi.page/<slug>: template A · Product (1.62,
+ * ui/page-template.js, the same module the Page view in the window draws
+ * with), in three tones (Software · Book · Design), the page's accent and
+ * its wash, following the reader's light or dark. Rendered once at each
+ * write and kept in R2, so a read costs no Worker time.
+ *
+ * Beside it (1.62, social audit 16627c32e2): each moment's own address,
+ * `/<slug>/m/<id>`, the page with that moment drawn large and its own
+ * preview; `feed.xml`, an Atom feed of the moments, to follow without
+ * snyvi; `badge.svg` for a README; and every head carries a link preview
+ * (the cover, or `card.png`, drawn by card.ts). The foot is a door to
+ * snyvi.com, saying which page it came from and nothing else.
  *
  * Never the builder's HTML: every field is escaped, a moment's Markdown is
  * cut to the reader's set (paragraphs, emphasis, code, https links), there
@@ -10,21 +18,17 @@
  * and clips from this origin only.
  */
 
+import { CSS as TEMPLATE_CSS, EIGHT, HEART, layout, vars } from "../../ui/page-template.js";
+
 export interface PageJson {
   slug: string; title: string; lede: string; kind: string; tone: string; stage: string;
   looking_for: string; logo: string; cover: string; hero: string; facts: string[];
   github: string; links: { label: string; url: string }[]; accent: string; wash: string;
   count_shown: boolean;
+  cta?: { label: string; url: string }; points?: { title: string; text: string }[]; story?: string;
 }
 export interface MomentJson { id: number; title: string; body_md: string; files: string[]; at: number }
 
-/** The eight, as snyvi's app.css pairs them: light ink, dark ink. */
-const EIGHT: Record<string, [string, string]> = {
-  passion: ["#8c0f26", "#f97e92"], crimson: ["#b91c1c", "#f87171"], rose: ["#be185d", "#f472b6"],
-  violet: ["#7c3aed", "#a78bfa"], blue: ["#1d4ed8", "#60a5fa"], teal: ["#0f766e", "#2dd4bf"],
-  green: ["#137639", "#4ade80"], graphite: ["#57534e", "#d6d3d1"],
-};
-const HEART: Record<string, string> = { software: "I'd use this", book: "I'd read this", design: "I'd try this" };
 
 export const CSP = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
@@ -60,10 +64,31 @@ function when(at: number): string {
   return at ? new Date(at * 1000).toISOString().slice(0, 10) : "";
 }
 
-/** The page whole, as snyvi.page/<slug> serves it. */
-export function pageHtml(p: PageJson, moments: MomentJson[], hearts: number, origin: string): string {
-  const [l, d] = EIGHT[p.accent] || EIGHT.passion;
-  const wash = /^#[0-9a-f]{6}$/i.test(p.wash || "") ? p.wash : "transparent";
+/** A picture a link preview can show: X, Slack and the rest take these. */
+const raster = (f: unknown): f is string => fileOk(f) && /\.(png|jpg|webp|gif)$/.test(f);
+
+/** The text of a moment's Markdown, plain, for a preview's one line. */
+const plain = (src: string, n: number) => String(src ?? "").replace(/[*`]/g, "").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/\s+/g, " ").trim().slice(0, n);
+
+/** The head's preview tags: what a link to this address shows where it is
+ *  pasted. Always the large card: the cover, a moment's picture, or the
+ *  page's drawn card. */
+function head(o: { title: string; desc: string; url: string; image: string; feed: string }): string {
+  const t = esc(o.title), d = esc(o.desc), i = esc(o.image);
+  return `<title>${t}</title><meta name="description" content="${d}"><link rel="canonical" href="${esc(o.url)}">
+<meta property="og:type" content="website"><meta property="og:site_name" content="snyvi.page"><meta property="og:title" content="${t}"><meta property="og:description" content="${d}">
+<meta property="og:url" content="${esc(o.url)}"><meta property="og:image" content="${i}"><meta property="og:image:alt" content="${t}">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${t}"><meta name="twitter:description" content="${d}"><meta name="twitter:image" content="${i}">
+<link rel="alternate" type="application/atom+xml" title="${esc(o.title)}" href="${esc(o.feed)}">`;
+}
+
+/** The page's own preview picture: its cover, or its drawn card. */
+const pageImage = (p: PageJson, origin: string) => raster(p.cover) ? `${origin}/files/${p.cover}` : `${origin}/${p.slug}/card.png`;
+
+/** The page whole, as snyvi.page/<slug> serves it; with `focus`, as that
+ *  moment's own address serves it, which shows no count (hearts move, and
+ *  a moment's page is drawn only when the moment or the page is written). */
+export function pageHtml(p: PageJson, moments: MomentJson[], hearts: number, origin: string, focus?: MomentJson): string {
   const tone = ["software", "book", "design"].includes(p.tone) ? p.tone : "software";
   const facts = new Set(p.facts || []);
   const last = moments[0];
@@ -73,39 +98,44 @@ export function pageHtml(p: PageJson, moments: MomentJson[], hearts: number, ori
     facts.has("last") && last ? `<div><small>Last moment</small><b>${esc(when(last.at))}</b></div>` : "",
     facts.has("looking") && p.looking_for ? `<div><small>Looking for</small><b>${esc(p.looking_for)}</b></div>` : "",
   ].join("");
-  const mark = fileOk(p.logo) ? `<img class="mark" src="/files/${p.logo}" alt="">` : `<span class="mark i">${esc((p.title || "?").charAt(0).toUpperCase())}</span>`;
-  const hero = p.hero === "picture" && fileOk(p.cover) ? `<div class="cover">${media(p.cover)}</div>` : "";
+  const mark = fileOk(p.logo) ? `<img class="pt-mark" src="/files/${p.logo}" alt="">` : `<span class="pt-mark pt-mark-i">${esc((p.title || "?").charAt(0).toUpperCase())}</span>`;
+  const cover = p.hero === "picture" && fileOk(p.cover) ? media(p.cover) : "";
+  const out = (u: string, words: string, cls = "") => `<a${cls ? ` class="${cls}"` : ""} href="${esc(u)}" rel="nofollow noopener noreferrer">${esc(words)}</a>`;
   const links = [
-    httpsOk(p.github) ? `<li><a href="${esc(p.github)}" rel="nofollow noopener noreferrer">${esc(p.github.replace(/^https:\/\//, ""))}</a></li>` : "",
-    ...(p.links || []).filter((k) => httpsOk(k.url)).slice(0, 6).map((k) => `<li><a href="${esc(k.url)}" rel="nofollow noopener noreferrer">${esc(k.label || k.url)}</a></li>`),
+    httpsOk(p.github) ? `<li>${out(p.github, p.github.replace(/^https:\/\//, ""))}</li>` : "",
+    ...(p.links || []).filter((k) => httpsOk(k.url)).slice(0, 6).map((k) => `<li>${out(k.url, k.label || k.url)}</li>`),
   ].join("");
-  const ms = moments.slice(0, 50).map((m, i) => `<li${i ? "" : ' class="new"'}><time>${esc(when(m.at))}</time><h3>${esc(m.title)}</h3>${md(m.body_md)}${(m.files || []).slice(0, 4).map(media).join("")}</li>`).join("");
-  const count = p.count_shown ? `<span class="heart" title="${esc(HEART[tone])}">♥ ${hearts}</span>` : `<span class="heart" title="${esc(HEART[tone])}">♥</span>`;
+  const nav = (p.links || []).filter((k) => httpsOk(k.url) && k.label).slice(0, 2).map((k) => out(k.url, k.label)).join("");
+  const cta = p.cta && httpsOk(p.cta.url) && p.cta.label ? out(p.cta.url, `${p.cta.label} →`, "pt-btn") : "";
+  const points = (p.points || []).filter((x) => x && x.title).slice(0, 3).map((x) => `<div><b>${esc(x.title)}</b>${x.text ? `<p>${esc(x.text)}</p>` : ""}</div>`).join("");
+  const ms = moments.slice(0, 50).map((m) => `<li id="m-${m.id}"><time><a href="${esc(origin)}/${esc(p.slug)}/m/${m.id}">${esc(when(m.at))}</a></time><div><h4>${esc(m.title)}</h4>${md(m.body_md)}${(m.files || []).slice(0, 4).map(media).join("")}</div></li>`).join("");
+  const heart = `<span class="pt-heart" title="${esc(HEART[tone as keyof typeof HEART])}">♥ ${esc(HEART[tone as keyof typeof HEART])}${p.count_shown && !focus ? ` · ${hearts}` : ""}</span>`;
+  const accent = (EIGHT as Record<string, unknown>)[p.accent] ? p.accent : "passion";
+  const home = `${origin}/${p.slug}`, feed = `${home}/feed.xml`;
+  const door = `https://snyvi.com/?from=${encodeURIComponent(p.slug)}`;
+  const shown = focus ? `<time>${esc(when(focus.at))}</time><h2>${esc(focus.title)}</h2>${md(focus.body_md)}${(focus.files || []).slice(0, 4).map(media).join("")}` : "";
+  const body = layout({
+    tone, style: vars({ accent, wash: p.wash }),
+    mark, nav, heart,
+    title: `<h1 class="pt-title">${esc(p.title)}</h1>`,
+    lede: p.lede ? `<p class="pt-lede">${esc(p.lede)}</p>` : "",
+    cta, cover, facts: cells, points,
+    story: p.story ? md(p.story) : "",
+    moments: ms ? `<ul class="pt-tl">${ms}</ul>` : `<p class="pt-quiet">No moments yet.</p>`,
+    focus: shown,
+    links: `<ul>${links}<li><a href="${esc(feed)}">Follow by feed</a></li></ul>`,
+    foot: `Made on <a href="${esc(door)}">snyvi</a> · <a href="${esc(door)}">build yours →</a><br>What is here is what its builder pressed Publish on, and nothing else of their machine.`,
+  });
+  const fileImg = focus && (focus.files || []).find(raster);
+  const tags = focus
+    ? head({ title: `${focus.title} · ${p.title}`, desc: plain(focus.body_md, 200) || p.lede, url: `${home}/m/${focus.id}`, image: fileImg ? `${origin}/files/${fileImg}` : pageImage(p, origin), feed })
+    : head({ title: `${p.title} · snyvi.page`, desc: p.lede, url: home, image: pageImage(p, origin), feed });
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(p.title)} · snyvi.page</title><meta name="description" content="${esc(p.lede)}">
-<meta property="og:title" content="${esc(p.title)}"><meta property="og:description" content="${esc(p.lede)}"><meta property="og:url" content="${esc(origin)}/${esc(p.slug)}">
+${tags}
 <style>
-:root{color-scheme:light dark;--bg:light-dark(#faf9f6,#15181f);--raise:light-dark(#fff,#1c2029);--fg:light-dark(#1f1d1a,rgba(255,255,255,.87));--fg2:light-dark(#5c574f,rgba(255,255,255,.62));--fg3:light-dark(#736c61,rgba(255,255,255,.47));--rule:light-dark(#e6e2da,rgba(255,255,255,.1));--accent:light-dark(${l},${d});--wash:${wash}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:1040px;margin:0 auto;padding:24px 16px 48px}a{color:var(--accent)}
-.head{display:flex;gap:14px;align-items:center}.mark{width:56px;height:56px;border-radius:12px;object-fit:contain;flex:none}.mark.i{display:grid;place-items:center;background:var(--accent);color:var(--bg);font-weight:600;font-size:26px}
-h1{margin:0;font-size:34px;line-height:1.15}.by{color:var(--fg3);font-size:13px}.heart{margin-left:auto;color:var(--accent);font-size:18px;white-space:nowrap}
-.book h1,.book .lede{font-family:"Source Serif 4",Georgia,serif}.lede{font-size:18px;margin:0}.book .lede{font-size:20px}.design .lede{font-size:15px}
-.hero{margin:20px -16px 0;padding:20px 16px;background:color-mix(in srgb,var(--wash) 12%,transparent)}.cover img,.cover video{width:100%;border-radius:12px;margin-top:16px}
-.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 -16px;padding:12px 16px;background:color-mix(in srgb,var(--wash) 7%,transparent);border-block:1px solid var(--rule)}
-.facts small{display:block;font-size:11px;color:var(--fg3);text-transform:uppercase;letter-spacing:.04em}.facts b{font-weight:500}
-.body{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:32px;margin-top:24px}h2{font-size:12px;color:var(--fg3);text-transform:uppercase;letter-spacing:.04em;margin:0 0 10px}
-ol{list-style:none;margin:0;padding:0 0 0 16px;border-left:2px solid var(--rule)}li{position:relative;margin:0 0 22px}ol li::before{content:"";position:absolute;left:-23px;top:8px;width:12px;height:12px;border-radius:50%;background:var(--rule)}ol li.new::before{background:var(--accent)}
-li h3{margin:2px 0 4px;font-size:17px}time{font-size:12px;color:var(--fg3)}li img,li video{display:block;max-width:100%;border-radius:10px;margin-top:8px}
-ul{list-style:none;margin:0;padding:0}ul li{margin:0 0 8px;overflow-wrap:anywhere}.foot{margin-top:40px;font-size:12px;color:var(--fg3)}
-@media (max-width:720px){.body{grid-template-columns:1fr}h1{font-size:26px}}
-</style></head><body><main class="${tone}">
-<header class="head">${mark}<div><h1>${esc(p.title)}</h1><div class="by">snyvi.page/${esc(p.slug)}</div></div>${count}</header>
-<div class="hero"><p class="lede">${esc(p.lede)}</p>${hero}</div>
-${cells ? `<div class="facts">${cells}</div>` : ""}
-<div class="body"><section><h2>Moments</h2>${ms ? `<ol>${ms}</ol>` : `<p class="by">No moments yet.</p>`}</section>
-<aside><h2>Links</h2><ul>${links}</ul><p class="foot">Made on a snyvi desk. What is here is what its builder pressed Publish on, and nothing else of their machine.</p></aside></div>
-</main></body></html>`;
+body{margin:0;background:light-dark(#faf9f6,#15181f);color-scheme:light dark}
+${TEMPLATE_CSS}
+</style></head><body><main>${body}</main></body></html>`;
 }
 
 /** A page's card on the wall: the head row, one line, the newest moment. */
@@ -113,9 +143,35 @@ export function card(p: PageJson, moments: MomentJson[], hearts: number, checked
   const m = moments[0];
   return {
     slug: p.slug, title: p.title, lede: p.lede, kind: p.kind, tone: p.tone, stage: p.stage,
-    accent: EIGHT[p.accent] ? p.accent : "passion", wash: /^#[0-9a-f]{6}$/i.test(p.wash || "") ? p.wash : "",
+    accent: (EIGHT as Record<string, unknown>)[p.accent] ? p.accent : "passion", wash: /^#[0-9a-f]{6}$/i.test(p.wash || "") ? p.wash : "",
     logo: fileOk(p.logo) ? p.logo : "", cover: p.hero === "picture" && fileOk(p.cover) ? p.cover : "",
     hearts: p.count_shown ? hearts : null, checked_at: checkedAt,
     moment: m ? { id: m.id, title: m.title, at: m.at, file: (m.files || []).find(fileOk) || "" } : null,
   };
+}
+
+/** The moments as an Atom feed: any feed reader follows a page, no account
+ *  and no snyvi needed. */
+export function feedXml(p: PageJson, moments: MomentJson[], origin: string): string {
+  const home = `${origin}/${p.slug}`;
+  const iso = (at: number) => new Date((at || 0) * 1000).toISOString();
+  const entries = moments.slice(0, 30).map((m) => `<entry><id>${esc(home)}/m/${m.id}</id><title>${esc(m.title)}</title><updated>${iso(m.at)}</updated>
+<link rel="alternate" href="${esc(home)}/m/${m.id}"/><content type="html">${esc(md(m.body_md) + (m.files || []).filter(raster).slice(0, 1).map((f) => `<p><img src="${origin}/files/${f}" alt=""></p>`).join(""))}</content></entry>`).join("\n");
+  return `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><id>${esc(home)}</id><title>${esc(p.title)}</title><subtitle>${esc(p.lede)}</subtitle>
+<link rel="alternate" href="${esc(home)}"/><link rel="self" href="${esc(home)}/feed.xml"/><updated>${iso(moments[0]?.at || 0)}</updated><author><name>${esc(p.title)}</name></author>
+${entries}
+</feed>`;
+}
+
+/** A README's badge: snyvi.page on the left, the page's name and hearts
+ *  (when its count is shown) on the right, in its accent. Widths are
+ *  measured at 11 px, about 6.6 px a letter. */
+export function badgeSvg(p: PageJson, hearts: number): string {
+  const l = "snyvi.page", r = `${p.slug}${p.count_shown ? ` ♥ ${hearts}` : ""}`;
+  const lw = Math.round(l.length * 6.6 + 12), rw = Math.round(r.length * 6.6 + 12);
+  const ink = ((EIGHT as Record<string, string[]>)[p.accent] || EIGHT.passion)[0];
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${lw + rw}" height="20" role="img" aria-label="${esc(`${l}: ${r}`)}"><title>${esc(`${l}: ${r}`)}</title>
+<rect width="${lw}" height="20" rx="3" fill="#555"/><rect x="${lw}" width="${rw}" height="20" rx="3" fill="${ink}"/><rect x="${lw}" width="4" height="20" fill="${ink}"/>
+<g fill="#fff" font-family="Verdana,DejaVu Sans,sans-serif" font-size="11"><text x="6" y="14">${esc(l)}</text><text x="${lw + 6}" y="14">${esc(r)}</text></g></svg>`;
 }

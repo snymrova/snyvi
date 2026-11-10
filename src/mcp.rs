@@ -245,6 +245,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("offer_line", Session::offer_line),
     // 1.59: a card for the desk's page; the user publishes (`page`).
     ("offer_post", Session::offer_post),
+    // 1.62: the page's words, when the user asked Claude to build it.
+    ("page_draft", Session::page_draft),
     ("start_thread", Session::start_thread),
     ("move_thread", Session::move_thread),
     ("ask", Session::ask),
@@ -1876,7 +1878,7 @@ mod tests {
 
     #[test]
     fn offer_post_is_a_panels_and_publishes_nothing() {
-        let spec = &page::specs()[0];
+        let spec = &page::specs()[1];
         assert_eq!(spec["name"], "offer_post");
         assert_eq!(spec["inputSchema"]["required"], json!(["title", "about"]));
         let d = spec["description"].as_str().unwrap();

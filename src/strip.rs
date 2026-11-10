@@ -432,8 +432,20 @@ mod tests {
     fn served_scripts() -> Vec<String> {
         let ui = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/ui"));
         [
-            "boot.js", "app.js", "mmd.js", "desk.js", "board.js", "page.js", "wall.js", "game.js",
-            "about.js", "find.js", "keys.js", "menu.js",
+            "boot.js",
+            "app.js",
+            "mmd.js",
+            "desk.js",
+            "board.js",
+            "page.js",
+            "wall.js",
+            "game.js",
+            "about.js",
+            "find.js",
+            "keys.js",
+            "menu.js",
+            "board-frame.js",
+            "page-template.js",
         ]
         .iter()
         .map(|name| source(ui, name).unwrap_or_else(|e| panic!("{name}: {e}")))

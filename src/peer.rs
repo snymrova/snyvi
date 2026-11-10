@@ -432,6 +432,13 @@ pub enum Content {
         since: i64,
         #[serde(default)]
         reported: i64,
+        /// 1.62 (v6): follows, new followers' names, the week's reads.
+        #[serde(default)]
+        follows: i64,
+        #[serde(default)]
+        followers: Vec<String>,
+        #[serde(default)]
+        reads: i64,
         #[serde(default)]
         v: u32,
     },

@@ -432,6 +432,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     // 1.58: a board and the reader's focus (`api_board`).
+    ("GET", "/api/panes/nope/boards", None, Gate::Token, true),
     ("GET", "/api/panes/nope/board/home", None, Gate::Token, true),
     (
         "POST",
@@ -478,6 +479,22 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("GET", "/api/desks/1/board/home", None, Gate::Desk, true),
+    // 1.62: a new board, and the runtime its sections are drawn in.
+    (
+        "POST",
+        "/api/desks/1/boards",
+        Some(r#"{"name":"x"}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/board/home/name",
+        Some(r#"{"name":"x"}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("GET", "/board-frame", None, Gate::Open, true),
     // 1.59: a desk's page (`api_page`), its file route and the agent's offer.
     ("GET", "/api/desks/1/page", None, Gate::Desk, true),
     ("POST", "/api/desks/1/page", Some("{}"), Gate::Desk, true),
@@ -507,9 +524,25 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
+    // 1.62: the page's words, from the agent the user asked (`page_draft`).
+    (
+        "POST",
+        "/api/panes/nope/page/draft",
+        Some(r#"{"title":"x"}"#),
+        Gate::Token,
+        true,
+    ),
     // The wall through this daemon: reaches the internet, asked only to refuse.
     ("GET", "/api/wall", None, Gate::Desk, false),
     ("POST", "/api/wall/heart", Some("{}"), Gate::Desk, false),
+    (
+        "POST",
+        "/api/wall/follow",
+        Some(r#"{"slug":"x"}"#),
+        Gate::Desk,
+        false,
+    ),
+    ("POST", "/api/wall/seen", Some("{}"), Gate::Desk, false),
     (
         "POST",
         "/api/desks/1/focus",

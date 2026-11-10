@@ -1,9 +1,12 @@
 # A board
 
-A board is a view over a desk (1.58, plan 6ff79c55a7): frames an agent draws,
+A board is a view over a desk (1.58, plan 6ff79c55a7): an empty canvas of
+**sections** an agent draws (frames, before 1.62; the tools keep the word),
 which the reader watches arrive with the panel they talk to docked with
-them, below the board or beside it. It is a folder in the desk's folder, not a kind of desk. The view
-appears in the desk's ⋯ menu, under Views, when the folder exists (1.60).
+them, below the board or beside it. It is a folder in the desk's folder, in
+git, not a kind of desk. A desk has as many as it likes: each appears in the
+desk's ⋯ menu, under Views, by its name, and ⋯ → New board or the board's
+own title makes one (1.62, `POST /api/desks/{id}/boards`), empty.
 
 ```mermaid
 flowchart LR
@@ -22,7 +25,7 @@ design/
   DESIGN.md        the look, in words; its first paragraph is in board_read
   tokens.css       the look, as custom properties; shown as swatches
   home/            a board, named by its folder
-    board.json     name; per frame: id, name, w, h, x, y, order, hidden
+    board.json     name; per frame: id, name, w, h (0: its content's), x, y, order, hidden
     hero.html      one frame: a self-contained fragment, CSS inline
     cards.html
 ```
@@ -58,19 +61,51 @@ Every `frame_write` is a document version: `board::send` puts the file through
 - **Nothing deleted.** Hiding is `hidden: true` in `board.json`; the file and
   every version stay.
 
-## Shown
+## Shown (1.62)
 
-A frame is shown exactly as an HTML document is (`ui/app/04-doc.js`): an
-iframe with `sandbox="allow-scripts"` and no `allow-same-origin`, loaded by
-`src` from the document's route, `/api/docs/{id}/blob`, which answers with
-the document's own CSP (`api_docs::protect`). Its scripts run, but it has an
-opaque origin, no network and no reach into the page. It is never loaded by
-`srcdoc`, which would give the frame this page's CSP instead. The URL carries
-the frame's hash (`?h=`), because a burst rewrites one document id in place.
+A board was one iframe per frame: a document, a script realm and a layer
+each, at a size the agent guessed, since a sandboxed frame cannot be
+measured. Now all of a board's sections are drawn in **one** document.
 
-The reader's hands are select, pan and zoom. The iframes take no pointer, so
-a click on a frame selects it. Selecting is the reader's focus: the agent
-reads it in the brief and through `board_read` or `read_focus`.
+```mermaid
+flowchart LR
+  W[ui/board: the world, pan and zoom] -->|fetch each section's blob, once per hash| H[sections' HTML]
+  H -->|postMessage sections| D["/board-frame: one sandboxed iframe"]
+  D --> S1[shadow root: hero]
+  D --> S2[shadow root: cards]
+  D -->|sizes: heights measured| W
+  W --> X[frame boxes above it: labels, picks]
+```
+
+- `/board-frame` answers a page that holds only the runtime
+  (`ui/board-frame.js`), inlined under a nonce made for that answer:
+  `script-src 'nonce-…'`, `connect-src 'none'`, `form-action 'none'`,
+  `frame-ancestors 'self'`. It is loaded in an iframe with
+  `sandbox="allow-scripts"` and no `allow-same-origin`: an opaque origin,
+  nothing of the page's. A section's inline handler or `javascript:` link is
+  refused by the nonce; `innerHTML` never runs a `<script>`.
+- The window fetches each section's HTML from its document's route
+  (`/api/docs/{id}/blob?h=`) and posts it in once per hash; the runtime puts
+  each in a closed shadow root, with `html`, `body` and `:root` in its CSS
+  made `:host` (the export does the same, `board::host_selectors`). The
+  tokens are set on the document's root once, and inherit into every root.
+- A section without a height is as tall as its content: a ResizeObserver in
+  the runtime posts heights back, and the window sizes the frame boxes and
+  the iframe by them. Nothing the runtime posts is anything but numbers,
+  clamped.
+- The iframe sits in the world at the sections' bounding box, so pan and
+  zoom move it with the boxes and nothing is synced on a pan.
+- A frame with a `<script>` is an **island** (`board::is_island`, `island`
+  in the read): shown as before, its own iframe from its document's route,
+  `ISLAND_H` (600) tall unless it has a height. Frames from before 1.62 that
+  ran a script keep working.
+
+The reader's hands are select, pan and zoom. The documents take no pointer,
+so a click on a section's box selects it. Selecting is the reader's focus:
+the agent reads it in the brief and through `board_read` or `read_focus`.
+
+Board versions stay in the store but are not in the Inbox list or the
+desk's Documents (V5): the board is where they are read.
 
 ## Live (1.61)
 
@@ -81,8 +116,10 @@ median hours from merge to told, and the last eight threads with both
 stamps. The read's hash covers them, so a board whose numbers did not move
 reads as unchanged.
 
-`ui/board/02-frames.js` posts `{snyvi: "live", source, data}` into the
-frame's iframe after it loads and again only when the numbers moved; a
+A section's `[data-live="name"]` slots are filled by the runtime from
+`{t: "live", id, data}` (a dotted name reaches inside), with no script in
+the section. An island still gets `{snyvi: "live", source, data}` posted
+into its own iframe after it loads, and again only when the numbers moved; a
 thread moving on the desk (the `desknotes` event) has an open board read
 again. The target origin is `"*"`, because a sandboxed frame without
 `allow-same-origin` has an opaque origin and no other target reaches it.
@@ -99,7 +136,7 @@ before acting on "this"; never delete.
 
 | Tool | Route (token, through `agent_pane`) |
 |---|---|
-| `board_read` | `GET /api/panes/{id}/board/{board}` |
+| `board_read` | `GET /api/panes/{id}/board/{board}`; no board: `GET /api/panes/{id}/boards` |
 | `frame_write` | `POST /api/panes/{id}/board/{board}/frames/{frame}`; `html: null` → `…/hide` |
 | `board_arrange` | `POST /api/panes/{id}/board/{board}/arrange` |
 | `frame_look` | `POST /api/panes/{id}/board/{board}/look/{frame}` (501 until the window can draw it) |

@@ -107,6 +107,10 @@ pub fn public_page(p: &Page) -> Value {
         "accent": p.accent,
         "wash": p.wash,
         "count_shown": p.count_shown,
+        // 1.62's template A: a wall from before ignores them.
+        "cta": p.cta,
+        "points": p.points,
+        "story": p.story,
         "v": 1,
     })
 }

@@ -121,6 +121,28 @@ CREATE TABLE IF NOT EXISTS page_outbox (
 CREATE INDEX IF NOT EXISTS page_outbox_held ON page_outbox(sent_at, queued_at);
 "#;
 
+/// 1.62's fields of template A (views audit e512285a2b): one main link, three
+/// points and the story; and from the social audit (16627c32e2) what the
+/// wall's line says of follows and reads, and the pages this reader follows
+/// (`wall_follows`, signed at the wall by this daemon's key; `seen` is when
+/// Home last showed what they posted). Columns added by `store`'s migration 37, not in
+/// `SCHEMA`, so a database from 1.59 gains them once; a test that builds
+/// `SCHEMA` by hand runs this after it.
+pub const COLUMNS_1_62: &str = "
+ALTER TABLE pages ADD COLUMN cta_label TEXT NOT NULL DEFAULT '';
+ALTER TABLE pages ADD COLUMN cta_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE pages ADD COLUMN points TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE pages ADD COLUMN story TEXT NOT NULL DEFAULT '';
+ALTER TABLE pages ADD COLUMN follows INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pages ADD COLUMN follower_names TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE pages ADD COLUMN reads INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS wall_follows (
+  slug TEXT PRIMARY KEY,
+  at INTEGER NOT NULL,
+  seen INTEGER NOT NULL DEFAULT 0
+);
+";
+
 pub const TONES: [&str; 3] = ["software", "book", "design"];
 pub const HEROES: [&str; 4] = ["picture", "clip", "mark", "none"];
 pub const VISIBILITY: [&str; 3] = ["off", "friends", "everyone"];
@@ -133,6 +155,12 @@ pub const LOOKING_CHARS: usize = 120;
 pub const LINKS_MAX: usize = 6;
 pub const LINK_LABEL_CHARS: usize = 40;
 pub const URL_CHARS: usize = 300;
+/// The template's three points: a title and a line each.
+pub const POINTS_MAX: usize = 3;
+pub const POINT_TITLE_CHARS: usize = 60;
+pub const POINT_TEXT_CHARS: usize = 200;
+/// The story: a few paragraphs, in the builder's words.
+pub const STORY_CHARS: usize = 4000;
 pub const MOMENT_TITLE_CHARS: usize = 80;
 pub const MOMENT_BODY_CHARS: usize = 4000;
 /// One picture or clip is the voice; a few more is the most.
@@ -146,6 +174,14 @@ pub const ABOUT_CHARS: usize = 200;
 pub struct Link {
     pub label: String,
     pub url: String,
+}
+
+/// One of the template's three points.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct Point {
+    pub title: String,
+    #[serde(default)]
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
@@ -166,6 +202,12 @@ pub struct Page {
     pub facts: Vec<String>,
     pub github: String,
     pub links: Vec<Link>,
+    /// The one main link the hero's button opens (1.62); empty for none.
+    pub cta: Link,
+    /// Up to three points, as cards under the hero (1.62).
+    pub points: Vec<Point>,
+    /// A few paragraphs on why, plain text with blank lines between (1.62).
+    pub story: String,
     pub accent: String,
     pub wash: String,
     pub count_shown: bool,
@@ -260,7 +302,7 @@ pub fn slug_of(name: &str, desk_id: i64) -> String {
 const COLS: &str =
     "id, desk_id, slug, title, lede, kind, tone, stage, looking_for, logo, cover, hero, \
     facts, github, links, accent, wash, count_shown, visibility, published_at, up_at, down_at, \
-    checked_at, provenance, created_at, updated_at";
+    checked_at, provenance, created_at, updated_at, cta_label, cta_url, points, story";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Page> {
     let facts: String = r.get(12)?;
@@ -297,6 +339,12 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Page> {
         provenance: serde_json::from_str(&prov).unwrap_or_default(),
         created_at: r.get(24)?,
         updated_at: r.get(25)?,
+        cta: Link {
+            label: r.get(26)?,
+            url: r.get(27)?,
+        },
+        points: serde_json::from_str(&r.get::<_, String>(28)?).unwrap_or_default(),
+        story: r.get(29)?,
     })
 }
 
@@ -377,6 +425,9 @@ pub struct Edit {
     pub facts: Option<Vec<String>>,
     pub github: Option<String>,
     pub links: Option<Vec<Link>>,
+    pub cta: Option<Link>,
+    pub points: Option<Vec<Point>>,
+    pub story: Option<String>,
     pub accent: Option<String>,
     pub count_shown: Option<bool>,
     pub visibility: Option<String>,
@@ -474,7 +525,61 @@ fn edit_cols(p: &Page, e: &Edit) -> Result<Vec<(&'static str, rusqlite::types::V
     if let Some(v) = e.count_shown {
         set.push(("count_shown", Integer(v as i64)));
     }
+    if let Some(c) = &e.cta {
+        let u = url("the main link", &c.url)?;
+        let l = words("the main link's label", &c.label, LINK_LABEL_CHARS)?;
+        if !u.is_empty() && l.is_empty() {
+            bail!("the main link needs a label, the words on its button");
+        }
+        set.push((
+            "cta_label",
+            Text(if u.is_empty() { String::new() } else { l }),
+        ));
+        set.push(("cta_url", Text(u)));
+    }
+    if let Some(ps) = &e.points {
+        set.push(("points", Text(serde_json::to_string(&check_points(ps)?)?)));
+    }
+    if let Some(v) = &e.story {
+        set.push(("story", Text(story(v)?)));
+    }
     Ok(set)
+}
+
+/// The three points: each a title (one line) and a line under it; one with
+/// neither is dropped, one with a line and no title refused.
+fn check_points(ps: &[Point]) -> Result<Vec<Point>> {
+    if ps.len() > POINTS_MAX {
+        bail!("a page has at most {POINTS_MAX} points");
+    }
+    let mut out = Vec::new();
+    for p in ps {
+        let title = words("a point's title", &p.title, POINT_TITLE_CHARS)?;
+        let text = words("a point's line", &p.text, POINT_TEXT_CHARS)?;
+        if title.is_empty() && !text.is_empty() {
+            bail!("a point needs a title");
+        }
+        if !title.is_empty() {
+            out.push(Point { title, text });
+        }
+    }
+    Ok(out)
+}
+
+/// The story: its paragraphs, split at blank lines, kept; within each, the
+/// spaces and line breaks made one space.
+fn story(s: &str) -> Result<String> {
+    let paras: Vec<String> = s
+        .replace("\r\n", "\n")
+        .split("\n\n")
+        .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|p| !p.is_empty())
+        .collect();
+    let t = paras.join("\n\n");
+    if t.chars().count() > STORY_CHARS {
+        bail!("the story is at most {STORY_CHARS} characters");
+    }
+    Ok(t)
 }
 
 fn check_links(links: &[Link]) -> Result<Vec<Link>> {
@@ -620,46 +725,105 @@ pub fn mark_checked(conn: &Connection, id: i64, at: i64) -> Result<()> {
     Ok(())
 }
 
-/// The wall's daily line about a page of this daemon's (`api_wall::take`):
-/// the hearts since `since`, the names of those from checked pages, and
-/// the reports counted. Kept on the page, to show; the desk it is on, or
-/// `None` when no page of this daemon's has that slug.
-#[allow(clippy::too_many_arguments)]
-pub fn hearts_said(
-    conn: &Connection,
-    slug: &str,
-    hearts: i64,
-    names: &[String],
-    since: i64,
-    reported: i64,
-    now: i64,
-) -> Result<Option<i64>> {
-    let names: Vec<String> = names
+/// What the wall's daily line says about one page (`peer::Content::Wall`).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Line {
+    /// Hearts since `since`, and the names of those from checked pages.
+    pub hearts: i64,
+    pub names: Vec<String>,
+    pub since: i64,
+    pub reported: i64,
+    /// How many follow it, and who began to since the last line (1.62).
+    pub follows: i64,
+    pub followers: Vec<String>,
+    /// How many times it was opened in the last seven days (1.62).
+    pub reads: i64,
+}
+
+/// Names from the wall, as shown: one line each, short, at most twenty.
+fn names_shown(names: &[String]) -> Vec<String> {
+    names
         .iter()
         .map(|n| draft::clip(&n.split_whitespace().collect::<Vec<_>>().join(" "), 40))
         .filter(|n| !n.is_empty())
         .take(20)
-        .collect();
+        .collect()
+}
+
+/// The wall's daily line about a page of this daemon's (`api_wall::take`),
+/// kept on the page to show; the desk it is on, or `None` when no page of
+/// this daemon's has that slug. A line with no new hearts (it came for the
+/// follows or the reads) leaves the last hearts as they were said.
+pub fn hearts_said(conn: &Connection, slug: &str, l: &Line, now: i64) -> Result<Option<i64>> {
     let desk: Option<i64> = conn
         .query_row("SELECT desk_id FROM pages WHERE slug = ?1", [slug], |r| {
             r.get(0)
         })
         .optional()?;
-    if desk.is_some() {
+    if desk.is_none() {
+        return Ok(None);
+    }
+    if l.hearts > 0 {
         conn.execute(
-            "UPDATE pages SET hearts = ?2, heart_names = ?3, hearts_since = ?4, hearts_at = ?5, \
-             reports = ?6 WHERE slug = ?1",
+            "UPDATE pages SET hearts = ?2, heart_names = ?3, hearts_since = ?4, hearts_at = ?5 \
+             WHERE slug = ?1",
             params![
                 slug,
-                hearts.max(0),
-                serde_json::to_string(&names)?,
-                since,
-                now,
-                reported.max(0)
+                l.hearts,
+                serde_json::to_string(&names_shown(&l.names))?,
+                l.since,
+                now
             ],
         )?;
     }
+    conn.execute(
+        "UPDATE pages SET reports = ?2, follows = ?3, follower_names = ?4, reads = ?5 WHERE slug = ?1",
+        params![
+            slug,
+            l.reported.max(0),
+            l.follows.max(0),
+            serde_json::to_string(&names_shown(&l.followers))?,
+            l.reads.max(0)
+        ],
+    )?;
     Ok(desk)
+}
+
+/// The last line's follows, new followers' names, and the week's reads.
+pub fn heard_of(conn: &Connection, page_id: i64) -> Result<(i64, Vec<String>, i64)> {
+    let (n, names, reads): (i64, String, i64) = conn.query_row(
+        "SELECT follows, follower_names, reads FROM pages WHERE id = ?1",
+        [page_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    Ok((n, serde_json::from_str(&names).unwrap_or_default(), reads))
+}
+
+/// The pages this reader follows, as the wall holds them for this daemon's
+/// key: (slug, followed at, Home last showed their moments at).
+pub fn follows(conn: &Connection) -> Result<Vec<(String, i64, i64)>> {
+    let mut st = conn.prepare("SELECT slug, at, seen FROM wall_follows ORDER BY at")?;
+    let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The wall took a follow (`on`) or its end: kept here as it said.
+pub fn set_follow(conn: &Connection, slug: &str, on: bool, now: i64) -> Result<()> {
+    if on {
+        conn.execute(
+            "INSERT INTO wall_follows(slug, at, seen) VALUES(?1, ?2, ?2) ON CONFLICT(slug) DO NOTHING",
+            params![slug, now],
+        )?;
+    } else {
+        conn.execute("DELETE FROM wall_follows WHERE slug = ?1", [slug])?;
+    }
+    Ok(())
+}
+
+/// Home showed what the followed pages posted, up to now.
+pub fn follows_seen(conn: &Connection, now: i64) -> Result<()> {
+    conn.execute("UPDATE wall_follows SET seen = ?1", [now])?;
+    Ok(())
 }
 
 /// The last line's hearts, names and since, for the view and Home's row.

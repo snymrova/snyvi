@@ -27,6 +27,12 @@ let boardMod = null, boardLoading = null;
 
 const viewsOf = d => (ctx.desks && ctx.desks.views && ctx.desks.views[d.id]) || ["folder"];
 const boardsOf = d => viewsOf(d).filter(v => v.startsWith("board:")).map(v => v.slice(6));
+/** The desk's boards with their titles (1.62, V3): `board.json`'s name, the
+ *  folder's until the desks list has it. */
+const boardHeads = d => {
+  const named = (ctx.desks && ctx.desks.boards && ctx.desks.boards[d.id]) || [];
+  return boardsOf(d).map(id => named.find(b => b.id === id) || { id, name: id, frames: 0 });
+};
 
 function tellFocus(f) {
   if (deskId == null) return;
@@ -48,7 +54,7 @@ function tellFocus(f) {
 const viewList = d => [["panels", "Panels", "your shells and Claude, side by side"],
   ["folder", "Folder", "this desk's files, a panel with them"],
   ["page", "Page", "the desk's landing page, to show people"],
-  ...boardsOf(d).map(n => [`board:${n}`, `Board · ${n}`, "frames Claude draws, a panel with them"])];
+  ...boardHeads(d).map(b => [`board:${b.id}`, `Board · ${b.name}`, "sections Claude draws, a panel with them"])];
 
 /** The view open on desk `d`: "panels", "folder", "page" or "board:<name>". */
 const viewNow = d => fdock && fdock.desk === d.id ? "folder" : viewOn && viewOn.desk === d.id ? (viewOn.page ? "page" : `board:${viewOn.board}`) : "panels";
@@ -147,6 +153,48 @@ export function viewsHere() {
 }
 export const viewHere = v => openView(v);
 
+/** ⋯ → New board (1.62, V1): an empty board, made and opened, named
+ *  "Board", "Board 2"… The reader renames it from its title. */
+export async function newBoardHere() {
+  const d = current();
+  if (!d) return;
+  const names = new Set(boardHeads(d).map(b => b.name));
+  let n = 1, name = "Board";
+  while (names.has(name)) name = `Board ${++n}`;
+  try {
+    const j = await makeBoard(d.id, name);
+    if (j && j.board) openView(`board:${j.board}`);
+  } catch (e) { ctx.toast("Could not make the board", e); }
+}
+
+/** A new board on desk `id`, and the desks list read again so ⋯ has it. */
+async function makeBoard(id, name) {
+  const j = await ctx.api(`/api/desks/${id}/boards`, { name });
+  await ctx.refresh();
+  return j;
+}
+
+/* "Ask Claude…" on a view (1.62, decision 2): snyvi's words, with the
+ * reader's own in them, typed into the docked panel and Enter pressed apart,
+ * as Send now types an answer -- only into a Claude at its prompt
+ * (`sendsHere`), and only on the reader's press. Anywhere else nothing is
+ * typed: the words are copied, and what is returned says so, for the view to
+ * show where the press was. Empty when it was typed. */
+function askClaude(text) {
+  const d = current(), v = docked && views.get(docked);
+  const line = oneLine(text);
+  if (v && sendsHere(v)) {
+    input(v, bracket(v, line));
+    setTimeout(() => input(v, "\r"), 120);
+    setTimeout(() => v.body && v.body.focus(), 0);
+    return "";
+  }
+  try { navigator.clipboard.writeText(line); } catch { /* the words are still shown */ }
+  const n = v ? v.pane.slot : 0;
+  return n ? `Panel ${n} has no Claude at its prompt, so nothing was typed. The words are copied: paste them when it is.`
+    : `No Claude beside this view. The words are copied: paste them into a panel's Claude.`;
+}
+
 /** `seed`: a card's words, for the page's moment form (27-page.js). */
 function openView(v, seed, by = "", path = "", pane = null) {
   const d = current();
@@ -242,7 +290,12 @@ function viewsMount(d) {
   const want = viewOn;
   boardUse().then(m => {
     if (viewOn !== want || !surf.isConnected) return;
-    m.open({ host: surf, desk: d.id, board: want.board, api: ctx.api, esc: ctx.esc, focus: tellFocus, named: () => { const c = current(); if (c) viewsSlot(c); }, dir: "design" });
+    m.open({ host: surf, desk: d.id, board: want.board, api: ctx.api, esc: ctx.esc, focus: tellFocus, named: () => { const c = current(); if (c) viewsSlot(c); }, dir: "design",
+      boards: () => { const c = current(); return c ? boardHeads(c) : []; },
+      make: name => makeBoard(d.id, name),
+      rename: (b, name) => ctx.api(`/api/desks/${d.id}/board/${encodeURIComponent(b)}/name`, { name }).then(j => (ctx.refresh(), j)),
+      switch: b => openView(`board:${b}`),
+      ask: askClaude, sayErr: e => ctx.sayErr(e).why });
   }, () => { surf.innerHTML = `<p class="dk-none">Could not load the board.</p>`; });
 }
 
@@ -368,6 +421,16 @@ function folderDraw() {
   }
   folderFill(el);
   folderFocus();
+  folderSaysOnce();
+}
+
+/* Folder says what it is, once per browser (1.62, F1): a line, not a card,
+ * so it moves nothing. Whether it was said is a convenience, kept where the
+ * browser keeps it; an empty storage says it once more. */
+function folderSaysOnce() {
+  const KEY = "snyvi.folder.said";
+  try { if (localStorage.getItem(KEY)) return; localStorage.setItem(KEY, "1"); } catch { return; }
+  ctx.toast("Folder", "This desk's files, with your panel beside them. Claude can open a file here for you, and the lines you mark are what it reads as \"this\".");
 }
 
 /* The desk's head over its folder (1.60, C9; views audit V1). The folder's

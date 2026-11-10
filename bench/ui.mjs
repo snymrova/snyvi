@@ -4572,7 +4572,8 @@ async function viewRows(cdp, base, token, env, tmp) {
 
     const deskName = await p.ev(`Math.round(document.querySelector(".dk-head > .dk-name").getBoundingClientRect().left)`);
     await viaMenu("Board · home");
-    const open = appeared && await until(`!!document.querySelector('.dk-grid > .dk-view .bd-frame[data-id="hero"] iframe') && !!document.querySelector(".dk-dock-b > .pn")`);
+    // 1.62: a section is drawn in the board's one document, not an iframe of its own.
+    const open = appeared && await until(`!!document.querySelector('.dk-grid > .dk-view .bd-frame.bd-sec[data-id="hero"]') && !!document.querySelector(".dk-view .bd-world > iframe.bd-doc") && !!document.querySelector(".dk-dock-b > .pn")`);
     const sat = { dock: await p.ev(dockedIn(".dk-view .dk-dock-b")), grid: await p.ev(gridPanes), below: await p.ev(`document.querySelector(".dk-view")?.classList.contains("below") || false`) };
     rows.push(["the board opens over the grid with one panel docked below it", open && !!sat.dock && sat.below && sat.grid.split(" ").filter(Boolean).every(id => id !== sat.dock),
       !open ? "no board, or no panel with it" : !sat.below ? `the dock is "${await p.ev(`document.querySelector(".dk-view").className`)}"` : `panel ${sat.dock} docked, the grid keeps ${sat.grid || "nothing"}`]);
@@ -4588,8 +4589,20 @@ async function viewRows(cdp, base, token, env, tmp) {
       !open ? "no board" : !roomy ? "too narrow for beside: its button is off, the dock below" : !besides ? "it did not go beside" : !backBelow ? "it did not come back below" : "beside, then below"]);
 
     const second = open && await frame("card", "Card");
-    const arrived = second === 201 && await until(`!!document.querySelector('.bd-frame[data-id="card"] iframe')`);
-    rows.push(["a frame written while it is open arrives on it", arrived, arrived ? "card is on the board" : `the write answered ${second}, and no card came`]);
+    const arrived = second === 201 && await until(`!!document.querySelector('.bd-frame.bd-sec[data-id="card"]') && document.querySelectorAll(".bd-world > iframe").length === 1`);
+    rows.push(["a section written while it is open arrives on it, in the same one document", arrived, arrived ? "card is on the board" : `the write answered ${second}, and the board has ${await p.ev(`document.querySelectorAll(".bd-world iframe").length`)} iframes`]);
+
+    // 1.62: a section with no height is as tall as its content, measured in
+    // the board's document and said back; a script makes an island of its own.
+    const tall = arrived && await fetch(`${base}/api/panes/${pa}/board/home/frames/tall`, { method: "POST", headers: TK,
+      body: JSON.stringify({ html: `<style>body{margin:0;background:#fff}</style><div style="height:333px">A section 333 px tall, with no height given.</div>`, w: 300 }) }).then(r => r.status);
+    const measured = tall === 201 && await until(`/^300 × 333$/.test(document.querySelector('.bd-frame[data-id="tall"] .bd-size')?.textContent || "") && Math.round(document.querySelector('.bd-frame[data-id="tall"] .bd-sheet').getBoundingClientRect().height / (+getComputedStyle(document.querySelector(".bd")).getPropertyValue("--bd-k") || 1)) === 333`, 80);
+    rows.push(["a section with no height is as tall as its content, measured in the board's document", !!measured,
+      tall !== 201 ? `the write answered ${tall}` : `its label says "${await p.ev(`document.querySelector('.bd-frame[data-id="tall"] .bd-size')?.textContent`)}"`]);
+    const isl = arrived && await fetch(`${base}/api/panes/${pa}/board/home/frames/island`, { method: "POST", headers: TK,
+      body: JSON.stringify({ html: `<p id="n">0</p><script>document.getElementById("n").textContent = "1"</script>`, w: 200, h: 120 }) }).then(r => r.status);
+    const island = isl === 201 && await until(`!!document.querySelector('.bd-frame[data-id="island"]:not(.bd-sec) .bd-sheet > iframe')`);
+    rows.push(["a section with a script is an island, in an iframe of its own", !!island, isl !== 201 ? `the write answered ${isl}` : island ? "its own iframe, outside the board's document" : "no iframe of its own"]);
 
     const pick = arrived && await until(`!!document.querySelector('.dk-view .bd-list [data-bd-pick="card"]') && !document.querySelector('#toc .bd-rail')`);
     if (pick) await p.clickOn(`.dk-view .bd-list [data-bd-pick="card"]`);
@@ -4610,6 +4623,19 @@ async function viewRows(cdp, base, token, env, tmp) {
     const cleared = back && await untilAsync(async () => ((await focus()).focus == null ? true : null));
     rows.push(["the head's chip says the board by its name and goes back: both panels in the grid, the focus cleared", back && !!cleared && /^Board · home/.test(chip),
       !back ? `the grid has ${await p.ev(gridPanes)}` : !cleared ? `the focus is still ${JSON.stringify((await focus()).focus)}` : `chip "${chip}", the panels as they were`]);
+
+    // 1.62 (V1, V2): ⋯ → New board makes an empty one and opens it, which
+    // says what a board is; Ask Claude types nothing into a panel with no
+    // Claude at its prompt, and says so where the press was.
+    await p.ev(`(async () => { document.querySelector(".dk-head .dk-menu").click(); })(); 1`);
+    await until(`!document.querySelector("#ctx")?.hidden`);
+    await p.ev(`[...document.querySelectorAll("#ctx [role^=menuitem]")].find(b => b.querySelector("span")?.textContent === "New board")?.click(); 1`);
+    const made2 = await until(`!!document.querySelector(".dk-view .bd.bd-none .bd-intro h3") && getComputedStyle(document.querySelector(".bd-intro")).visibility === "visible"`);
+    const named = made2 && await untilAsync(async () => /Board · Board/.test(await menuViews()) || null, 20);
+    if (made2) await p.ev(`(() => { const f = document.querySelector(".bd-ask"); f.what.value = "a pricing card"; f.requestSubmit(); return 1; })()`);
+    const told = made2 && await until(`/no Claude at its prompt/.test(document.querySelector(".bd-ask-said")?.textContent || "")`);
+    rows.push(["⋯ → New board makes an empty board that says what it is, and Ask Claude says why nothing was typed", !!made2 && !!named && !!told,
+      !made2 ? "no empty board with its intro" : !named ? `the menu says "${await menuViews()}"` : `the intro says "${await p.ev(`document.querySelector(".bd-ask-said")?.textContent`)}"`]);
 
     // Folder: the desk's own folder over the desk, a panel docked beside it.
     await viaMenu("Folder");
@@ -4741,13 +4767,13 @@ async function pageRows(cdp, base, token, env, tmp) {
     rows.push(["Page is in the desk's ⋯ views, after Folder", sw === "Panels ✓ | Folder | Page", `"${sw}"`]);
 
     await viaMenu("Page");
-    const open = await until(`!!document.querySelector(".dk-view .pg .pg-title") && !!document.querySelector(".dk-view .dk-dock-b > .pn")`);
-    const drafted = open && await p.ev(`({ title: document.querySelector(".pg-title").textContent, chip: document.querySelector(".pg-names .pg-chip")?.textContent || "" })`);
+    const open = await until(`!!document.querySelector(".dk-view .pg .pt-title") && !!document.querySelector(".dk-view .pg-intro") && !!document.querySelector(".dk-view .dk-dock-b > .pn")`);
+    const drafted = open && await p.ev(`({ title: document.querySelector(".pt-title").textContent, chip: document.querySelector('.pt-claim .pg-chip[data-redraft="title"]')?.textContent || "" })`);
     const none = (await read()).page == null;
-    rows.push(["pressed, it is a draft from the desk's README, its chip says so, and nothing is kept yet", !!drafted && drafted.title === "Breeds of dogs" && drafted.chip === "from README" && none,
+    rows.push(["pressed, it says what a page is above a draft from the desk's README, its chip says so, and nothing is kept yet", !!drafted && drafted.title === "Breeds of dogs" && drafted.chip === "from README" && none,
       !open ? "no page over the grid, or no panel beside it" : !none ? "a page was kept before the press" : `title "${drafted.title}", chip "${drafted.chip}"`]);
 
-    if (open) await p.ev(`document.querySelector(".pg-side [data-start]").click(); 1`);
+    if (open) await p.ev(`document.querySelector(".pg-intro [data-start]").click(); 1`);
     const kept = open && await untilAsync(async () => { const r = await read(); return r.page && r.page.title === "Breeds of dogs" ? r : null; });
     const side = kept && await until(`!!document.querySelector('.pg-side [data-who="off"][aria-pressed="true"]')`) &&
       await p.ev(`({ disabled: document.querySelector(".pg-press[data-publish]")?.disabled, said: document.querySelector(".pg-said")?.textContent || "" })`);
@@ -4755,14 +4781,14 @@ async function pageRows(cdp, base, token, env, tmp) {
       !kept ? `the daemon has ${JSON.stringify((await read()).page)}` : !side ? "the side has no Who sees it, set to Off" : `Publish ${side.disabled ? "disabled" : "pressable"}, the row says "${side.said}"`]);
 
     const renamed = "Breeds of dogs, a field guide";
-    if (kept) await p.ev(`(() => { const t = document.querySelector(".pg-title"); t.focus(); t.textContent = ${JSON.stringify(renamed)}; t.blur(); return 1; })()`);
+    if (kept) await p.ev(`(() => { const t = document.querySelector(".pt-title"); t.focus(); t.textContent = ${JSON.stringify(renamed)}; t.blur(); return 1; })()`);
     const edited = kept && await untilAsync(async () => { const r = await read(); return r.page && r.page.title === renamed ? r : null; });
-    const chipGone = edited && await until(`document.querySelector(".pg-title")?.textContent === ${JSON.stringify(renamed)} && !document.querySelector('.pg-names .pg-chip[data-redraft="title"]')`);
+    const chipGone = edited && await until(`document.querySelector(".pt-title")?.textContent === ${JSON.stringify(renamed)} && !document.querySelector('.pt-claim .pg-chip[data-redraft="title"]')`);
     rows.push(["a field edited where it stands is kept, and is the builder's own: its chip goes", !!edited && chipGone,
       !edited ? `the daemon kept "${((await read()).page || {}).title}"` : !chipGone ? "the drafted chip is still on the title" : `"${renamed}", no chip`]);
 
-    if (kept) await p.ev(`(() => { const f = document.querySelector(".pg-moment"); f.title.value = "Chapter 4 accepted"; f.body.value = "Working dogs, done."; f.requestSubmit(); return 1; })()`);
-    const moment = kept && await until(`[...document.querySelectorAll(".pg-moments li b")].some(b => b.textContent === "Chapter 4 accepted")`);
+    if (kept) await p.ev(`(() => { document.querySelector('[data-fold="moment"]').open = true; const f = document.querySelector(".pg-moment"); f.title.value = "Chapter 4 accepted"; f.body.value = "Working dogs, done."; f.requestSubmit(); return 1; })()`);
+    const moment = kept && await until(`[...document.querySelectorAll(".pg-sheet .pt-tl li h4")].some(b => b.firstChild?.textContent.trim() === "Chapter 4 accepted")`);
     rows.push(["a moment kept shows on the page", !!moment, moment ? "Chapter 4 accepted is on it" : `moments: ${JSON.stringify(((await read()).moments || []).map(m => m.title))}`]);
 
     await p.clickOn(`.dk-head .dk-vchip`);

@@ -9,6 +9,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
     conn.execute_batch(crate::peer::SCHEMA).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
+    conn.execute_batch(COLUMNS_1_62).unwrap();
     conn.execute(
         "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'Breeds of Dogs', '/tmp/dogs', 1)",
         [],
@@ -532,4 +533,48 @@ fn files_are_copied_by_their_content_and_held_to_their_caps() {
     ] {
         assert!(!files::file_name_ok(bad), "{bad}");
     }
+}
+
+#[test]
+fn a_line_for_follows_or_reads_keeps_the_last_hearts_and_follows_are_kept_here() {
+    let conn = db();
+    let p = started(&conn);
+    let line = |hearts, follows, reads| Line {
+        hearts,
+        names: vec!["Trapti's garden".into()],
+        since: 100,
+        follows,
+        followers: vec!["  Sam \n the   builder ".into()],
+        reads,
+        ..Line::default()
+    };
+    assert_eq!(
+        hearts_said(&conn, &p.slug, &line(4, 1, 30), 200).unwrap(),
+        Some(p.desk_id)
+    );
+    assert_eq!(
+        hearts_said(&conn, "not-mine", &line(4, 1, 30), 200).unwrap(),
+        None
+    );
+    // The next day's line came for a follow and the reads: the hearts stay.
+    hearts_said(&conn, &p.slug, &line(0, 2, 140), 300).unwrap();
+    assert_eq!(
+        hearts_of(&conn, p.id).unwrap(),
+        (4, vec!["Trapti's garden".to_string()], 100)
+    );
+    assert_eq!(
+        heard_of(&conn, p.id).unwrap(),
+        (2, vec!["Sam the builder".to_string()], 140)
+    );
+
+    set_follow(&conn, "ledger", true, 10).unwrap();
+    set_follow(&conn, "ledger", true, 20).unwrap();
+    set_follow(&conn, "owls", true, 30).unwrap();
+    assert_eq!(
+        follows(&conn).unwrap(),
+        vec![("ledger".into(), 10, 10), ("owls".into(), 30, 30)]
+    );
+    follows_seen(&conn, 50).unwrap();
+    set_follow(&conn, "ledger", false, 60).unwrap();
+    assert_eq!(follows(&conn).unwrap(), vec![("owls".into(), 30, 50)]);
 }

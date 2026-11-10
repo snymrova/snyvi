@@ -588,6 +588,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (35, desk::groups::COLUMNS_1_57),
     (35, desk::groups::DOCS_COLUMN_1_57),
     (36, desk::checks::COLUMNS_1_58), // 1.58: checks the reader holds on a note (H2.1)
+    (37, crate::page::COLUMNS_1_62), // 1.62: the page's main link, points and story
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -597,14 +598,15 @@ pub const SAVED_PATH_COLUMN: &str = "ALTER TABLE docs ADD COLUMN saved_path TEXT
 /// the one index a four-column `WHERE` on a desk's documents needs, and
 /// `?1` the desk, `?2` the limit.
 /// `sent` leaves the hook's drafts out, on both sides: a file's head is its
-/// newest send, not a draft saved after it.
+/// newest send, not a draft saved after it. A board's sections are never on
+/// it (1.62, V5): the board is their place.
 fn desk_docs_sql(off: bool, sent: bool) -> String {
     let sent = if sent { "AND d.origin != 'hook'" } else { "" };
     format!(
         "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path,
                 d.saved_path, d.origin, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), p.root, d.desk_grp
          FROM live_docs d JOIN projects p ON p.id = d.project_id
-         WHERE d.desk_id = ?1 AND d.desk_off {} {sent}
+         WHERE d.desk_id = ?1 AND d.desk_off {} {sent} AND d.origin != 'board'
            AND (d.source_path IS NULL
                 OR d.rowid = (SELECT d2.rowid FROM live_docs d2
                               WHERE d2.desk_id = ?1 AND d2.project_id = d.project_id
@@ -1642,11 +1644,15 @@ impl Store {
         Ok((!w.docs.is_empty()).then_some(w))
     }
 
+    /// Every project's newest documents, for the Inbox. A board's sections
+    /// are not among them (1.62, V5): a board of twenty is twenty versions
+    /// a minute while Claude draws, and the board itself is where they are
+    /// read. They stay in the store, in their project's tree, and in search.
     pub fn inbox(&self, limit: usize) -> Result<Vec<Doc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .prepare(&format!(
-                "SELECT {DOC_COLS} {HEAD_FROM} ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
+                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.origin != 'board' ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
             ))?
             .query_map(params![limit as i64], row_to_doc)?
             .collect::<std::result::Result<_, _>>()?;

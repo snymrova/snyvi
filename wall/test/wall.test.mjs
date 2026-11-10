@@ -188,6 +188,56 @@ test("the daily line goes to the page's daemon, sealed by the wall's key", async
   assert.ok(!deposits.some((x) => x.to === me.address));
 });
 
+// --- 1.62: what a link to a page carries, and who follows it ----------------
+
+test("a page's head carries a link preview, its foot is a door, and its moments have addresses", async () => {
+  const me = await identity();
+  await signed(me, "PUT", "/pages/owls", page(me, "owls"));
+  await signed(me, "PUT", "/pages/owls/moments/3", JSON.stringify({ title: "The barn owl chapter", body_md: "Done, with *pictures*.", files: [], at: 5 }));
+  const html = await (await fetch(`${BASE}/p/owls`)).text();
+  assert.match(html, /<meta name="twitter:card" content="summary_large_image">/);
+  assert.match(html, /<meta property="og:image" content="https:\/\/snyvi\.page\/owls\/card\.png">/);
+  assert.match(html, /href="https:\/\/snyvi\.com\/\?from=owls">build yours/);
+  assert.match(html, /href="https:\/\/snyvi\.page\/owls\/m\/3"/);
+  const card = await fetch(`${BASE}/p/owls/card.png`);
+  assert.equal(card.headers.get("content-type"), "image/png");
+  assert.deepEqual([...new Uint8Array(await card.arrayBuffer()).subarray(0, 4)], [137, 80, 78, 71]);
+  const m = await (await fetch(`${BASE}/p/owls/m/3`)).text();
+  assert.match(m, /<meta property="og:title" content="The barn owl chapter · Breeds of dogs">/);
+  assert.match(m, /class="pt-this"/);
+  assert.equal((await fetch(`${BASE}/p/owls/m/4`)).status, 404);
+  const feed = await fetch(`${BASE}/p/owls/feed.xml`);
+  assert.match(feed.headers.get("content-type"), /atom\+xml/);
+  assert.match(await feed.text(), /<entry><id>https:\/\/snyvi\.page\/owls\/m\/3<\/id><title>The barn owl chapter<\/title>/);
+  const badge = await fetch(`${BASE}/p/owls/badge.svg`);
+  assert.equal(badge.headers.get("content-type"), "image/svg+xml");
+  assert.match(await badge.text(), /owls ♥ 0/);
+});
+
+test("a follow is signed and set, and the daily line says follows, followers and reads", async () => {
+  const [me, fan] = [await identity(), await identity()];
+  await signed(me, "PUT", "/pages/newts", page(me, "newts"));
+  // The follower's own page is checked: its title is the name the builder hears.
+  await signed(fan, "PUT", "/pages/fanpage", page(fan, "fanpage", { title: "Trapti's garden", github: "https://github.com/o/fanpage" }));
+  owners.set("o/fanpage", `snyvi-owner-v1 ${fan.address}`);
+  await signed(fan, "POST", "/pages/fanpage/check", "{}");
+  assert.deepEqual(await (await signed(fan, "POST", "/pages/newts/follow", JSON.stringify({ on: true }))).json(), { on: true, follows: 1 });
+  assert.deepEqual(await (await signed(fan, "POST", "/pages/newts/follow", JSON.stringify({ on: true }))).json(), { on: true, follows: 1 }, "set, not toggled");
+  assert.equal((await signed(fan, "POST", "/pages/nope/follow", "{}")).status, 404);
+  // Two readers and a robot: the robot is not counted.
+  await fetch(`${BASE}/p/newts`, { headers: { "user-agent": "Mozilla/5.0" } });
+  await fetch(`${BASE}/p/newts`, { headers: { "user-agent": "Twitterbot/1.0" } });
+  await new Promise((r) => setTimeout(r, 300));
+  deposits.length = 0;
+  await fetch(`${BASE}/_test/daily`, { method: "POST" });
+  assert.ok(deposits.some((x) => x.to === me.address), "a follow alone earns the line");
+  const j = await (await fetch(`${BASE}/_test/line/newts`, { method: "POST" })).json();
+  assert.equal(j.follows, 1);
+  assert.deepEqual(j.followers, ["Trapti's garden"]);
+  assert.ok(j.reads >= 1, `reads ${j.reads}`);
+  assert.deepEqual(await (await signed(fan, "POST", "/pages/newts/follow", JSON.stringify({ on: false }))).json(), { on: false, follows: 0 });
+});
+
 test("taken down, a page is gone from the wall and from snyvi.page", async () => {
   const me = await identity();
   await signed(me, "PUT", "/pages/gone", page(me, "gone", { github: "https://github.com/o/gone" }));

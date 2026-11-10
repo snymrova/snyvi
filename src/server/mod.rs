@@ -535,6 +535,7 @@ fn note_routes() -> Router<Arc<App>> {
 /// on the panel, behind the token; the page's on the desk.
 fn board_routes() -> Router<Arc<App>> {
     Router::new()
+        .route("/api/panes/{id}/boards", get(pane_boards))
         .route("/api/panes/{id}/board/{board}", get(pane_board))
         .route(
             "/api/panes/{id}/board/{board}/frames/{frame}",
@@ -561,6 +562,10 @@ fn board_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/focus", get(pane_focus))
         .route("/api/panes/{id}/view", post(pane_open_view))
         .route("/api/desks/{id}/board/{board}", get(desk_board))
+        // 1.62: a new, empty board, and the one document a board is drawn in.
+        .route("/api/desks/{id}/boards", post(desk_board_new))
+        .route("/api/desks/{id}/board/{board}/name", post(desk_board_name))
+        .route("/board-frame", get(board_frame))
         // 1.59: a desk's page (`api_page`), the window's; the agent's offer.
         .route("/api/desks/{id}/page", get(desk_page).post(save_desk_page))
         .route("/api/desks/{id}/page/moments", post(desk_page_moment))
@@ -572,9 +577,12 @@ fn board_routes() -> Router<Arc<App>> {
         .route("/api/desks/{id}/page/publish", post(desk_page_publish))
         .route("/api/desks/{id}/page/down", post(desk_page_down))
         .route("/api/panes/{id}/post", post(pane_post))
+        .route("/api/panes/{id}/page/draft", post(pane_page_draft))
         // Home's section: the wall, read and hearted through this daemon.
         .route("/api/wall", get(wall_read))
         .route("/api/wall/heart", post(wall_heart))
+        .route("/api/wall/follow", post(wall_follow))
+        .route("/api/wall/seen", post(wall_seen))
         .route("/api/desks/{id}/focus", post(set_desk_focus))
 }
 

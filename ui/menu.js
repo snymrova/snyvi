@@ -482,7 +482,9 @@ function entries(ctx, el, byKey = false) {
     const vs = (dk && dk.viewsHere && dk.viewsHere()) || [];
     return { head: d.name, items: [
       vs.length && { section: "Views of this desk" },
-      ...vs.map(x => ({ label: x.label, about: x.about, on: x.on, key: x.v === "folder" ? ctx.keyHint("ctrl+alt+f") : "", run: () => dk.viewHere(x.v) })), vs.length && RULE,
+      ...vs.map(x => ({ label: x.label, about: x.about, on: x.on, key: x.v === "folder" ? ctx.keyHint("ctrl+alt+f") : "", run: () => dk.viewHere(x.v) })),
+      // 1.62 (V1): a board could only appear once Claude drew one.
+      vs.length && dk.newBoardHere && { label: "New board", about: "an empty canvas Claude draws on", run: () => dk.newBoardHere() }, vs.length && RULE,
       !here && { label: "Show", run: () => ctx.show(id, true) },
       // On the desk shown, its own: in the tab on screen, which says why when
       // that tab is full (#217); a desk elsewhere, the tab it reopens on.

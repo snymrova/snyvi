@@ -44,13 +44,13 @@ const STILLS = {
   "wall.png": { part: '[data-w="wall"]', first: `for (let i = 0; i < 40 && !document.querySelector(".wl-card"); i++) await new Promise(r => setTimeout(r, 100));` },
   // A window tall enough for the whole page beside its docked panel.
   "page.png": {
-    part: ".dk-view .pg-page", vh: 1400,
+    part: ".dk-view .pg-sheet", vh: 1400,
     // 1.60: Page is in the desk's ⋯ menu.
     first: `document.querySelector(".dk-head .dk-menu")?.click(); await new Promise(r => setTimeout(r, 200));
       [...document.querySelectorAll("#ctx [role=menuitemradio]")].find(b => b.querySelector("span").textContent === "Page")?.click();
-      for (let i = 0; i < 40 && !document.querySelector(".pg-moments li"); i++) await new Promise(r => setTimeout(r, 100));
+      for (let i = 0; i < 40 && !document.querySelector(".pg-sheet .pt-tl li"); i++) await new Promise(r => setTimeout(r, 100));
       // The page as a reader meets it: from its head, with its newest moment.
-      document.head.insertAdjacentHTML("beforeend", "<style>.pg-moments li + li { display: none }</style>");
+      document.head.insertAdjacentHTML("beforeend", "<style>.pt-tl li + li { display: none }</style>");
       document.querySelector(".pg-left")?.scrollTo(0, 0);`,
   },
 };

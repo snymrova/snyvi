@@ -181,7 +181,10 @@ async function start(ctx, url, body) {
     `<div class="pr-foot"><button type="button" data-pr="close">Cancel</button>${made ? `<button type="button" class="pr-go" data-pr="copy">Copy</button>` : ""}</div>`);
   waiting = r.code;
   const cp = box.querySelector("[data-pr=copy]");
-  if (cp) { cp.addEventListener("click", () => copy(r.code, cp)); cp.focus({ preventScroll: true }); }
+  // What is copied is a message the friend can act on, snyvi or not yet
+  // (1.62, social audit S9): the code, where it goes, and where snyvi is.
+  const words = `Pair with me on snyvi: ${r.code}\nIn snyvi, Pair with a friend… → I have a code, or open snyvi://pair/${r.code}\nNo snyvi yet? https://snyvi.com/install, then the same. It works once, for ten minutes.`;
+  if (cp) { cp.addEventListener("click", () => copy(words, cp)); cp.focus({ preventScroll: true }); }
   const until = r.until * 1000;
   const over = why => {
     clearInterval(poll); poll = 0; waiting = "";

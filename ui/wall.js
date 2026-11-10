@@ -9,10 +9,15 @@
  * the daemon (`/api/wall/heart`).
  *
  * Three segments: Everyone (the wall, newest moment first), Following (the
- * pages this reader follows, kept in this browser), Friends (pages friends
- * sent Friends only). The hearts are shown, never ranked; a page that hides
- * its count shows the heart alone. Your own pages are one line on the
- * segments' row.
+ * pages this reader follows), Friends (pages friends sent Friends only).
+ * The hearts are shown, never ranked; a page that hides its count shows the
+ * heart alone. Your own pages are one line on the segments' row.
+ *
+ * A follow (1.62, D2) is signed by the daemon at the wall, like a heart, so
+ * the builder hears it; the daemon keeps the list (`follows` in the read).
+ * Follows this browser kept before 1.62 are said to the wall once, then
+ * dropped here. When a followed page posted since Home last showed it, one
+ * line on the segments' row says so; pressing it, or Following, shows them.
  *
  * The section never changes height (no layout shift): the segments' row,
  * then one row of cards of one height that scrolls sideways, 0 cards or 12.
@@ -23,6 +28,7 @@
 let read = null, at = 0, loading = null;
 let seg = "everyone";
 let saidFor = null;      // a card's row that just said something, by slug
+let moved = false;       // the browser's old follows, said to the wall once a load
 /** How long a read stands before the next draw asks again. */
 const FRESH_MS = 5 * 60 * 1000;
 const SHOWN = 12;
@@ -42,15 +48,45 @@ export function fill(el, c) {
   if (!el) return;
   el.addEventListener("click", e => click(e, el, c));
   if (read && Date.now() - at < FRESH_MS) return;
-  loading ||= c.deskApi("/api/wall").then(j => { read = j; at = Date.now(); }, () => { read ||= { wall: { pages: [], offline: true }, mine: [], friends: [] }; at = Date.now(); })
-    .finally(() => { loading = null; if (el.isConnected) el.innerHTML = body(c); });
+  loading ||= c.deskApi("/api/wall").then(j => { read = j; at = Date.now(); }, () => { read ||= { wall: { pages: [], offline: true }, mine: [], friends: [], follows: [] }; at = Date.now(); })
+    .finally(() => { loading = null; if (el.isConnected) el.innerHTML = body(c); moveFollows(el, c); });
+}
+
+const followed = () => (read.follows || []).map(f => f.slug);
+
+/** Follows from before 1.62, kept in this browser: each said to the wall,
+ *  and the browser's list dropped once all of them were taken. */
+async function moveFollows(el, c) {
+  const old = store("snyvi.wall.follow", "[]").filter(s => !followed().includes(s));
+  if (moved || !old.length || !read || (read.wall && read.wall.offline)) return;
+  moved = true;
+  let all = true;
+  for (const slug of old) {
+    try { await c.deskApi("/api/wall/follow", { slug, on: true }); (read.follows ||= []).push({ slug, at: 0, seen: Date.now() / 1000 | 0 }); } catch { all = false; }
+  }
+  if (all) try { localStorage.removeItem("snyvi.wall.follow"); } catch { /* kept */ }
+  if (el.isConnected) el.innerHTML = body(c);
+}
+
+/** Followed pages whose newest moment came after Home last showed them. */
+function news() {
+  const seen = Object.fromEntries((read.follows || []).map(f => [f.slug, f.seen]));
+  return ((read.wall && read.wall.pages) || []).filter(p => p.slug in seen && p.moment && p.moment.at > seen[p.slug]);
+}
+
+/** Following was shown: what it holds is seen, here and at the daemon. */
+function sawFollows(c) {
+  const t = Date.now() / 1000 | 0;
+  for (const f of read.follows || []) f.seen = t;
+  c.deskApi("/api/wall/seen", {}).catch(() => {});
 }
 
 function body(c) {
   const { esc } = c;
-  const mine = (read.mine || []).map(m => `${m.title} ${m.visibility === "everyone" ? (m.checked ? "is on the wall" : "is up, not on the wall until its check is in the repo") : "went to friends"}${m.hearts ? ` · ${m.hearts} ♥${m.since ? ` since ${c.rel(m.since * 1000)}` : ""}` : ""}${(m.names || []).length ? ` · ${m.names.slice(0, 3).join(", ")}` : ""}`).join(" · ");
-  const xs = cards(c);
-  return frame(mine ? `<span class="wl-mine" data-tip="${esc(mine)}">${esc(mine)}</span>` : "", xs, !/wl-card/.test(xs));
+  const mine = (read.mine || []).map(m => `${m.title} ${m.visibility === "everyone" ? (m.checked ? "is on the wall" : "is up, not on the wall until its check is in the repo") : "went to friends"}${m.hearts ? ` · ${m.hearts} ♥${m.since ? ` since ${c.rel(m.since * 1000)}` : ""}` : ""}${(m.names || []).length ? ` · ${m.names.slice(0, 3).join(", ")}` : ""}${m.follows ? ` · ${m.follows} follow` : ""}${m.reads ? ` · opened ${m.reads} times this week` : ""}`).join(" · ");
+  const xs = cards(c), ns = seg === "following" ? [] : news();
+  const line = ns.length ? `<button type="button" class="wl-news" data-wl="news">New from ${esc(ns[0].title)}: ${esc(ns[0].moment.title)}${ns.length > 1 ? ` · and ${ns.length - 1} more` : ""}</button>` : "";
+  return frame(line + (mine ? `<span class="wl-mine" data-tip="${esc(mine)}">${esc(mine)}</span>` : ""), xs, !/wl-card/.test(xs));
 }
 
 /** The box every state draws in: the segments' row (and your own pages'
@@ -64,7 +100,7 @@ function frame(mine, inner, none) {
 function list() {
   const pages = (read.wall && read.wall.pages) || [];
   if (seg === "friends") return (read.friends || []).map(f => ({ ...f.page, from: f.from, friend: true, moment: f.moment && f.moment.title ? f.moment : null }));
-  if (seg === "following") { const f = store("snyvi.wall.follow", "[]"); return pages.filter(p => f.includes(p.slug)); }
+  if (seg === "following") { const f = followed(); return pages.filter(p => f.includes(p.slug)); }
   return pages;
 }
 
@@ -73,9 +109,9 @@ function cards(c) {
   if (!xs.length) {
     if (seg === "friends") return `<p class="wl-quiet">Pages your friends send Friends only land here.</p>`;
     if (seg === "following") return `<p class="wl-quiet">Follow a page on Everyone, and its moments come here.</p>`;
-    return `<p class="wl-quiet">${read.wall && read.wall.offline ? "The wall did not answer; the last one this snyvi saw is shown when there is one." : "Nobody is on the wall yet. Put yours there from Page, in a desk's head."}</p>`;
+    return `<p class="wl-quiet">${read.wall && read.wall.offline ? "The wall did not answer; the last one this snyvi saw is shown when there is one." : "Nobody is on the wall yet. Put yours there from Page, in a desk's ⋯."}</p>`;
   }
-  const hearted = store("snyvi.wall.hearted", "[]"), follow = store("snyvi.wall.follow", "[]");
+  const hearted = store("snyvi.wall.hearted", "[]"), follow = followed();
   return xs.map(p => {
     const m = p.moment, on = hearted.includes(p.slug), fol = follow.includes(p.slug);
     const logo = p.logo ? `<img class="wl-logo" src="/api/wall/file/${esc(p.logo)}" alt="" loading="lazy">` : `<span class="wl-logo wl-i" aria-hidden="true">${esc((p.title || "?").charAt(0).toUpperCase())}</span>`;
@@ -94,12 +130,24 @@ function click(e, el, c) {
   const b = e.target.closest("[data-wl]");
   if (!b || !el.contains(b)) return;
   const k = b.dataset.k;
-  if (b.dataset.wl === "seg") { seg = k; el.innerHTML = body(c); return; }
-  if (b.dataset.wl === "follow") {
-    const f = store("snyvi.wall.follow", "[]"), i = f.indexOf(k);
-    if (i < 0) f.push(k); else f.splice(i, 1);
-    keep("snyvi.wall.follow", f);
+  if (b.dataset.wl === "seg" || b.dataset.wl === "news") {
+    seg = b.dataset.wl === "news" ? "following" : k;
+    if (seg === "following" && news().length) sawFollows(c);
     el.innerHTML = body(c);
+    return;
+  }
+  if (b.dataset.wl === "follow") {
+    const on = !followed().includes(k);
+    b.disabled = true;
+    c.deskApi("/api/wall/follow", { slug: k, on }).then(() => {
+      read.follows = (read.follows || []).filter(f => f.slug !== k);
+      if (on) read.follows.push({ slug: k, at: Date.now() / 1000 | 0, seen: Date.now() / 1000 | 0 });
+      saidFor = on ? { slug: k, text: "its builder sees that you follow" } : null;
+      el.innerHTML = body(c);
+    }, () => {
+      saidFor = { slug: k, text: "the wall did not take it; try again in a while" };
+      el.innerHTML = body(c);
+    });
     return;
   }
   if (b.dataset.wl === "heart") {
@@ -135,6 +183,9 @@ const WALL_CSS = `
 .wl { height: 178px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .wl-head { height: 30px; flex: none; display: flex; align-items: center; gap: 12px; min-width: 0; }
 .wl-quiet { margin: 8px 0; font-size: var(--fs-small); color: var(--fg-3); }
+.wl-news { margin-left: auto; min-width: 0; flex: 0 1 auto; border: 0; background: none; padding: 2px 6px; border-radius: var(--r-sm); color: var(--accent); font: inherit; font-size: var(--fs-small); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-news:hover { background: var(--wash); }
+.wl-news + .wl-mine { margin-left: 0; }
 .wl-mine { margin-left: auto; min-width: 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-segs { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-pill); background: var(--wash); }
 .wl-segs button { border: 0; background: none; padding: 2px var(--sp-4); border-radius: var(--r-pill); color: var(--fg-2); font: inherit; font-size: var(--fs-small); cursor: pointer; }

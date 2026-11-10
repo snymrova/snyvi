@@ -84,7 +84,11 @@ const SHADOWS_CSS = new Set(FILES.filter(f => f.endsWith(".js") &&
  * HTML page is the page's, not ours; the #000 in a mask is an alpha channel;
  * the serialisers write colours out rather than draw with them. */
 const ALLOW_COLOUR = [/mask(-image)?:/, /\.html-frame|iframe|srcdoc/, /xterm|cube|ansi256|256/i];
-const ALLOW_COLOUR_FILES = new Set(["boot.js", "mmd.js"]);
+const ALLOW_COLOUR_FILES = new Set(["boot.js", "mmd.js", "page-template.js"]);
+/* The page's template (1.62) is also snyvi.page's stylesheet, served where
+ * none of the window's tokens exist: its palette and its type are its own,
+ * scoped to `.pt`, and are what a reader of the published page sees. */
+const OWN_TYPE_FILES = new Set(["page-template.js"]);
 
 /* The files that draw the two sidebars: the left's parts and the desk's rail. */
 const SIDES = new Set(["app/02-tree.js", "app/03-queue.js", "app/08-desks.js", "desk/06-rail.js", "desk/09-thread.js"]);
@@ -104,7 +108,8 @@ const CHECKS = {
   },
   "font-size": {
     what: "px font sizes not on the type scale",
-    run(text) {
+    run(text, file) {
+      if (OWN_TYPE_FILES.has(file)) return 0;
       let n = 0;
       for (const m of text.matchAll(/font(?:-size)?\s*:\s*([^;"`}]*)/g))
         for (const px of m[1].matchAll(/(\d+(?:\.\d+)?)px/g)) if (!SCALE.has(Number(px[1]))) { n++; break; }

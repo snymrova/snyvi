@@ -178,6 +178,14 @@ const OLD_1_47: &str =
 
 /// 1.58's step, taken back: the checks held on a note (step 36,
 /// `desk::checks::COLUMNS_1_58`).
+/// 1.62's step, taken back (step 37, `page::COLUMNS_1_62`): the page's main
+/// link, points and story, the line's follows and reads, and the follows.
+const OLD_1_62: &str =
+    "ALTER TABLE pages DROP COLUMN cta_label; ALTER TABLE pages DROP COLUMN cta_url;
+  ALTER TABLE pages DROP COLUMN points; ALTER TABLE pages DROP COLUMN story;
+  ALTER TABLE pages DROP COLUMN follows; ALTER TABLE pages DROP COLUMN follower_names;
+  ALTER TABLE pages DROP COLUMN reads; DROP TABLE wall_follows;";
+
 const OLD_1_58: &str = "DROP TABLE note_checks;";
 
 /// 1.57's step, taken back (step 35, `desk::groups::COLUMNS_1_57` and
@@ -1090,7 +1098,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1379,7 +1387,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1914,7 +1922,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1957,7 +1965,7 @@ fn a_1_46_1_database_keeps_its_panel_names() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
+        "{OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
     ))
     .unwrap();
     drop(conn);
@@ -2017,8 +2025,10 @@ fn a_1_56_database_opens_with_no_tabs_and_its_first_tab_moves_nothing() {
         (d.id, ids)
     };
     let conn = Connection::open(&paths.db_path).unwrap();
-    conn.execute_batch(&format!("{OLD_1_58} {OLD_1_57} PRAGMA user_version = 34;"))
-        .unwrap();
+    conn.execute_batch(&format!(
+        "{OLD_1_62} {OLD_1_58} {OLD_1_57} PRAGMA user_version = 34;"
+    ))
+    .unwrap();
     drop(conn);
 
     let s = Store::open(&paths).unwrap();

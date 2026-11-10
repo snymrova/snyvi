@@ -6,8 +6,8 @@
   "to_sign": "Gc9lQosmlcFcT6weqIZPreRvK4aXizBLZetkUSfJNiU",
   "to_box": "MdSras7slhE3kXA3k25gcW-sVzr-lNnahKgCBEjfwRI",
   "nonce": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUF",
-  "content": "{\"kind\":\"wall\",\"slug\":\"breeds-of-dogs\",\"hearts\":3,\"names\":[\"Trapti\",\"Sam\"],\"since\":1800000000,\"reported\":1,\"v\":5}",
-  "frame": "AY4QAX___jd5rwyfgW92PORg1AKgSqR3EmS2Qr5AWkcpBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFImTE8Bj-WxgQl2i2zuQBs52Q2wiySjfHa4YVKbJx8BUQJLzYd2UZyCo2b2-S_tRRoHsTcqVHmEspstR7E0MMMFKUXuRkdXfUfF8IwugSl98si1V3AtPPW8_O3A4DygBvUzeGTIH-zveokfQ0waHy2c6vrXY5HNdYHjz3o33ZORbqLvCmmtDUnplV8zSviCgTM_hPKSF9SEbfvuK9NYyWqPvogRkrkK9BPUD8ZFc7UkHDVQSsdm34uSe0xZGuvFSk8XNhVAs",
+  "content": "{\"kind\":\"wall\",\"slug\":\"breeds-of-dogs\",\"hearts\":3,\"names\":[\"Trapti\",\"Sam\"],\"since\":1800000000,\"reported\":1,\"follows\":2,\"followers\":[\"Sam\"],\"reads\":9,\"v\":5}",
+  "frame": "AY4QAX___jd5rwyfgW92PORg1AKgSqR3EmS2Qr5AWkcpBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFyGTE8Bj-WxgQl2i2zuQBs52Q2wiySjfHa4YVKbJx8BUQJLzYd2UZyCo2b2-S_tRRoHsTcqVHmEspstR7E0MMMFKUXuRkdXfUfF8IwugSl98si1V3AtPPW8_O3A4DygBvUzeGTIH-zveokfQ0waHy2d7i-y8rl9f7f2WLLceyCCUbtlM_8jF_W67pg1HBgped-YV2_WDHuIWsQb-rUhQMNL0_IeivKN-AgkAafYkvTZG-JAEnvadaJnHFGiLwakpSkuk3iPjzgel0JA9szkPFWxMkgspXUa5mLP6mRcYlh7zORDerbPKlziJ__4_MVAA",
   "auth": {
     "method": "PUT",
     "path": "/pages/breeds-of-dogs",
