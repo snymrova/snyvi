@@ -89,26 +89,15 @@ notes, its threads, the user's On you list.
 - A friend on the list can be offered a document (`offer_document`) or a line
   (`offer_line`); the user decides whether it goes.
 - A **routine** is a line that comes back: one of the project's or the user's
-  slash commands or skills that snyvi starts at an hour the user set, in a
-  panel in the back (`/newsroom · every day 07:30`). You never start one.
-  When the user asks for something to happen on its own, on a schedule, it
-  is a routine, never cron, `/loop` or `/schedule`, which end with your
-  session. Write the command first if it is new (`.claude/commands/<name>.md`,
-  or a skill), then offer it with `offer_routine`: `command` the command and
-  its words, `every` the cadence, `waits` the Bash patterns that must wait
-  for them (a publish, a
-  deploy, anything that spends a key); a skill's script runs from its
-  folder, so its pattern starts the path with `*`
-  (`python3 -I *scripts/publish.py *`). The user tries it once and starts it
-  in its sheet; only their Start makes it run on its own.
-- **A command a routine can run** takes `$ARGUMENTS`; reads a
-  `continue: <answers>` form and goes on from the first step not done (without
-  one, the user's answers come back in the run's own session); asks each
-  decision with `ask`, one a question; hands over as `run` anything on the
-  brief's Waits line, which is denied in its panel; ends with `leave_off`
-  `needs: you` when something waits; and keeps each run inside 25 minutes.
-  When the brief says this panel is a routine, you are that run: when it says
-  it is a try, the user is watching.
+  slash commands or skills that snyvi runs on its own -- at the hours the
+  user set, or when its watch sees something happen -- in a panel in the
+  back. When the user asks for something to happen on its own, it is a
+  routine, never cron, `/loop` or `/schedule`, which end with your session.
+  You never start one; you write it and offer it (`offer_routine`), and only
+  the user's Start makes it run. **Before you write a command, a gate or a
+  watch a routine runs, read [routine.md](routine.md).** When the brief says
+  this panel is a routine, you are that run: when it says it is a try, the
+  user is watching.
 
 ## A board
 

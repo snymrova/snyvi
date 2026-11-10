@@ -36,7 +36,9 @@ mod lifecycle;
 mod peer_link;
 mod pipeline_run;
 mod restore_run;
+mod routine_gate;
 mod routine_run;
+mod routine_watch;
 #[cfg(test)]
 mod tests;
 mod widget_run;
@@ -886,6 +888,7 @@ fn spawn_runners(app: &Arc<App>) {
     widget_run::spawn(app.clone());
     pipeline_run::spawn(app.clone());
     routine_run::spawn(app.clone());
+    routine_watch::spawn(app.clone());
 }
 
 /// The marks the last daemon left (`desk::marks`): the planned restart's,
@@ -1028,6 +1031,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
         }
     }
     leaving.panes.shutdown();
+    routine_watch::stop_all();
     Ok(why)
 }
 

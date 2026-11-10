@@ -24,6 +24,22 @@ const GOES_OUT: &[&str] = &[
     "deploy",
     "release",
 ];
+/// Words a line goes out with when they are words of their own (1.63, U9):
+/// `post` in `omdbot post` but not in `postgres`.
+const GOES_OUT_WORDS: &[&str] = &["post", "send", "upload", "email", "tweet"];
+
+/// Whether a part goes out: one of `GOES_OUT` in it, or one of
+/// `GOES_OUT_WORDS` as a word.
+fn goes_out(low: &str) -> Option<&'static str> {
+    GOES_OUT
+        .iter()
+        .find(|w| low.contains(*w))
+        .copied()
+        .or_else(|| {
+            low.split(|c: char| !c.is_ascii_alphanumeric())
+                .find_map(|w| GOES_OUT_WORDS.iter().find(|g| **g == w).copied())
+        })
+}
 /// How many suggestions a sheet shows at most.
 const SUGGEST_MAX: usize = 8;
 
@@ -58,16 +74,24 @@ fn commands_in(line: &str, fenced: bool) -> Vec<String> {
     v
 }
 
-/// Each line's number and the commands on it.
+/// Each line's number and the commands on it. A fenced block's lines are
+/// commands, and since 1.63 (U9) an indented block's too: four spaces or a
+/// tab, after a blank line or another such line, as Markdown reads one.
 fn each(text: &str) -> Vec<(u32, Vec<String>)> {
     let mut fenced = false;
+    let mut after_blank = true;
+    let mut in_indent = false;
     let mut v = Vec::new();
     for (i, l) in text.lines().enumerate() {
         if l.trim_start().starts_with("```") {
             fenced = !fenced;
             continue;
         }
-        let c = commands_in(l, fenced);
+        let blank = l.trim().is_empty();
+        let indented = !blank && (l.starts_with("    ") || l.starts_with('\t'));
+        in_indent = indented && !fenced && (after_blank || in_indent);
+        after_blank = blank;
+        let c = commands_in(l, fenced || in_indent);
         if !c.is_empty() {
             v.push((i as u32 + 1, c));
         }
@@ -196,7 +220,7 @@ pub fn suggest(text: &str, skill: bool) -> Vec<Suggested> {
         for cmd in &cmds {
             for part in parts(cmd) {
                 let low = part.to_ascii_lowercase();
-                let word = GOES_OUT.iter().find(|w| low.contains(*w)).copied();
+                let word = goes_out(&low);
                 let key = key_in(part);
                 let why = match (&key, word) {
                     (Some(k), _) => format!("spends {k}"),
@@ -361,6 +385,25 @@ git push origin main
             "python3 -I /home/me/.claude/skills/pub/scripts/publish.py --post"
         ));
         assert_eq!(catches(&s[0].pattern, text), [1, 2]);
+    }
+
+    /// 1.63 (U9): an indented block is read as a fenced one, and a post, a
+    /// send, an upload, an email or a tweet goes out when it is a word.
+    #[test]
+    fn an_indented_block_and_a_post_are_read_as_going_out() {
+        let text = "Reply to each tag:\n\n    omdbot post --thread 12 \"$BODY\"\n    omdbot send-dm 4\n\nThen `pg_dump postgres > x`.\n";
+        let s = suggest(text, false);
+        let got: Vec<&str> = s.iter().map(|x| x.pattern.as_str()).collect();
+        assert_eq!(got, ["omdbot post *", "omdbot send-dm *"], "{s:?}");
+        assert_eq!(
+            (s[0].lines.as_slice(), s[1].lines.as_slice()),
+            (&[3][..], &[4][..])
+        );
+        assert!(
+            suggest("Not code:\n    omdbot post x\n", false).is_empty(),
+            "no blank line before it"
+        );
+        assert_eq!(suggest("`mail -s hi x | email-it`", false).len(), 1);
     }
 
     #[test]

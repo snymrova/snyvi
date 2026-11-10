@@ -151,7 +151,7 @@ pub fn gather(conn: &Connection, now: i64) -> Result<OnYou> {
     let ran_quiet: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT r.routine_id) FROM routine_runs r
          JOIN routines x ON x.id = r.routine_id JOIN desks d ON d.id = x.desk_id
-         WHERE r.started_at >= ?1 AND r.state = 'done' AND x.removed_at = 0 AND d.closed_at = 0
+         WHERE r.started_at >= ?1 AND r.state IN ('done', 'quiet') AND x.removed_at = 0 AND d.closed_at = 0
            AND NOT (d.left_off_pane = x.pane AND d.left_off_needs = 'you' AND d.left_off_ok_at < d.left_off_at
                     AND d.left_off_until <= ?2 AND d.left_off_not = '')",
         params![day, now],

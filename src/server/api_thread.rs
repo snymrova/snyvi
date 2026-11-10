@@ -55,6 +55,19 @@ pub(crate) fn place_turn(app: &App, v: &mut serde_json::Value) {
         p.pane.name.clone()
     });
     v["runs_here"] = json!(s.running && s.agent_in && p.pane.agent_session.len() == 36);
+    // A routine's run card (1.63, U8): Run starts it as the routine's
+    // panel's process, as the desk's tray offers, so Home says which
+    // routine and whether its command is on that routine's Waits list.
+    if v.get("kind").and_then(serde_json::Value::as_str) == Some("run") {
+        if let Ok(Some(r)) = app.store.clocked(|c, _| crate::routine::of_pane(c, &pane)) {
+            let cmd = v
+                .get("cmd")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            v["waits_ok"] = json!(crate::routine::waits::on_list(&r.waits, cmd));
+            v["routine"] = json!(r.name);
+        }
+    }
 }
 
 /// `place_turn` on every card of a list, and on the card inside each row

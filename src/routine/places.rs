@@ -405,14 +405,29 @@ fn slashed(p: &Path) -> String {
 /// The files a skill's folder holds, sorted, or `None` when it is past
 /// the bounds and `SKILL.md` alone is hashed (T8).
 fn folder_files(dir: &Path) -> Option<Vec<PathBuf>> {
+    files_but(dir, None)
+}
+
+/// A routine's scripts folder keeps what its scripts remember in `state/`
+/// (a last id seen, a cursor): written by every run, so never part of what
+/// the reader allowed, or a gate that notes its day would stop its own
+/// routine at "changed · Allow" the next morning.
+pub const STATE: &str = "state";
+
+/// The files under `dir`, sorted, but the folder `skip` at its top; `None`
+/// past the bounds.
+fn files_but(dir: &Path, skip: Option<&str>) -> Option<Vec<PathBuf>> {
     let mut out = Vec::new();
     let mut bytes = 0u64;
     let mut stack = vec![dir.to_path_buf()];
+    let skipped = skip.map(|s| dir.join(s));
     while let Some(d) = stack.pop() {
         for e in std::fs::read_dir(&d).ok()?.flatten() {
             let Ok(t) = e.file_type() else { continue };
             if t.is_dir() {
-                stack.push(e.path());
+                if skipped.as_ref() != Some(&e.path()) {
+                    stack.push(e.path());
+                }
             } else if t.is_file() {
                 bytes += e.metadata().map(|m| m.len()).unwrap_or(0);
                 out.push(e.path());
@@ -450,6 +465,121 @@ pub fn hash(p: &Place) -> Option<String> {
         h.update(&[0]);
     }
     Some(h.finalize().to_hex().to_string())
+}
+
+/// A routine's scripts (1.63, R6): `.claude/routines/<cmd>/`, beside the
+/// `.claude` its command or skill is in -- the project's for a project
+/// command, `~/.claude/routines/<cmd>/` for one of the reader's own. `None`
+/// when there is no such folder.
+pub fn scripts(p: &Place, cmd: &str) -> Option<PathBuf> {
+    if !name_ok(cmd) {
+        return None;
+    }
+    let claude = p
+        .path
+        .ancestors()
+        .find(|a| a.file_name().is_some_and(|n| n == ".claude"))?;
+    let d = claude.join("routines").join(cmd);
+    d.is_dir().then_some(d)
+}
+
+/// The scripts folder as the sheet says it: `.claude/routines/pro-forum/`,
+/// `~/.claude/routines/pro-forum/`.
+pub fn scripts_said(p: &Place, cmd: &str) -> String {
+    match p.who {
+        Who::You => format!("~/.claude/routines/{cmd}/"),
+        Who::Project => format!(".claude/routines/{cmd}/"),
+    }
+}
+
+/// The scripts' files, sorted, under the folder's bounds; past them, `None`.
+pub fn script_files(dir: &Path) -> Option<Vec<PathBuf>> {
+    files_but(dir, Some(STATE))
+}
+
+/// What is allowed for a routine (1.63): the command's own hash, and with a
+/// scripts folder, every file in it folded in. A routine with no folder
+/// keeps the hash it had, so nothing from before reads as changed. A
+/// folder past the bounds is hashed by its names and sizes, and the sheet
+/// says only those are watched.
+pub fn hash_with(p: &Place, cmd: &str) -> Option<String> {
+    let main = hash(p)?;
+    let Some(dir) = scripts(p, cmd) else {
+        return Some(main);
+    };
+    let mut h = blake3::Hasher::new();
+    h.update(main.as_bytes());
+    match script_files(&dir) {
+        Some(files) if files.is_empty() => return Some(main),
+        Some(files) => {
+            for f in files {
+                h.update(slashed(f.strip_prefix(&dir).unwrap_or(&f)).as_bytes());
+                h.update(&[0]);
+                h.update(&std::fs::read(&f).unwrap_or_default());
+                h.update(&[0]);
+            }
+        }
+        None => {
+            h.update(b"large\0");
+            for e in walkdir_names(&dir, &dir.join(STATE)) {
+                h.update(e.as_bytes());
+                h.update(&[0]);
+            }
+        }
+    }
+    Some(h.finalize().to_hex().to_string())
+}
+
+/// A large folder's files by name and size, sorted, a few thousand at most.
+fn walkdir_names(dir: &Path, skip: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let Ok(t) = e.file_type() else { continue };
+            if t.is_dir() {
+                if e.path() != skip {
+                    stack.push(e.path());
+                }
+            } else {
+                let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+                out.push(format!(
+                    "{} {len}",
+                    slashed(e.path().strip_prefix(dir).unwrap_or(&e.path()))
+                ));
+            }
+            if out.len() > 4096 {
+                break;
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The scripts' text, for the diff kept beside the command's: each file
+/// under a heading of its own path. Not text, or past the bounds: its name.
+pub fn scripts_text(p: &Place, cmd: &str) -> String {
+    let Some(dir) = scripts(p, cmd) else {
+        return String::new();
+    };
+    let said = scripts_said(p, cmd);
+    let Some(files) = script_files(&dir) else {
+        return format!("\n\n## {said} (past 200 files or 4 MB: names and sizes only)\n");
+    };
+    let mut s = String::new();
+    for f in files {
+        let rel = slashed(f.strip_prefix(&dir).unwrap_or(&f));
+        let text = std::fs::read(&f)
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+            .unwrap_or_else(|| "(not text)".into());
+        s.push_str(&format!("\n\n## {said}{rel}\n\n{text}"));
+    }
+    s
 }
 
 #[cfg(test)]

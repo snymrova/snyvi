@@ -624,13 +624,21 @@ function turnRow(w) {
   // A run card offers what the desk will (A4): Run in the panel that asked
   // while a Claude session is in it, else a new panel there; Copy is for
   // anywhere. It said "Run on the desk" to a shell, where nothing ran.
-  const run = w.kind === "run" && !(w.options && w.options.length)
+  // A routine's card (1.63, U8) gets the desk's acts: Run, as that
+  // routine's panel's process, or Run anyway when its command is not on the
+  // routine's Waits list, said on the card; then Copy. No new panel: a
+  // routine's command belongs to its own.
+  const rtRun = w.kind === "run" && w.routine && w.cmd && !(w.options && w.options.length);
+  const run = rtRun
+    ? `<button type="button" class="cn-opt" data-a="cn-answer" data-k="${w.id}" data-v="${w.waits_ok ? "Run" : "Run anyway"}" data-tip="${w.waits_ok ? "Run" : "Run anyway"} in ${esc(w.routine)}'s panel" data-tip-sub="${w.waits_ok ? "on its Waits list" : "not on its Waits list"} · as that panel's process, in the desk's folder with its keys">${w.waits_ok ? "Run" : "Run anyway"}</button>` +
+      `<button type="button" class="cn-opt" data-a="cn-copy" data-c="${esc(w.cmd)}">Copy</button>`
+    : w.kind === "run" && !(w.options && w.options.length)
     ? `<button type="button" class="cn-opt rec" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}" data-tip="${w.runs_here ? `Typed into ${esc(panel)}'s prompt, on its desk` : "Run in a new panel on its desk"}">${w.runs_here ? `Run in ${esc(panel)} ›` : "New panel on the desk ›"}</button>` +
       (w.cmd ? `<button type="button" class="cn-opt" data-a="cn-copy" data-c="${esc(w.cmd)}">Copy</button>` : "")
     : "";
   return `<li class="cn-row cn-ask"><span class="cn-ico">${c.glyph("aside", 12)}</span><span class="cn-b">` +
     `<span class="cn-by"><b>${esc(who)}</b> · ${where} · ${c.relShort(w.created_at)}</span>` +
-    `<span class="cn-t">${code(w.text)}</span>${w.kind === "run" && w.options && w.options.length ? `<span class="cn-by">${w.options.filter(o => !o.startsWith("# ")).length} steps, run one at a time on the desk</span>` : w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>` : ""}` +
+    `<span class="cn-t">${code(w.text)}</span>${w.kind === "run" && w.options && w.options.length ? `<span class="cn-by">${w.options.filter(o => !o.startsWith("# ")).length} steps, run one at a time on the desk</span>` : w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>${rtRun ? `<span class="cn-by">${esc(w.routine)} · ${w.waits_ok ? "✓ on its Waits list" : "not on its Waits list"}</span>` : ""}` : ""}` +
     (L.pop === `t${w.id}` ? popHtml(`t${w.id}`, false) :
     `<span class="cn-acts">${run}${opts.map((o, i) => `<button type="button" class="cn-opt${i === w.recommended ? " rec" : ""}" data-a="cn-answer" data-k="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
     // A dated line's card carries the line's document (1.54): Open, Copy.
@@ -1131,7 +1139,7 @@ async function answer(id, v) {
   const w = L.turns.find(x => x.id === id);
   if (!w) return;
   // A due card is snyvi's (1.47): Done ticks its line, a time moves it.
-  sayIn(`t${id}`, w.kind === "due" ? (v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`) : w.kind === "tell" ? (v === "No one" ? "Told no one: it counts as told" : `${v}: a dated line is on its desk${v === "A post" || v === "Release note" ? " · a panel drafts it when you ask" : ""}`) : `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
+  sayIn(`t${id}`, w.routine && (v === "Run" || v === "Run anyway") ? `Running in ${w.routine}'s panel: ${w.cmd}` : w.kind === "due" ? (v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`) : w.kind === "tell" ? (v === "No one" ? "Told no one: it counts as told" : `${v}: a dated line is on its desk${v === "A post" || v === "Release note" ? " · a panel drafts it when you ask" : ""}`) : `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
   try { await c.deskApi(`/api/desks/${w.desk_id}/turns/${id}/answer`, { answer: v }); }
   catch (e) { sayIn(`t${id}`, `Could not answer it: ${c.sayErr(e).why}`); }
   if (L.card?.key === `t${id}`) settle();

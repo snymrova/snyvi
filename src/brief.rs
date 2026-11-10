@@ -410,7 +410,7 @@ fn routine_lines(
         let mut s = format!(
             "This panel is the routine \"{}\" ({}), {what} by snyvi in a panel in the back: {first}. Ask each decision with ask; end with leave_off.",
             cut(&r.name, 60),
-            r.every,
+            when_of(r),
         );
         if !r.waits.is_empty() {
             let w: Vec<String> = r
@@ -423,6 +423,11 @@ fn routine_lines(
                 " These wait for the user and are denied here: hand each over with hand_over run, never run them another way: {}.",
                 w.join(", ")
             ));
+        }
+        // 1.63: what woke it, which is also on its prompt: its hour and
+        // that time's words, the lines its watch or gate printed, a try's.
+        if !r.woke.is_empty() {
+            s.push_str(&format!(" It woke on: {}.", cut(&r.woke, 120)));
         }
         if r.late_s > 0 {
             s.push_str(&format!(" It started late by {}", ago_words(r.late_s)));
@@ -447,13 +452,23 @@ fn routine_lines(
             } else {
                 String::new()
             };
-            format!("{} ({}{last})", cut(&r.name, 40), r.every)
+            format!("{} ({}{last})", cut(&r.name, 40), when_of(r))
         })
         .collect();
     vec![format!(
         "Routines on this desk, snyvi's to start at their hour, never yours: {}.",
         named.join("; ")
     )]
+}
+
+/// A routine's when as the brief says it: its times, or its watch alone.
+fn when_of(r: &crate::routine::Routine) -> String {
+    match (r.every.is_empty(), r.watch.is_empty()) {
+        (false, true) => r.every.clone(),
+        (false, false) => format!("{}, and when its watch prints a line", r.every),
+        (true, false) => "when its watch prints a line".into(),
+        (true, true) => "no time yet".into(),
+    }
 }
 
 /// `13 h`, `2 d`: a span on its own.
@@ -1802,6 +1817,21 @@ mod tests {
             mine.contains("It started late by 13 h: the last run was 1 day ago."),
             "{mine}"
         );
+        // 1.63: what woke it, beside its prompt.
+        let woken = crate::routine::Routine {
+            woke: "tag 5304 ; tag 5311".into(),
+            watch: "omdbot watch".into(),
+            every: String::new(),
+            ..all[0].clone()
+        };
+        let one = [woken];
+        let w = Work {
+            routines: &one,
+            ..Work::default()
+        };
+        let said = brief_of(&d, 5, &w, &[], &[], None, now);
+        assert!(said.contains("(when its watch prints a line)"), "{said}");
+        assert!(said.contains("It woke on: tag 5304 ; tag 5311."), "{said}");
         let other = brief_of(&d, 1, &work, &[], &[], None, now);
         assert!(other.contains("Routines on this desk, snyvi's to start at their hour, never yours: newsroom (every day 07:30, ran 1 day ago, done)."), "{other}");
         assert!(

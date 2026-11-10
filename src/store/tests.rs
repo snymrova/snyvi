@@ -176,6 +176,16 @@ const OLD_1_47: &str =
      ALTER TABLE threads DROP COLUMN told_how; ALTER TABLE threads DROP COLUMN ask_told_at;
      DROP TABLE home_state; ALTER TABLE desks DROP COLUMN rule_asked_at;";
 
+/// 1.63's step, taken back (step 38, `routine::TRIGGER_COLUMNS_1_63`): a
+/// routine's times and events, its gate, watch, shape, model, effort,
+/// context and drops, and a run's window and what woke it.
+const OLD_1_63: &str = "DROP TABLE routine_times; DROP TABLE routine_events;
+  ALTER TABLE routines DROP COLUMN gate; ALTER TABLE routines DROP COLUMN watch;
+  ALTER TABLE routines DROP COLUMN shape; ALTER TABLE routines DROP COLUMN model;
+  ALTER TABLE routines DROP COLUMN effort; ALTER TABLE routines DROP COLUMN slim;
+  ALTER TABLE routines DROP COLUMN dropped; ALTER TABLE routines DROP COLUMN woke; ALTER TABLE routine_runs DROP COLUMN five_before;
+  ALTER TABLE routine_runs DROP COLUMN five_after; ALTER TABLE routine_runs DROP COLUMN woke;";
+
 /// 1.58's step, taken back: the checks held on a note (step 36,
 /// `desk::checks::COLUMNS_1_58`).
 /// 1.62's step, taken back (step 37, `page::COLUMNS_1_62`): the page's main
@@ -1098,7 +1108,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1387,7 +1397,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1922,7 +1932,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1965,7 +1975,7 @@ fn a_1_46_1_database_keeps_its_panel_names() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
+        "{OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
     ))
     .unwrap();
     drop(conn);
@@ -2026,7 +2036,7 @@ fn a_1_56_database_opens_with_no_tabs_and_its_first_tab_moves_nothing() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_62} {OLD_1_58} {OLD_1_57} PRAGMA user_version = 34;"
+        "{OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} PRAGMA user_version = 34;"
     ))
     .unwrap();
     drop(conn);
@@ -2159,4 +2169,53 @@ fn a_tab_renumbers_its_own_documents_and_a_moved_panel_takes_its_own() {
     assert_eq!(at(&format!("{two}-2")), (two, 1));
     assert_eq!(at(&format!("{two}-3")), (two, 2));
     assert_eq!(at(&format!("{one}-2")), (one, 1), "one's own untouched");
+}
+
+/// 1.63: a 1.62 routine, live at its one hour, opens as a routine with one
+/// time at that hour, and nothing else about it moves (step 38).
+#[test]
+fn a_1_62_routine_opens_with_its_one_hour_as_its_one_time() {
+    let dir = tempdir::Dir::new("snyvi-store-1-62");
+    let paths = Paths {
+        data_dir: dir.path.clone(),
+        config_dir: dir.path.clone(),
+        docs_dir: dir.path.join("docs"),
+        db_path: dir.path.join("t.db"),
+        token_path: dir.path.join("token"),
+    };
+    let desk = {
+        let s = Store::open(&paths).unwrap();
+        s.create_desk(dir.path.to_str().unwrap(), Some("news"))
+            .unwrap()
+            .id
+    };
+    let conn = Connection::open(&paths.db_path).unwrap();
+    conn.execute_batch(&format!("{OLD_1_63} PRAGMA user_version = 37;"))
+        .unwrap();
+    conn.execute(
+        "INSERT INTO routines(desk_id, name, cmd, every, due_at, created_at, started_at)
+         VALUES(?1, 'news', 'news', 'every day 07:30', 1800000000, 1, 1)",
+        [desk],
+    )
+    .unwrap();
+    drop(conn);
+    let s = Store::open(&paths).unwrap();
+    let conn = s.conn.lock().unwrap();
+    let r = crate::routine::for_desk(&conn, desk).unwrap().remove(0);
+    assert_eq!(
+        (r.every.as_str(), r.due_at),
+        ("every day 07:30", 1_800_000_000)
+    );
+    assert_eq!((r.gate.as_str(), r.watch.as_str(), r.slim), ("", "", false));
+    let t = crate::routine::times::times_of(&conn, r.id).unwrap();
+    assert_eq!(t.len(), 1);
+    assert_eq!(
+        (
+            t[0].every.as_str(),
+            t[0].words.as_str(),
+            t[0].gated,
+            t[0].due_at
+        ),
+        ("every day 07:30", "", true, 1_800_000_000)
+    );
 }

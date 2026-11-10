@@ -897,8 +897,9 @@ const THREAD_CSS = `
 .tn-opt { padding: 1px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
 .tn-opt:hover { color: var(--fg); border-color: var(--accent); }
 .tn-opt.rec { border-color: var(--accent); color: var(--fg); }
-/* The recommended answer: the star and the outline, as off the desk (1.56). */
-.tn-opt.rec::before { content: "★ "; color: var(--accent); font-size: .85em; }
+/* The recommended answer: the star and the outline, as off the desk (1.56).
+   The star is the button's own span (picks): a ::before here as well drew
+   two (1.63, U11). */
 .tn-opt.quiet { border-style: dashed; }
 .tn-x { margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
 .tn-x:hover { background: var(--rule-2); color: var(--fg); }
@@ -909,7 +910,7 @@ const THREAD_CSS = `
 .dk-turn:not(.grp) > .tn-acts > .tn-x, .tn-gq > .tn-acts > .tn-x, .tn-gx { position: absolute; top: 4px; right: 4px; margin: 0; }
 .tn-gq > .tn-acts > .tn-x { top: 4px; right: -4px; }
 .dk-turn:not(.grp) > .tn-q, .tn-gq > .tn-q, .dk-turn.grp > .tn-by:first-child { padding-right: 20px; }
-.tn-star { margin-right: 3px; color: var(--accent); }
+.tn-star { margin-right: 3px; color: var(--accent); font-size: .85em; }
 .tn-wait { font-size: var(--fs-micro); color: var(--fg-3); }
 .dk-turn.said { border-style: dashed; }
 /* Questions asked together: one card, a row for each, ruled apart. */

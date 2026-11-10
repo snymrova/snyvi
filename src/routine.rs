@@ -30,12 +30,23 @@
 //! reader's own words, sent as they are. An agent's offer is a draft with
 //! its name on it, and never words.
 //!
+//! 1.63 (plan d621276291): a routine has **times** (`times`), each hour with
+//! its own words and its own "Only if"; a **gate**, a command the reader
+//! allowed that says whether a clock run is worth a session; and a
+//! **watch**, a command that prints a line when something happens, whose
+//! lines in the reader's shape wake it (`events`). Only ids reach the
+//! prompt: `/pro-forum tag 5304 ; tag 5311`.
+//!
 //! The store's side only, as `crate::desk` is for notes: no HTTP, no panes.
 
+pub mod events;
 pub mod places;
+pub mod times;
 pub mod waits;
 
-use crate::due::every::{every, every_tail, Every};
+pub use times::TRIGGER_COLUMNS_1_63;
+
+use crate::due::every::{every_tail, Times};
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -110,6 +121,11 @@ pub const LINE_CHARS: usize = 120;
 const WAITS_MAX: usize = 12;
 const WAIT_CHARS: usize = 200;
 
+/// The models a routine may run with (S1), `""` the reader's default.
+pub const MODELS: &[&str] = &["", "haiku", "sonnet", "opus", "fable"];
+/// Its effort, `""` the default.
+pub const EFFORTS: &[&str] = &["", "low", "medium", "high"];
+
 /// `running`: a Claude session is under way in the routine's panel. Any
 /// other non-empty value is the command a run card started there.
 pub const SESSION: &str = "session";
@@ -163,6 +179,23 @@ pub struct Routine {
     /// The file its name came to when it was allowed (`places::Place::file`).
     #[serde(rename = "path")]
     pub file: String,
+    /// 1.63: the command that says whether a clock run is worth a session
+    /// (exit 0 yes, 1 no), asked only for a time with "Only if" ticked.
+    pub gate: String,
+    /// 1.63: the command that prints a line when something happens.
+    pub watch: String,
+    /// 1.63: the shape a watch's line must have to wake it (`events::ok`).
+    pub shape: String,
+    /// 1.63: `--model` and `--effort` for its sessions; empty for the default.
+    pub model: String,
+    pub effort: String,
+    /// 1.63: its sessions start without the reader's global CLAUDE.md.
+    pub slim: bool,
+    /// 1.63: the watch's lines dropped as out of shape, all told.
+    pub dropped: i64,
+    /// 1.63: what woke the run under way, or the last: written before its
+    /// start, so the brief its session reads at once can say it.
+    pub woke: String,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -198,8 +231,20 @@ impl Routine {
         self.cmd.is_empty()
     }
 
-    pub fn cadence(&self) -> Option<Every> {
-        every(&self.every)
+    /// The prompt with what woke it (1.63): a time's words, then the ids its
+    /// watch or gate printed, `/pro-forum tag 5304 ; tag 5311`. Both are
+    /// the reader's: their words, or lines in the shape they allowed.
+    pub fn prompt_with(&self, words: &str, ids: &[String]) -> String {
+        let mut p = self.prompt();
+        if !words.is_empty() {
+            p.push(' ');
+            p.push_str(words);
+        }
+        if !ids.is_empty() {
+            p.push(' ');
+            p.push_str(&ids.join(" ; "));
+        }
+        p
     }
 }
 
@@ -208,7 +253,7 @@ impl Routine {
 pub struct Run {
     pub id: i64,
     /// `clock`, `you` (Run now), `try` (Try once now), `answer` (a card's
-    /// answer) or `card` (a run card's command).
+    /// answer), `card` (a run card's command) or `event` (its watch, 1.63).
     pub why: String,
     pub what: String,
     pub started_at: i64,
@@ -219,6 +264,15 @@ pub struct Run {
     pub late_s: i64,
     /// How long the machine slept while it ran.
     pub slept_s: i64,
+    /// What woke it (1.63): `13:00 · case`, `tag 5304 ; tag 5311`.
+    pub woke: String,
+    /// The five-hour window's use before and after, when both readings were
+    /// fresh; -1 when not kept.
+    pub five_before: f64,
+    pub five_after: f64,
+    /// Quiet runs of the same day folded into this line (1.63, R10).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub more: i64,
 }
 
 /// A line read as a routine: its name, its command, its cadence.
@@ -229,7 +283,9 @@ pub struct Line {
     pub cmd: String,
     /// Typed with its `/`: a command, never words.
     pub slash: bool,
-    pub every: Every,
+    /// Its when, if the line ends in one (1.63: the field is what-only, and
+    /// a draft may have no time until its sheet gives it one).
+    pub every: Option<Times>,
 }
 
 impl Line {
@@ -240,12 +296,15 @@ impl Line {
     }
 }
 
-/// What a line ending in a cadence says: `newsroom · every day 07:30`,
-/// `/bench main, every weekday 9`, `open PRs, summarise · every weekday 9`.
-/// Whether its first word is a command is the caller's to look up
-/// (`resolve`): a line typed with `/` must be one, any other may be words.
+/// What a line says: `newsroom`, `/bench main`, `open PRs, summarise`, and
+/// a when if it ends in one (`newsroom · every day 07:30`). Whether its
+/// first word is a command is the caller's to look up (`resolve`): a line
+/// typed with `/` must be one, any other may be words.
 pub fn from_line(text: &str) -> Option<Line> {
-    let (head, every) = every_tail(text)?;
+    let (head, every) = match every_tail(text) {
+        Some((h, t)) => (h, Some(t)),
+        None => (text.to_string(), None),
+    };
     let head = head.trim().trim_end_matches(['·', ',', ';', '-']).trim();
     let slash = head.starts_with('/');
     let name = head.trim_start_matches('/').trim().to_string();
@@ -285,7 +344,7 @@ fn resolve_name(root: &Path, cmd: &str, slash: bool) -> Made {
         return Made::Words;
     }
     match places::resolve(root, cmd) {
-        places::Resolved::One(p) => match places::hash(&p) {
+        places::Resolved::One(p) => match places::hash_with(&p, cmd) {
             Some(h) => Made::File(p, h),
             None => Made::NoFile(cmd.to_string()),
         },
@@ -363,16 +422,26 @@ pub fn rule(pattern: &str) -> String {
 
 /// The run's settings: the deny rules every run has, and what waits for the
 /// reader. Nothing else: the session's other settings are the reader's own.
-pub fn settings(deny: &[&str], waits: &[String]) -> serde_json::Value {
+///
+/// 1.63 (S2): a slim run leaves out the reader's global `CLAUDE.md` with
+/// Claude Code's own `claudeMdExcludes`; their commands and skills stay, so
+/// `/pro-forum` is still there.
+pub fn settings(deny: &[&str], waits: &[String], slim_home: Option<&Path>) -> serde_json::Value {
     let mut rules: Vec<String> = deny.iter().map(|s| s.to_string()).collect();
     rules.extend(waits.iter().map(|w| rule(w)));
-    serde_json::json!({ "permissions": { "deny": rules } })
+    let mut v = serde_json::json!({ "permissions": { "deny": rules } });
+    if let Some(home) = slim_home {
+        let f = home.join(".claude").join("CLAUDE.md");
+        v["claudeMdExcludes"] = serde_json::json!([f.to_string_lossy()]);
+    }
+    v
 }
 
 const COLS: &str =
     "id, desk_id, name, cmd, every, due_at, waits, minutes, five_hour, pane, cmd_hash,
     allowed_at, last_at, last_state, last_line, runs, running_since, running, late_s,
-    suggested_by, suggested_pane, paused_at, created_at, removed_at, started_at, file, slept_s";
+    suggested_by, suggested_pane, paused_at, created_at, removed_at, started_at, file, slept_s,
+    gate, watch, shape, model, effort, slim, dropped, woke";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Routine> {
     let waits: String = r.get(6)?;
@@ -404,6 +473,14 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Routine> {
         started_at: r.get(24)?,
         file: r.get(25)?,
         slept_s: r.get(26)?,
+        gate: r.get(27)?,
+        watch: r.get(28)?,
+        shape: r.get(29)?,
+        model: r.get(30)?,
+        effort: r.get(31)?,
+        slim: r.get::<_, i64>(32)? != 0,
+        dropped: r.get(33)?,
+        woke: r.get(34)?,
     })
 }
 
@@ -507,13 +584,11 @@ pub fn add(
     tx.execute(
         "INSERT INTO routines(desk_id, name, cmd, every, due_at, waits, file,
            suggested_by, suggested_pane, created_at)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         VALUES(?1, ?2, ?3, '', 0, ?4, ?5, ?6, ?7, ?8)",
         params![
             desk_id,
             line.name,
             line.cmd,
-            line.every.words(),
-            line.every.next_after(now, crate::due::offset()),
             waits.join("\n"),
             file,
             crate::thread::line(from.by, 60),
@@ -522,15 +597,38 @@ pub fn add(
         ],
     )?;
     let id = tx.last_insert_rowid();
+    if let Some(t) = &line.every {
+        let one = times::Line {
+            times: t.clone(),
+            words: String::new(),
+            gated: true,
+        };
+        times::set(&tx, id, &[one], now)?;
+    }
     let r = get(&tx, id)?.expect("the row just written");
     tx.commit()?;
     Ok(Added::Routine(Box::new(r)))
 }
 
+/// What wakes a routine besides its times, and what it runs with (1.63).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Triggers {
+    pub gate: String,
+    pub watch: String,
+    pub shape: String,
+    pub model: String,
+    pub effort: String,
+}
+
 /// The sheet's Save.
+#[derive(Clone, Default)]
 pub struct Save {
     pub name: String,
-    pub every: Every,
+    /// Its When, whole: empty for a draft with no time yet, `None` to keep
+    /// the times it has.
+    pub times: Option<Vec<times::Line>>,
+    pub triggers: Triggers,
+    pub slim: bool,
     pub waits: Vec<String>,
     pub minutes: i64,
     pub five_hour: i64,
@@ -540,48 +638,91 @@ pub struct Save {
     pub file: String,
 }
 
-/// Save the sheet: the next hour read again from the cadence, a live
-/// routine's file allowed as it is, and an offer made the reader's draft.
-pub fn save(conn: &Connection, id: i64, s: &Save, now: i64) -> Result<bool> {
-    let n = conn.execute(
-        "UPDATE routines SET name = ?2, every = ?3, due_at = ?4, waits = ?5, minutes = ?6,
-           five_hour = ?7,
-           cmd_hash = CASE WHEN started_at = 0 OR ?8 = '' THEN cmd_hash ELSE ?8 END,
-           file = CASE WHEN started_at = 0 OR ?8 = '' THEN file ELSE ?10 END,
-           allowed_at = CASE WHEN started_at = 0 OR ?8 = '' THEN allowed_at ELSE ?9 END,
-           suggested_by = '', suggested_pane = ''
+/// Save the sheet: its times written whole and armed from now, its gate,
+/// watch and shape, a live routine's file allowed as it is, and an offer
+/// made the reader's draft. One transaction: what the reader saved is
+/// what runs, all of it or none (R5). `false` when it is not on view or
+/// names more than `times::MAX` hours.
+pub fn save(conn: &mut Connection, id: i64, s: &Save, now: i64) -> Result<bool> {
+    let tx = conn.transaction()?;
+    let n = tx.execute(
+        "UPDATE routines SET name = ?2, waits = ?3, minutes = ?4, five_hour = ?5,
+           cmd_hash = CASE WHEN started_at = 0 OR ?6 = '' THEN cmd_hash ELSE ?6 END,
+           file = CASE WHEN started_at = 0 OR ?6 = '' THEN file ELSE ?8 END,
+           allowed_at = CASE WHEN started_at = 0 OR ?6 = '' THEN allowed_at ELSE ?7 END,
+           suggested_by = '', suggested_pane = '',
+           gate = ?9, watch = ?10, shape = ?11, model = ?12, effort = ?13, slim = ?14
          WHERE id = ?1 AND removed_at = 0",
         params![
             id,
             s.name,
-            s.every.words(),
-            s.every.next_after(now, crate::due::offset()),
             s.waits.join("\n"),
             s.minutes.clamp(1, 240),
             s.five_hour.clamp(10, 100),
             s.hash,
             now,
-            s.file
+            s.file,
+            s.triggers.gate,
+            s.triggers.watch,
+            s.triggers.shape,
+            s.triggers.model,
+            s.triggers.effort,
+            s.slim as i64,
         ],
     )?;
-    Ok(n > 0)
+    if n == 0 {
+        return Ok(false);
+    }
+    if let Some(t) = &s.times {
+        if times::set(&tx, id, t, now)?.is_none() {
+            return Ok(false);
+        }
+    }
+    tx.commit()?;
+    Ok(true)
+}
+
+/// An agent's offer, given what it would run with (1.63): its times, gate,
+/// watch, shape, model. Only on an offer row, which never runs; the
+/// reader's Save is what makes any of it theirs.
+pub fn offered(
+    conn: &mut Connection,
+    id: i64,
+    when: &[times::Line],
+    t: &Triggers,
+    now: i64,
+) -> Result<bool> {
+    let tx = conn.transaction()?;
+    let n = tx.execute(
+        "UPDATE routines SET gate = ?2, watch = ?3, shape = ?4, model = ?5, effort = ?6
+         WHERE id = ?1 AND suggested_by != '' AND started_at = 0",
+        params![id, t.gate, t.watch, t.shape, t.model, t.effort],
+    )?;
+    if n == 0 || times::set(&tx, id, when, now)?.is_none() {
+        return Ok(false);
+    }
+    tx.commit()?;
+    Ok(true)
+}
+
+/// Whether a routine has a when: a time, or a watch to wake it (C3).
+pub fn has_when(conn: &Connection, r: &Routine) -> Result<bool> {
+    Ok(!r.watch.trim().is_empty() || !times::times_of(conn, r.id)?.is_empty())
 }
 
 /// Start it: a draft or an offer made live, its file allowed as it is now
 /// (`hash`, `file`; both empty for words), its first hour the next one.
 pub fn start(conn: &Connection, id: i64, hash: &str, file: &str, now: i64) -> Result<bool> {
-    let Some(r) = get(conn, id)? else {
-        return Ok(false);
-    };
-    let next = r
-        .cadence()
-        .map_or(now + 86_400, |e| e.next_after(now, crate::due::offset()));
-    Ok(conn.execute(
-        "UPDATE routines SET started_at = ?2, due_at = ?3, cmd_hash = ?4, file = ?5,
+    let n = conn.execute(
+        "UPDATE routines SET started_at = ?2, cmd_hash = ?3, file = ?4,
            allowed_at = ?2, suggested_by = '', suggested_pane = '', late_s = 0
          WHERE id = ?1 AND removed_at = 0 AND started_at = 0",
-        params![id, now, next, hash, file],
-    )? > 0)
+        params![id, now, hash, file],
+    )?;
+    if n > 0 {
+        times::rearm_all(conn, id, now)?;
+    }
+    Ok(n > 0)
 }
 
 /// What the row's menu does.
@@ -591,6 +732,8 @@ pub enum Act {
     Resume,
     Remove,
     Restore,
+    /// 1.63: the run under way ends, said so (`server::routine_run::stop`).
+    Stop,
 }
 
 impl Act {
@@ -600,6 +743,7 @@ impl Act {
             "resume" => Act::Resume,
             "remove" => Act::Remove,
             "restore" => Act::Restore,
+            "stop" => Act::Stop,
             _ => return None,
         })
     }
@@ -608,38 +752,31 @@ impl Act {
 /// Pause, Resume, Remove from view, Restore. Resume reads the next hour
 /// from now: a routine paused a week does not ring for the days it missed.
 pub fn act(conn: &Connection, id: i64, act: Act, now: i64) -> Result<bool> {
-    let Some(r) = get(conn, id)? else {
-        return Ok(false);
-    };
     let n = match act {
         Act::Pause => conn.execute(
             "UPDATE routines SET paused_at = ?2 WHERE id = ?1 AND removed_at = 0 AND paused_at = 0",
             params![id, now],
         )?,
-        Act::Resume => {
-            let next = r
-                .cadence()
-                .map_or(r.due_at, |e| e.next_after(now, crate::due::offset()));
-            conn.execute(
-                "UPDATE routines SET paused_at = 0, due_at = ?2 WHERE id = ?1 AND removed_at = 0",
-                params![id, next],
-            )?
-        }
+        Act::Resume => conn.execute(
+            "UPDATE routines SET paused_at = 0 WHERE id = ?1 AND removed_at = 0",
+            params![id],
+        )?,
         Act::Remove => conn.execute(
             "UPDATE routines SET removed_at = ?2 WHERE id = ?1 AND removed_at = 0",
             params![id, now],
         )?,
-        Act::Restore => {
-            let next = r
-                .cadence()
-                .map_or(r.due_at, |e| e.next_after(now, crate::due::offset()));
-            conn.execute(
-                "UPDATE routines SET removed_at = 0, due_at = ?2 WHERE id = ?1 AND removed_at != 0
-                 AND (SELECT COUNT(*) FROM routines o WHERE o.desk_id = routines.desk_id AND o.removed_at = 0) < ?3",
-                params![id, next, PER_DESK],
-            )?
+        Act::Restore => conn.execute(
+            "UPDATE routines SET removed_at = 0 WHERE id = ?1 AND removed_at != 0
+             AND (SELECT COUNT(*) FROM routines o WHERE o.desk_id = routines.desk_id AND o.removed_at = 0) < ?2",
+            params![id, PER_DESK],
+        )?,
+        Act::Stop => {
+            return ended(conn, id, "stopped by you", "", now);
         }
     };
+    if n > 0 && matches!(act, Act::Resume | Act::Restore) {
+        times::rearm_all(conn, id, now)?;
+    }
     Ok(n > 0)
 }
 
@@ -654,7 +791,9 @@ pub fn allow(conn: &Connection, id: i64, hash: &str, file: &str, now: i64) -> Re
 }
 
 /// The clock's question: the routines whose hour has come, on view, not
-/// paused, not an offer, on an open desk. A parked desk's are found too,
+/// paused, not an offer, not running (R3: passed over, not re-armed, so the
+/// hour runs after the run under way), on an open desk; a routine with no
+/// time (`due_at = 0`) never. A parked desk's are found too,
 /// so the hour is passed by and said (`skipped: desk parked`) rather than
 /// kept for the day the desk is unparked.
 pub fn due(conn: &Connection, now: i64) -> Result<Vec<Routine>> {
@@ -665,8 +804,8 @@ pub fn due(conn: &Connection, now: i64) -> Result<Vec<Routine>> {
         .join(", ");
     let mut st = conn.prepare_cached(&format!(
         "SELECT {cols} FROM routines r JOIN desks d ON d.id = r.desk_id
-         WHERE r.due_at <= ?1 AND r.removed_at = 0 AND r.paused_at = 0 AND r.suggested_by = ''
-           AND r.started_at != 0 AND d.closed_at = 0
+         WHERE r.due_at > 0 AND r.due_at <= ?1 AND r.removed_at = 0 AND r.paused_at = 0
+           AND r.suggested_by = '' AND r.started_at != 0 AND r.running_since = 0 AND d.closed_at = 0
          ORDER BY r.due_at, r.id LIMIT 12"
     ))?;
     let v = st
@@ -679,38 +818,34 @@ pub fn due(conn: &Connection, now: i64) -> Result<Vec<Routine>> {
 /// view, so nothing is said, and reopening it never starts a stale run.
 pub fn pass_closed(conn: &Connection, now: i64) -> Result<usize> {
     let mut st = conn.prepare_cached(
-        "SELECT r.id, r.every FROM routines r JOIN desks d ON d.id = r.desk_id
-         WHERE r.due_at <= ?1 AND r.removed_at = 0 AND r.started_at != 0 AND d.closed_at != 0
+        "SELECT r.id FROM routines r JOIN desks d ON d.id = r.desk_id
+         WHERE r.due_at > 0 AND r.due_at <= ?1 AND r.removed_at = 0 AND r.started_at != 0
+           AND d.closed_at != 0
          LIMIT 64",
     )?;
-    let v: Vec<(i64, String)> = st
-        .query_map(params![now], |r| Ok((r.get(0)?, r.get(1)?)))?
+    let v: Vec<i64> = st
+        .query_map(params![now], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
-    for (id, every) in &v {
-        let next = crate::due::every::every(every)
-            .map_or(now + 86_400, |e| e.next_after(now, crate::due::offset()));
-        conn.execute(
-            "UPDATE routines SET due_at = ?2, late_s = 0 WHERE id = ?1",
-            params![id, next],
-        )?;
+    for id in &v {
+        times::rearm_all(conn, *id, now)?;
+        conn.execute("UPDATE routines SET late_s = 0 WHERE id = ?1", params![id])?;
     }
     Ok(v.len())
 }
 
-/// The next hour, set before a run starts, so one that fails to start
-/// never rings twice; and how late this one is.
-pub fn rearm(conn: &Connection, r: &Routine, now: i64) -> Result<i64> {
-    let next = r
-        .cadence()
-        .map_or(now + 86_400, |e| e.next_after(now, crate::due::offset()));
-    let late = if now - r.due_at > 3600 {
-        now - r.due_at
+/// The times that rang, set to their next before a run starts, so one
+/// that fails to start never rings twice; and how late this one is. The
+/// other times past due keep theirs for the next look (R3).
+pub fn rearm(conn: &Connection, r: &Routine, f: &times::Fired, now: i64) -> Result<i64> {
+    times::rearm_fired(conn, r.id, f, now)?;
+    let late = if now - f.due_at > 3600 {
+        now - f.due_at
     } else {
         0
     };
     conn.execute(
-        "UPDATE routines SET due_at = ?2, late_s = ?3 WHERE id = ?1",
-        params![r.id, next, late],
+        "UPDATE routines SET late_s = ?2 WHERE id = ?1",
+        params![r.id, late],
     )?;
     Ok(late)
 }
@@ -750,6 +885,15 @@ pub fn began(
     Ok(conn.last_insert_rowid())
 }
 
+/// What wakes the run about to start, before its session does (1.63).
+pub fn waking(conn: &Connection, id: i64, woke: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE routines SET woke = ?2 WHERE id = ?1",
+        params![id, crate::thread::line(woke, LINE_CHARS)],
+    )?;
+    Ok(())
+}
+
 /// A start not from the clock, before its session starts: on time. Said
 /// before the start and not only in `began`, since the brief the session
 /// reads at its start tells it how late it is.
@@ -758,14 +902,21 @@ pub fn not_late(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
+/// The runs that were sessions or commands, in SQL: not an hour passed by,
+/// not a quiet run, not a failed gate (1.63, R10).
+const RAN: &str =
+    "state NOT LIKE 'skipped%' AND state != 'quiet' AND state NOT LIKE 'gate failed%'";
+
 /// An hour that never ran leaves the row saying the last run's lateness,
 /// not its own: `rearm` wrote it before a start that did not happen.
 pub fn late_as_last(conn: &Connection, id: i64) -> Result<()> {
     conn.execute(
-        "UPDATE routines SET late_s = COALESCE((SELECT late_s FROM routine_runs
-           WHERE routine_id = ?1 AND state NOT LIKE 'skipped%'
-           ORDER BY started_at DESC, id DESC LIMIT 1), 0)
-         WHERE id = ?1",
+        &format!(
+            "UPDATE routines SET late_s = COALESCE((SELECT late_s FROM routine_runs
+               WHERE routine_id = ?1 AND {RAN}
+               ORDER BY started_at DESC, id DESC LIMIT 1), 0)
+             WHERE id = ?1"
+        ),
         params![id],
     )?;
     Ok(())
@@ -804,18 +955,85 @@ pub fn ended(conn: &Connection, id: i64, state: &str, line: &str, now: i64) -> R
 }
 
 /// An hour that could not run, and why: the row says it, the history keeps
-/// it, the next hour is kept, and the lateness the row says is the last
-/// run's again.
-pub fn skipped(conn: &Connection, id: i64, why: &str, now: i64) -> Result<()> {
+/// it under what started it (`run_why`: `clock`, `event`, `answer`, …),
+/// the next hour is kept, and the lateness the row says is the last run's
+/// again.
+pub fn skipped(conn: &Connection, id: i64, run_why: &str, why: &str, now: i64) -> Result<()> {
+    passed(conn, id, run_why, &format!("skipped: {why}"), "", now)
+}
+
+/// A run that never was a session, said on the row and kept in History:
+/// `skipped: …`, `quiet`, `gate failed: …`.
+fn passed(
+    conn: &Connection,
+    id: i64,
+    run_why: &str,
+    state: &str,
+    woke: &str,
+    now: i64,
+) -> Result<()> {
     late_as_last(conn, id)?;
     conn.execute(
         "UPDATE routines SET last_state = ?2 WHERE id = ?1",
-        params![id, format!("skipped: {why}")],
+        params![id, state],
     )?;
     conn.execute(
-        "INSERT INTO routine_runs(routine_id, why, what, started_at, ended_at, state)
-         VALUES(?1, 'clock', '', ?2, ?2, ?3)",
-        params![id, now, format!("skipped: {why}")],
+        "INSERT INTO routine_runs(routine_id, why, what, started_at, ended_at, state, woke)
+         VALUES(?1, ?2, '', ?3, ?3, ?4, ?5)",
+        params![id, run_why, now, state, woke],
+    )?;
+    Ok(())
+}
+
+/// The gate said no (exit 1, 1.63): one grey line, no session, no panel.
+/// The row says `quiet` and when.
+pub fn quiet(conn: &Connection, id: i64, woke: &str, now: i64) -> Result<()> {
+    passed(conn, id, "clock", "quiet", woke, now)?;
+    conn.execute(
+        "UPDATE routines SET last_at = ?2 WHERE id = ?1",
+        params![id, now],
+    )?;
+    Ok(())
+}
+
+/// The gate failed (any exit but 0 and 1, a timeout): on the row, in History.
+pub fn gate_failed(conn: &Connection, id: i64, why: &str, woke: &str, now: i64) -> Result<()> {
+    passed(conn, id, "clock", &format!("gate failed: {why}"), woke, now)
+}
+
+/// The states of a routine's last `n` runs, newest first.
+pub fn last_states(conn: &Connection, id: i64, n: i64) -> Result<Vec<String>> {
+    let mut st = conn.prepare_cached(
+        "SELECT state FROM routine_runs WHERE routine_id = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
+    )?;
+    let v = st
+        .query_map(params![id, n], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(v)
+}
+
+/// What woke a run, and the five-hour window's use as it began (when the
+/// reading was fresh), on its history line.
+pub fn woke(conn: &Connection, run_id: i64, woke: &str, five: Option<f64>) -> Result<()> {
+    conn.execute(
+        "UPDATE routine_runs SET woke = ?2, five_before = ?3 WHERE id = ?1",
+        params![
+            run_id,
+            crate::thread::line(woke, LINE_CHARS),
+            five.unwrap_or(-1.0)
+        ],
+    )?;
+    Ok(())
+}
+
+/// The window's use as the run ended, when the reading was fresh: History
+/// says "window moved 2%" only when both ends were.
+pub fn five_after(conn: &Connection, id: i64, five: Option<f64>) -> Result<()> {
+    conn.execute(
+        "UPDATE routine_runs SET five_after = ?2 WHERE id = (SELECT id FROM routine_runs
+           WHERE routine_id = ?1 AND ended_at != 0 ORDER BY ended_at DESC, id DESC LIMIT 1)
+           AND five_before >= 0",
+        params![id, five.unwrap_or(-1.0)],
     )?;
     Ok(())
 }
@@ -832,14 +1050,17 @@ pub fn end_all(conn: &Connection, now: i64) -> Result<usize> {
     Ok(ids.len())
 }
 
-/// A routine's runs, newest first.
+/// A routine's runs, newest first, `limit` lines. A day's quiet runs are
+/// one line, its `more` the others (R10): four a day would fill History
+/// in a week.
 pub fn runs_of(conn: &Connection, id: i64, limit: i64) -> Result<Vec<Run>> {
     let mut st = conn.prepare_cached(
-        "SELECT id, why, what, started_at, ended_at, state, line, late_s, slept_s FROM routine_runs
+        "SELECT id, why, what, started_at, ended_at, state, line, late_s, slept_s, woke,
+           five_before, five_after FROM routine_runs
          WHERE routine_id = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
     )?;
-    let v = st
-        .query_map(params![id, limit], |r| {
+    let all: Vec<Run> = st
+        .query_map(params![id, limit * 8], |r| {
             Ok(Run {
                 id: r.get(0)?,
                 why: r.get(1)?,
@@ -850,10 +1071,41 @@ pub fn runs_of(conn: &Connection, id: i64, limit: i64) -> Result<Vec<Run>> {
                 line: r.get(6)?,
                 late_s: r.get(7)?,
                 slept_s: r.get(8)?,
+                woke: r.get(9)?,
+                five_before: r.get(10)?,
+                five_after: r.get(11)?,
+                more: 0,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
-    Ok(v)
+    Ok(fold_quiet(all, limit as usize))
+}
+
+/// The local day a time is on.
+fn day_of(at: i64) -> i64 {
+    (at + crate::due::offset().whole_seconds() as i64).div_euclid(86_400)
+}
+
+/// Quiet runs on the same day as the quiet line above them, folded into it.
+fn fold_quiet(all: Vec<Run>, limit: usize) -> Vec<Run> {
+    let mut out: Vec<Run> = Vec::new();
+    for r in all {
+        if r.state == "quiet" {
+            if let Some(q) = out
+                .iter_mut()
+                .rev()
+                .find(|q| q.state == "quiet" && day_of(q.started_at) == day_of(r.started_at))
+            {
+                q.more += 1;
+                continue;
+            }
+        }
+        if out.len() >= limit {
+            break;
+        }
+        out.push(r);
+    }
+    out
 }
 
 /// Why its last session started: `try`, `clock`, … or empty. A draft's
@@ -861,8 +1113,10 @@ pub fn runs_of(conn: &Connection, id: i64, limit: i64) -> Result<Vec<Run>> {
 pub fn last_why(conn: &Connection, id: i64) -> Result<String> {
     Ok(conn
         .query_row(
-            "SELECT why FROM routine_runs WHERE routine_id = ?1 AND why != 'card' AND state NOT LIKE 'skipped%'
-             ORDER BY started_at DESC, id DESC LIMIT 1",
+            &format!(
+                "SELECT why FROM routine_runs WHERE routine_id = ?1 AND why != 'card' AND {RAN}
+                 ORDER BY started_at DESC, id DESC LIMIT 1"
+            ),
             params![id],
             |r| r.get(0),
         )
@@ -934,7 +1188,9 @@ pub fn continue_prompt(r: &Routine, answers: &[(i64, String)]) -> String {
 /// Home's week.
 pub fn week(conn: &Connection, since: i64) -> Result<(i64, i64)> {
     let ran: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM routine_runs WHERE started_at >= ?1 AND why != 'card' AND state NOT LIKE 'skipped%'",
+        &format!(
+            "SELECT COUNT(*) FROM routine_runs WHERE started_at >= ?1 AND why != 'card' AND {RAN}"
+        ),
         params![since],
         |r| r.get(0),
     )?;

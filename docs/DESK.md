@@ -24,7 +24,9 @@ the questions the design left open.
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
 | A desk's links in the rail's foot, the hidden ones too | `desks.links`, JSON, `src/links.rs` | yes |
-| A routine: its line, cadence, Waits list, limits, its panel, the file its name resolved to and its hash, its Start (a draft has none), and its runs | `routines`, `routine_runs`, `src/routine.rs`; the text as allowed, for its diff, in `routines/<id>/allowed.md` | yes; a run under way when the daemon stops is ended, said so |
+| A routine: its line, Waits list, limits, its panel, the file its name resolved to and its hash (with its scripts folder's), its Start (a draft has none), its gate, watch, shape, model, effort and context, and its runs | `routines`, `routine_runs`, `src/routine.rs`; the text as allowed, for its diff, in `routines/<id>/allowed.md` | yes; a run under way when the daemon stops is ended, said so |
+| A routine's times, each with its words and Only if; the lines its watch or gate printed, until a run takes them | `routine_times`, `routine_events` (1.63, `src/routine/times.rs`, `events.rs`) | yes |
+| A routine's watch: its process, last heard, last stderr line | memory, `src/server/routine_watch.rs`; its pid in `routines/<id>/watch.pid` | no; a leftover is ended at the next start |
 
 **A desk can have tabs (1.57, #217).** A tab is a group of panels inside one
 desk -- `website`, `insta`, `bot` -- with its own four in the grid and four
@@ -72,7 +74,9 @@ the word there.
 at the hour the reader set, their own allowed slash command, skill or
 words, in a panel in the back, and only once the reader has pressed Start
 it (1.53: until then it is a draft, run only as a try while they watch;
-`docs/TERMINAL.md` §9b). It never restarts a pane the reader
+`docs/TERMINAL.md` §9b). 1.63 adds its gate and its watch, commands the
+reader allowed beside it, run as a widget's command is, never in a panel;
+the watch keeps running while the routine is live and stops with it. It never restarts a pane the reader
 had running, and a run that was under way when the daemon stopped is not
 started again: it is ended, and the next hour runs.
 

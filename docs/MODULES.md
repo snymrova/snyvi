@@ -66,6 +66,12 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/pane.rs` | 2175 | a PTY and the process on it; `SNYVI_SESSION` and key values into the env |
 | `src/screen.rs` | 1995 | vte → cells → frames the page paints |
 | `src/prompt.rs` | 571 | snyvi's own shell prompt |
+| `src/routine.rs` | 1187 | routines (1.50): the table, a line read as one, Save, Start, the acts, what is due, a run's start and end, History with a day's quiet runs folded |
+| `src/routine/times.rs`, `events.rs` | 280, 250 | 1.63: a routine's times (its hours, each with words and Only if; the soonest cached on the routine) and the lines its watch or gate printed, in the reader's shape, batched and taken once |
+| `src/routine/places.rs`, `waits.rs` | 565, 410 | the commands and skills a name resolves to, in Claude Code's order, and the scripts folder hashed with them; Ask me before's suggestions and what each pattern catches |
+| `src/server/routine_run.rs` | 1083 | the runner: the clock's look, the gate, an event's run, the 5 s tick, didn't start, Stop, the settings file and arguments |
+| `src/server/routine_gate.rs`, `routine_watch.rs` | 300, 430 | 1.63: the gate and the watch's ground (a cleared environment, the scripts first, only the keys named), the gate's run, the watch's supervisor (backoff, heartbeats, a pidfile, a wake restart) |
+| `src/server/api_routine.rs` | 1097 | a desk's routines over HTTP, every route behind `refuse_desk`: the rail, the read, the sheet, Save, the acts |
 | `src/secrets.rs` | 282 | desk key values: keychain on macOS/Windows, 0600 file on Linux |
 | `src/capability.rs` | 184 | the window's 32-byte capability, minted per launch, saved 0600 |
 | `src/config.rs` | 101 | paths, port, the write token |
@@ -86,7 +92,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |
 | `src/agents.rs` | 1157 | the registry: claude, codex, cursor, gemini; what each has |
 | `src/client.rs` | 1153 | CLI/MCP → daemon over HTTP with the token; starts the daemon if needed |
-| `src/setup.rs` | 1,049 | `init-claude`, undo, PATH, the skill in `src/skill/` (SKILL.md, widgets.md, board.md, launch.md, grow.md); `sync_skill` writes it only from the binary Claude Code runs |
+| `src/setup.rs` | 1,049 | `init-claude`, undo, PATH, the skill in `src/skill/` (SKILL.md, widgets.md, board.md, launch.md, grow.md, routine.md); `sync_skill` writes it only from the binary Claude Code runs |
 
 ## Lifecycle
 
