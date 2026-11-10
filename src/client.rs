@@ -1272,6 +1272,23 @@ pub fn offer_document(paths: &Paths, pane: &str, to: &str, id: &str, by: &str) -
     }
 }
 
+/// Fill the desk's page from this pane: `page_draft`. Words only; the
+/// daemon never publishes on a token. What it says back, for the agent.
+pub fn pane_page_draft(paths: &Paths, pane: &str, body: Value) -> Result<String> {
+    let mut resp = pane_post(paths, &format!("{pane}/page/draft"), body)?;
+    match resp.status().as_u16() {
+        200 | 201 => {
+            let v: Value = resp.body_mut().read_json()?;
+            Ok(v.get("said")
+                .and_then(Value::as_str)
+                .unwrap_or("drafted")
+                .to_string())
+        }
+        400 | 404 | 409 => bail!("{}", said(&mut resp)),
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 /// Offer something that shipped to the desk's page, from this pane:
 /// `offer_post`. The daemon makes a card in the desk's corner and nothing
 /// more. What the daemon says back, for the agent.

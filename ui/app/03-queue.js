@@ -337,8 +337,10 @@
   }
   /** A document the stream says is in, put in the list where it belongs: a
    *  save in place, a draft, an arrival -- one row a file, the newest. */
+  // A board's section is not the Inbox's (1.62, V5): its read leaves them
+  // out (store.rs `inbox`), and so does an arrival.
   function listPut(d) {
-    if (!state.list || !d) return;
+    if (!state.list || !d || d.origin === "board") return;
     const same = x => x.id === d.id || (!!d.source_path && x.project_id === d.project_id && x.source_path === d.source_path);
     state.list = [d, ...state.list.filter(x => !same(x))].sort((a, b) => b.received_at - a.received_at);
   }

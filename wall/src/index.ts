@@ -17,10 +17,19 @@
  * page.json and its index.html into R2 once, and a read is R2 through the
  * cache. Once a day (09:00 UTC) each page with new hearts gets one line,
  * sealed to its daemon like a friend's frame and left at the relay.
+ *
+ * 1.62 (social audit 16627c32e2): a follow is signed like a heart, by the
+ * follower's daemon key, so the builder hears how many follow and which
+ * builders; a read of a page is counted, as a number per day, never who --
+ * not the address, not the referrer, not the agent, and link-preview robots
+ * not at all. The daily line now goes to a page with new hearts, new
+ * follows or reads since its last, and says the week's reads.
  */
 
 import { authMessage, b64, blake3hex16, keysOf, relayAuth, seal, unb64, verify, wallLine, type Keys } from "./seal";
-import { card, CSP, fileOk, pageHtml, type MomentJson, type PageJson } from "./render";
+import { badgeSvg, card, CSP, feedXml, fileOk, pageHtml, type MomentJson, type PageJson } from "./render";
+import { cardPng } from "./card";
+import { EIGHT } from "../../ui/page-template.js";
 
 interface Env {
   DB: D1Database;
@@ -57,7 +66,10 @@ CREATE TABLE IF NOT EXISTS files (name TEXT NOT NULL, slug TEXT NOT NULL, bytes 
 CREATE TABLE IF NOT EXISTS hearts (key TEXT NOT NULL, target TEXT NOT NULL, slug TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (key, target));
 CREATE INDEX IF NOT EXISTS hearts_of ON hearts (slug, at);
 CREATE TABLE IF NOT EXISTS reports (key TEXT NOT NULL, slug TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (key, slug));
-CREATE TABLE IF NOT EXISTS budget (key TEXT NOT NULL, day INTEGER NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (key, day));`;
+CREATE TABLE IF NOT EXISTS budget (key TEXT NOT NULL, day INTEGER NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (key, day));
+CREATE TABLE IF NOT EXISTS follows (key TEXT NOT NULL, slug TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (key, slug));
+CREATE INDEX IF NOT EXISTS follows_of ON follows (slug, at);
+CREATE TABLE IF NOT EXISTS reads (slug TEXT NOT NULL, day INTEGER NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (slug, day));`;
 
 let schemaReady: Promise<unknown> | null = null;
 function ready(env: Env) {
@@ -106,17 +118,68 @@ async function heartsOf(env: Env, slug: string): Promise<number> {
   return r?.n ?? 0;
 }
 
-/** Render what a read of this page and of the wall serves, into R2. */
-async function render(env: Env, origin: string, slug: string) {
+/** Everything kept under a page's name in R2, gone. */
+async function dropPage(env: Env, slug: string) {
+  for (let cursor: string | undefined, more = true; more; ) {
+    const l = await env.BUCKET.list({ prefix: `pages/${slug}/`, cursor });
+    if (l.objects.length) await env.BUCKET.delete(l.objects.map((o) => o.key));
+    more = l.truncated;
+    cursor = l.truncated ? l.cursor : undefined;
+  }
+}
+
+const HTML = { httpMetadata: { contentType: "text/html; charset=utf-8" } };
+
+/** Render what a read of this page and of the wall serves, into R2. A heart
+ *  draws what shows the count (`hearts`); a write of the page draws all of
+ *  it, its card and its moments' own pages (`page`); a moment, its own. */
+async function render(env: Env, origin: string, slug: string, what: "hearts" | "page" | { moment: number } = "hearts") {
   const row = await pageRow(env, slug);
   if (!row || row.hidden) {
-    await env.BUCKET.delete([`pages/${slug}/index.html`, `pages/${slug}/page.json`]);
+    await dropPage(env, slug);
   } else {
     const p: PageJson = JSON.parse(row.json), ms = await momentsOf(env, slug), hearts = await heartsOf(env, slug);
-    await env.BUCKET.put(`pages/${slug}/index.html`, pageHtml(p, ms, hearts, origin), { httpMetadata: { contentType: "text/html; charset=utf-8" } });
-    await env.BUCKET.put(`pages/${slug}/page.json`, JSON.stringify({ page: p, moments: ms, hearts: p.count_shown ? hearts : null, checked_at: row.checked_at }), { httpMetadata: { contentType: "application/json" } });
+    const put = (k: string, v: string | Uint8Array, contentType: string) => env.BUCKET.put(`pages/${slug}/${k}`, v, { httpMetadata: { contentType } });
+    await env.BUCKET.put(`pages/${slug}/index.html`, pageHtml(p, ms, hearts, origin), HTML);
+    await put("page.json", JSON.stringify({ page: p, moments: ms, hearts: p.count_shown ? hearts : null, checked_at: row.checked_at }), "application/json");
+    await put("badge.svg", badgeSvg(p, hearts), "image/svg+xml");
+    if (what !== "hearts") {
+      await put("feed.xml", feedXml(p, ms, origin), "application/atom+xml; charset=utf-8");
+      const these = what === "page" ? ms.slice(0, 50) : ms.filter((m) => m.id === what.moment);
+      for (const m of these) await put(`m/${m.id}.html`, pageHtml(p, ms, hearts, origin, m), "text/html; charset=utf-8");
+    }
+    if (what === "page") {
+      const ink = ((EIGHT as Record<string, string[]>)[p.accent] || EIGHT.passion)[0];
+      await put("card.png", await cardPng(p.title, `snyvi.page/${slug}`, ink), "image/png");
+    }
   }
   await renderWall(env);
+}
+
+/** Robots that fetch a link to draw its preview, and crawlers: not readers. */
+const ROBOT = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|whatsapp|telegram|discord|slack|skype|vkshare|pinterest|headless|curl|wget|python|go-http|node-fetch|undici/i;
+
+/** Reads waiting to be counted, by slug: each isolate writes at most once in
+ *  ten seconds, so a page read a thousand times a minute is a handful of
+ *  writes, and a page read once is written at once. What comes inside the
+ *  ten seconds is written when they end, kept alive by `waitUntil`. */
+const reading = new Map<string, number>();
+let readsAt = 0, flushing = false;
+function counted(env: Env, ctx: ExecutionContext, req: Request, slug: string) {
+  if (req.method !== "GET" || ROBOT.test(req.headers.get("user-agent") || "")) return;
+  reading.set(slug, (reading.get(slug) || 0) + 1);
+  if (flushing) return;
+  flushing = true;
+  const wait = Math.max(0, readsAt + (env.WALL_TEST ? 0 : 10_000) - Date.now());
+  ctx.waitUntil(new Promise((r) => setTimeout(r, wait)).then(async () => {
+    readsAt = Date.now();
+    flushing = false;
+    const day = Math.floor(now() / 86400), batch = [...reading];
+    reading.clear();
+    await ready(env);
+    await env.DB.batch(batch.map(([s, n]) =>
+      env.DB.prepare("INSERT INTO reads (slug, day, n) VALUES (?, ?, ?) ON CONFLICT (slug, day) DO UPDATE SET n = n + excluded.n").bind(s, day, n)));
+  }).catch(() => {}));
 }
 
 /** wall.json: every checked, shown page's card, newest moment first. */
@@ -142,6 +205,10 @@ function pageFrom(body: unknown, slug: string): PageJson | null {
     hero: s("hero", 10), facts: Array.isArray(b.facts) ? (b.facts as unknown[]).filter((f): f is string => typeof f === "string").slice(0, 4) : [],
     github: s("github", 300), links: Array.isArray(b.links) ? (b.links as { label?: unknown; url?: unknown }[]).slice(0, 6).map((l) => ({ label: String(l?.label ?? "").slice(0, 40), url: String(l?.url ?? "").slice(0, 300) })) : [],
     accent: s("accent", 10), wash: s("wash", 7), count_shown: b.count_shown !== false,
+    // 1.62's template A; a daemon from before sends none of them.
+    cta: b.cta && typeof b.cta === "object" ? { label: String((b.cta as { label?: unknown }).label ?? "").slice(0, 40), url: String((b.cta as { url?: unknown }).url ?? "").slice(0, 300) } : { label: "", url: "" },
+    points: Array.isArray(b.points) ? (b.points as { title?: unknown; text?: unknown }[]).slice(0, 3).map((x) => ({ title: String(x?.title ?? "").slice(0, 60), text: String(x?.text ?? "").slice(0, 200) })).filter((x) => x.title) : [],
+    story: s("story", 4000),
   };
 }
 
@@ -158,7 +225,7 @@ async function putPage(env: Env, origin: string, slug: string, key: string, body
   const t = now();
   await env.DB.prepare(`INSERT INTO pages (slug, key, box, json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT (slug) DO UPDATE SET box = excluded.box, json = excluded.json, updated_at = excluded.updated_at`).bind(slug, key, box, JSON.stringify(p), t, t).run();
-  await render(env, origin, slug);
+  await render(env, origin, slug, "page");
   return json(200, { slug, up: true });
 }
 
@@ -184,7 +251,7 @@ async function putMoment(env: Env, origin: string, slug: string, id: number, key
     env.DB.prepare("INSERT INTO moments (slug, id, json, at) VALUES (?, ?, ?, ?) ON CONFLICT (slug, id) DO UPDATE SET json = excluded.json").bind(slug, id, JSON.stringify(moment), at),
     env.DB.prepare("UPDATE pages SET newest = MAX(newest, ?), updated_at = ? WHERE slug = ?").bind(at, now(), slug),
   ]);
-  await render(env, origin, slug);
+  await render(env, origin, slug, { moment: id });
   return json(200, { slug, moment: id });
 }
 
@@ -230,11 +297,14 @@ async function takeDown(env: Env, slug: string): Promise<void> {
     env.DB.prepare("DELETE FROM moments WHERE slug = ?").bind(slug),
     env.DB.prepare("DELETE FROM files WHERE slug = ?").bind(slug),
     env.DB.prepare("DELETE FROM hearts WHERE slug = ?").bind(slug),
+    env.DB.prepare("DELETE FROM follows WHERE slug = ?").bind(slug),
+    env.DB.prepare("DELETE FROM reads WHERE slug = ?").bind(slug),
   ]);
   const still = await env.DB.prepare("SELECT DISTINCT name FROM files").all<{ name: string }>();
   const kept = new Set((still.results || []).map((r) => r.name));
   const gone = (files.results || []).map((f) => f.name).filter((n) => !kept.has(n)).map((n) => `files/${n}`);
-  await env.BUCKET.delete([`pages/${slug}/index.html`, `pages/${slug}/page.json`, ...gone]);
+  if (gone.length) await env.BUCKET.delete(gone);
+  await dropPage(env, slug);
   await renderWall(env);
 }
 
@@ -256,6 +326,27 @@ async function heart(env: Env, origin: string, slug: string, moment: number | nu
   if (moment == null) await render(env, origin, slug);
   const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM hearts WHERE target = ?").bind(target).first<{ n: number }>();
   return json(200, { on: !had, hearts: n?.n ?? 0 });
+}
+
+/** A follow, signed by the follower's daemon (D2): set, not toggled, so a
+ *  reader's snyvi can say again what it holds. Counted in the day's budget
+ *  with the hearts. */
+async function follow(env: Env, slug: string, key: string, body: Uint8Array): Promise<Response> {
+  if (!(await under(env.LIMIT_HEART, key))) return no(429, "slow down");
+  const row = await pageRow(env, slug);
+  if (!row || row.hidden) return no(404, "no page by that name");
+  let on = true;
+  try { on = JSON.parse(new TextDecoder().decode(body) || "{}").on !== false; } catch { return no(400, "a follow is JSON: {on}"); }
+  const day = Math.floor(now() / 86400);
+  const spent = await env.DB.prepare("SELECT n FROM budget WHERE key = ? AND day = ?").bind(key, day).first<{ n: number }>();
+  if ((spent?.n ?? 0) >= HEARTS_A_DAY) return no(429, "that is the day's follows");
+  await env.DB.batch([
+    on ? env.DB.prepare("INSERT INTO follows (key, slug, at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").bind(key, slug, now())
+      : env.DB.prepare("DELETE FROM follows WHERE key = ? AND slug = ?").bind(key, slug),
+    env.DB.prepare("INSERT INTO budget (key, day, n) VALUES (?, ?, 1) ON CONFLICT (key, day) DO UPDATE SET n = n + 1").bind(key, day),
+  ]);
+  const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM follows WHERE slug = ?").bind(slug).first<{ n: number }>();
+  return json(200, { on, follows: n?.n ?? 0 });
 }
 
 async function report(env: Env, slug: string, key: string): Promise<Response> {
@@ -310,24 +401,41 @@ async function write(req: Request, env: Env, origin: string, parts: string[], pa
   if (m === "POST" && rest === "hearts") return heart(env, origin, slug, null, who.key);
   if (m === "POST" && parts[2] === "moments" && parts[4] === "hearts" && /^\d{1,15}$/.test(parts[3] ?? "")) return heart(env, origin, slug, Number(parts[3]), who.key);
   if (m === "POST" && rest === "report") return report(env, slug, who.key);
+  if (m === "POST" && rest === "follow") return follow(env, slug, who.key, body);
   return no(404, "no such write");
 }
 
-/** The daily line: each page with hearts since its last, sealed to its daemon. */
+/** Titles of checked pages whose keys did `table`'s thing to `slug` since:
+ *  a page's title is its builder's name here. */
+async function namesOf(env: Env, table: "hearts" | "follows", slug: string, since: number): Promise<string[]> {
+  const named = await env.DB.prepare(`SELECT DISTINCT q.json FROM ${table} h JOIN pages q ON q.key = h.key
+    WHERE h.slug = ? AND h.at > ? AND q.checked_at > 0 AND q.hidden = 0 LIMIT 20`).bind(slug, since).all<{ json: string }>();
+  return (named.results || []).map((x) => String(JSON.parse(x.json).title || "")).filter(Boolean);
+}
+
+/** The daily line: each page with hearts, follows or reads since its last,
+ *  sealed to its daemon. */
 async function daily(env: Env): Promise<number> {
   const seed = unb64(env.WALL_SEED || "");
   if (!seed || seed.length !== 64) return 0;
   const me = keysOf(seed);
+  const today = Math.floor(now() / 86400);
+  await env.DB.prepare("DELETE FROM reads WHERE day < ?").bind(today - 8).run();
   const r = await env.DB.prepare(`SELECT p.slug, p.key, p.box, p.line_at, p.reports FROM pages p
-    WHERE p.hidden = 0 AND EXISTS (SELECT 1 FROM hearts h WHERE h.slug = p.slug AND h.at > p.line_at)`).all<{ slug: string; key: string; box: string; line_at: number; reports: number }>();
+    WHERE p.hidden = 0 AND (EXISTS (SELECT 1 FROM hearts h WHERE h.slug = p.slug AND h.at > p.line_at)
+      OR EXISTS (SELECT 1 FROM follows f WHERE f.slug = p.slug AND f.at > p.line_at)
+      OR EXISTS (SELECT 1 FROM reads x WHERE x.slug = p.slug AND x.day > p.line_at / 86400))`).all<{ slug: string; key: string; box: string; line_at: number; reports: number }>();
   let sent = 0;
   for (const p of r.results || []) {
     const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM hearts WHERE slug = ? AND at > ?").bind(p.slug, p.line_at).first<{ n: number }>();
-    // Names are those of hearts from checked pages: a page's title is its builder's name here.
-    const named = await env.DB.prepare(`SELECT DISTINCT q.json FROM hearts h JOIN pages q ON q.key = h.key
-      WHERE h.slug = ? AND h.at > ? AND q.checked_at > 0 AND q.hidden = 0 LIMIT 20`).bind(p.slug, p.line_at).all<{ json: string }>();
-    const names = (named.results || []).map((x) => String(JSON.parse(x.json).title || "")).filter(Boolean);
-    if (await deposit(env, me, p.key, p.box, wallLine(p.slug, n?.n ?? 0, names, p.line_at, p.reports))) {
+    const f = await env.DB.prepare("SELECT COUNT(*) AS n FROM follows WHERE slug = ?").bind(p.slug).first<{ n: number }>();
+    const reads = await env.DB.prepare("SELECT COALESCE(SUM(n), 0) AS n FROM reads WHERE slug = ? AND day > ?").bind(p.slug, today - 7).first<{ n: number }>();
+    const line = wallLine({
+      slug: p.slug, hearts: n?.n ?? 0, names: await namesOf(env, "hearts", p.slug, p.line_at), since: p.line_at, reported: p.reports,
+      follows: f?.n ?? 0, followers: await namesOf(env, "follows", p.slug, p.line_at), reads: reads?.n ?? 0,
+    });
+    if (env.WALL_TEST) said.set(p.slug, line);
+    if (await deposit(env, me, p.key, p.box, line)) {
       await env.DB.prepare("UPDATE pages SET line_at = ? WHERE slug = ?").bind(now(), p.slug).run();
       sent++;
     }
@@ -352,6 +460,10 @@ async function deposit(env: Env, me: Keys, to: string, box: string, line: string
   }
 }
 
+/** The last line made for each page, kept in test only: a sealed frame is
+ *  not the test's to open. */
+const said = new Map<string, string>();
+
 /** Test-only routes (WALL_TEST): the seal against the vectors, and the cron. */
 async function testRoute(req: Request, env: Env, parts: string[]): Promise<Response> {
   if (parts[1] === "seal" && req.method === "POST") {
@@ -361,6 +473,7 @@ async function testRoute(req: Request, env: Env, parts: string[]): Promise<Respo
     return json(200, { frame: b64(frame), wall_sign: b64(me.signPub), wall_box: b64(me.boxPub) });
   }
   if (parts[1] === "daily" && req.method === "POST") return json(200, { sent: await daily(env) });
+  if (parts[1] === "line" && parts[2]) return json(200, JSON.parse(said.get(parts[2]) || "null"));
   return no(404, "no such test route");
 }
 
@@ -378,9 +491,17 @@ export default {
       }
       if (!page && url.pathname === "/wall.json") return fromBucket(req, env, ctx, "wall.json", 60);
       if (!page && parts[0] === "pages" && parts[2] === "page.json" && SLUG_RE.test(parts[1] ?? "")) return fromBucket(req, env, ctx, `pages/${parts[1]}/page.json`, 300);
-      // snyvi.page/<slug>, and /p/<slug> on any host (the tests, workers.dev).
-      const slug = page ? parts[0] : parts[0] === "p" ? parts[1] : undefined;
-      if (slug && SLUG_RE.test(slug) && parts.length === (page ? 1 : 2)) return fromBucket(req, env, ctx, `pages/${slug}/index.html`, 300, { "content-security-policy": CSP, "referrer-policy": "no-referrer" });
+      // snyvi.page/<slug>[/…], and /p/<slug>[/…] on any host (the tests, workers.dev).
+      const at = page ? parts : parts[0] === "p" ? parts.slice(1) : [];
+      const slug = at[0];
+      if (slug && SLUG_RE.test(slug)) {
+        const doc = { "content-security-policy": CSP, "referrer-policy": "no-referrer" };
+        if (at.length === 1) { counted(env, ctx, req, slug); return fromBucket(req, env, ctx, `pages/${slug}/index.html`, 300, doc); }
+        if (at.length === 3 && at[1] === "m" && /^\d{1,15}$/.test(at[2])) { counted(env, ctx, req, slug); return fromBucket(req, env, ctx, `pages/${slug}/m/${at[2]}.html`, 300, doc); }
+        if (at.length === 2 && at[1] === "feed.xml") return fromBucket(req, env, ctx, `pages/${slug}/feed.xml`, 600);
+        if (at.length === 2 && at[1] === "card.png") return fromBucket(req, env, ctx, `pages/${slug}/card.png`, 3600);
+        if (at.length === 2 && at[1] === "badge.svg") return fromBucket(req, env, ctx, `pages/${slug}/badge.svg`, 600, { "content-security-policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'" });
+      }
       if (page && parts.length === 0) return Response.redirect("https://snyvi.com/", 302);
       return no(404, "not here");
     }

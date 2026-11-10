@@ -549,3 +549,139 @@ pub(crate) fn views_by_desk(desks: &[crate::desk::Desk]) -> serde_json::Value {
     }
     serde_json::Value::Object(m)
 }
+
+/// `board_read` with no board named: the boards this pane's desk has, by
+/// folder name, title and how many sections each shows.
+pub(crate) async fn pane_boards(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    Json(json!({ "boards": board::boards(std::path::Path::new(&placed.root)) })).into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct NewBoardBody {
+    pub(crate) name: String,
+}
+
+/// The reader's New board (1.62): an empty `design/<slug>/board.json` with
+/// its name, so a board can be made before anything is drawn on it. The
+/// desks list hears of it through the `board` event, as of any board moved.
+pub(crate) async fn desk_board_new(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NewBoardBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let name = b.name.clone();
+    let made =
+        tokio::task::spawn_blocking(move || board::create(std::path::Path::new(&desk.root), &name))
+            .await;
+    match made {
+        Ok(Ok(board)) => {
+            board_moved(&app, id, &board);
+            (
+                StatusCode::CREATED,
+                Json(json!({ "board": board, "name": b.name.trim() })),
+            )
+                .into_response()
+        }
+        Ok(Err(e)) => refused(e),
+        Err(e) => err(anyhow::anyhow!("making the board: {e}")),
+    }
+}
+
+/// The reader names a board (1.62): its title in `board.json`, the folder
+/// kept, so every route and tool still finds it by the same name.
+pub(crate) async fn desk_board_name(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, board_id)): Path<(i64, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NewBoardBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if b.name.trim().is_empty() {
+        return refused(anyhow::anyhow!("a board needs a name"));
+    }
+    match board::arrange(
+        std::path::Path::new(&desk.root),
+        &board_id,
+        &[],
+        Some(&b.name),
+    ) {
+        Ok(read) => {
+            board_moved(&app, id, &board_id);
+            Json(json!({ "board": board_id, "name": read.name })).into_response()
+        }
+        Err(e) => refused(e),
+    }
+}
+
+/// The one document a board's sections are drawn in (1.62, docs/BOARD.md):
+/// the runtime, inlined under a nonce made for this answer, so the only
+/// script that runs in it is snyvi's. The Board view loads it in a
+/// sandboxed iframe (an opaque origin: no capability, no cookie, nothing of
+/// the page's) and posts the sections in; each is a shadow root there.
+/// Nothing of a desk is in it, so it is open to this host like an asset.
+pub(crate) async fn board_frame(State(app): S) -> Response {
+    let mut n = [0u8; 16];
+    if getrandom::fill(&mut n).is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let nonce: String = n.iter().map(|b| format!("{b:02x}")).collect();
+    let js = app
+        .ui
+        .text("board-frame.js", super::assets::BOARD_FRAME_JS)
+        .replace("</script", "<\\/script");
+    let page = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>board</title></head><body><script nonce=\"{nonce}\">{js}</script></body></html>"
+    );
+    // Sections may show pictures and fonts from anywhere, as an HTML
+    // document may; they reach nothing (`connect-src 'none'`), submit
+    // nothing, and run no script but the runtime's -- an inline handler or
+    // a `javascript:` link in a section is refused by the nonce.
+    let csp = format!(
+        "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' https:; img-src data: blob: https: http://127.0.0.1:*; font-src data: https:; media-src data: blob: https:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+    );
+    let mut h = HeaderMap::new();
+    if let Ok(v) = HeaderValue::from_str(&csp) {
+        h.insert(header::CONTENT_SECURITY_POLICY, v);
+    }
+    h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    (h, Html(page)).into_response()
+}
+
+/// Each desk's boards by name, for the desks list beside `views`: what the
+/// menu and the switcher call a board (`board.json`'s name, else its folder).
+pub(crate) fn boards_by_desk(desks: &[crate::desk::Desk]) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    for d in desks {
+        m.insert(
+            d.id.to_string(),
+            json!(board::boards(std::path::Path::new(&d.root))),
+        );
+    }
+    serde_json::Value::Object(m)
+}

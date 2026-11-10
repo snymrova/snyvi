@@ -148,7 +148,7 @@ fn hide_keeps_the_file_and_a_write_shows_it_again() {
     assert!(bd.join("hero.html").is_file(), "hidden, not deleted");
     assert_eq!(boards(&d.path)[0].frames, 0);
     assert!(
-        !export(&bd, "home").contains("srcdoc"),
+        !export(&bd, "home").contains("<p>h</p>"),
         "a hidden frame is not exported"
     );
     write(&d.path, "home", "hero", "<p>h2</p>", Size::default()).unwrap();
@@ -281,4 +281,108 @@ fn tokens_and_the_design_head() {
         ]
     );
     assert_eq!(t.design.as_deref(), Some("Calm and warm."));
+}
+
+#[test]
+fn a_section_is_as_tall_as_its_content_unless_given_a_height() {
+    let d = Dir::new("snyvi-board");
+    write(&d.path, "home", "auto", "<p>a</p>", Size::default()).unwrap();
+    write(&d.path, "home", "cut", "<p>c</p>", size(400, 300)).unwrap();
+    let bd = dir(&d.path, "home", false).unwrap().unwrap();
+    let b = read(&bd);
+    assert_eq!(
+        (b.frames[0].w, b.frames[0].h),
+        (DEFAULT_W, 0),
+        "0 is the content's"
+    );
+    assert_eq!((b.frames[1].w, b.frames[1].h), (400, 300));
+    // A file nobody named is a section too, as tall as it is.
+    std::fs::write(bd.join("loose.html"), "<p>l</p>").unwrap();
+    assert_eq!(read(&bd).frames[2].h, 0);
+    let wide = Size {
+        w: Some(0),
+        ..Default::default()
+    };
+    assert!(write(&d.path, "home", "auto", "x", wide).is_err());
+    let tall = Size {
+        h: Some(MAX_SIDE + 1),
+        ..Default::default()
+    };
+    assert!(write(&d.path, "home", "auto", "x", tall).is_err());
+}
+
+#[test]
+fn a_script_makes_an_island_and_the_read_says_so() {
+    assert!(is_island("<div></div><SCRIPT>x()</SCRIPT>"));
+    assert!(!is_island("<p>a script tag, in words</p>"));
+    let d = Dir::new("snyvi-board");
+    write(&d.path, "home", "plain", "<p>p</p>", Size::default()).unwrap();
+    write(
+        &d.path,
+        "home",
+        "live",
+        "<script>1</script>",
+        Size::default(),
+    )
+    .unwrap();
+    let bd = dir(&d.path, "home", false).unwrap().unwrap();
+    let (_, fr, _) = frames(&bd);
+    assert_eq!(
+        fr.iter().map(|f| f.island).collect::<Vec<_>>(),
+        [false, true]
+    );
+    let x = export(&bd, "home");
+    assert!(
+        x.contains("shadowrootmode=\"open\""),
+        "a section is a shadow root"
+    );
+    assert!(x.contains("srcdoc"), "an island keeps a page of its own");
+    assert!(
+        x.contains(&format!("height:{ISLAND_H}px"))
+            || x.contains(&format!("height=\"{ISLAND_H}\""))
+    );
+}
+
+#[test]
+fn a_sections_page_selectors_mean_the_section() {
+    let h = host_selectors(
+        "<style>body{margin:0} html, :root{--a:1} .body-x{} .body{} @media (max-width:1px){body p{x:y}}</style><body>b</body>",
+    );
+    assert!(h.contains(":host{margin:0}"), "{h}");
+    assert!(
+        h.contains(":host, :host{--a:1}") || h.contains(":host,:host{--a:1}"),
+        "{h}"
+    );
+    assert!(
+        h.contains(".body-x{}"),
+        "a word that only starts with body stays: {h}"
+    );
+    assert!(h.contains(" .body{}"), "a class named body stays: {h}");
+    assert!(h.contains("@media (max-width:1px){:host p{x:y}}"), "{h}");
+    assert!(h.ends_with("<body>b</body>"), "only CSS changes: {h}");
+}
+
+#[test]
+fn a_new_board_is_named_and_its_folder_never_taken_twice() {
+    assert_eq!(slug("Pricing page!"), "pricing-page");
+    assert_eq!(slug("  "), "board");
+    assert_eq!(slug("Été 2026"), "t-2026");
+    let d = Dir::new("snyvi-board");
+    assert_eq!(create(&d.path, "Pricing page").unwrap(), "pricing-page");
+    assert_eq!(create(&d.path, "Pricing page").unwrap(), "pricing-page-2");
+    assert!(create(&d.path, " ").is_err());
+    let hs = boards(&d.path);
+    assert_eq!(
+        hs.iter()
+            .map(|b| (b.id.as_str(), b.name.as_str(), b.frames))
+            .collect::<Vec<_>>(),
+        [
+            ("pricing-page", "Pricing page", 0),
+            ("pricing-page-2", "Pricing page", 0)
+        ]
+    );
+    // An empty board is a view, before anything is drawn on it.
+    assert!(views(&d.path).contains(&"board:pricing-page".to_string()));
+    let renamed = arrange(&d.path, "pricing-page-2", &[], Some("Pricing, take two")).unwrap();
+    assert_eq!(renamed.name, "Pricing, take two");
 }

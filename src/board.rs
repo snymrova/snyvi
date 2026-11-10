@@ -34,10 +34,15 @@ pub const DIR: &str = "design";
 pub const MAX_FRAME_BYTES: usize = 256 * 1024;
 /// Largest side of a frame, in CSS pixels.
 pub const MAX_SIDE: u32 = 4000;
-/// The size a frame gets when nothing said one: a file that arrived some
+/// The width a frame gets when nothing said one: a file that arrived some
 /// other way, or a write that left a size out.
 const DEFAULT_W: u32 = 800;
-const DEFAULT_H: u32 = 600;
+/// A frame's height when nothing said one is 0: its content's (1.62). The
+/// window draws a section without a script in one document with the rest
+/// and measures it; a frame with a script is still its own sandboxed page,
+/// which cannot be measured, so it is drawn this tall when no height was
+/// given -- here for the export, in ui/board for the window.
+pub const ISLAND_H: u32 = 600;
 /// The gap between frames placed one after another.
 const GAP: i64 = 80;
 
@@ -107,6 +112,10 @@ pub struct FrameRead {
     /// The file is in `board.json` but not on disk.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub missing: bool,
+    /// It has a script (`is_island`): drawn in a document of its own, as a
+    /// frame was before 1.62, not as a section of the board's one document.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub island: bool,
 }
 
 /// `design/tokens.css`'s custom properties and `DESIGN.md`'s first
@@ -312,19 +321,16 @@ pub fn read(dir: &Path) -> Board {
         b.frames.push(Frame {
             id,
             w: DEFAULT_W,
-            h: DEFAULT_H,
             x,
             y,
             order,
             ..Default::default()
         });
     }
+    // A height of 0 stays 0: the content's (`ISLAND_H`).
     for f in &mut b.frames {
         if f.w == 0 {
             f.w = DEFAULT_W;
-        }
-        if f.h == 0 {
-            f.h = DEFAULT_H;
         }
     }
     b.frames
@@ -355,6 +361,9 @@ pub fn frames(dir: &Path) -> (Board, Vec<FrameRead>, String) {
                 frame: f.clone(),
                 bytes: bytes.as_ref().map_or(0, Vec::len),
                 missing: bytes.is_none(),
+                island: bytes
+                    .as_deref()
+                    .is_some_and(|b| is_island(&String::from_utf8_lossy(b))),
                 hash,
             }
         })
@@ -387,10 +396,12 @@ pub fn write(root: &Path, board: &str, id: &str, html: &str, size: Size) -> Resu
             MAX_FRAME_BYTES / 1024
         );
     }
-    for side in [size.w, size.h].into_iter().flatten() {
-        if side == 0 || side > MAX_SIDE {
-            bail!("a frame's sides are 1 to {MAX_SIDE} px");
-        }
+    if size.w.is_some_and(|w| w == 0 || w > MAX_SIDE) {
+        bail!("a frame's width is 1 to {MAX_SIDE} px");
+    }
+    // 0 is the content's height again.
+    if size.h.is_some_and(|h| h > MAX_SIDE) {
+        bail!("a frame's height is 0 (its content's) to {MAX_SIDE} px");
     }
     // Checked before the directory is made, so a bad id leaves no folder.
     if !valid_name(id) {
@@ -413,7 +424,6 @@ pub fn write(root: &Path, board: &str, id: &str, html: &str, size: Size) -> Resu
             b.frames.push(Frame {
                 id: id.to_string(),
                 w: DEFAULT_W,
-                h: DEFAULT_H,
                 x,
                 y,
                 order,
@@ -554,9 +564,11 @@ fn first_paragraph(md: &str) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-/// One HTML page of every shown frame, in order, each in its own sandboxed
-/// iframe so one frame's CSS cannot reach another's. A file to keep or hand
-/// on; PNG, SVG and PDF come later, with a renderer.
+/// One HTML page of every shown frame, in order: a file to keep or hand on.
+/// A section without a script is drawn in place, in a declarative shadow
+/// root, so its CSS cannot reach another's and its height is its content's,
+/// as the window draws it. A frame with a script keeps its own sandboxed
+/// iframe, at its height or `ISLAND_H`. PNG, SVG and PDF come later.
 pub fn export(dir: &Path, title: &str) -> String {
     let b = read(dir);
     let mut out = String::from("<!doctype html><meta charset=\"utf-8\"><title>");
@@ -564,25 +576,181 @@ pub fn export(dir: &Path, title: &str) -> String {
     out.push_str(
         "</title><style>body{margin:32px;font:14px system-ui,sans-serif;background:#f4f4f2;color:#222}\
          figure{margin:0 0 40px}figcaption{margin:0 0 8px;color:#666}\
-         iframe{border:0;background:#fff;display:block;box-shadow:0 1px 3px rgba(0,0,0,.15)}</style>",
+         iframe,.s{border:0;background:#fff;color:#000;display:block;box-shadow:0 1px 3px rgba(0,0,0,.15)}\
+         .s{font:16px serif;overflow:hidden}</style>",
     );
     for f in b.frames.iter().filter(|f| !f.hidden) {
         let Some(bytes) = frame_html(dir, &f.id) else {
             continue;
         };
         let html = String::from_utf8_lossy(&bytes);
-        let label = if f.name.is_empty() { &f.id } else { &f.name };
-        out.push_str(&format!(
-            "<figure><figcaption>{} · {}×{}</figcaption><iframe sandbox=\"allow-scripts\" width=\"{}\" height=\"{}\" srcdoc=\"{}\"></iframe></figure>",
-            html_escape::encode_text(label),
-            f.w,
-            f.h,
-            f.w,
-            f.h,
-            html_escape::encode_double_quoted_attribute(&html),
-        ));
+        let label = html_escape::encode_text(if f.name.is_empty() { &f.id } else { &f.name });
+        if is_island(&html) {
+            let h = if f.h == 0 { ISLAND_H } else { f.h };
+            out.push_str(&format!(
+                "<figure><figcaption>{label} · {}×{h}</figcaption><iframe sandbox=\"allow-scripts\" width=\"{}\" height=\"{h}\" srcdoc=\"{}\"></iframe></figure>",
+                f.w,
+                f.w,
+                html_escape::encode_double_quoted_attribute(&html),
+            ));
+        } else {
+            let (size, h) = if f.h == 0 {
+                (format!("{} wide", f.w), String::new())
+            } else {
+                (format!("{}×{}", f.w, f.h), format!(";height:{}px", f.h))
+            };
+            out.push_str(&format!(
+                "<figure><figcaption>{label} · {size}</figcaption><div class=\"s\" style=\"width:{}px{h}\"><template shadowrootmode=\"open\">{}</template></div></figure>",
+                f.w,
+                host_selectors(&html).replace("</template", "&lt;/template"),
+            ));
+        }
     }
     out
+}
+
+/// A frame that runs a script: drawn as its own sandboxed page, since a
+/// section in the board's one document never runs one.
+pub fn is_island(html: &str) -> bool {
+    html.to_ascii_lowercase().contains("<script")
+}
+
+/// A frame's CSS made to work in a shadow root: `html`, `body` and `:root`
+/// in a selector are the section itself, `:host`. Only selectors change --
+/// the text before a `{` -- never a declaration. ui/board-frame.js does the
+/// same in the window.
+pub fn host_selectors(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    loop {
+        let lower = rest.to_ascii_lowercase();
+        let Some(open) = lower.find("<style") else {
+            out.push_str(rest);
+            return out;
+        };
+        let Some(gt) = rest[open..].find('>').map(|i| open + i + 1) else {
+            out.push_str(rest);
+            return out;
+        };
+        let close = lower[gt..].find("</style").map_or(rest.len(), |i| gt + i);
+        out.push_str(&rest[..gt]);
+        out.push_str(&css_host(&rest[gt..close]));
+        rest = &rest[close..];
+    }
+}
+
+fn css_host(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut seg = String::new();
+    for c in css.chars() {
+        match c {
+            '{' => {
+                out.push_str(&prelude_host(&seg));
+                seg.clear();
+                out.push(c);
+            }
+            '}' => {
+                out.push_str(&seg);
+                seg.clear();
+                out.push(c);
+            }
+            _ => seg.push(c),
+        }
+    }
+    out.push_str(&seg);
+    out
+}
+
+/// One selector list, its `html`, `body` and `:root` made `:host`.
+fn prelude_host(sel: &str) -> String {
+    if sel.trim_start().starts_with('@') {
+        return sel.to_string();
+    }
+    // Before the word: the start, a space or a combinator, so `.body` and
+    // `#html` (a class, an id) stay; after it, anything but a name's letter.
+    let before = |c: Option<char>| c.is_none_or(|c| c.is_whitespace() || ",>+~(".contains(c));
+    let edge =
+        |c: Option<char>| c.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    let mut out = String::with_capacity(sel.len());
+    let mut i = 0;
+    while i < sel.len() {
+        let mut hit = None;
+        for word in [":root", "html", "body"] {
+            let end = i + word.len();
+            if end <= sel.len()
+                && sel.is_char_boundary(end)
+                && sel[i..end].eq_ignore_ascii_case(word)
+                && before(sel[..i].chars().last())
+                && edge(sel[end..].chars().next())
+            {
+                hit = Some(end);
+                break;
+            }
+        }
+        if let Some(end) = hit {
+            out.push_str(":host");
+            i = end;
+        } else {
+            let ch = sel[i..].chars().next().expect("in bounds");
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out.replace(":host :host", ":host")
+        .replace(":host > :host", ":host")
+}
+
+/// A board's folder name from the name the reader gave it: lowercase
+/// letters, digits and hyphens, at most 48, `board` when nothing is left.
+pub fn slug(name: &str) -> String {
+    let mut s = String::new();
+    for c in name.trim().chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            s.push(c);
+        } else if !s.ends_with('-') && !s.is_empty() {
+            s.push('-');
+        }
+        if s.len() >= 48 {
+            break;
+        }
+    }
+    let s = s.trim_end_matches('-').to_string();
+    if s.is_empty() {
+        "board".into()
+    } else {
+        s
+    }
+}
+
+/// A new, empty board named `name`: `design/<slug>/board.json` with only
+/// its name. Its folder's name is the slug, with `-2`, `-3`… when a board
+/// already has it. Returns the folder's name.
+pub fn create(root: &Path, name: &str) -> Result<String> {
+    let name: String = name.trim().chars().take(80).collect();
+    if name.is_empty() {
+        bail!("a board needs a name");
+    }
+    let base = slug(&name);
+    let taken = |id: &str| dir(root, id, false).ok().flatten().is_some();
+    let id = (1..1000)
+        .map(|n| {
+            if n == 1 {
+                base.clone()
+            } else {
+                format!("{base}-{n}")
+            }
+        })
+        .find(|id| valid_name(id) && !taken(id))
+        .context("no free name for the board")?;
+    let d = dir(root, &id, true)?.context("the board's folder")?;
+    save(
+        &d,
+        &Board {
+            name,
+            frames: Vec::new(),
+        },
+    )?;
+    Ok(id)
 }
 
 /// What puts a frame into the store as a version: origin `board`, the

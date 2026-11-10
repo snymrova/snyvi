@@ -475,6 +475,9 @@ pub(crate) async fn desks(
             "desks": with_status(&app, &desks),
             // Each desk's views, by id: Folder, and a board per design/*/ (1.58).
             "views": super::api_board::views_by_desk(&desks),
+            // And their names (1.62): the menu and switcher say a board's
+            // title, not its folder.
+            "boards": super::api_board::boards_by_desk(&desks),
             // So a pane's header can say `~/snyvi` rather than the whole path.
             "home": dirs::home_dir(),
             "panes": panes,

@@ -8,6 +8,13 @@
   "arrive": true,
   "rail": "story"
 }-->
+<script>
+/* Came from a builder's page (snyvi.page's foot links here with ?from=<its
+   name>): the line above the title says so, in its place, before the first
+   paint. Read from the address and nowhere else; nothing is kept or sent. */
+(() => { const f = new URLSearchParams(location.search).get("from") || "", k = document.querySelector(".doc-head span:last-child");
+  if (k && /^[a-z0-9][a-z0-9-]{1,39}$/.test(f)) k.textContent = `You came from ${f} on snyvi.page. This is the desk it was built on.`; })();
+</script>
 <h1 class="display">All your passion projects, in one calm place.</h1>
 <p class="answer">Agents make it easy to start. <b>snyvi helps you finish.</b></p>
 <p class="problem">Running agents on several projects in terminal tabs? Their plans scroll away, what's left lives in your head, and every switch loses the thread.</p>

@@ -411,6 +411,9 @@ pub(crate) fn take(
             names,
             since,
             reported,
+            follows,
+            followers,
+            reads,
             ..
         },
         _,
@@ -418,9 +421,18 @@ pub(crate) fn take(
     else {
         return Ok(false);
     };
+    let line = page::Line {
+        hearts,
+        names,
+        since,
+        reported,
+        follows,
+        followers,
+        reads,
+    };
     let desk = app
         .store
-        .clocked(|c, now| page::hearts_said(c, &slug, hearts, &names, since, reported, now))?;
+        .clocked(|c, now| page::hearts_said(c, &slug, &line, now))?;
     match desk {
         Some(d) => {
             emit(
@@ -533,9 +545,11 @@ fn mine(app: &App) -> Vec<serde_json::Value> {
                         return Ok(None);
                     };
                     let h = page::hearts_of(c, p.id)?;
+                    let f = page::heard_of(c, p.id)?;
                     Ok(p.is_up().then(|| {
                         json!({ "desk": d.id, "slug": p.slug, "title": p.title, "visibility": p.visibility,
-                                "checked": p.checked_at > 0, "hearts": h.0, "names": h.1, "since": h.2 })
+                                "checked": p.checked_at > 0, "hearts": h.0, "names": h.1, "since": h.2,
+                                "follows": f.0, "reads": f.2 })
                     }))
                 })
                 .ok()
@@ -560,7 +574,15 @@ pub(crate) async fn wall_read(
             .store
             .clocked(|c, _| page::friend_pages(c, 40))
             .unwrap_or_default();
-        json!({ "wall": wall_json(&a, again), "mine": mine(&a), "friends": friends })
+        // The pages this reader follows, signed at the wall (1.62, D2).
+        let follows: Vec<serde_json::Value> = a
+            .store
+            .clocked(|c, _| page::follows(c))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(slug, at, seen)| json!({ "slug": slug, "at": at, "seen": seen }))
+            .collect();
+        json!({ "wall": wall_json(&a, again), "mine": mine(&a), "friends": friends, "follows": follows })
     })
     .await;
     match got {
@@ -694,5 +716,85 @@ pub(crate) async fn wall_heart(
         )
             .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FollowBody {
+    pub(crate) slug: String,
+    #[serde(default = "yes")]
+    pub(crate) on: bool,
+}
+fn yes() -> bool {
+    true
+}
+
+/// `POST /api/wall/follow`: the reader follows a page (or stops), signed by
+/// this daemon's key at the wall, so its builder hears it (1.62, D2), and
+/// kept here once the wall has taken it.
+pub(crate) async fn wall_follow(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<FollowBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if !page::valid_slug(&b.slug) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let a = app.clone();
+    let sent = tokio::task::spawn_blocking(move || -> anyhow::Result<(u16, Vec<u8>)> {
+        let me = super::api_peer::identity_blocking(&a)?;
+        let body = json!({ "on": b.on }).to_string();
+        let got = signed(
+            &me,
+            "POST",
+            &format!("/pages/{}/follow", b.slug),
+            body.as_bytes(),
+            "application/json",
+        )?;
+        if got.0 == 200 {
+            a.store
+                .clocked(|c, now| page::set_follow(c, &b.slug, b.on, now))?;
+        }
+        Ok(got)
+    })
+    .await;
+    match sent {
+        Ok(Ok((200, out))) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/json")],
+            out,
+        )
+            .into_response(),
+        Ok(Ok((status, out))) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": why(status, &out) })),
+        )
+            .into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("{e:#}") })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// `POST /api/wall/seen`: Home showed the followed pages' moments; the line
+/// that said there were new ones goes.
+pub(crate) async fn wall_seen(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app.store.clocked(|c, now| page::follows_seen(c, now)) {
+        Ok(()) => Json(json!({ "seen": true })).into_response(),
+        Err(e) => refused(e),
     }
 }

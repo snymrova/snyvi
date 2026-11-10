@@ -1,5 +1,6 @@
-/* The Board view: frames an agent draws, in the desk's folder, that the
- * reader watches arrive (plan 6ff79c55a7, docs/BOARD.md).
+/* The Board view: sections an agent draws, in the desk's folder, that the
+ * reader watches arrive (plan 6ff79c55a7, docs/BOARD.md; sections 1.62,
+ * views audit e512285a2b).
  *
  * Not on the wire until a board is opened: ui/desk's views part imports this
  * on the first open, the way the desk itself is imported by app.js. The seam
@@ -10,11 +11,13 @@
  * section of the desk's rail: a folded rail took them away.
  *
  * The reader's hands are select, pan and zoom. Nothing here edits a frame:
- * the agent draws, snyvi shows. A frame is a document, shown exactly the way
- * an HTML document is (ui/app/04-doc.js): an iframe sandboxed without
- * allow-same-origin, loaded by `src` from the document's own route, so it
- * gets that route's CSP -- no network, no parent -- and nothing more. Never
- * srcdoc: a srcdoc frame takes on this page's CSP instead.
+ * the agent draws, snyvi shows. Since 1.62 a board's sections are drawn in
+ * ONE sandboxed document, `/board-frame` (ui/board-frame.js), each in a
+ * shadow root and as tall as its content; only a section with a script (an
+ * island) still gets a document of its own, the way an HTML document is
+ * shown (ui/app/04-doc.js): sandboxed without allow-same-origin, loaded by
+ * `src` from the document's own route. Never srcdoc: a srcdoc frame takes on
+ * this page's CSP instead.
  *
  * The world is one element under a transform: pan is a translate, zoom a
  * scale about the cursor. Frames are placed in world pixels, at the size the
@@ -32,8 +35,19 @@ let view = { x: 0, y: 0, k: 1 };
 /** What the reader has selected, by frame id, in the order they picked. */
 let picked = [];
 let fitted = false;
+/** The reader has panned or zoomed since the board opened: heights that
+ *  arrive later no longer refit what they arranged. */
+let touched = false;
+/** Each section's height as the board's document measured it, by id. */
+let measured = {};
+/** An island's height when the agent gave none: its page cannot be measured. */
+const ISLAND_H = 600;
+/** A section not measured yet, so a fit before the heights has a box to fit. */
+const UNMEASURED_H = 240;
 
 const shown = () => (board ? board.frames.filter(f => !f.hidden) : []);
+/** How tall `f` is drawn: the agent's height, else what was measured. */
+const heightOf = f => f.h || (f.island ? ISLAND_H : measured[f.id] || UNMEASURED_H);
 
 function applyView() {
   if (world) world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
@@ -57,7 +71,7 @@ function fit(frames) {
   const fs = frames && frames.length ? frames : shown();
   if (!fs.length || !host) return;
   const x0 = Math.min(...fs.map(f => f.x)), y0 = Math.min(...fs.map(f => f.y));
-  const x1 = Math.max(...fs.map(f => f.x + f.w)), y1 = Math.max(...fs.map(f => f.y + f.h + 28));
+  const x1 = Math.max(...fs.map(f => f.x + f.w)), y1 = Math.max(...fs.map(f => f.y + heightOf(f) + 28));
   const r = host.getBoundingClientRect();
   const k = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN,
     Math.min((r.width - 2 * FIT_PAD) / Math.max(1, x1 - x0), (r.height - 2 * FIT_PAD) / Math.max(1, y1 - y0))));
@@ -80,6 +94,7 @@ function wire() {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     drag.moved = true;
+    touched = true;
     host.classList.add("bd-panning");
     view.x = drag.vx + dx; view.y = drag.vy + dy;
     applyView();
@@ -94,6 +109,7 @@ function wire() {
   host.addEventListener("pointercancel", () => { drag = null; host.classList.remove("bd-panning"); });
   host.addEventListener("wheel", e => {
     e.preventDefault();
+    touched = true;
     if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-e.deltaY / 300), e.clientX, e.clientY);
     else { view.x -= e.deltaX; view.y -= e.deltaY; applyView(); }
   }, { passive: false });
@@ -102,9 +118,9 @@ function wire() {
     const r = host.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (e.key === "0") fit();
     else if (e.key === "f") fit(shown().filter(f => picked.includes(f.id)));
-    else if (e.key === "+" || e.key === "=") zoomAt(1.25, cx, cy);
-    else if (e.key === "-") zoomAt(0.8, cx, cy);
-    else if (e.key === "Escape" && lookOpen) { lookOpen = false; paintList(); }
+    else if (e.key === "+" || e.key === "=") { touched = true; zoomAt(1.25, cx, cy); }
+    else if (e.key === "-") { touched = true; zoomAt(0.8, cx, cy); }
+    else if (e.key === "Escape" && (lookOpen || boardsOpen)) { lookOpen = false; boardsOpen = false; paintList(); }
     else if (e.key === "Escape" && picked.length) pick(null, false);
     else return;
     e.preventDefault();

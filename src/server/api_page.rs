@@ -85,7 +85,7 @@ fn page_json(app: &App, desk: &crate::desk::Desk) -> anyhow::Result<serde_json::
         Ok((
             page::moments(c, p.id, false)?,
             page::file_names(c, &p)?,
-            page::hearts_of(c, p.id)?,
+            (page::hearts_of(c, p.id)?, page::heard_of(c, p.id)?),
             crate::wall::held(c, Some(p.id))?,
         ))
     })?;
@@ -97,7 +97,8 @@ fn page_json(app: &App, desk: &crate::desk::Desk) -> anyhow::Result<serde_json::
         "held": files::held(&pages_dir(app), &refs),
         "cap": files::PAGE_MAX,
         // The wall's last line: the hearts, with names, to the builder.
-        "hearts": { "n": hearts.0, "names": hearts.1, "since": hearts.2 },
+        "hearts": { "n": hearts.0 .0, "names": hearts.0 .1, "since": hearts.0 .2,
+                    "follows": hearts.1 .0, "followers": hearts.1 .1, "reads": hearts.1 .2 },
         // What the wall has not taken yet, and the last reason.
         "waiting": waiting.len(),
         "waiting_why": waiting.first().map(|r| r.error.clone()).unwrap_or_default(),
@@ -471,7 +472,7 @@ pub(crate) async fn pane_post(
         match got {
             Ok(Some(x)) => x,
             Ok(None) => return Json(json!({
-                "said": "no page yet: the user starts one from Page in the desk's head; say so once"
+                "said": "no page yet: the user starts one from Page in the desk's ⋯ (or asks you to, with page_draft); say so once"
             }))
             .into_response(),
             Err(e) => return refused(e),
@@ -532,5 +533,120 @@ pub(crate) fn offer_shipped(app: &App, desk_id: i64) {
             "page",
             json!({ "desk": desk_id, "what": "offers", "offer": offer, "title": title, "by": "snyvi" }),
         );
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct DraftBody {
+    pub(crate) title: Option<String>,
+    pub(crate) lede: Option<String>,
+    pub(crate) kind: Option<String>,
+    pub(crate) stage: Option<String>,
+    pub(crate) looking_for: Option<String>,
+    pub(crate) cta: Option<page::Link>,
+    pub(crate) points: Option<Vec<page::Point>>,
+    pub(crate) story: Option<String>,
+    pub(crate) links: Option<Vec<page::Link>>,
+    pub(crate) github: Option<String>,
+    /// Paths in the desk's folder.
+    pub(crate) cover: Option<String>,
+    pub(crate) logo: Option<String>,
+}
+
+/// `POST /api/panes/{id}/page/draft`: `page_draft` (1.62). The page's words
+/// from the agent the user asked to build it: started from its draft when
+/// the desk has none, then the fields given, and its pictures copied in as
+/// a pick is. Never who sees it, never its address, never the press: the
+/// token publishes nothing, and a page that is up stays as it went up until
+/// the user presses Publish again.
+pub(crate) async fn pane_page_draft(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<DraftBody>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let e = Edit {
+        title: b.title,
+        lede: b.lede,
+        kind: b.kind,
+        stage: b.stage,
+        looking_for: b.looking_for,
+        cta: b.cta,
+        points: b.points,
+        story: b.story,
+        links: b.links,
+        github: b.github,
+        ..Default::default()
+    };
+    let pics: Vec<(&str, String)> = [("logo", b.logo), ("cover", b.cover)]
+        .into_iter()
+        .filter_map(|(f, p)| p.filter(|p| !p.trim().is_empty()).map(|p| (f, p)))
+        .collect();
+    let a = app.clone();
+    let done = tokio::task::spawn_blocking(move || -> anyhow::Result<page::Page> {
+        save_page(
+            &a,
+            &desk,
+            PageBody {
+                start: true,
+                edit: Some(e),
+                ..Default::default()
+            },
+        )?;
+        let mut cover = false;
+        for (field, path) in pics {
+            cover |= field == "cover";
+            save_page(
+                &a,
+                &desk,
+                PageBody {
+                    pick: Some(Pick {
+                        field: field.into(),
+                        path,
+                    }),
+                    ..Default::default()
+                },
+            )?;
+        }
+        // A cover given is a cover shown: the hero is the picture.
+        if cover {
+            let e = Edit {
+                hero: Some("picture".into()),
+                ..Default::default()
+            };
+            a.store.clocked(|c, now| page::save(c, desk.id, &e, now))?;
+        }
+        a.store
+            .clocked(|c, _| page::get(c, desk.id))?
+            .ok_or_else(|| anyhow::anyhow!("the page went away"))
+    })
+    .await;
+    match done {
+        Ok(Ok(p)) => {
+            emit(
+                &app,
+                "page",
+                json!({ "desk": placed.desk_id, "what": "page" }),
+            );
+            let up = if p.is_up() {
+                "it is up as it was; the user's Publish again sends this"
+            } else {
+                "not up: who sees it and Publish are the user's"
+            };
+            Json(json!({
+                "said": format!("The page `{}` has your words ({up}). Tell the user it is ready to look at in Page, in the desk's ⋯.", p.slug),
+            }))
+            .into_response()
+        }
+        Ok(Err(e)) => refused(e),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

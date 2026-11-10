@@ -25,6 +25,38 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "share"
+since = "1.62.0"
+title = "Your page, shared where your people are"
+line = "Once it's up, Copy link and Post it… open your own X, Bluesky or LinkedIn with the words in. Each moment has an address of its own, every link shows a picture where it's pasted, and anyone can follow your page by feed. Follows from Home now reach the builder, and once a day you hear who follows and how many opened your page."
+
+[[feature]]
+id = "badge"
+since = "1.62.0"
+title = "A badge for the README"
+line = "Once your page is on the wall, Page offers one line for your README: a badge with its name and hearts that opens the page. Claude in the panel can add it, or push the check that puts the page on the wall."
+small = "yes"
+
+[[feature]]
+id = "boards"
+since = "1.62.0"
+title = "Many boards, each an empty canvas"
+line = "Make a board from the desk's ⋯ (New board) and ask Claude to draw on it: screens, cards, a page, each a section as tall as its content, in one light document however many there are. Switch boards and rename them from the board's title."
+
+[[feature]]
+id = "pagebuild"
+since = "1.62.0"
+title = "Claude builds your page"
+line = "Page says what it is before anything else, and Ask Claude to build it fills the title, the lede, a main link, three points and the story from your project, in a cleaner template. You still choose who sees it and press Publish."
+
+[[feature]]
+id = "viewsay"
+since = "1.62.0"
+title = "Each view says what it is"
+line = "An empty board, a desk without a page and the Folder view each say, once, what they are for, and Ask Claude types into the panel beside them when its Claude is at its prompt."
+small = "yes"
+
+[[feature]]
 id = "draftpost"
 since = "1.61.0"
 title = "Claude drafts the post"

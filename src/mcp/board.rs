@@ -7,17 +7,21 @@ use super::{arg, said, Session};
 use crate::client;
 use serde_json::{json, Value};
 
-const READ: &str = "Read a board on this snyvi desk: its frames (id, size, place, version), what the user has \
-selected on it, and the design's tokens and DESIGN.md's first paragraph. Read it before the first frame, and \
-before acting on \"this\" or \"these\": the selection is what they mean. A board is design/<board>/ in the \
-desk's folder; frame_write makes one. Pass `since` (the last read's hash) to learn only whether it changed.";
+const READ: &str = "Read a board on this snyvi desk: its sections (id, size, place, version), what the user has \
+selected on it, and the design's tokens and DESIGN.md's first paragraph. Read it before the first section, and \
+before acting on \"this\" or \"these\": the selection is what they mean. Leave `board` out to list the desk's \
+boards (the user can make empty ones, by name). A board is design/<board>/ in the desk's folder; frame_write \
+makes one. Pass `since` (the last read's hash) to learn only whether it changed.";
 
-const WRITE: &str = "Draw one frame on a board in this snyvi desk, whole: a self-contained HTML fragment (CSS \
-inline, tokens as var(--…) with tokens.css's :root copied in, no network), 300 to 3,000 bytes, at a size in \
-CSS pixels. The user, watching the board, sees it arrive. A frame is rewritten whole; a write to the same frame \
-within 20 s is the same version. Show options as several frames side by side (hero-a, hero-b), not as prose. \
-`html: null` hides a frame: its file and versions stay, and say so. Look at what you drew before saying done \
-(frame_look).";
+const WRITE: &str = "Draw one section on a board in this snyvi desk, whole: a self-contained HTML fragment (CSS \
+inline in a <style>, tokens as var(--…) with tokens.css's :root copied in, no network), 300 to 3,000 bytes, at a \
+width in CSS pixels; its height is its content's unless you give one. A new board's name makes the board. Sections \
+are drawn together in one page, each in its own shadow root: `body`, `html` and `:root` in your CSS mean the section \
+itself, and a section runs no script -- one that has a <script> is drawn alone, in its own sandboxed frame, so keep \
+scripts for what a static section cannot show. The user, watching the board, sees it arrive. A section is rewritten \
+whole; a write to the same one within 20 s is the same version. Show options as several sections side by side \
+(hero-a, hero-b), not as prose. `html: null` hides one: its file and versions stay, and say so. Look at what you \
+drew before saying done (frame_look).";
 
 const ARRANGE: &str =
     "Move, reorder or name frames on a board in this snyvi desk, or name the board, or make a frame \
@@ -65,7 +69,7 @@ pub(super) fn specs() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": { "board": board_prop(), "frame": frame_prop(),
                 "html": { "type": ["string", "null"], "description": "The frame's HTML, whole; null hides it." },
                 "w": { "type": "integer", "minimum": 1, "maximum": 4000, "description": "Width in CSS px. Default 800, or its last." },
-                "h": { "type": "integer", "minimum": 1, "maximum": 4000, "description": "Height in CSS px. Default 600, or its last." },
+                "h": { "type": "integer", "minimum": 0, "maximum": 4000, "description": "Height in CSS px. Leave it out (or 0) and the section is as tall as its content; give one only to clip it." },
                 "x": { "type": "integer", "description": "Left on the board; a new frame goes right of the rest." },
                 "y": { "type": "integer", "description": "Top on the board." } },
                 "required": ["frame", "html"], "additionalProperties": false }, "annotations": annotations(false) }),
@@ -103,6 +107,34 @@ fn refusal(status: u16, v: &Value) -> String {
         .map_or_else(|| format!("snyvi answered {status}"), str::to_string)
 }
 
+/// The desk's boards, for a `board_read` that named none.
+fn say_boards(heads: &[Value]) -> String {
+    if heads.is_empty() {
+        return "This desk has no board yet. frame_write with a board's name (design/<board>/) makes one."
+            .into();
+    }
+    let list: Vec<String> = heads
+        .iter()
+        .map(|b| {
+            let n = b["frames"].as_u64().unwrap_or(0);
+            format!(
+                "{} (\"{}\", {})",
+                b["id"].as_str().unwrap_or(""),
+                b["name"].as_str().unwrap_or(""),
+                if n == 0 {
+                    "empty".to_string()
+                } else {
+                    format!("{n} section(s)")
+                }
+            )
+        })
+        .collect();
+    format!(
+        "Boards on this desk: {}. Read one with board: <its folder name>; an empty one is waiting for you to draw on it.",
+        list.join(", ")
+    )
+}
+
 /// A board's frames, its selection and its look, said for an agent to act on.
 fn say_board(v: &Value) -> String {
     let id = v["id"].as_str().unwrap_or("");
@@ -122,11 +154,13 @@ fn say_board(v: &Value) -> String {
         }
     );
     for f in &frames {
+        let size = match f["h"].as_u64() {
+            Some(h) if h > 0 => format!("{}×{h}", f["w"]),
+            _ => format!("{} wide, as tall as its content", f["w"]),
+        };
         out.push_str(&format!(
-            "- {} {}×{} at ({}, {}), v{}, {} bytes{}{}\n",
+            "- {} {size} at ({}, {}), v{}, {} bytes{}{}\n",
             f["id"].as_str().unwrap_or(""),
-            f["w"],
-            f["h"],
             f["x"],
             f["y"],
             f["versions"].as_u64().unwrap_or(0).max(1),
@@ -224,6 +258,25 @@ impl Session {
     }
 
     pub(super) fn board_read(&self, args: &Value) -> Value {
+        // No board named: the desk's boards (1.62), or the one there is.
+        if arg(args, "board").is_empty() {
+            let Some(p) = self.pane.clone() else {
+                return said(
+                    "This session is not running in a snyvi desk, so there is no board here.",
+                    true,
+                );
+            };
+            let heads = match client::pane_board(&self.paths, &p, "boards", None) {
+                Ok((200, v)) => v["boards"].as_array().cloned().unwrap_or_default(),
+                Ok((s, v)) => return said(refusal(s, &v), true),
+                Err(e) => return said(format!("snyvi did not answer: {e}"), true),
+            };
+            if heads.len() != 1 {
+                return said(say_boards(&heads), false);
+            }
+            let one = heads[0]["id"].as_str().unwrap_or("home").to_string();
+            return self.board_read(&json!({ "board": one, "since": arg(args, "since") }));
+        }
         let (p, board, _) = match self.on_board(args, false) {
             Ok(x) => x,
             Err(no) => return no,

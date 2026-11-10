@@ -102,8 +102,44 @@ The wall is `wall/` (README there): one Worker, D1 and R2, observability
 off. It holds, in the clear, what a builder signed: pages, moments, files,
 under the daemon's public key; the hearts by the key that gave them; the
 reports, counted (1.59 counts them and an operator acts on them; automatic
-hiding is 1.60's). It never holds an account, a name that is not a page's
-own title, or a log of who read what. Reads are R2 through the cache.
+hiding is 1.60's); since 1.62 the follows, by the key that followed, and a
+count of reads per page per day. It never holds an account, a name that is
+not a page's own title, or a log of who read what: a read is a number added
+to that day's, never the address, the referrer or the agent it came with,
+and link-preview robots are not counted. Reads are R2 through the cache.
+
+## Out of snyvi (1.62)
+
+The social audit (16627c32e2) found the loop inside snyvi working and the
+one out of it shut: a page's link pasted anywhere was grey text, a visitor
+could do nothing, and the foot was not a link. 1.62 opens it, keeping the
+promise: snyvi never posts for anyone.
+
+```mermaid
+flowchart LR
+  S[A thread ships] --> M[A moment, offered by Claude]
+  M -->|Publish| P[snyvi.page/slug/m/id]
+  P -->|Post it…, the builder's own account| X[X, Bluesky, LinkedIn]
+  X -->|a picture and a title| V[A visitor]
+  V -->|Follow by feed| F[feed.xml]
+  V -->|Made on snyvi| C[snyvi.com/?from=slug]
+  R[README badge] --> P
+  H[Home: Follow, signed] -->|daily line: follows, reads| B[The builder]
+```
+
+| Before | After |
+|---|---|
+| a page's link shows grey text | `og:image` (the cover, or `card.png` the Worker draws) and `summary_large_image` |
+| after Publish, a line of text | Copy link · Post it… (intent links: X, Bluesky, LinkedIn) beside the press and on each moment that is up |
+| a moment has no address | `snyvi.page/<slug>/m/<id>`, that moment drawn large, its own preview |
+| the foot is plain text | "Made on snyvi · build yours →" to `snyvi.com/?from=<slug>`, whose head says where you came from |
+| no way to follow without snyvi | `snyvi.page/<slug>/feed.xml`, Atom, linked in the head and the page |
+| Follow kept in the reader's browser, unseen | signed by the reader's daemon at the wall (`/api/wall/follow`), kept in `wall_follows`; the builder's line says how many and which builders |
+| nothing for the README | `snyvi.page/<slug>/badge.svg`, and the line to paste in Page |
+| reads unknown | a daily count; the line says the week's |
+| a pairing code assumes snyvi | the copied words end with where to get it |
+
+Hearts stay a snyvi builder's (D1 answered no): a visitor follows by feed.
 
 **Takedowns.** Open an issue at https://github.com/snymrova/snyvi/issues
 with the page's address (a mailbox for this is still to be named). The
@@ -120,4 +156,5 @@ snyvi.page, and its owner can take it down for good.
 | `src/mcp/page.rs` | `offer_post` |
 | `ui/desk/27-page.js`, `ui/page.js` | Page in the desk's ⋯, the card, the view |
 | `ui/wall.js` | Home's section |
-| `wall/` | the service |
+| `wall/` | the service; `wall/src/card.ts` the drawn preview |
+| `site/src/pages/index.html` | the `?from=` line |

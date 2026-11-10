@@ -2,10 +2,10 @@
  * order (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
 // ---------- a desk's page (1.59, plan 48ca2d5b9e; docs/WALL.md) ----------
 /*
- * Page is a view like Folder, always in the switcher after it: the desk's
- * page, edited in place, over the grid with one panel docked, the way a
- * Board opens (25-views.js). The view itself is ui/page.js, fetched the
- * first time Page is pressed.
+ * Page is a view like Folder, in the desk's ⋯ after it: the desk's page,
+ * edited in place, over the grid with one panel docked, the way a Board
+ * opens (25-views.js), so the Claude its Ask Claude types into is beside
+ * it. The view itself is ui/page.js, fetched the first time Page opens.
  *
  * And one card, in the grid's corner, for all three doors: snyvi's own when
  * a thread ships, the agent's offer_post, and (from the view) the reader's
@@ -32,7 +32,7 @@ function pageMount(surf, d) {
   const want = viewOn;
   pageUse().then(m => {
     if (viewOn !== want || !surf.isConnected) return;
-    m.open({ host: surf, desk: d.id, api: ctx.api, esc: ctx.esc, toast: ctx.toast, rel: ctx.rel, sayErr: ctx.sayErr, seed: want.seed || null });
+    m.open({ host: surf, desk: d.id, api: ctx.api, esc: ctx.esc, toast: ctx.toast, rel: ctx.rel, sayErr: ctx.sayErr, seed: want.seed || null, ask: askClaude });
   }, () => { surf.innerHTML = `<p class="dk-none">Could not load the page.</p>`; });
 }
 

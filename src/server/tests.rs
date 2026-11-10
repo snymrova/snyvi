@@ -821,6 +821,9 @@ fn the_hash_behind_the_version_covers_every_chunk_the_page_can_fetch() {
             }
             (name.ends_with(".js") || name.ends_with(".css")).then_some(name)
         })
+        // The board's runtime is no asset: `/board-frame` inlines it under a
+        // nonce made for that answer (api_board.rs), and serves it no-store.
+        .filter(|n| n != "board-frame.js")
         .collect();
     on_disk.sort();
     let mut named: Vec<String> = super::assets::ASSETS

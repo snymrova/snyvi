@@ -35,6 +35,15 @@ pub(crate) const BOARD_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/board.
 /// Page is pressed in its head, never before, on the same terms as the Board.
 pub(crate) const PAGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/page.js"));
 
+/// Template A (1.62): the page's one layout, imported by page.js, and by the
+/// wall's Worker from source, so the Page view draws what snyvi.page serves.
+pub(crate) const PAGE_TEMPLATE_JS: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/page-template.js"));
+
+/// The runtime inside a board's one iframe (1.62): inlined under a nonce by
+/// `/board-frame`, never served as an asset of the page.
+pub(crate) const BOARD_FRAME_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/board-frame.js"));
+
 /// Home's "What people are building" (1.59): imported by Home after its
 /// first draw, never by first paint.
 pub(crate) const WALL_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/wall.js"));
@@ -1070,6 +1079,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("desk.js", DESK_JS, JS),
     ("board.js", BOARD_JS, JS),
     ("page.js", PAGE_JS, JS),
+    ("page-template.js", PAGE_TEMPLATE_JS, JS),
     ("wall.js", WALL_JS, JS),
     ("frame.js", FRAME_JS, JS),
     ("game.js", GAME_JS, JS),

@@ -23,6 +23,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
     conn.execute_batch(crate::peer::SCHEMA).unwrap();
     conn.execute_batch(crate::page::SCHEMA).unwrap();
+    conn.execute_batch(crate::page::COLUMNS_1_62).unwrap();
     conn.execute(
         "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'dogs', '/tmp/dogs', 1)",
         [],
@@ -109,6 +110,9 @@ fn the_walls_line_opens_against_the_walls_keys_and_nothing_else_does() {
         names: vec!["Trapti".into()],
         since: 1_800_000_000,
         reported: 0,
+        follows: 12,
+        followers: vec!["Sam".into()],
+        reads: 140,
         v: CONTENT_V,
     };
     let frame = seal(&wall, &as_peer(&me, "me"), &line, b"").unwrap();
@@ -158,6 +162,9 @@ fn the_walls_vectors_are_written_from_here() {
         names: vec!["Trapti".into(), "Sam".into()],
         since: 1_800_000_000,
         reported: 1,
+        follows: 2,
+        followers: vec!["Sam".into()],
+        reads: 9,
         v: CONTENT_V,
     };
     let nonce = [5u8; 24];

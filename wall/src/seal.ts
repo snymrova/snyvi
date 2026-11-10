@@ -112,6 +112,10 @@ export function blake3hex16(bytes: Uint8Array): string {
 }
 
 /** `Content::Wall` as serde writes it: field order is the enum's. */
-export function wallLine(slug: string, hearts: number, names: string[], since: number, reported: number): string {
-  return JSON.stringify({ kind: "wall", slug, hearts, names, since, reported, v: 5 });
+/** The daily line's content, as the daemon reads it (src/peer.rs,
+ *  `Content::Wall`): v6 adds the follows, the new followers' names and the
+ *  week's reads, which a daemon from before leaves unread. */
+export interface WallLine { slug: string; hearts: number; names: string[]; since: number; reported: number; follows: number; followers: string[]; reads: number }
+export function wallLine(l: WallLine): string {
+  return JSON.stringify({ kind: "wall", ...l, v: 6 });
 }

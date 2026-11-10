@@ -1,4 +1,4 @@
-/** Select a frame: a click picks it alone, shift (or cmd, ctrl) adds or
+/** Select a section: a click picks it alone, shift (or cmd, ctrl) adds or
  *  takes it away, a click on nothing clears. Every change is the reader's
  *  focus, sent through `o.focus` (POST /api/desks/{id}/focus), so the agent
  *  in the docked panel reads "this one" as the frames named. */
@@ -22,5 +22,7 @@ function paintBar() {
   const names = picked.map(id => { const f = shown().find(x => x.id === id); return f ? (f.name || f.id) : id; });
   bar.innerHTML = names.length
     ? `<span class="bd-bar-k">Claude reads</span> <span class="bd-bar-v">${names.map(esc).join(", ")}</span>`
-    : `<span class="bd-bar-k">Pick a frame</span> <span class="bd-bar-v">and say what to change in the panel.</span>`;
+    : shown().length
+      ? `<span class="bd-bar-k">Pick a section</span> <span class="bd-bar-v">and say what to change in the panel: it reads what you picked.</span>`
+      : `<span class="bd-bar-k">An empty board</span> <span class="bd-bar-v">Claude in the panel draws on it.</span>`;
 }
