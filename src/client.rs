@@ -935,6 +935,21 @@ pub fn desk_widgets(paths: &Paths, pane: &str) -> Result<Value> {
     pane_read(paths, pane, "widgets")
 }
 
+/// The desk `pane` is on, as `read_desk` asks (1.65): its threads, panels,
+/// folder and decisions, or the `sections` named, comma-separated; `query`
+/// finds a decision by its words. Read as the notes are.
+pub fn pane_desk(paths: &Paths, pane: &str, sections: &str, query: &str) -> Result<Value> {
+    pane_read(
+        paths,
+        pane,
+        &format!(
+            "desk?sections={}&query={}",
+            crate::browse::urlencode(sections),
+            crate::browse::urlencode(query)
+        ),
+    )
+}
+
 /// A board route of the desk `pane` is on (docs/BOARD.md): `GET` when
 /// `body` is `None`, else `POST`. The status and the JSON, whatever the
 /// status: a board says "no such board" (404) and "not yet" (501) in words

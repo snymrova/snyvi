@@ -23,6 +23,7 @@ mod git;
 mod hook;
 mod lately;
 mod launch;
+mod ledger;
 mod links;
 mod mcp;
 mod music;

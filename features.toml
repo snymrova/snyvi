@@ -25,6 +25,20 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "decisions"
+since = "1.65.0"
+title = "Decisions: every question an agent asked you, kept"
+line = "On you's tray has a line for the desk's decisions: what is still open however old, what you answered and where, what you dropped. Answer, put off or drop one there. Agents read the same list before they ask, so a question you settled is not asked twice."
+show = "desk .dc-line"
+
+[[feature]]
+id = "read-desk"
+since = "1.65.0"
+title = "An agent can read the desk before it starts"
+line = "An agent in a panel can now look up where the work is: the threads, the other panels, which checkout is live and how far each is from main, and what you already decided. An answer you give by talking is kept in your words."
+small = "yes"
+
+[[feature]]
 id = "one-card"
 since = "1.64.0"
 title = "One card for what's on you"

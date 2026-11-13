@@ -771,11 +771,11 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
     let open: Vec<String> = answers
         .iter()
         .filter(|t| t.answered_at == 0 && t.kind == "decide")
-        .map(|t| format!("\"{}\"", cut(&t.text, LINE_CHARS)))
+        .map(|t| format!("#{} \"{}\"", t.id, cut(&t.text, LINE_CHARS)))
         .collect();
     if !open.is_empty() {
         lines.push(format!(
-            "Still open on the user's On you list, from you: {}. If their message answers them, call settle_asks; if not, leave them, they wait there.",
+            "Still open on the user's On you list, from you: {}. If their message answers them, call settle_asks with what they said, by id; if not, leave them, they wait there.",
             open.join("; ")
         ));
     }

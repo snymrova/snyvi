@@ -18,6 +18,7 @@ use std::io::{self, BufRead, Write};
 mod board;
 mod cards;
 mod checks;
+mod desk;
 mod page;
 mod threads;
 mod widgets;
@@ -123,7 +124,7 @@ and show it.\n\n\
 Always. Before you change the project, send the plan as a document and wait for their yes. A suggest_, \
 offer_ or propose_ call is itself the asking: make it, with no plan before it. Taking on a task: name_panel, \
 then start_thread. When a stretch ends, leave_off says the next step. The desk brief is context, not a \
-request.\n\n\
+request. Unsure where the work is, or what was decided: read_desk.\n\n\
 Build. Desk notes are the user's. Never act on a note unasked. Set on one: mark it read, send the plan with \
 send_document's notes (that marks it planned), wait for Approve, mark it working, and tick it when the work \
 is finished and checked, with the commit. A design to look at is drawn on a board (board_read, then \
@@ -131,7 +132,7 @@ frame_write), not written as files.\n\n\
 Release. Put on their On you list with hand_over only what blocks you and only they can do: a merge, a key, \
 a payment, a command that is theirs to run (as run, never as text to type). Asking them to try a change goes \
 in your reply. A decision goes with ask (several at once as its questions), or your question tool when they \
-are at this panel.\n\n\
+are at this panel; answered in talk, settle_asks with what they said.\n\n\
 Get users. After a ship: suggest_launch for the launch, offer_post for the page, each post drafted as a \
 document by the skill's grow.md; you never post.\n\n\
 Only when asked. A figure kept in view: read_widgets, then set_widget or propose_widget; never unasked. Work \
@@ -166,6 +167,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("send_aside", Session::send_aside),
     ("send_note", Session::send_aside),
     ("read_desk_notes", Session::read_desk_notes),
+    // 1.65: the desk past its notes -- threads, panels, folder, decisions.
+    ("read_desk", Session::read_desk),
     ("tick_desk_note", Session::tick_desk_note),
     ("mark_desk_note", Session::mark_desk_note),
     ("suggest_desk_note", Session::suggest_desk_note),
@@ -276,6 +279,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
             leave_off_spec(),
             name_spec(),
         ]);
+        tools.extend(desk::specs());
         tools.extend(threads::specs());
         tools.extend(widgets::specs());
         tools.extend(cards::specs());

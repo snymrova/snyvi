@@ -958,6 +958,15 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("GET", "/api/desks/1/threads", None, Gate::Desk, true),
+    ("GET", "/api/panes/nope/desk", None, Gate::Token, true),
+    ("GET", "/api/desks/1/decisions", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/decisions/1/answer",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/api/desks/1/pipelines", None, Gate::Desk, true),
     (
         "POST",

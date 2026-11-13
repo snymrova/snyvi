@@ -173,12 +173,14 @@ function riseHtml(d, f, esc) {
  *  before it could be answered. Each question is its title line and two
  *  lines of the rest here (`qClamp`), a click from the whole. */
 function trayHtml(d, f, esc) {
+  // The shelf of decisions has the tray's place while it is open (29-decisions.js).
+  if (dec.open) return decHtml(d, esc);
   const gone = filedGone && (filedGone.k === "w" || filedGone.k === "g") ? goneRow(filedGone.k, filedGone.id, filedGone.text, esc) : "";
   qClamp = true;
   const rows = gone + turnRows(d, f, esc, "fresh"), old = turnRows(d, f, esc, "older"), hushed = turnRows(d, f, esc, "quiet");
   qClamp = false;
   const said = rows ? `<ul class="dk-turn-list" data-part="desk.turns">${rows}</ul>` : "";
-  const older = old ? `<ul class="cn-list cn-old oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, or asked over half an hour ago. It goes by itself after three days, and can come back">${old}</ul>` : "";
+  const older = old ? `<ul class="cn-list cn-old oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, or asked over half an hour ago. A question waits in Decisions after a day, anything else goes by itself after three, and can come back">${old}</ul>` : "";
   // Gone quiet (C3): its panel was prompted since, so it may be done there.
   const quiet = hushed ? `<p class="oy-qh">Quiet · its panel was prompted since</p><ul class="dk-turn-list" data-part="desk.quiet">${hushed}</ul>` : "";
   const K = ctx.corner?.(), offers = K ? K.offersHtml() : "", lines = K?.linesHtml?.() || "";
@@ -197,7 +199,7 @@ function trayHtml(d, f, esc) {
   const close = `<button type="button" class="oy-x" data-a="oy-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${ico("x")}</button>`;
   // Nothing to keep open beside the panels, so no pin, unless it is pinned.
   const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${all || oy.pin ? pinBtn() : ""}${close}</div>`;
-  return `<div class="oy-tray${oy.quiet ? " ring-quiet" : ""}" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing on you right now.</p>`}</div></div>`;
+  return `<div class="oy-tray${oy.quiet ? " ring-quiet" : ""}" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing on you right now.</p>`}${decLine(d, esc)}</div></div>`;
 }
 
 /** Where the corner sits: in the rail's column, at its width, its foot just
@@ -234,6 +236,7 @@ function onYou(d) {
   if (oy.pinAt !== d.id) { oy.pinAt = d.id; oy.pin = pinned(d.id); oy.open ||= oy.pin; }
   const el = oyNode();
   oyPlace(el);
+  decWant(d);
   // Every draw asks what is new, not only a read of the list: a turn read
   // while the desk was out of view -- Home, a document -- rises when it is
   // back in view (#116). Only once this desk's list is in, or its first read
@@ -269,7 +272,7 @@ function onYou(d) {
   // is on one (corner.js `lift`).
   const top = el.offsetHeight ? el.getBoundingClientRect().top : innerHeight, h = el.offsetHeight ? Math.max(0, Math.round(innerHeight - top - 20 + 8)) : 0;
   K ? K.lift(h) : document.documentElement.style.setProperty("--oy-h", `${h}px`);
-  if (drew) threadFocus(el);
+  if (drew) { threadFocus(el); decFocus(el); }
 }
 
 /** A button's selector by what it does and which row it is on. */
@@ -365,6 +368,7 @@ function oyPin(d) {
 function oyClose(back) {
   if (back && oy.pin) setPinned(deskId, false);
   oy.open = false; oldOpen.clear();
+  dec.open = false; dec.field = null; dec.done.clear();
   if (current()) rail();
   if (back && oy.back?.isConnected) oy.back.focus({ preventScroll: true });
   oy.back = null;
@@ -397,6 +401,7 @@ document.addEventListener("keydown", e => {
 function forgetOnYou() {
   clearTimeout(oy.timer);
   Object.assign(oy, { open: false, rise: 0, drawnRise: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, more: 0 });
+  dec.open = false; dec.field = null; dec.done.clear();
   oyEl?.remove(); oyEl = null;
   const K = ctx.corner?.();
   K ? K.lift(0) : document.documentElement.style.setProperty("--oy-h", "0px");
