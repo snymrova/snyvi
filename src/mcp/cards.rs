@@ -9,23 +9,17 @@ use super::{arg, said, Session};
 use crate::client;
 use serde_json::{json, Value};
 
-const SHOW: &str = "Show a small card above the rail's foot in snyvi while this panel has focus: a link to \
-where the work can be seen, or a one-line word on where it is. For a place the user will want while you work \
-(a preview or dev server, a deploy, a PR, a CI run, a doc): kind link with a short label and the url. For \
-progress worth a glance (\"Building 3/7 shards\", \"Tests passed 412/412\"): kind text, with tone (run while \
-it goes, ok, warn, bad) and for, the seconds it stays (10-3600; leave it out to keep it while this session \
-runs). Give an id and send the same id again to update it in place (a count going 3/7, 4/7) rather than \
-stacking a new one. The newest three show; a panel keeps six. Never a paragraph, an instruction, or something \
-the user must do (that is hand_over); a figure for the whole desk to keep is set_widget. The user can close \
-a card with its ✕; a closed card stays closed for the session. Cards go when this session ends.";
+const SHOW: &str = "Show a small card above the rail's foot while this panel has focus: `kind` link, with a label and url, for a \
+place the user will want while you work (a preview, a deploy, a CI run); or `kind` text for progress worth a \
+glance (\"Building 3/7\"), with `tone` and `for`, the seconds it stays. Send the same `id` again to update \
+it in place. Never a paragraph or something the user must do (hand_over); a figure for the whole desk is \
+set_widget. A card the user closed stays closed.";
 
-const PIN: &str = "Pin a link in the rail's foot of this snyvi desk, beside its repository: a place \
-this desk's work lives that the user will want one click away on any day, whichever panel they are in -- the \
-live site, a staging or preview deploy that stays, a dashboard, the docs. It stays until the user takes it out \
-with its ✕. Pin the same url again to change its label in place. For a place that matters only while you work \
-(a dev server, a CI run, this PR), use show_card instead: it goes with this session. The repository and the \
-thread's PR are shown already. A desk shows six links; never a link the user did not need, never one to \
-something they must do (that is hand_over).";
+const PIN: &str = "Pin a link in the rail's foot of this desk: a place its work lives that the user will want one click away on \
+any day (the live site, a staging deploy that stays, a dashboard, the docs). It stays until the user takes \
+it out. Pin the same url again to change its label. For a place that matters only while you work (a dev \
+server, a CI run), use show_card. The repository and the thread's PR are shown already. Never one to \
+something they must do (hand_over).";
 
 const CLEAR: &str =
     "Take a card you showed with show_card off the rail's foot, by its id: when the link is \

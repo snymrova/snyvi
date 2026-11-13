@@ -55,6 +55,7 @@ grep -q "full path" $HOME/init1.log
 grep -q "Skill in $HOME/.claude/skills/snyvi" $HOME/init1.log
 grep -q "snyvi init-claude wrote this" $HOME/.claude/skills/snyvi/SKILL.md
 test -f $HOME/.claude/skills/snyvi/widgets.md
+test -f $HOME/.claude/skills/snyvi/notes.md
 check "assert s['hooks']['SessionStart'][0]['hooks'][0]['command']=='$B hook', s"
 echo "--- 2. again: nothing re-added, claude asked once"
 $B init-claude | tee $HOME/init2.log

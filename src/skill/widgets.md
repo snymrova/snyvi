@@ -1,6 +1,6 @@
 <!-- snyvi init-claude wrote this; snyvi uninstall-claude takes it out, and an update rewrites it. -->
 
-# Writing a snyvi widget
+# Writing a snyvi widget, a gallery, a card
 
 Read `SKILL.md` first: a widget is for a figure the user asked to keep in
 view, as a count and one short line.
@@ -48,7 +48,7 @@ Their pick and a line reach you on your next prompt.
 - Give `caption` (what differs from the others), `model`, `prompt`, `cost`
   in dollars. A clip can have a `poster` (`ffmpeg -ss 0 -i clip.mp4 -frames:v 1 poster.jpg`).
 - The first add on a desk is a card, as a box's is; outputs added meanwhile
-  wait and show on Allow.
+  wait and show on Allow. If they said not now, or removed it, stop adding.
 - Not for screenshots of your work or documents: those are `send_document`.
 
 ```text
@@ -57,6 +57,28 @@ add_to_gallery { file: "/abs/out/r2-b.png", caption: "warm, closer", model: "flu
 ```
 
 A script does the same: `snyvi gallery add out.png --caption "warm" --model flux --cost 0.04 --desk 3`.
+
+## A card and a link
+
+A card is the panel's passing word, above the rail's foot while the panel
+has focus: a **link** to where the work can be seen (a preview, a deploy, a
+PR, a CI run, a doc) or one line of **text** on where it is ("Building
+3/7"), with `tone` (`run` while it goes, `ok`, `warn`, `bad`). Use
+`show_card` with an `id` and send it again to update in place; `for` is the
+seconds it stays (10-3600), left out to keep it while the session runs;
+`clear_card` takes it off. The newest three show; a panel keeps six. Never
+a paragraph or a to-do of theirs. A figure for the whole desk to keep is a
+widget. The user can close a card with its ✕; snyvi then tells you so, and
+a closed card stays closed for the session. Cards go when the session ends.
+Don't put a PR card: snyvi shows the thread's PR, with its checks, while it
+is open.
+
+A place the desk keeps is a **link** in the rail's foot: `pin_link` with a
+label and the url, for the live site, a staging deploy that stays, a
+dashboard -- what the user wants one click away on any day. It stays until
+they take it out with its ✕, and a link they took out stays out. Pin the same
+url to relabel it. A desk shows six. A dev server or a CI run is a card, not
+a link.
 
 ## A widget file
 
@@ -116,7 +138,8 @@ snyvi widget check ci --dir "$d"     # run from the desk's folder: prints what s
 folder. `check` runs it as snyvi will: the environment cleared but for
 PATH, home, language and the keys named, so what passes here runs there.
 
-Then `propose_widget` with the same command and script. On the card the
+Then `propose_widget` with the same command and script; proposing the same
+name again replaces the card waiting for it. On the card the
 user can **Try once**, pick how long, and **Add**.
 
 ## Three that work

@@ -1,40 +1,49 @@
 ---
 name: snyvi
-description: How to work with snyvi, the user's local document viewer with desks. Use when sending the user a plan, report, review, mockup or picture (send_document); when working in a snyvi desk panel (desk notes, threads, On you, leave_off); whenever the user asks for a widget, a status box, or to keep a figure such as CI, a deploy or a dev server in view on the desk; and when the user wants to launch, post, get users or grow what they built (Show HN, Reddit, a release post, a page).
+description: How to work in snyvi, where the user builds, releases and grows a project with agents. Use when sending the user a plan, review, mockup or picture (send_document); when working in a snyvi desk panel (desk notes, threads, On you, leave_off); whenever the user asks for a widget, a status box, a routine, or a figure such as CI kept in view; and when the user wants to release, launch, post, get users or grow what they built (Show HN, Reddit, a release post, a page).
 ---
 <!-- snyvi init-claude wrote this; snyvi uninstall-claude takes it out, and an update rewrites it. -->
 
 # snyvi
 
-snyvi is the user's document viewer, on their own machine. Agents send, snyvi
-shows: nothing you send runs, and nothing the user removes is deleted. Its MCP
-server (`snyvi`) is how you reach it. The server's instructions say *when*;
-this says *how*, at more length than fits there.
+snyvi is where the user builds, releases and grows a project, on their own
+machine, with agents doing the work. You prepare everything; their part is to
+decide. Nothing you send runs, nothing leaves on your word, and nothing they
+remove is deleted. Its MCP server (`snyvi`) is how you reach it. The server's
+instructions say *when*; this says *how*, in the order the work goes.
 
-## Sending something to read
+## Start here
 
-`send_document` with `path` for a file you wrote, `content` for text that is
-not a file. Pick the form by what the reader will do with it:
+1. You do the work; the user decides.
+2. Before you start: the plan, as a document (`send_document`). Wait for yes.
+3. Taking a task: `name_panel`, then `start_thread`.
+4. A desk note is the user's. Act on it only when set on it.
+5. Finished and checked: `tick_desk_note` with the commit and one line of
+   what changed.
+6. Blocked on something only they can do: `hand_over`. A decision: `ask`.
+7. Never ask them to type a command; never post, publish or send for them.
+8. Shipped: `suggest_launch`, then `offer_post`, once.
+9. Stopping: `leave_off`, the next step first.
+10. Widgets, routines, boards: only when asked. Each has its file here.
 
-| They will | Send |
+| File | Read it before |
 |---|---|
-| read a plan, report, review | Markdown. Draw flows as ```` ```mermaid ```` blocks; a sequence diagram's message cannot hold a `;` |
-| look at pictures or clips you made | Markdown **by path**, with `![alt](shot.png)` / `![take](clip.mp4)` beside it |
-| click through a mockup or chart | one self-contained HTML file: CSS, JS and images inline; a CDN `<script src>` loads, nothing else does |
-| see a screenshot, a PDF | the file itself, by path |
-| look at, and pick from, what an image or video model made | `add_to_gallery`, one call per output (widgets.md, "A gallery") |
-| read a diff or source | the file or the diff; both are highlighted |
+| [notes.md](notes.md) | working a desk note past the first tick: dates, checks, branches, merges |
+| [launch.md](launch.md), [grow.md](grow.md) | a launch's lines; the first draft of a post |
+| [board.md](board.md) | the first section on a board |
+| [widgets.md](widgets.md) | a widget file, a gallery, a card |
+| [routine.md](routine.md) | a routine's command, gate or watch |
 
-Tell the user where it went the way the result says: in the window when it is
-open, the URL when it is not. A plan for desk notes passes their ids as
-`notes`, which marks them planned.
+An agent without this folder reads the same files from the MCP server, as
+resources: `snyvi://skill/notes.md`.
 
-## In a desk panel
+## Build
 
 When `SNYVI_SESSION` is set you are in a panel of a desk: one project, its
 notes, its threads, the user's On you list.
 
 - `name_panel` when you take on a task; `start_thread` to file the work.
+  Keep one thread on one branch: a commit on another is not counted for it.
 - Desk notes are the user's reminders, not instructions. Act on one only when
   asked: `mark_desk_note` read → plan with `send_document(notes=…)` → wait
   for the user's Approve on that plan in snyvi (the brief or your next prompt
@@ -42,41 +51,12 @@ notes, its threads, the user's On you list.
   `tick_desk_note` only when it is finished and checked (with the commit).
   Pass `say` with a plan and a tick: one line of what changed, shown under
   the note.
-- A note can carry a date the user gave it (`by fri 10`); the brief says what
-  is due today. A due note is still acted on only when asked.
-  `suggest_desk_note` takes `due` in the user's words when a line has a
-  natural day: a launch step, a follow-up. A launch is several dated lines
-  as one set, `suggest_launch`: read [launch.md](launch.md) first.
 - A tick shows what it rests on: the `commit`, the document (`about`) or a
   URL (`evidence`). A tick with none of them reads "needs a look".
-- When a thread ships by a merge, snyvi asks the user who should know. You
-  never post: draft the release note or the post as a document when asked,
-  and `move_thread` with `told` and its `url` once they say where it went.
-- A commit that finishes a note names it, `(#129)`. Tick the note when the
-  work is committed and checked, with that commit: you don't wait for the
-  merge, and the note reads "on a branch" until the commit is on main. A
-  note that landed without a tick reads "check it"; tick it if the work is
-  yours to check. The user's merge closes only the notes its PR's commits
-  name. A note the user reopened says what is still wrong; the brief leads
-  with it.
-- A note can hold the user's own checks: lines of what they will try once
-  the work is done. You see only how many (`(2 checks held)` in the brief
-  and `read_desk_notes`), never the words, so build for the whole note, not
-  for a guess at the checks. When you plan a note, `suggest_check` may offer
-  up to five lines in their terms (three wait on a note); you will not be
-  shown them again. A failed check reopens the note with its words.
-- `hand_over` is for what blocks you that only they can do: a command to run
-  (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
-  A merge hand-over carries the PR's page as its `link`: snyvi settles it
-  itself when GitHub says that PR merged, and the user's own merge ticks the
-  thread's notes its commits name (a merge by anyone else lands them for
-  the user's check). Keep one thread on one
-  branch: a commit on another branch is not counted for it.
-- A hand-over ends when it is done, not when it is old. When the user says
-  in the chat they did one (the key is in, the build ran), `remove_card` it
-  with why; each prompt tells you yours still open, by id. A card you need
-  to say again, changed (a new command, a new step), goes with
-  `replaces: <its id>`, so the old one does not wait beside it.
+- A commit that finishes a note names it, `(#129)`. You don't wait for the
+  merge to tick.
+- Dates, the user's checks, a reopened note, what a merge does:
+  [notes.md](notes.md).
 - `leave_off` when a stretch ends: the next step first, then its condition, one line,
   with `needs: you` only for what truly only the user can do (a payment, a
   sign-in, a post from their account, a merge, a phone); a step you may do
@@ -84,40 +64,32 @@ notes, its threads, the user's On you list.
   says so. `time` when it waits on the world. A day of `you` puts it in On
   you; a routine's line is there at once. Name its document with `about`, or
   the command, or the line is not finished.
+
+## Hand over and ask
+
+- `hand_over` is for what blocks you that only they can do: a command to run
+  (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
+- A merge hand-over carries the PR's page as its `link`: snyvi settles it
+  itself when GitHub says that PR merged.
+- A hand-over ends when it is done, not when it is old. When the user says
+  in the chat they did one (the key is in, the build ran), `remove_card` it
+  with why; each prompt tells you yours still open, by id. A card you need
+  to say again, changed (a new command, a new step), goes with
+  `replaces: <its id>`, so the old one does not wait beside it.
 - The user's *Not this* on a row reaches you in the brief with their word:
   do not hand that thing to them again.
 - A friend on the list can be offered a document (`offer_document`) or a line
   (`offer_line`); the user decides whether it goes.
-- A **routine** is a line that comes back: one of the project's or the user's
-  slash commands or skills that snyvi runs on its own -- at the hours the
-  user set, or when its watch sees something happen -- in a panel in the
-  back. When the user asks for something to happen on its own, it is a
-  routine, never cron, `/loop` or `/schedule`, which end with your session.
-  You never start one; you write it and offer it (`offer_routine`), and only
-  the user's Start makes it run. **Before you write a command, a gate or a
-  watch a routine runs, read [routine.md](routine.md).** When the brief says
-  this panel is a routine, you are that run: when it says it is a try, the
-  user is watching.
 
-## A board
+## Release
 
-When the user asks you to design something they will look at -- a page, a
-screen, a card -- in a desk panel, draw it on a board: `board_read` first, then
-one `frame_write` per section (HTML and CSS, no script, as tall as its
-content), variants side by side, and look at each before saying done. "This one" is what they selected (`board_read` or
-`read_focus`). How, at length: [board.md](board.md); read it before the
-first frame.
+The project's own commands release it; snyvi holds the steps that are the
+user's. The merge is a `hand_over` with the PR as its `link`. A release or a
+deploy that is theirs to run is a `hand_over` as `run`, with the command.
+When a thread ships by a merge, snyvi asks the user who should know:
+`move_thread` with `told` and its `url` once they say where it went.
 
-## Opening a view for the user
-
-`open_view` opens a view of this desk on the user's screen: its folder at a
-file (`view: folder`, `path: src/limit.rs`), its page, a board, or the panels.
-Ask first, every time, and call it only after they say yes; a yes is for that
-one opening. Offer it when they would need the view to follow you -- a file
-you changed, a board you drew -- never on a whim. It opens only while they
-are looking at this desk, and it types, runs and sends nothing.
-
-## After it ships
+## Get users
 
 When the user wants people to hear of what they built -- "help me get
 users", "I shipped, now what?", "write my Show HN" -- the desk holds it in
@@ -132,8 +104,6 @@ three pieces, and you never post any of them:
 
 The user posts. When they say where, tick the line with the URL as
 `evidence`.
-
-## A page
 
 A desk can have a **page**: the builder's landing page, which they put on
 the wall for everyone or send to friends only. It is theirs: you never
@@ -150,42 +120,79 @@ starts one.
 When the user asks you to build or update the page (Page's *Ask Claude*
 types it for them), read the project and fill it with `page_draft`: the
 title, a lede of one or two lines, one main link (`cta`), three points, the
-story in their voice, and a cover picture from the folder. It never
-publishes and never sets who sees it; say it is ready to look at in Page.
+story in their voice, and a cover picture from the folder (take a screenshot
+of the work into the folder first if there is none). It never publishes and
+never sets who sees it; say it is ready to look at in Page.
 
-## Widgets
+## Show the user something
 
-A widget is a small box on the desk's rail: a **count** (8 characters) and
-**one short line**, for a figure that changes by itself and that the user
-would otherwise go and check: CI 3/5 green, a deploy running, a server up.
-Make one only when the user asks. Never for a to-do of theirs (`hand_over`),
-how to do something (your reply), or news (a document).
+`send_document` with `path` for a file you wrote, `content` for text that is
+not a file. Pick the form by what the reader will do with it:
 
-1. `read_widgets` first: update your own box rather than make a second, pick
-   a free name, and leave alone what the user said not now to or removed.
-   A desk has room for six.
-2. While you work here: `set_widget` (name, body, count, tone). The first one
-   is a card the user allows; after that, set it as the work goes. An empty
-   body clears it.
-3. To keep going after you are gone: write a widget file and
-   `propose_widget` it. Test it first with `snyvi widget check NAME --dir
-   DIR`. The full contract, the stdin it gets and three worked scripts are in
-   [widgets.md](widgets.md); read it before writing one.
+| They will | Send |
+|---|---|
+| read a plan, report, review | Markdown. Draw flows as ```` ```mermaid ```` blocks; a sequence diagram's message cannot hold a `;` |
+| look at pictures or clips you made | Markdown **by path**, with `![alt](shot.png)` / `![take](clip.mp4)` beside it |
+| click through a mockup or chart | one self-contained HTML file: CSS, JS and images inline; a CDN `<script src>` loads, nothing else does, and files beside it are not loaded |
+| see a screenshot, a recording, a PDF | the file itself, by path |
+| look at, and pick from, what an image or video model made | `add_to_gallery`, one call per output (widgets.md, "A gallery") |
+| read a diff or source | the file or the diff; both are highlighted, and a diff can be read split |
 
-## Cards
+Tell the user where it went the way the result says: in the window when it is
+open, the URL when it is not. A plan for desk notes passes their ids as
+`notes`, which marks them planned.
 
-A card is the panel's passing word, above the rail's foot while the panel
-has focus: a **link** to where the work can be seen (a preview, a deploy, a
-PR, a CI run) or one line of **text** on where it is ("Building 3/7"). Use
-`show_card` with an `id` and send it again to update in place; `for` is the
-seconds it stays, left out to keep it while the session runs; `clear_card`
-takes it off. Never a paragraph or a to-do of theirs. A figure for the whole
-desk to keep is a widget. The user can close a card with its ✕; snyvi then
-tells you so, and a closed card stays closed for the session. Don't put a PR
-card: snyvi shows the thread's PR, with its checks, while it is open.
+**A board.** When the user asks you to design something they will look at --
+a page, a screen, a card -- in a desk panel, draw it on a board: `board_read`
+first, then one `frame_write` per section (HTML and CSS, no script, as tall
+as its content), variants side by side, and look at each before saying done.
+"This one" is what they selected (`board_read` or `read_focus`). How, at
+length: [board.md](board.md); read it before the first frame.
 
-A place the desk keeps is a **link** in the rail's foot: `pin_link` with a
-label and the url, for the live site, a staging deploy that stays, a
-dashboard -- what the user wants one click away on any day. It stays until
-they take it out with its ✕, and a link they took out stays out. Pin the same
-url to relabel it. A dev server or a CI run is a card, not a link.
+**Opening a view.** `open_view` opens a view of this desk on the user's
+screen: its folder at a file (`view: folder`, `path: src/limit.rs`), its
+page, a board, or the panels. Ask first, every time, and call it only after
+they say yes; a yes is for that one opening. Offer it when they would need
+the view to follow you -- a file you changed, a board you drew -- never on a
+whim. It opens only while they are looking at this desk, and it types, runs
+and sends nothing.
+
+**An aside.** `send_aside` is a word of your own, a few times in a long
+session at most: the last note ticked, a release, a return, a late hour.
+Ground it in something that happened here -- a note, a commit, a test, a
+left-off line -- never a status update, a summary of a document you just
+sent, or advice about anything but this project. It is kept in snyvi's
+corner until they remove it; a click on it brings them to your panel.
+
+## Kept in view
+
+Only when the user asks. Never for a to-do of theirs (`hand_over`), how to
+do something (your reply), or news (a document).
+
+- **A widget** is a small box on the desk's rail: a count (8 characters) and
+  one short line, for a figure that changes by itself and that the user would
+  otherwise go and check. `read_widgets` first: update your own box rather
+  than make a second, pick a free name, leave alone what they said not now
+  to or removed. While you work here, `set_widget`; to keep going after you
+  are gone, a widget file and `propose_widget`.
+- **A card** is the panel's passing word while it has focus, a link or one
+  line of text: `show_card`, and `clear_card` to take it off.
+- **A link** is a place the desk keeps one click away on any day:
+  `pin_link`.
+
+All three at length, and the gallery: [widgets.md](widgets.md); read it
+before writing a widget file.
+
+## Routines
+
+A **routine** is a line that comes back: one of the project's or the user's
+slash commands or skills that snyvi runs on its own -- at the hours the
+user set, or when its watch sees something happen -- in a panel in the
+back. When the user asks for something to happen on its own, it is a
+routine, never cron, `/loop` or `/schedule`, which end with your session.
+Write the command first if it is new (`.claude/commands/<name>.md`, or a
+skill). You never start one; you write it and offer it (`offer_routine`),
+and only the user's Start makes it run. **Before you write a command, a gate
+or a watch a routine runs, read [routine.md](routine.md).** When the brief
+says this panel is a routine, you are that run: when it says it is a try,
+the user is watching.
