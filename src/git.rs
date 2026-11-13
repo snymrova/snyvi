@@ -482,6 +482,153 @@ fn parse_changes(out: &str, under: &str) -> Vec<(String, char)> {
     v
 }
 
+/// One checkout of a repository (1.65, `read_desk`): the folder, what it
+/// has out, its newest commit, and how it stands against the main line.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Worktree {
+    pub path: String,
+    /// The branch, or empty on a detached head.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub branch: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last: Option<Commit>,
+    /// Commits the main line has that this has not, and the other way.
+    /// `None` with no main line, or when git did not say in time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<usize>,
+    /// The folder that was asked about.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub here: bool,
+    #[serde(skip)]
+    head: String,
+}
+
+/// A repository's checkouts, the newest work first.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Checkouts {
+    /// The main line they are counted against, `origin/main` or the like;
+    /// empty when the repository has none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub main: String,
+    /// How many there are; `trees` carries `WORKTREES_SHOWN` at most.
+    pub total: usize,
+    pub trees: Vec<Worktree>,
+}
+
+/// How many checkouts are said. A repository worked on by several agents
+/// grows dozens; the newest dozen is where the work is.
+pub const WORKTREES_SHOWN: usize = 12;
+/// How long the counting against the main line may take in all. What is
+/// not counted by then says nothing, rather than holding the answer.
+const COUNT_FOR: Duration = Duration::from_secs(2);
+
+/// The checkouts of the repository `root` is in, by their newest commit,
+/// the one `root` is in always among them: where the work is, for an agent
+/// that started in a folder and cannot tell whether it is the live one. It
+/// started in a checkout 27 releases behind once and read it through
+/// (1.65). Blocking, through `run`: three commands, and one more for each
+/// checkout said. Never called with the store's lock held, and never from
+/// the brief -- on request only. `None` outside a repository.
+pub fn worktrees(root: &Path) -> Option<Checkouts> {
+    let top = repository(root)?;
+    let out = run(root, &["worktree", "list", "--porcelain"])?;
+    let mut trees = parse_worktrees(&out);
+    let total = trees.len();
+    // Every head's newest commit in one log, not one each.
+    let heads: Vec<String> = trees.iter().map(|t| t.head.clone()).collect();
+    let mut args = vec![
+        "log",
+        "--no-walk=unsorted",
+        "--format=%H%x09%ct%x09%h%x09%s",
+    ];
+    args.extend(heads.iter().map(String::as_str));
+    let last: HashMap<String, Commit> = if heads.is_empty() {
+        HashMap::new()
+    } else {
+        run(root, &args)
+            .map(|o| o.lines().filter_map(head_line).collect())
+            .unwrap_or_default()
+    };
+    for t in &mut trees {
+        t.last = last.get(&t.head).cloned();
+        t.here = same(Path::new(&t.path), &top);
+    }
+    trees.sort_by_key(|t| -t.last.as_ref().map_or(0, |c| c.at));
+    if let Some(at) = trees.iter().position(|t| t.here) {
+        if at >= WORKTREES_SHOWN {
+            let here = trees.remove(at);
+            trees.insert(WORKTREES_SHOWN - 1, here);
+        }
+    }
+    trees.truncate(WORKTREES_SHOWN);
+    let main = main_ref(root).unwrap_or("");
+    let started = Instant::now();
+    for t in &mut trees {
+        if main.is_empty() || started.elapsed() > COUNT_FOR {
+            break;
+        }
+        let counted = run(
+            root,
+            &[
+                "rev-list",
+                "--left-right",
+                "--count",
+                &format!("{main}...{}", t.head),
+            ],
+        );
+        if let Some((behind, ahead)) = counted.as_deref().and_then(left_right) {
+            (t.behind, t.ahead) = (Some(behind), Some(ahead));
+        }
+    }
+    Some(Checkouts {
+        main: main.to_string(),
+        total,
+        trees,
+    })
+}
+
+/// `git worktree list --porcelain`: a block for each checkout, `worktree
+/// <path>`, `HEAD <hash>`, then `branch refs/heads/<name>` or `detached`. A
+/// bare one has no head and is no place work is done.
+fn parse_worktrees(out: &str) -> Vec<Worktree> {
+    let mut v: Vec<Worktree> = Vec::new();
+    for l in out.lines() {
+        if let Some(p) = l.strip_prefix("worktree ") {
+            v.push(Worktree {
+                path: p.to_string(),
+                ..Worktree::default()
+            });
+        } else if let (Some(h), Some(t)) = (l.strip_prefix("HEAD "), v.last_mut()) {
+            t.head = h.trim().to_string();
+        } else if let (Some(b), Some(t)) = (l.strip_prefix("branch "), v.last_mut()) {
+            t.branch = b.trim().trim_start_matches("refs/heads/").to_string();
+        }
+    }
+    v.retain(|t| !t.head.is_empty());
+    v
+}
+
+/// One line of the heads' log: the full hash, then a `Commit`.
+fn head_line(l: &str) -> Option<(String, Commit)> {
+    let mut f = l.splitn(4, '\t');
+    Some((
+        f.next()?.to_string(),
+        Commit {
+            at: f.next()?.parse().ok()?,
+            hash: f.next()?.to_string(),
+            subject: f.next().unwrap_or("").to_string(),
+        },
+    ))
+}
+
+/// `rev-list --left-right --count a...b`: what only `a` has, then only `b`.
+fn left_right(out: &str) -> Option<(usize, usize)> {
+    let mut f = out.split_whitespace();
+    Some((f.next()?.parse().ok()?, f.next()?.parse().ok()?))
+}
+
 /// The top of the repository `dir` is in, found by looking for `.git` on the
 /// way up -- no process for a folder that is in none.
 fn repository(dir: &Path) -> Option<PathBuf> {
@@ -912,5 +1059,68 @@ mod tests {
         assert_ne!(roots_print("a\n"), roots_print("a\nb\n"));
         assert_eq!(roots_print("\n"), None);
         assert_eq!(roots_print("a").map(|p| p.len()), Some(32));
+    }
+    /// 1.65: a repository's checkouts, each counted against the main line,
+    /// and the folder asked about marked.
+    #[test]
+    fn worktrees_are_listed_and_counted_against_main() {
+        use super::{parse_worktrees, run, worktrees};
+        let out = "worktree /w/snyvi\nHEAD aaa\nbranch refs/heads/main\n\nworktree /w/bare\nbare\n\nworktree /w/loose\nHEAD bbb\ndetached\n";
+        let got = parse_worktrees(out);
+        let said: Vec<(&str, &str)> = got
+            .iter()
+            .map(|t| (t.path.as_str(), t.branch.as_str()))
+            .collect();
+        assert_eq!(said, [("/w/snyvi", "main"), ("/w/loose", "")]);
+
+        let dir = crate::store::tempdir::Dir::new("snyvi-git-worktrees");
+        let r = dir.path.join("repo");
+        std::fs::create_dir_all(&r).unwrap();
+        let git = |at: &std::path::Path, args: &[&str]| {
+            let mut a = vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ];
+            a.extend_from_slice(args);
+            run(at, &a).is_some()
+        };
+        if !git(&r, &["init", "-q", "-b", "main"]) {
+            return; // no git here
+        }
+        let commit = |at: &std::path::Path, msg: &str| {
+            assert!(git(at, &["commit", "-q", "--allow-empty", "-m", msg]));
+        };
+        commit(&r, "one");
+        let w = dir.path.join("next");
+        assert!(git(
+            &r,
+            &["worktree", "add", "-q", "-b", "next", w.to_str().unwrap()]
+        ));
+        commit(&w, "two");
+        commit(&w, "three");
+
+        let c = worktrees(&r).expect("a repository");
+        assert_eq!((c.main.as_str(), c.total), ("main", 2));
+        // The two were committed within a second, so their order is not
+        // asked here: each by its branch.
+        let of = |branch: &str| {
+            let t = c.trees.iter().find(|t| t.branch == branch).unwrap();
+            (
+                t.here,
+                t.behind,
+                t.ahead,
+                t.last.as_ref().map(|l| l.subject.clone()),
+            )
+        };
+        assert_eq!(of("next"), (false, Some(0), Some(2), Some("three".into())));
+        assert_eq!(of("main"), (true, Some(0), Some(0), Some("one".into())));
+        // Asked from the other checkout, that one is here.
+        let c = worktrees(&w).expect("a worktree is in its repository");
+        assert!(c.trees.iter().any(|t| t.branch == "next" && t.here));
+        assert_eq!(worktrees(&dir.path), None, "outside a repository");
     }
 }

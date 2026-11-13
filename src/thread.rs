@@ -170,6 +170,9 @@ pub const OLDER_S: i64 = 30 * 60;
 /// How long a waiting turn is kept on view at all: after it, it is put away
 /// by itself (`retire`), as a ✕ would, and stays recoverable.
 pub const RETIRE_S: i64 = 3 * 86400;
+/// A question goes after one day (1.65): the desk's Decisions shelf holds it
+/// from then (`crate::ledger`), so On you need not.
+pub const ASK_RETIRE_S: i64 = 86400;
 
 /// Where a thread is. Every move is allowed -- the reader and the agent both
 /// know better than a state machine -- and only `shipped` stamps a date.
@@ -562,6 +565,15 @@ fn listed(t: &Thread) -> bool {
 /// hold, and shipped ones, which the page shows the last few of. Put-away
 /// ones are left out, and so are the ones no panel is moving.
 pub fn for_desk(conn: &Connection, desk_id: i64) -> Result<Vec<Thread>> {
+    let mut v = all_for_desk(conn, desk_id)?;
+    v.retain(listed);
+    Ok(v)
+}
+
+/// The same, and the ones no panel is moving too, each saying why it rests
+/// (`rest`): what an agent reads of its desk (`read_desk`, 1.65). The work
+/// a closed panel left is where the next agent most needs to look.
+pub fn all_for_desk(conn: &Connection, desk_id: i64) -> Result<Vec<Thread>> {
     let mut st = conn.prepare(&format!(
         "SELECT {THREAD_COLS} FROM threads WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY moved_at DESC, id DESC LIMIT 40"
@@ -570,7 +582,6 @@ pub fn for_desk(conn: &Connection, desk_id: i64) -> Result<Vec<Thread>> {
         .query_map(params![desk_id], row_to_thread)?
         .collect::<rusqlite::Result<_>>()?;
     mark_rest(conn, &mut v)?;
-    v.retain(listed);
     fill_notes(conn, &mut v)?;
     Ok(v)
 }
@@ -1340,9 +1351,10 @@ pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()>
 pub fn retire(conn: &Connection, now: i64) -> Result<usize> {
     Ok(conn.execute(
         "UPDATE turns SET removed_at = ?1, removed_by = 'aged' WHERE answered_at = 0 AND removed_at = 0
-         AND ((created_at < ?2 AND until < ?2) OR (kind = 'tell' AND created_at < ?3 AND until < ?3
+         AND ((created_at < ?2 AND until < ?2) OR (kind = 'decide' AND created_at < ?4 AND until < ?4)
+              OR (kind = 'tell' AND created_at < ?3 AND until < ?3
               AND NOT EXISTS (SELECT 1 FROM panes p WHERE p.id = turns.pane)))",
-        params![now, now - RETIRE_S, now - TELL_RETIRE_S],
+        params![now, now - RETIRE_S, now - TELL_RETIRE_S, now - ASK_RETIRE_S],
     )?)
 }
 
@@ -2039,13 +2051,40 @@ pub fn open_chores(conn: &Connection, desk_id: i64, pane: &str) -> Result<Vec<Tu
 /// `settle_asks`: the agent says its open questions were answered in the
 /// conversation. Each is answered there, and told, so nothing comes back to
 /// it. Its hand-overs stay: only the reader settles those. How many.
-pub fn settle_asks(conn: &Connection, desk_id: i64, pane: &str, now: i64) -> Result<usize> {
-    Ok(conn.execute(
+///
+/// 1.65: with what the reader said, by the question's id (`heard`), which is
+/// kept as the answer, in the panel, for the desk's decisions to say
+/// (`crate::ledger`); one put away by age is answered too. A question with
+/// no word given is "in the conversation", as every one was before.
+pub fn settle_asks(
+    conn: &Connection,
+    desk_id: i64,
+    pane: &str,
+    heard: &[(i64, String)],
+    now: i64,
+) -> Result<usize> {
+    let mut n = 0;
+    {
+        let mut up = conn.prepare_cached(
+            "UPDATE turns SET answer = ?4, answered_in = 'panel', answered_at = ?3, told_at = ?3,
+                    removed_at = 0, removed_by = ''
+             WHERE desk_id = ?1 AND pane = ?2 AND id = ?5 AND kind = 'decide' AND via = 'ask'
+             AND answered_at = 0 AND (removed_at = 0 OR removed_by = 'aged')",
+        )?;
+        for (id, said) in heard {
+            let said = line(said, TEXT_CHARS);
+            if !said.is_empty() {
+                n += up.execute(params![desk_id, pane, now, said, id])?;
+            }
+        }
+    }
+    n += conn.execute(
         "UPDATE turns SET answer = 'in the conversation', answered_in = 'panel', answered_at = ?3, told_at = ?3
          WHERE desk_id = ?1 AND pane = ?2 AND kind = 'decide' AND via = 'ask'
          AND answered_at = 0 AND removed_at = 0",
         params![desk_id, pane, now],
-    )?)
+    )?;
+    Ok(n)
 }
 
 /// A key was added on the desk (or on every desk, `desk::EVERY_DESK`): the

@@ -21,6 +21,7 @@ instructions say *when*; this says *how*, in the order the work goes.
 5. Finished and checked: `tick_desk_note` with the commit and one line of
    what changed.
 6. Blocked on something only they can do: `hand_over`. A decision: `ask`.
+   Unsure where the work is, or what was decided already: `read_desk`.
 7. Never ask them to type a command; never post, publish or send for them.
 8. Shipped: `suggest_launch`, then `offer_post`, once.
 9. Stopping: `leave_off`, the next step first.
@@ -69,6 +70,16 @@ notes, its threads, the user's On you list.
 
 - `hand_over` is for what blocks you that only they can do: a command to run
   (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
+- Before you ask, `read_desk` with `sections: ["decisions"]` (and a `query`
+  when you know the subject): a question answered, or dropped, is not asked
+  again. A question about a document carries it as `about`, so the user
+  finds the plan's decisions together.
+- Answered in the chat instead of in snyvi: `settle_asks` with `answers`,
+  each the question's id and what they said in their words. The desk keeps
+  it, and the next agent reads it.
+- `read_desk` also says which checkout is live (worktrees, each against
+  main), the threads with the resting ones, and the other panels. Read it
+  when you start in a project you do not know, not at every step.
 - A merge hand-over carries the PR's page as its `link`: snyvi settles it
   itself when GitHub says that PR merged.
 - A hand-over ends when it is done, not when it is old. When the user says

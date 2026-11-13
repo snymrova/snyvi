@@ -593,6 +593,201 @@ pub(crate) async fn pane_pin_link(
     }
 }
 
+/// Which sections of its desk an agent asks for (`pane_desk`), and the
+/// words to find among the decisions.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct DeskQ {
+    /// `threads`, `panels`, `folder`, `decisions`, comma-separated; all of
+    /// them when empty.
+    sections: String,
+    query: String,
+}
+
+/// Shipped threads are said for this long; the page keeps its own window.
+const SHIPPED_SAID_S: i64 = 14 * 86_400;
+/// With no words to find, the decisions an agent is given are the open
+/// ones and the last few settled: the rest is a query away.
+const ANSWERED_SAID: usize = 8;
+const DROPPED_SAID: usize = 3;
+
+/// `read_desk` (1.65, plan 2d186a80c1): what an agent in a panel may ask of
+/// its own desk at any point in a session -- where the work is, what the
+/// other panels are doing, what the reader decided.
+///
+/// The brief says some of this once, at the session's start, and leaves out
+/// what no panel is moving. An agent three hours in worked from that
+/// picture; one that started in an old checkout read it through before
+/// `git` told it so; and "is the other panel done?" went through the
+/// reader. Everything here is in the store or in git already.
+///
+/// The gate every agent route has (`agent_pane`), and only this pane's own
+/// desk. It reads and writes nothing: no turn is put away from here, no
+/// event is said. Never another panel's screen or scrollback, never the
+/// library, never a key's value. The store is read once and let go of
+/// before git is asked anything (`git::worktrees` runs commands; the
+/// store's one lock is not held across them, nor taken again inside it --
+/// the freeze of 1.59 to 1.63 was exactly that).
+pub(crate) async fn pane_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<DeskQ>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let asked: Vec<&str> = q
+        .sections
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let wants = |s: &str| asked.is_empty() || asked.contains(&s);
+    let desk_id = placed.desk_id;
+    let read = app.store.clocked(|c, now| {
+        Ok((
+            crate::desk::get(c, desk_id)?,
+            // A panel's thread is said with the panel, too.
+            if wants("threads") || wants("panels") {
+                crate::thread::all_for_desk(c, desk_id)?
+            } else {
+                Vec::new()
+            },
+            if wants("decisions") {
+                crate::ledger::for_desk(c, desk_id, now)?
+            } else {
+                Vec::new()
+            },
+            now,
+        ))
+    });
+    let (desk, threads, decisions, now) = match read {
+        Ok((Some(d), t, l, now)) => (d, t, l, now),
+        Ok((None, ..)) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    let slot_of = |pane: &str| desk.panes.iter().find(|p| p.id == pane).map(|p| p.slot);
+    let mut out = json!({ "desk": desk.name, "now": now });
+    if wants("threads") {
+        let said: Vec<serde_json::Value> = threads
+            .iter()
+            .filter(|t| t.stage != "shipped" || t.shipped_at >= now - SHIPPED_SAID_S)
+            .map(|t| {
+                let mut v = json!(t);
+                if let Some(o) = v.as_object_mut() {
+                    o.remove("desk_id");
+                    o.remove("pane");
+                    if let Some(slot) = slot_of(&t.pane).filter(|_| t.rest.is_empty()) {
+                        o.insert("panel".into(), json!(slot));
+                    }
+                    if t.pane == id && t.rest.is_empty() {
+                        o.insert("this_panel".into(), json!(true));
+                    }
+                }
+                v
+            })
+            .collect();
+        out["threads"] = json!(said);
+    }
+    if wants("panels") {
+        let said: Vec<serde_json::Value> = desk
+            .panes
+            .iter()
+            .map(|p| {
+                let s = app.panes.status(&p.id);
+                let tab = desk
+                    .groups
+                    .iter()
+                    .find(|g| p.grp != 0 && g.id == p.grp)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
+                let thread = threads
+                    .iter()
+                    .find(|t| t.pane == p.id && t.rest.is_empty())
+                    .map(|t| t.name.clone())
+                    .unwrap_or_default();
+                json!({
+                    "slot": p.slot, "tab": tab, "name": p.name,
+                    "program": program(if s.cmd.is_empty() { &p.cmd } else { &s.cmd }),
+                    "running": s.running, "agent": s.agent, "agent_since": s.agent_since,
+                    "stopped": s.stopped, "thread": thread,
+                    "folder": crate::text::tilde(std::path::Path::new(&p.cwd)),
+                    "branch": s.branch, "dirty": s.dirty, "this_panel": p.id == id,
+                })
+            })
+            .collect();
+        out["panels"] = json!(said);
+    }
+    if wants("decisions") {
+        let counts = crate::ledger::counts(&decisions);
+        let list = if q.query.trim().is_empty() {
+            let (mut answered, mut dropped) = (0, 0);
+            decisions
+                .into_iter()
+                .filter(|d| match d.state {
+                    "answered" => {
+                        answered += 1;
+                        answered <= ANSWERED_SAID
+                    }
+                    "dropped" => {
+                        dropped += 1;
+                        dropped <= DROPPED_SAID
+                    }
+                    _ => true,
+                })
+                .collect()
+        } else {
+            crate::ledger::matching(decisions, &q.query)
+        };
+        out["decisions"] = json!({ "counts": counts, "query": q.query.trim(), "list": list });
+    }
+    if wants("folder") {
+        // The tab's own folder when the panel is in one, else the desk's.
+        let root = desk
+            .groups
+            .iter()
+            .find(|g| placed.pane.grp != 0 && g.id == placed.pane.grp)
+            .map_or(desk.root.clone(), |g| g.root.clone());
+        let at = std::path::PathBuf::from(&root);
+        let trees = tokio::task::spawn_blocking(move || crate::git::worktrees(&at))
+            .await
+            .ok()
+            .flatten();
+        let mut folder = json!({ "root": crate::text::tilde(std::path::Path::new(&root)) });
+        if let Some(c) = trees {
+            let said: Vec<serde_json::Value> = c
+                .trees
+                .iter()
+                .map(|t| {
+                    let mut v = json!(t);
+                    v["path"] = json!(crate::text::tilde(std::path::Path::new(&t.path)));
+                    v
+                })
+                .collect();
+            folder["main"] = json!(c.main);
+            folder["total"] = json!(c.total);
+            folder["worktrees"] = json!(said);
+        }
+        out["folder"] = folder;
+    }
+    Json(out).into_response()
+}
+
+/// A panel's program by its name alone: `claude`, `zsh`, `npm`. Never its
+/// arguments, which are the reader's and may carry a path or a word that is
+/// not another panel's to read; `shell` for a panel started with none.
+fn program(cmd: &str) -> String {
+    let first = cmd.split_whitespace().next().unwrap_or("");
+    let name = first.rsplit(['/', '\\']).next().unwrap_or(first);
+    if name.is_empty() {
+        "shell".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// The running pane `id`, placed on its desk, for the routes an agent reaches
 /// from inside it: the token, a pane id of the right shape, a pane that is
 /// running -- which a pane only is while its program is -- and then its row.

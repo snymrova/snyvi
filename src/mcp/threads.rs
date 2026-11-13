@@ -20,10 +20,10 @@ parked), and with parked the next step to pick it up by. Add a PR number or more
 work changes stage. Shipped, then told with url once the user posts it and says where: you never post, you \
 draft.";
 
-const ASK: &str = "Put a decision on the user's On you list in snyvi: a question, two to four short options, and \
-the one you recommend; up to four at once as questions, on one card. It does not wait: the answers come with \
-the user's next message and are kept on the thread. Your own question tool stays in this panel, for when the \
-user is at it; Home lists it too.";
+const ASK: &str = "Put a decision on the user's On you list: a question, two to four short options, the one \
+you recommend; up to four at once as questions. It does not wait: answers come with their next message and \
+stay in the desk's decisions (read_desk). about: the document it is asked under. At this panel, your own \
+question tool.";
 
 const HAND_OVER: &str = "Put what blocks you and only the user can do on their On you list: merge (a PR), key \
 (pass key, its name), try (a change only they can try), run (a command you were blocked from: pass cmd, one \
@@ -37,8 +37,9 @@ them (a setup, a device to plug in): one run with steps, never commands written 
 (one line) or a say (a thing done by hand), at most 12. They run each with a click, in order, here or in a \
 shell of its own when it asks for a password (sudo), and tick each done.";
 
-const SETTLE_ASKS: &str = "Take your open questions off the user's On you list when their message in this \
-conversation answered them. Your hand-overs stay. snyvi says, at their next message, which questions of \
+const SETTLE_ASKS: &str = "Take your open questions off the user's On you list when their message here \
+answered them, with what they said: answers, each a question's id and their words. snyvi keeps it as the \
+decision, heard in the panel; they can change it. Your hand-overs stay. Their next message says which of \
 yours are still open.";
 
 const REMOVE_CARD: &str = "Remove a card from the user's On you list in snyvi once it is no longer on them: you see \
@@ -92,6 +93,7 @@ pub(super) fn specs() -> Vec<Value> {
                         "options": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 4, "description": "Short labels." },
                         "recommended": { "type": "integer", "description": "The index of the option you recommend, from 0." }
                     }, "required": ["question", "options"], "additionalProperties": false } },
+                "about": { "type": "string", "description": "The id of the document the question is asked under, from send_document." },
                 "replaces": { "type": "integer", "description": "The id of a card of yours this one asks again, changed: it is taken off, with every question on it, as this goes on. The same question in the same words is never asked twice: it is folded into its card." }
             }, "additionalProperties": false },
             "annotations": ann(false)
@@ -114,7 +116,13 @@ pub(super) fn specs() -> Vec<Value> {
         }),
         json!({
             "name": "settle_asks", "title": "Settle questions answered in the conversation", "description": SETTLE_ASKS,
-            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "inputSchema": { "type": "object", "properties": {
+                "answers": { "type": "array", "description": "What the user said to each question, in their words.",
+                    "items": { "type": "object", "properties": {
+                        "id": { "type": "integer", "description": "The question's id, as ask said it." },
+                        "answer": { "type": "string", "description": "Their answer, short." }
+                    }, "required": ["id", "answer"], "additionalProperties": false } }
+            }, "additionalProperties": false },
             "annotations": ann(true)
         }),
         json!({
@@ -286,6 +294,11 @@ impl Session {
         if let Some(r) = args.get("replaces").and_then(Value::as_i64) {
             body["replaces"] = json!(r);
         }
+        // The document it is asked under: what the decisions group by.
+        let about = arg(args, "about");
+        if !about.is_empty() {
+            body["link"] = json!(about);
+        }
         match self.thread_call("ask", body) {
             // Already waiting, in the same words (C8): folded, not asked twice.
             Ok(v) if v.get("again").and_then(Value::as_bool) == Some(true) => {
@@ -298,10 +311,21 @@ impl Session {
             }
             Ok(v) => {
                 let n = v.get("turns").and_then(Value::as_array).map_or(1, Vec::len);
+                // Each by its id: what settle_asks takes an answer for.
+                let turns: Vec<&Value> = match v.get("turns").and_then(Value::as_array) {
+                    Some(t) => t.iter().collect(),
+                    None => v.get("turn").into_iter().collect(),
+                };
+                let ids: Vec<String> = turns
+                    .iter()
+                    .filter_map(|t| t.get("id").and_then(Value::as_i64))
+                    .map(|i| format!("#{i}"))
+                    .collect();
+                let ids = ids.join(", ");
                 let head = if n > 1 {
-                    format!("Asked {n} questions, on one card on the user's On you list in snyvi; the answers come with their next message. Carry on with what does not depend on them.")
+                    format!("Asked {n} questions ({ids}), on one card on the user's On you list in snyvi; the answers come with their next message. Carry on with what does not depend on them.")
                 } else {
-                    "Asked. It is on the user's On you list in snyvi; the answer comes with their next message. Carry on with what does not depend on it.".to_string()
+                    format!("Asked ({ids}). It is on the user's On you list in snyvi; the answer comes with their next message. Carry on with what does not depend on it.")
                 };
                 said(head + &also_open(&v), false)
             }
@@ -332,8 +356,9 @@ impl Session {
 
     /// The reader answered this panel's questions in the conversation: off
     /// On you, answered there, and nothing comes back about them.
-    pub(super) fn settle_asks(&self, _args: &Value) -> Value {
-        match self.thread_call("settle", json!({})) {
+    pub(super) fn settle_asks(&self, args: &Value) -> Value {
+        let answers = args.get("answers").cloned().unwrap_or(json!([]));
+        match self.thread_call("settle", json!({ "answers": answers })) {
             Ok(v) => match v.get("settled").and_then(Value::as_i64).unwrap_or(0) {
                 0 => said("None of your questions was open on On you.", false),
                 1 => said(

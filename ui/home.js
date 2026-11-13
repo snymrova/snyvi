@@ -785,7 +785,7 @@ function status(j) {
     if (due) bits.push(`<span class="hm-due now">${due} due today</span>`);
     if (wt) bits.push(`<span class="hm-due late">${wt} waiting on you</span>`);
     if (!asking.length && !on && !due && !wt) bits.push("Nothing needs you");
-    if (!on && old) bits.push(`<button type="button" class="hm-onyou old" data-hm="turns" aria-haspopup="dialog" data-tip="Older" data-tip-sub="Panels since closed, or asked over half an hour ago. They go by themselves after three days, and can come back">${old} older ›</button>`);
+    if (!on && old) bits.push(`<button type="button" class="hm-onyou old" data-hm="turns" aria-haspopup="dialog" data-tip="Older" data-tip-sub="Panels since closed, or asked over half an hour ago. A question waits in its desk's Decisions after a day, anything else goes by itself after three, and can come back">${old} older ›</button>`);
   }
   bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${j.waiting} waiting</a>` : bits.length ? "nothing waiting" : "Nothing waiting");
   if (j.desks) {

@@ -492,7 +492,7 @@ fn waiting_rows(
 
 /// A document by id, when it is one in the library: the id and its title;
 /// nothing for a web link or a missing one.
-fn doc_titled(conn: &Connection, doc: &str) -> (String, String) {
+pub(crate) fn doc_titled(conn: &Connection, doc: &str) -> (String, String) {
     if !crate::desk::doc_ok(doc) {
         return (String::new(), String::new());
     }

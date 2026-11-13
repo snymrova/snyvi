@@ -427,21 +427,42 @@ async fn pane_turn(
     asked(&app, desk, r)
 }
 
+/// What the reader said to a question, as the agent heard it (1.65).
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct HeardBody {
+    id: i64,
+    answer: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct SettleBody {
+    answers: Vec<HeardBody>,
+}
+
 /// `settle_asks`: the agent says the questions it put on On you were
-/// answered in the conversation (B1). Only its own, only questions.
+/// answered in the conversation (B1). Only its own, only questions. 1.65:
+/// with what was said to each, kept as its answer for the desk's decisions
+/// (`crate::ledger`); the reader changes one on the shelf if it was heard
+/// wrong. A body with none settles as before.
 pub(crate) async fn pane_settle(
     State(app): S,
     headers: HeaderMap,
     Path(id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Response {
     let placed = match agent_pane(&app, &headers, &id) {
         Ok(p) => p,
         Err(no) => return *no,
     };
     let desk = placed.desk_id;
+    // No body at all is the settle of every session before 1.65.
+    let said: SettleBody = serde_json::from_slice(&body).unwrap_or_default();
+    let heard: Vec<(i64, String)> = said.answers.into_iter().map(|h| (h.id, h.answer)).collect();
     match app
         .store
-        .clocked(|c, now| thread::settle_asks(c, desk, &id, now))
+        .clocked(|c, now| thread::settle_asks(c, desk, &id, &heard, now))
     {
         Ok(n) => {
             if n > 0 {
@@ -1161,7 +1182,7 @@ pub(crate) async fn desk_threads(
     // the sweep finds comes as the `desknotes` event, and the rail reads again.
     tokio::spawn(merges_unseen(app.clone(), id));
     notes_landed(&app, id).await;
-    // What has waited three days is put away first (`thread::retire`). Its
+    // What has waited its time (a question a day, an errand three) is put away first (`thread::retire`). Its
     // event is said after the closure, never inside it: `threads_moved` reaches
     // the store again (`offer_shipped`), and the store's one std Mutex is not
     // re-entrant, so calling it while `clocked` held the lock froze the whole
@@ -1189,6 +1210,85 @@ pub(crate) async fn desk_threads(
             }))
             .into_response()
         }
+        Err(e) => err(e),
+    }
+}
+
+/// The desk's Decisions shelf (1.65, `crate::ledger`): every question an
+/// agent put to the reader here, open however old, answered, or dropped.
+/// What has waited its day is put away first, as the rail's own read does,
+/// and its event said after the store is let go of (`desk_threads`).
+pub(crate) async fn desk_decisions(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Q,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let r = app.store.clocked(|c, now| {
+        let retired = thread::retire(c, now)? > 0;
+        Ok((retired, crate::ledger::for_desk(c, id, now)?))
+    });
+    match r {
+        Ok((retired, list)) => {
+            if retired {
+                threads_moved(&app, id);
+            }
+            Json(json!({ "counts": crate::ledger::counts(&list), "list": list })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+/// What a press on the shelf says: the answer, when to bring it back
+/// (`tomorrow`, `next week`), or the word of a Drop.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct DecisionBody {
+    answer: String,
+    later: String,
+    not: String,
+}
+
+/// A press on the shelf: `answer` (or change an answer), `later`, `drop`.
+/// They reach a question put away by age, which the turn's own routes
+/// refuse; Undo is the turn's own restore. The reader's, as every desk
+/// route is: an agent has no way to answer its own question here.
+pub(crate) async fn desk_decision_act(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, row, act)): Path<(i64, i64, String)>,
+    Query(q): Q,
+    body: axum::body::Bytes,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let b: DecisionBody = serde_json::from_slice(&body).unwrap_or_default();
+    let r = app.store.clocked(|c, now| {
+        Ok(match act.as_str() {
+            "answer" => crate::ledger::answer(c, id, row, &b.answer, now)?,
+            "later" => {
+                let when = if b.later.is_empty() {
+                    "next week"
+                } else {
+                    b.later.as_str()
+                };
+                let until = super::api_desk::later_until(when, now);
+                until > now && crate::ledger::later(c, id, row, until)?
+            }
+            "drop" => crate::ledger::drop_it(c, id, row, &b.not, now)?,
+            _ => false,
+        })
+    });
+    match r {
+        Ok(true) => {
+            threads_moved(&app, id);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
     }
 }

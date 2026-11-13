@@ -1305,12 +1305,13 @@ fn only_fresh_turns_hold_a_place() {
             Asked::Turn(_)
         ));
     }
-    // Three days on, what still waits is put away by itself, and can come back.
+    // Three days on, what still waits is put away by itself, and can come
+    // back: the first seven, and the questions, which go after one (1.65).
     let gone = retire(&conn, 10_003 + RETIRE_S).unwrap();
     assert_eq!(
         gone,
-        TURNS_PER_DESK as usize + 1,
-        "the first seven; the later ones are not three days old"
+        2 * TURNS_PER_DESK as usize + 1,
+        "the first seven and the six questions; the later try is not three days old"
     );
     let first = turns(&conn, d, 0, 10_003 + RETIRE_S).unwrap();
     assert!(first.iter().all(|t| t.created_at >= later));
@@ -1375,7 +1376,7 @@ fn a_question_answered_in_the_conversation_settles() {
     };
     assert!(quiet_asks(&conn, d, "p1", 5).unwrap().is_empty());
     // settle_asks answers panel 1's questions, and only those.
-    assert_eq!(settle_asks(&conn, d, "p1", 6).unwrap(), 2);
+    assert_eq!(settle_asks(&conn, d, "p1", &[], 6).unwrap(), 2);
     let t = turn(&conn, d, after.id).unwrap().unwrap();
     assert_eq!(
         (t.answer.as_str(), t.answered_in.as_str(), t.told_at),
@@ -1946,4 +1947,78 @@ fn a_tell_on_no_panel_retires_after_a_day() {
     .unwrap();
     assert_eq!(retire(&conn, TELL_RETIRE_S - 1).unwrap(), 0);
     assert_eq!(retire(&conn, TELL_RETIRE_S + 1).unwrap(), 1);
+}
+
+/// 1.65: a question waits a day on On you, an errand three; and what the
+/// reader said in the panel is kept as the answer, on a question put away
+/// by age too (`crate::ledger` reads both).
+#[test]
+fn a_question_retires_after_a_day_and_keeps_what_was_said() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let q = |text: &str| Ask {
+        kind: "decide".into(),
+        via: "ask".into(),
+        text: text.into(),
+        options: vec!["Yes".into(), "No".into()],
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let id = |a: Asked| match a {
+        Asked::Turn(t) => t.id,
+        other => panic!("{other:?}"),
+    };
+    let old = id(ask(&mut conn, d, &q("Ship it?"), 10).unwrap());
+    let errand = id(ask(
+        &mut conn,
+        d,
+        &Ask {
+            kind: "do".into(),
+            text: "Pay".into(),
+            pane: "p1".into(),
+            ..Ask::default()
+        },
+        10,
+    )
+    .unwrap());
+    assert_eq!(retire(&conn, 10 + ASK_RETIRE_S + 1).unwrap(), 1);
+    assert_eq!(removed_by(&conn, old), "aged");
+    assert_eq!(
+        removed_by(&conn, errand),
+        "",
+        "an errand has its three days"
+    );
+    let at = 10 + ASK_RETIRE_S + 2;
+    let new = id(ask(&mut conn, d, &q("Which name?"), at).unwrap());
+    let unsaid = id(ask(&mut conn, d, &q("Dark too?"), at).unwrap());
+    let heard = vec![
+        (old, "Yes, after 1.64".to_string()),
+        (new, "read_desk".to_string()),
+    ];
+    assert_eq!(settle_asks(&conn, d, "p1", &heard, at + 5).unwrap(), 3);
+    let got = |t: i64| {
+        let t = turn(&conn, d, t).unwrap().unwrap();
+        (t.answer, t.answered_in, t.removed_at)
+    };
+    assert_eq!(got(old), ("Yes, after 1.64".into(), "panel".into(), 0));
+    assert_eq!(got(new), ("read_desk".into(), "panel".into(), 0));
+    assert_eq!(
+        got(unsaid),
+        ("in the conversation".into(), "panel".into(), 0)
+    );
+    // Another panel's question is not this one's to settle, whatever it says.
+    let theirs = id(ask(
+        &mut conn,
+        d,
+        &Ask {
+            pane: "p2".into(),
+            ..q("Theirs?")
+        },
+        at + 6,
+    )
+    .unwrap());
+    assert_eq!(
+        settle_asks(&conn, d, "p1", &[(theirs, "Yes".into())], at + 7).unwrap(),
+        0
+    );
 }

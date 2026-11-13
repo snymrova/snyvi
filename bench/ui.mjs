@@ -4034,6 +4034,42 @@ async function panelRows(cdp, base, token) {
     rows.push(["a card of questions goes with one ✕, and one Undo brings it all back", !!gxBack,
       !g2Id ? `ask answered ${JSON.stringify(g2).slice(0, 80)}` : !gx ? "no ✕ for the whole card" : !gxGone ? "the card stayed, or no Undo" : "the Undo did not bring both back"]);
 
+    // 1.65 (plan 2d186a80c1): the desk's Decisions. On you's tray ends on a
+    // line for them; pressed, the shelf takes the tray's place. A pick there
+    // answers in place: the row stays, says it, and holds its Undo (the
+    // turn's own restore). An agent's read_desk finds the answer by a word
+    // of it, so the next agent does not ask again.
+    const dq = await (await agent("ask", { by: "bench-agent", text: "bench: shelf question?", options: ["Keep it", "Drop it"] })).json().catch(() => ({}));
+    const dqId = dq.turn?.id;
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    const dLine = !!dqId && await until(`/decisions? open/.test(document.querySelector('#onyou .dc-line')?.textContent || "")`, 60);
+    if (dLine) await q.clickOn('#onyou .dc-line');
+    const dRow = `#onyou .dc-shelf .dc-row[data-w="${dqId}"]`;
+    const dShelf = dLine && await until(`!!document.querySelector('${dRow} [data-a="dec-pick"][data-v="Keep it"]')`, 40);
+    if (dShelf) await q.clickOn(`${dRow} [data-a="dec-pick"][data-v="Keep it"]`);
+    const dSaid = dShelf && await until(`(() => { const r = document.querySelector('${dRow}'); return !!r && r.classList.contains("done") && /Answered: Keep it/.test(r.textContent) && !!r.querySelector('[data-a="dec-undo"]'); })()`, 40);
+    const dList = async () => (await (await fetch(`${base}/api/desks/${desk}/decisions`, { headers: H })).json().catch(() => ({}))).list || [];
+    const dKept = dSaid && (await dList()).find(x => x.id === dqId);
+    const dRead = dSaid && await (await fetch(`${base}/api/panes/${pa}/desk?sections=decisions&query=${encodeURIComponent("shelf keep")}`, { headers: A })).json().catch(() => ({}));
+    const dFound = (dRead?.decisions?.list || []).some(x => x.id === dqId && x.answer === "Keep it");
+    const dOnly = !!dRead && !dRead.threads && !dRead.panels;
+    rows.push(["Decisions: the tray's line opens the shelf, a pick answers in its row, and read_desk finds the answer",
+      !!dSaid && dKept?.state === "answered" && dKept.answer === "Keep it" && dFound && dOnly,
+      !dqId ? `ask answered ${JSON.stringify(dq).slice(0, 80)}` : !dLine ? `no Decisions line in the tray: ${await q.ev(`document.querySelector('#onyou .oy-tray')?.textContent.slice(-120) || "no tray"`)}` :
+        !dShelf ? "the shelf did not open with the question's options" : !dSaid ? "the row did not say the answer with Undo" :
+        dKept?.state !== "answered" ? `the shelf's list has it as ${JSON.stringify(dKept).slice(0, 100)}` : !dFound ? `read_desk did not find it: ${JSON.stringify(dRead).slice(0, 140)}` : !dOnly ? "read_desk sent sections it was not asked for" : "answered in its row, with Undo; read_desk found it by two of its words"]);
+    // Undo in the row: open again, on the shelf and for agents; and the
+    // line and the shelf moved nothing on the page (both are in the tray).
+    if (dSaid) await q.clickOn(`${dRow} [data-a="dec-undo"]`);
+    const dUndone = dSaid && await until(`!!document.querySelector('${dRow} [data-a="dec-pick"]')`, 40);
+    const dOpen = dUndone && (await dList()).find(x => x.id === dqId)?.state === "open";
+    const dAt = dShelf ? await q.ev(`(() => { const b = document.querySelector('#onyou .dc-back'); if (!b) return "no ‹"; const r = b.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e === b ? "" : "‹ is under " + (e ? e.tagName + "." + e.className : "nothing"); })()`) : "";
+    if (dShelf) await q.clickOn('#onyou .dc-back');
+    const dBack = dShelf && await until(`!!document.querySelector('#onyou .oy-tray .dc-line') && !document.querySelector('#onyou .dc-shelf')`, 30);
+    rows.push(["Decisions: Undo in the row opens the question again, and ‹ goes back to On you", !!dOpen && !!dBack,
+      !dSaid ? "nothing to undo" : !dUndone ? "the row did not offer its options again" : !dOpen ? "the list still has it answered" : !dBack ? `‹ did not bring On you back${dAt ? ` (${dAt})` : ""}` : "open again on the shelf and for agents, and On you back"]);
+    if (dqId) await post(`/api/desks/${desk}/turns/${dqId}/remove`, {}).catch(() => {});
+
     // U8: Ctrl+Alt+Y opens and closes the tray from anywhere on the desk.
     const trayOpen = `!!document.querySelector('#onyou .oy-tray')`;
     const yKey = `document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyY", key: "y", ctrlKey: true, altKey: true, bubbles: true })); 1`;

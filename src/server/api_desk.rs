@@ -35,7 +35,7 @@ pub(crate) async fn home(
     };
     // On you across desks, each marked fresh or stale, and the threads by
     // stage (`crate::thread`): behind the same gate as the desks they are
-    // on. What has waited three days is put away first.
+    // on. What has waited its time is put away first (a question a day, an errand three).
     // And what is due by the end of the reader's day, and what has waited
     // on them long enough to say so (`crate::due`, `crate::waiting`).
     let null = serde_json::Value::Null;
