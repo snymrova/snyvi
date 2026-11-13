@@ -1141,12 +1141,15 @@ pub(crate) async fn desk_threads(
     // the sweep finds comes as the `desknotes` event, and the rail reads again.
     tokio::spawn(merges_unseen(app.clone(), id));
     notes_landed(&app, id).await;
+    // What has waited three days is put away first (`thread::retire`). Its
+    // event is said after the closure, never inside it: `threads_moved` reaches
+    // the store again (`offer_shipped`), and the store's one std Mutex is not
+    // re-entrant, so calling it while `clocked` held the lock froze the whole
+    // daemon on the first aged turn after 1.59 (11-09, 11-10, 11-12).
     let r = app.store.clocked(|c, now| {
-        // What has waited three days is put away first (`thread::retire`).
-        if thread::retire(c, now)? > 0 {
-            threads_moved(&app, id);
-        }
+        let retired = thread::retire(c, now)? > 0;
         Ok((
+            retired,
             thread::for_desk(c, id)?,
             thread::turns(c, id, now - ANSWERED_SHOWN, now)?,
             thread::suggestions(c, id)?,
@@ -1154,7 +1157,10 @@ pub(crate) async fn desk_threads(
         ))
     });
     match r {
-        Ok((threads, turns, suggestions, away)) => {
+        Ok((retired, threads, turns, suggestions, away)) => {
+            if retired {
+                threads_moved(&app, id);
+            }
             let mut turns = json!(turns);
             super::routine_run::mark_waits(&app, id, &mut turns);
             place_turns(&app, &mut turns);
