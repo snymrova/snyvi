@@ -3927,9 +3927,11 @@ async function panelRows(cdp, base, token) {
     const steps = [];
     for (const [i, v] of [[0, "SF6"], [1, "Off"], [2, "Drills"]]) {
       if (!gCard) break;
-      steps.push(await q.ev(`document.querySelector('.dk-turn.grp[data-g="${gIds[0]}"] .tn-gfoot')?.textContent || ""`));
+      // The count is in the card's head since the one card (1.64, C1), and
+      // an answered question stays in its place, said (U7).
+      steps.push(await q.ev(`(document.querySelector('.dk-turn.grp[data-g="${gIds[0]}"]')?.textContent.match(/\\d+ of \\d+ decisions? left/) || [""])[0]`));
       await q.clickOn(`.dk-turn.grp[data-g="${gIds[0]}"] .tn-gq[data-w="${gIds[i]}"] [data-v="${v}"]`);
-      await until(`!document.querySelector('.tn-gq[data-w="${gIds[i]}"]')`, 30);
+      await until(`!document.querySelector('.tn-gq[data-w="${gIds[i]}"]:not(.said)')`, 30);
     }
     const gFoot = gCard && await until(`(() => { const f = document.querySelector('.dk-turn.grp[data-g="${gIds[0]}"] .tn-gfoot'); return f && (f.querySelector('[data-a="tn-gsend"]') || /next message/.test(f.textContent)); })()`, 40);
     rows.push(["questions asked together are one card that counts down to Send answers",
