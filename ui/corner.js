@@ -37,8 +37,9 @@ const HOME_ROWS = 5;
 const TODAY_ROWS = 10;
 /** How long what a row's button did is said in the row. */
 const SAID_MS = 6000;
-/** What a hand-over is answered with, by kind, as Home and the desk say. */
-const TURN_ANSWERS = { try: ["Looks good"], merge: ["Merged"], key: ["Added"], do: ["Done"], due: ["Done", "Tomorrow 9"] };
+/** Older cards, and quiet ones, are one line in the tray until opened, as
+ *  on the desk (C4): younger than this a card is drawn whole. */
+const OLDER_S = 30 * 60;
 
 /** snyvi's own asides, by the moment that says each (app.js `snyviSays`),
  *  and the part of /start each one points into. */
@@ -159,7 +160,7 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 .cn-row.new .cn-t { color: var(--fg); }
 .cn-row.new::before { content: ""; position: absolute; left: -7px; top: 13px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .cn-row.mine .cn-t { color: var(--fg-3); }
-.cn-rx { position: absolute; top: 6px; right: -4px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); opacity: 0; cursor: pointer; }
+.cn-rx { position: absolute; top: 6px; right: -4px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); opacity: .55; cursor: pointer; }
 .cn-row:is(:hover, :focus-within) .cn-rx { opacity: 1; }
 .cn-rx:hover { background: var(--rule-2); color: var(--fg); }
 .cn-said { font-size: var(--fs-micro); color: var(--fg-3); }
@@ -207,6 +208,8 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 `;
 
 let c = null, el = null;
+/** The one card (ui/turn.js, 1.64 C1): the desk's, drawn here too. */
+let T = null;
 /** On you's mark: a raised hand, what is handed to the reader (`hand_over`).
  *  It wore the Inbox's tray, and Inbox is what came to read, not what only
  *  the reader can do. The desk's corner draws it from here too. */
@@ -233,12 +236,22 @@ const L = {
   /** On you, ranked, as `/api/lately` gave it (1.54, `crate::onyou`), and
    *  the row whose ✕ has its answers open. */
   onyou: null, pop: "",
+  /** The one card's state off a desk: the field open on a turn and what is
+   *  typed in it, the card whose Later is open (and Not mine's field), the
+   *  questions opened whole, older lines opened, answers being changed,
+   *  each row's error, and routine runs refused for their Waits list. */
+  tn: { field: null, draft: "", later: "", not: false, open: new Set(), old: new Set(), changing: new Set(), errs: new Map(), anyway: new Set() },
 };
 
 export function init(ctx) {
   c = ctx;
   document.head.append(Object.assign(document.createElement("style"), { id: "corner-drawn", textContent: CSS }));
+  import(`/assets/turn.js${new URL(import.meta.url).search}`).then(m => { T = m; T.style(); redraw(); }, () => {});
   document.addEventListener("pointerdown", pressed, true);
+  // A card's field (Other…, Something's off…, Not mine…): Enter says it,
+  // Esc puts it away, and the page's keys do not see what is typed.
+  document.addEventListener("keydown", tnKey, true);
+  document.addEventListener("input", e => { if (e.target.matches?.("input[data-cn]")) L.tn.draft = e.target.value; });
   document.addEventListener("keydown", escape, true);
   document.addEventListener("visibilitychange", () => { if (!document.hidden && L.card) riseFor(RISE_MS); });
   // Back in front from another app: a card that waited for the reader has
@@ -267,8 +280,8 @@ export function init(ctx) {
      *  the desk does not count from its own list (a dated line, a routine's
      *  line, a plan, a left-off), and `others`, every other desk's. */
     onyouHtml, onyou: () => L.onyou,
-    here: desk => oyPart(desk, "here", L.onyou?.rows).length,
-    others: desk => oyPart(desk, "others", L.onyou?.rows).length,
+    here: desk => oyPart(desk, "here", L.onyou?.rows).filter(r => !r.quiet).length,
+    others: desk => oyPart(desk, "others", L.onyou?.rows).filter(r => !r.quiet).length,
     /** The desk's first page while its card is up: its row in the rail is ringed. */
     rising: id => L.card?.kind === "first" && L.card.key === `d${id}` };
 }
@@ -536,6 +549,7 @@ function mark() {
 /** Redraw wherever the corner is drawn: the desk's, or this file's; and
  *  Lately, in the sidebar's popover, wherever that is open. */
 function redraw() {
+  tnFocus();
   drawLately();
   c.root.toggleAttribute("data-lately", dot());
   if (c.onDesk()) return c.deskRedraw?.();
@@ -600,51 +614,46 @@ function offTray(esc) {
   // Ranked, when the daemon gave the list (1.54): the sentence, seven rows,
   // the fold and the grey lines; then offers and a friend's lines.
   const ranked = L.onyou ? onyouHtml() : "";
-  const asks = ranked ? said + offersHtml() : said + fresh.map(turnRow).join("") + offersHtml();
-  const older = ranked ? linesHtml() : linesHtml() + (old.length ? `<ul class="cn-list cn-dim" aria-label="Older">${old.map(turnRow).join("")}</ul>` : "");
+  const asks = ranked ? said + offersHtml() : said + fresh.map(w => turnRow(w)).join("") + offersHtml();
+  const older = ranked ? linesHtml() : linesHtml() + (old.length ? `<ul class="cn-list cn-dim" aria-label="Older">${old.map(w => turnRow(w)).join("")}</ul>` : "");
   const close = `<button type="button" class="oy-x" data-a="cn-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${c.glyph("x", 12)}</button>`;
   return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1"><div class="oy-head"><span class="oy-hi" aria-hidden="true">${hand()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do, across your desks">On you</h3><span class="oy-gap"></span>${close}</div>` +
     `<div class="oy-scroll">${ranked}${asks || older ? (asks ? `<ul class="cn-list">${asks}</ul>` : "") + older : ranked ? "" : `<p class="oy-none">Nothing on you right now.</p>`}</div></div>`;
 }
 
-/** Who asked, as the reader knows them. */
-const whoOf = w => /^claude\b/.test(w.by || "") ? "Claude" : w.slot ? `Panel ${w.slot}` : "An agent";
 
-/** A turn across desks, with its answers in the row, as Home had them. A
- *  command runs on its desk, where Run types it into the panel that asked. */
-function turnRow(w) {
-  const { esc } = c;
-  const opts = w.kind === "decide" || w.kind === "tell" ? w.options || [] : w.kind === "run" ? [] : TURN_ANSWERS[w.kind] || ["Done"];
-  // One meta line wherever a card is drawn (1.56, audit B3): who asked,
-  // the panel by its name, the desk, how long ago. The desk's tray says
-  // the same without the desk (09-thread.js `byHtml`).
-  const who = /^claude/i.test(w.by || "") ? "Claude" : w.by || whoOf(w);
-  const panel = w.panel || (w.slot ? `panel ${w.slot}` : "");
-  const where = [panel, w.desk_name || "a desk"].filter(Boolean).map(esc).join(" · ");
-  // A run card offers what the desk will (A4): Run in the panel that asked
-  // while a Claude session is in it, else a new panel there; Copy is for
-  // anywhere. It said "Run on the desk" to a shell, where nothing ran.
-  // A routine's card (1.63, U8) gets the desk's acts: Run, as that
-  // routine's panel's process, or Run anyway when its command is not on the
-  // routine's Waits list, said on the card; then Copy. No new panel: a
-  // routine's command belongs to its own.
-  const rtRun = w.kind === "run" && w.routine && w.cmd && !(w.options && w.options.length);
-  const run = rtRun
-    ? `<button type="button" class="cn-opt" data-a="cn-answer" data-k="${w.id}" data-v="${w.waits_ok ? "Run" : "Run anyway"}" data-tip="${w.waits_ok ? "Run" : "Run anyway"} in ${esc(w.routine)}'s panel" data-tip-sub="${w.waits_ok ? "on its Waits list" : "not on its Waits list"} · as that panel's process, in the desk's folder with its keys">${w.waits_ok ? "Run" : "Run anyway"}</button>` +
-      `<button type="button" class="cn-opt" data-a="cn-copy" data-c="${esc(w.cmd)}">Copy</button>`
-    : w.kind === "run" && !(w.options && w.options.length)
-    ? `<button type="button" class="cn-opt rec" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}" data-tip="${w.runs_here ? `Typed into ${esc(panel)}'s prompt, on its desk` : "Run in a new panel on its desk"}">${w.runs_here ? `Run in ${esc(panel)} ›` : "New panel on the desk ›"}</button>` +
-      (w.cmd ? `<button type="button" class="cn-opt" data-a="cn-copy" data-c="${esc(w.cmd)}">Copy</button>` : "")
-    : "";
-  return `<li class="cn-row cn-ask"><span class="cn-ico">${c.glyph("aside", 12)}</span><span class="cn-b">` +
-    `<span class="cn-by"><b>${esc(who)}</b> · ${where} · ${c.relShort(w.created_at)}</span>` +
-    `<span class="cn-t">${code(w.text)}</span>${w.kind === "run" && w.options && w.options.length ? `<span class="cn-by">${w.options.filter(o => !o.startsWith("# ")).length} steps, run one at a time on the desk</span>` : w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>${rtRun ? `<span class="cn-by">${esc(w.routine)} · ${w.waits_ok ? "✓ on its Waits list" : "not on its Waits list"}</span>` : ""}` : ""}` +
-    (L.pop === `t${w.id}` ? popHtml(`t${w.id}`, false) :
-    `<span class="cn-acts">${run}${opts.map((o, i) => `<button type="button" class="cn-opt${i === w.recommended ? " rec" : ""}" data-a="cn-answer" data-k="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
-    // A dated line's card carries the line's document (1.54): Open, Copy.
-    (w.kind === "due" && /^[0-9a-f]{6,64}$/.test(w.link || "") ? `<button type="button" class="cn-opt" data-a="cn-oy-open" data-k="${esc(w.link)}">Open</button><button type="button" class="cn-opt" data-a="cn-oy-copy" data-k="${esc(w.link)}">Copy</button>` : "") +
-    `<button type="button" class="cn-link" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}">${w.kind === "run" && w.options && w.options.length ? "Run them on the desk" : "Go to desk"}</button></span>`) + `</span>` +
-    (L.onyou ? oyX(`t${w.id}`, w.text) : `<button type="button" class="cn-rx" data-a="cn-notnow" data-k="${w.id}" aria-label="Not now: ${esc(w.text)}" data-tip="Not now" data-tip-sub="nothing is deleted">${c.glyph("x", 10)}</button>`) + `</li>`;
+/** The one card (ui/turn.js) off a desk, as the desk draws it (1.64, C1):
+ *  the corner's tray, its risen card and Home's box. A merge keeps its PR,
+ *  a key its Add key…, a card of questions is one card with Other… on each.
+ *  What needs a live panel is a step to the desk, the panel named. Its
+ *  buttons are this file's (`cn-tn-…`), so Home and a desk hand them here. */
+function turnRow(w, group = null, clamp = true) {
+  if (!T) return "";
+  const html = T.card(tnEnv(clamp), w, group && group.length > 1 ? group : null);
+  return cnOwn(html);
+}
+/** A card's buttons and field, marked as the corner's. */
+const cnOwn = html => html.replace(/data-a="tn-/g, 'data-a="cn-tn-').replace(/<input class="th-in/g, '<input data-cn class="th-in');
+
+/** What only this side knows, for the card: the panel by the slot the
+ *  daemon placed it in (`place_turns`), Run there while a Claude session is
+ *  in it, its routine. Send now is the desk's: off a desk an answer goes
+ *  with the panel's next message. */
+function tnEnv(clamp) {
+  const t = L.tn, { esc } = c;
+  return {
+    esc, ico: n => c.glyph(n, 10), rel: x => c.relShort(x), off: true,
+    deskName: w => w.desk_name || "its desk",
+    panel: w => w.slot ? { slot: w.slot, name: w.panel || `panel ${w.slot}` } : null,
+    runsHere: w => !!w.runs_here, sendsHere: () => false,
+    routine: w => w.routine ? { name: w.routine, ok: !!w.waits_ok } : null,
+    anyway: w => t.anyway.has(w.id), steps: null, sendable: () => false,
+    field: w => t.field && t.field.id === w.id ? t.field.kind : "",
+    open: id => t.open.has(id), clamp,
+    later: k => t.later === k ? (t.not ? "not" : "menu") : "",
+    changing: id => t.changing.has(id),
+    err: k => t.errs.has(k) ? `<p class="tn-by cn-err" role="alert">${esc(t.errs.get(k))}</p>` : "",
+  };
 }
 
 /* ---------- On you, ranked (1.54) ----------
@@ -689,23 +698,32 @@ function oyPart(desk, part, rows = oyRows()) {
 function onyouHtml(all = false, desk = 0, part = "") {
   const o = L.onyou, { esc } = c;
   if (!o || !c.capability) return "";
-  const rows = desk ? oyPart(desk, part) : oyRows();
-  if (part === "here") return rows.length ? oyGroups(rows, false) : "";
-  const shown = all ? rows : rows.slice(0, 7);
-  const more = rows.length - shown.length;
-  const desks = new Set(rows.slice(shown.length).map(r => r.desk)).size;
-  const fold = more ? `<p class="oy-fold"><button type="button" data-a="cn-home">and ${more} more, on ${desks} desk${desks === 1 ? "" : "s"}</button></p>` : "";
+  const every = desk ? oyPart(desk, part) : oyRows();
+  if (part === "here") return every.length ? oyGroups(every, false) : "";
+  // The daemon's order (C4): the newest few cards, then what is not a card
+  // -- a dated line, a plan, a left-off -- then the rest; the quiet ones,
+  // whose panel was prompted since, last and apart, never counted. The
+  // tray holds `tray` rows, so a plan is never folded away under cards.
+  const rows = every.filter(r => !r.quiet), quiet = every.filter(r => r.quiet);
+  const ghosts = rows.length - rows.filter(r => o.rows.includes(r)).length;
+  const shown = all ? rows : rows.slice(0, (o.tray || 7) + ghosts);
+  const rest = rows.slice(shown.length), more = rest.length;
+  const desks = new Set(rest.map(r => r.desk)).size;
+  const cards = rest.every(r => r.kind === "card");
+  const fold = more ? `<p class="oy-fold"><button type="button" data-a="cn-home">and ${more} more${cards ? ` card${more === 1 ? "" : "s"}` : ""}, on ${desks === 1 ? esc(rest[0].desk_name || "a desk") : `${desks} desks`}</button></p>` : "";
+  const quietHtml = quiet.length ? `<p class="oy-qh">Quiet · its panel was prompted since</p>` + oyGroups(quiet, all) : "";
   const grey = (o.ran_quiet ? `<p class="oy-grey">${o.ran_quiet} routine${o.ran_quiet === 1 ? "" : "s"} ran today with nothing for you.</p>` : "") +
     (o.older ? `<p class="oy-grey">${o.older} thread${o.older === 1 ? "" : "s"} on ${o.older_desks} desk${o.older_desks === 1 ? "" : "s"} still for two weeks: Sunday's week has them.</p>` : "");
-  const sent = desk ? "" : `<p class="oy-sent">${esc(o.sentence)}</p>`;
-  return sent + oyGroups(shown, all) + fold + grey;
+  // Home's box says its count and clauses in its head (C2).
+  const sent = desk || all ? "" : `<p class="oy-sent">${esc(o.sentence)}</p>`;
+  return sent + oyGroups(shown, all) + fold + quietHtml + grey;
 }
 
 /** The rows as one list, or on Home past four desks under a head per desk,
  *  the desk with the first-ranked row first: twenty rows on nine desks read
  *  as where they are before what they are. */
 function oyGroups(rows, all) {
-  const ul = rs => `<ul class="cn-list" data-part="corner.onyou">${rs.map(oyRow).join("")}</ul>`;
+  const ul = rs => `<ul class="cn-list" data-part="corner.onyou">${rs.map(r => oyRow(r, all)).join("")}</ul>`;
   const desks = [...new Set(rows.map(r => r.desk))];
   if (!rows.length) return "";
   if (!all || desks.length <= 4) return ul(rows);
@@ -718,9 +736,9 @@ function oyWhen(r) {
   return r.at * 1000 < Date.now() ? `overdue since ${new Date().toDateString() === d.toDateString() ? hm : c.relShort(r.at)}` : `today ${hm}`;
 }
 
-function oyRow(r) {
+function oyRow(r, all = false) {
   const { esc } = c, key = oyKey(r), s = L.said.get(key);
-  if (r.kind === "card" && !s?.item) return turnRow({ ...r.turn, desk_name: r.desk_name });
+  if (r.kind === "card" && !s?.item) return cardRow(r, all);
   const who = r.kind === "routine" ? esc(r.routine) : esc(r.by && r.kind !== "due" ? r.by : OY_BY[r.kind]);
   const when = r.kind === "due" ? oyWhen(r) : r.kind === "routine" ? `ran ${c.relShort(r.at)}` : c.relShort(r.at);
   const thing = r.doc ? `<button type="button" class="cn-link cn-doc" data-a="cn-oy-open" data-k="${esc(r.doc)}" data-tip="Open" data-tip-sub="${esc(r.doc_title)}">${esc(r.doc_title || "its document")}</button>`
@@ -764,7 +782,7 @@ async function oyDo(key, said, url, body, undo) {
   L.said.set(key, { text: said, undo: !!undo, back: undo, item: r });
   redraw();
   try {
-    const j = await c.deskApi(url, body);
+    const j = await (typeof url === "function" ? url() : c.deskApi(url, body));
     if (j && j.ok === false && j.why) { L.said.set(key, { text: `Could not: ${j.why}`, undo: false, item: r }); redraw(); }
   } catch (e) { L.said.set(key, { text: `Could not: ${c.sayErr(e).why}`, undo: false, item: r }); redraw(); }
   load();
@@ -782,7 +800,7 @@ function oyAct(a, b) {
   if (a === "cn-oy-undo") {
     const s = L.said.get(key);
     L.said.delete(key); redraw();
-    return s?.back ? c.deskApi(s.back[0], s.back[1]).catch(() => {}).then(() => load()) : undefined;
+    return s?.back ? (typeof s.back === "function" ? s.back() : c.deskApi(s.back[0], s.back[1])).catch(() => {}).then(() => load()) : undefined;
   }
   if (!r) return;
   const d = r.desk, t = r.turn;
@@ -1013,7 +1031,7 @@ function cardHtml(desk) {
   const mine = k.kind === "turn" || k.kind === "offer" || k.kind === "line";
   const more = k.more && (mine || c.lately) ? `<button type="button" class="cn-more" data-a="${mine ? "cn-open" : "cn-lately"}">+${k.more} more</button>` : "";
   let body = "";
-  if (k.kind === "turn") body = `<ul class="cn-list">${turnRow(k.turn)}</ul>`;
+  if (k.kind === "turn") body = `<ul class="cn-list">${turnRow(k.turn, k.turn.ask_group ? L.turns.filter(x => x.ask_group === k.turn.ask_group) : null, false)}</ul>`;
   else if (k.kind === "offer") body = `<ul class="cn-list">${offerRow(L.offers.find(o => o.id === k.offer.id) || k.offer)}</ul>`;
   else if (k.kind === "line") body = `<ul class="cn-list">${lineRow(L.lines.find(n => n.id === k.line.id) || k.line)}</ul><p class="cn-where">It stays in On you until you keep it or remove it.</p>`;
   else if (k.kind === "aside") {
@@ -1040,6 +1058,7 @@ function cardHtml(desk) {
 function act(a, b) {
   if (!a?.startsWith("cn-")) return false;
   if (a.startsWith("cn-oy-")) { oyAct(a, b); return true; }
+  if (a.startsWith("cn-tn-")) { tnAct(a.slice(3), b); return true; }
   const k = b.dataset.k, r = b.dataset.r;
   const go = {
     "cn-open": () => toggle(),
@@ -1055,8 +1074,6 @@ function act(a, b) {
     "cn-close": () => { c.unpop?.(); [...document.querySelectorAll(".lt-btn")].find(x => x.getClientRects().length)?.focus({ preventScroll: true }); },
     "cn-more": () => load(L.rows[L.rows.length - 1]?.id || 0),
     "cn-seen": () => { opened(); for (const x of L.rows) x.seen = true; redraw(); },
-    "cn-answer": () => answer(+k, b.dataset.v),
-    "cn-notnow": () => notNow(+k),
     "cn-desk": () => { settle(); closeTray(false); c.showDesk(+k, true, +b.dataset.v || 0); },
     // A run card's command, for anywhere else (1.56).
     "cn-copy": () => { navigator.clipboard?.writeText(b.dataset.c || ""); c.toast("Copied", { sub: b.dataset.c }); },
@@ -1133,26 +1150,143 @@ async function post(url, body) {
   return j;
 }
 
-/** A turn answered off a desk: it reaches the agent with its panel's next
- *  prompt, and the row says so for a moment. */
-async function answer(id, v) {
-  const w = L.turns.find(x => x.id === id);
-  if (!w) return;
-  // A due card is snyvi's (1.47): Done ticks its line, a time moves it.
-  sayIn(`t${id}`, w.routine && (v === "Run" || v === "Run anyway") ? `Running in ${w.routine}'s panel: ${w.cmd}` : w.kind === "due" ? (v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`) : w.kind === "tell" ? (v === "No one" ? "Told no one: it counts as told" : `${v}: a dated line is on its desk${v === "A post" || v === "Release note" ? " · a panel drafts it when you ask" : ""}`) : `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`);
-  try { await c.deskApi(`/api/desks/${w.desk_id}/turns/${id}/answer`, { answer: v }); }
-  catch (e) { sayIn(`t${id}`, `Could not answer it: ${c.sayErr(e).why}`); }
-  if (L.card?.key === `t${id}`) settle();
-  load();
+/* ---------- the one card's clicks, off a desk (1.64) ---------- */
+
+/** A card on the ranked list: whole, or in the tray one line while it is
+ *  older or quiet, a click from whole, as the desk's tray has it (C4).
+ *  Home draws every card whole. */
+function cardRow(r, all) {
+  if (!T) return "";
+  const w = { ...r.turn, desk_name: r.desk_name };
+  const ms = (r.turns || []).map(x => ({ ...x, desk_name: r.desk_name }));
+  const k = w.ask_group || w.id;
+  const old = r.quiet || w.stale || Date.now() / 1000 - r.at > OLDER_S;
+  if (!all && old && !L.tn.old.has(k)) return cnOwn(T.olderLine(tnEnv(true), w, ms.filter(x => !x.answered_at).length || 1));
+  return turnRow(w, ms, !all);
 }
-async function notNow(id) {
-  const w = L.turns.find(x => x.id === id);
-  if (!w) return;
-  sayIn(`t${id}`, `Not now: ${w.text}`);
-  try { await c.deskApi(`/api/desks/${w.desk_id}/turns/${id}/remove`, {}); }
-  catch { sayIn(`t${id}`, "Could not put it away; try again on the desk"); }
-  load();
+
+/** Every turn this page knows, by id: the list's, each with its desk's
+ *  name, over the turns across desks. */
+function tnAll() {
+  const m = new Map(L.turns.map(w => [w.id, w]));
+  for (const r of L.onyou?.rows || []) if (r.kind === "card") for (const x of r.turns?.length ? r.turns : [r.turn]) m.set(x.id, { ...x, desk_name: r.desk_name });
+  return m;
 }
+/** The list's row a turn is on: its own, or its card's. */
+const tnRowOf = w => (L.onyou?.rows || []).find(r => r.kind === "card" && (r.turn.id === w.id || (w.ask_group && r.turn.ask_group === w.ask_group)));
+
+/** What a row says once its answer is given here. */
+function sayFor(w, v) {
+  if (w.routine && (v === "Run" || v === "Run anyway")) return `Running in ${w.routine}'s panel: ${w.cmd}`;
+  if (w.kind === "due") return v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`;
+  if (w.kind === "tell") return v === "No one" ? "Told no one: it counts as told" : `${v}: a dated line is on its desk${v === "A post" || v === "Release note" ? " · a panel drafts it when you ask" : ""}`;
+  return `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`;
+}
+
+function tnAct(a, b) {
+  const t = L.tn, id = +b.dataset.w || 0, w = id ? tnAll().get(id) : null;
+  if (!a.startsWith("tn-lt")) { t.later = ""; t.not = false; }
+  if (a === "tn-lt-open") { const k = b.dataset.k; t.not = false; t.later = t.later === k ? "" : k; return redraw(); }
+  if (a === "tn-lt-not") { t.later = b.dataset.k; t.not = true; t.field = { kind: "not", id: b.dataset.k }; t.draft = ""; return redraw(); }
+  if (a === "tn-lt") return tnLater(b.dataset.k, b.dataset.v, "");
+  if (a === "tn-more") { if (!t.open.delete(id)) t.open.add(id); return redraw(); }
+  if (a === "tn-old") { t.old.add(id); return redraw(); }
+  if (a === "tn-link") { if (/^https?:\/\//.test(b.dataset.u || "")) open(b.dataset.u, "_blank", "noopener"); return; }
+  if (a === "tn-doc") { if (L.open && !c.onDesk()) closeTray(false); return c.showDoc(b.dataset.u); }
+  if (a === "tn-copy") { navigator.clipboard?.writeText(b.dataset.c || ""); return c.toast("Copied", { sub: b.dataset.c }); }
+  if (!w) return;
+  // What needs a live panel, or the desk's keys, is a step to the desk,
+  // at the panel that asked.
+  if (a === "tn-desk" || a === "tn-run" || a === "tn-newpanel" || a === "tn-key") { settle(); closeTray(false); return c.showDesk(w.desk_id, true, w.slot || 0); }
+  if (a === "tn-other" || a === "tn-change") { t.field = { kind: a === "tn-other" ? "other" : "change", id }; t.draft = ""; return redraw(); }
+  if (a === "tn-rechange") { t.changing.add(id); return redraw(); }
+  if (a === "tn-pick") return tnAnswer(w, b.dataset.v);
+  // Still to do (C3): back in amber, and it does not go quiet again.
+  if (a === "tn-keep") return tnDo(w, `Still to do: ${w.text}`, () => c.deskApi(`/api/desks/${w.desk_id}/turns/${id}/restore`, {}));
+}
+
+/** An answer given off a desk: it reaches the agent with its panel's next
+ *  prompt. One of a card's questions, others still open, folds in its place
+ *  with Change (C7); a card's last, or a card of one, says so in the row
+ *  with its Undo, until the daemon's list no longer has it. */
+async function tnAnswer(w, v) {
+  const t = L.tn, r = tnRowOf(w);
+  t.changing.delete(w.id); t.errs.delete(`w${w.id}`);
+  if (L.card?.key === `t${w.id}`) settle();
+  const post = () => c.deskApi(`/api/desks/${w.desk_id}/turns/${w.id}/answer`, { answer: v })
+    .catch(e => { if (/Waits list/.test(c.sayErr(e).raw)) t.anyway.add(w.id); throw e; });
+  const x = r?.turns?.find(y => y.id === w.id);
+  if (x && r.turns.some(y => y.id !== w.id && !y.answered_at)) {
+    const was = { answer: x.answer, answered_at: x.answered_at };
+    Object.assign(x, { answer: v, answered_at: Math.floor(Date.now() / 1000) });
+    redraw();
+    try { await post(); } catch (e) { Object.assign(x, was); t.errs.set(`w${w.id}`, `Could not answer it: ${c.sayErr(e).why}`); }
+    return load();
+  }
+  // A dated line ticked, a routine started, a tell's line made: done, not
+  // taken back from here.
+  const undo = !(w.kind === "due" || w.kind === "tell" || (w.routine && /^Run/.test(v)));
+  return tnDo(w, sayFor(w, v), post, undo ? () => c.deskApi(`/api/desks/${w.desk_id}/turns/${w.id}/restore`, {}) : null);
+}
+
+/** A card's step said in its row, with its Undo when `back` can put it
+ *  back; a turn not on the list (the risen card, before the list is read)
+ *  says it at the tray's top. */
+function tnDo(w, said, run, back = null) {
+  const r = tnRowOf(w);
+  if (r) return oyDo(oyKey(r), said, run, null, back);
+  sayIn(`t${w.id}`, said);
+  return run().catch(e => sayIn(`t${w.id}`, `Could not: ${c.sayErr(e).why}`)).then(() => load());
+}
+
+/** Later's answers (C5) on a card or a card of questions: Tomorrow, Next
+ *  week, Already done (an answer the agent is told), Not mine with a word
+ *  for its brief. Each is undone by restoring the turns. */
+function tnLater(key, v, word) {
+  const t = L.tn;
+  t.later = ""; t.not = false; t.field = null;
+  const m = tnAll(), g = key[0] === "g" ? +key.slice(1) : 0;
+  const ws = g ? [...m.values()].filter(x => x.ask_group === g && !x.answered_at) : [m.get(+key.slice(1))].filter(Boolean);
+  if (!ws.length) return redraw();
+  const d = ws[0].desk_id;
+  const said = (v === "done" ? "Done" : v === "not" ? `Not mine${word ? ` (“${word}”)` : ""}` : `Back ${v}`) + `: ${ws[0].text}`;
+  const one = w => v === "done"
+    ? c.deskApi(`/api/desks/${d}/turns/${w.id}/answer`, { answer: w.kind === "decide" ? "answered in the chat" : T.DONE[w.kind] || "Done" })
+    : c.deskApi(`/api/desks/${d}/turns/${w.id}/remove`, v === "not" ? { not: word } : { later: v });
+  return tnDo(ws[0], said, () => Promise.all(ws.map(one)), () => Promise.all(ws.map(w => c.deskApi(`/api/desks/${d}/turns/${w.id}/restore`, {}))));
+}
+
+/** The field's Enter: Other… is the answer, Something's off… says so,
+ *  Not mine… goes with its word. */
+function tnSave() {
+  const t = L.tn, f = t.field, text = t.draft.trim();
+  t.field = null; t.draft = "";
+  if (!f) return;
+  if (f.kind === "not") return tnLater(f.id, "not", text);
+  const w = tnAll().get(f.id);
+  if (w && text) return tnAnswer(w, f.kind === "change" ? `Something's off: ${text}` : text);
+  redraw();
+}
+function tnKey(e) {
+  // A question opened whole by its keys, on Home (the desk's tray has its own).
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('.hm .tn-q[data-a="cn-tn-more"]')) { e.preventDefault(); e.target.click(); return; }
+  if (!e.target.matches?.("input[data-cn]")) return;
+  e.stopPropagation();
+  if (e.key === "Enter") { e.preventDefault(); tnSave(); }
+  else if (e.key === "Escape") { e.preventDefault(); Object.assign(L.tn, { field: null, draft: "", later: "", not: false }); redraw(); }
+}
+/** After a redraw, the open field back, with what was typed in it. */
+function tnFocus() {
+  if (!L.tn.field) return;
+  requestAnimationFrame(() => {
+    const i = document.querySelector("input[data-cn]");
+    if (!i || document.activeElement === i) return;
+    i.value = L.tn.draft;
+    i.focus({ preventScroll: true });
+    i.setSelectionRange(i.value.length, i.value.length);
+  });
+}
+
 function sayIn(key, text, undo = false) {
   L.said.set(key, { text, undo });
   redraw();

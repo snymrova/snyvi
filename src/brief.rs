@@ -707,6 +707,21 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
     if n_older > 0 {
         lines.push("One you can see is done (a tag, a merge), remove_card with why.".to_string());
     }
+    // Cards from panels since closed (C8): no one else can settle them, and
+    // the user's answer to one comes to whichever panel asks next.
+    let orphans: Vec<String> = waiting
+        .iter()
+        .filter(|w| !w.pane.is_empty() && !desk.panes.iter().any(|p| p.id == w.pane))
+        .take(TURNS_SHOWN)
+        .map(|w| format!("#{}", w.id))
+        .collect();
+    if !orphans.is_empty() {
+        lines.push(format!(
+            "{} from panels since closed {} yours now: the user's answer comes to you, and one that is done or moot is yours to remove_card with why.",
+            orphans.join(", "),
+            if orphans.len() == 1 { "is" } else { "are" }
+        ));
+    }
     lines
 }
 
@@ -771,10 +786,16 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
         .filter(|t| t.answered_at == 0 && t.kind != "decide")
         .map(|t| format!("#{} {}: {}", t.id, t.kind, cut(&t.text, LINE_CHARS)))
         .collect();
+    // One that went quiet at this prompt (1.64, C3) is no longer amber on
+    // the user's list: it waits there for Done, or for this agent to say.
+    let hushed = answers
+        .iter()
+        .any(|t| t.answered_at == 0 && t.kind != "decide" && t.quiet_at > 0);
     if !chores.is_empty() {
         lines.push(format!(
-            "Your hand-overs still open on the user's On you list: {}. If their message says one is done, remove_card it with why; if not, leave it.",
-            chores.join("; ")
+            "Your hand-overs still open on the user's On you list: {}.{} If their message says one is done, remove_card it with why; if not, leave it.",
+            chores.join("; "),
+            if hushed { " They have gone quiet there, since the user is in this panel." } else { "" }
         ));
     }
     lines
@@ -1693,6 +1714,36 @@ mod tests {
         ));
         assert!(b.contains("On the user (their On you list in snyvi): #0 try: Try it on 7871."));
         assert!(!b.contains("Old"));
+    }
+
+    /// 1.64 (C8): a card whose panel closed is the next Claude's on the
+    /// desk, by its id; one from a panel still open is not.
+    #[test]
+    fn cards_from_panels_since_closed_are_the_next_claudes() {
+        let d = desk(2, None);
+        let gone = Turn {
+            id: 41,
+            kind: "decide".into(),
+            text: "Integers?".into(),
+            pane: "p-closed".into(),
+            stale: true,
+            ..Turn::default()
+        };
+        let open = Turn {
+            id: 42,
+            kind: "do".into(),
+            text: "Sign in".into(),
+            pane: d.panes[0].id.clone(),
+            ..Turn::default()
+        };
+        let lines = thread_lines(&d, 2, &[], &[gone, open]);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("#41 from panels since closed is yours now")),
+            "{lines:?}"
+        );
+        assert!(!lines.iter().any(|l| l.contains("#42 from")));
     }
 
     /// 1.61 (C5): on a busy desk the cap cuts from the end, and the line

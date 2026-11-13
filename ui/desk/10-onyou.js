@@ -93,7 +93,7 @@ function oyNode() {
   oyEl.addEventListener("click", click);
   // A question cut to its lines opens with Enter or Space, as a button would.
   oyEl.addEventListener("keydown", e => {
-    if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('.tn-q[data-a="tn-more"]')) { e.preventDefault(); e.target.click(); }
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('.tn-q[data-a="tn-more"], .tn-q[data-a="cn-tn-more"]')) { e.preventDefault(); e.target.click(); }
   });
   // The first key in it brings the focus ring back.
   oyEl.addEventListener("keydown", () => { if (oy.quiet) { oy.quiet = false; oyEl.querySelector(".ring-quiet")?.classList.remove("ring-quiet"); } });
@@ -125,11 +125,14 @@ function oyCounts(d, f) {
  *  and says so while the tray is open. */
 function oyFoot(d) {
   const n = oyCounts(d, filedNow(d)), count = n.now + n.old;
+  // What waits on the other desks, said beside the hand (C6): only a tip
+  // said it. The button grows into the foot's free room, so nothing moves.
+  const away = n.others ? `<span class="oy-else">· ${n.others} elsewhere</span>` : "";
   const label = !count ? "Nothing on you right now" : `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
   // What On you is, always, then how it stands: with nothing on the reader
   // the tip said only that, and a first hover never learned what it was for.
   const sub = `What only you can do on this desk · ${n.now ? "new" : count ? "older asks waiting" : "nothing right now"}${oyOthers(n)}${ctx.esc(ctx.corner?.()?.chimed(" · ") || "")}`;
-  return `<button type="button" class="oy-foot${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span></button>`;
+  return `<button type="button" class="oy-foot${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}${n.others ? `, ${n.others} on other desks` : ""}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span>${away}</button>`;
 }
 
 /** The tip's word on the other desks, so a desk at nought does not read as
@@ -172,10 +175,12 @@ function riseHtml(d, f, esc) {
 function trayHtml(d, f, esc) {
   const gone = filedGone && (filedGone.k === "w" || filedGone.k === "g") ? goneRow(filedGone.k, filedGone.id, filedGone.text, esc) : "";
   qClamp = true;
-  const rows = gone + turnRows(d, f, esc, false), old = turnRows(d, f, esc, true);
+  const rows = gone + turnRows(d, f, esc, "fresh"), old = turnRows(d, f, esc, "older"), hushed = turnRows(d, f, esc, "quiet");
   qClamp = false;
   const said = rows ? `<ul class="dk-turn-list" data-part="desk.turns">${rows}</ul>` : "";
-  const older = old ? `<ul class="cn-list cn-old oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, asked over half an hour ago, or its panel was prompted since. It goes by itself after three days, and can come back">${old}</ul>` : "";
+  const older = old ? `<ul class="cn-list cn-old oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, or asked over half an hour ago. It goes by itself after three days, and can come back">${old}</ul>` : "";
+  // Gone quiet (C3): its panel was prompted since, so it may be done there.
+  const quiet = hushed ? `<p class="oy-qh">Quiet · its panel was prompted since</p><ul class="dk-turn-list" data-part="desk.quiet">${hushed}</ul>` : "";
   const K = ctx.corner?.(), offers = K ? K.offersHtml() : "", lines = K?.linesHtml?.() || "";
   const away = awayRows(f, esc);
   // This desk's own rest of On you (1.54): its dated line, routine's line,
@@ -184,7 +189,7 @@ function trayHtml(d, f, esc) {
   // column and the Inbox pill's. 1.54 listed them under their own head.
   const here = K?.onyouHtml?.(false, d.id, "here") || "";
   const n = oyCounts(d, f), count = n.now + n.old;
-  const all = said + older + here + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
+  const all = said + older + here + quiet + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
     (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d);
   oy.empty = !all;
   const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +
@@ -423,6 +428,8 @@ const ONYOU_CSS = `
 #meta .oy-foot svg { width: 13px; height: 13px; }
 #meta .oy-foot .n { min-width: 2ch; text-align: left; font-weight: 600; color: var(--fg-2); }
 #meta .oy-foot.on, #meta .oy-foot.on .n { color: var(--warn); }
+/* The other desks' share, beside the count (C6), quiet: theirs, not here. */
+#meta .oy-foot .oy-else { margin-left: 2px; color: var(--fg-3); font-weight: 400; white-space: nowrap; }
 #meta .oy-foot:hover, #meta .oy-foot:focus-visible, #meta .oy-foot[aria-expanded="true"] { background: var(--rule); color: var(--fg); opacity: 1; }
 .oy-hi { display: grid; place-items: center; width: 14px; margin-right: 4px; color: var(--fg-3); }
 .oy-hi svg { width: 13px; height: 13px; }
@@ -446,7 +453,7 @@ const ONYOU_CSS = `
 .oy-tray .dk-turn-list { gap: 0; margin: 0; }
 .oy-tray .dk-turn, .oy-tray .dk-sugcard { padding: 8px 0; border: 0; border-radius: 0; background: none; }
 .oy-tray .dk-turn-list > li + li, .oy-tray .dk-turn-list + .dk-turn-list > li:first-child { border-top: 1px solid var(--rule); }
-.oy-tray .dk-turn:not(.grp) > .tn-acts > .tn-x, .oy-tray .tn-gx { top: 6px; right: -4px; }
+.oy-tray .dk-turn:not(.grp) > .tn-acts > .tn-x { top: 6px; right: -4px; }
 .oy-pin { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
 .oy-pin:hover { background: var(--rule-2); color: var(--fg); }
 .oy-pin.on { color: var(--accent); }

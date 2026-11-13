@@ -320,6 +320,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn.blk .pn-state { color: var(--warn); font-weight: 600; animation: pn-need .8s ease-out; }
 /* Done is grey with a green tick (1.60, C5): pink is for "you are here" alone. */
 .pn.done .pn-state { color: var(--fg-2); }
+.pn.asks .pn-state { color: var(--warn); font-weight: 600; cursor: pointer; }
+.pn.asks .pn-state:hover { text-decoration: underline; }
 .pn.done .pn-state::first-letter { color: var(--ok); }
 @keyframes pn-need { 0%, 60% { background: color-mix(in srgb, var(--warn) 18%, transparent); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .pn.blk .pn-state { animation: none; } }

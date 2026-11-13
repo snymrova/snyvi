@@ -105,6 +105,10 @@
   }
 
   let deskRoots = "";
+  /** A card asked or answered moves a desk row's On you count (1.64, C6):
+   *  the desks read again, once for a burst. */
+  let desksSoonAt = 0;
+  function desksSoon() { clearTimeout(desksSoonAt); desksSoonAt = setTimeout(loadDesks, 900); }
   async function loadDesks() {
     if (capability) { try { state.desks = await deskApi("/api/desks"); desksOff = false; } catch { desksOff = true; } }
     // A project's row says whether it has a desk; only a desk made, closed
@@ -165,11 +169,15 @@
       // on another desk says it once and settles, and this is where it went.
       // Not on the desk on screen, whose rail lists it already, in bold.
       const w = on && state.deskId === d.id ? 0 : state.queue.filter(q => q.desk && q.desk.id === d.id).length;
-      const tip = [plural(n, "panel"), working ? `${working} working` : "", w ? `${w} to read` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
+      // Cards fresh on the reader there (1.64, C6), in On you's amber: the
+      // other desks' were said only in a tooltip of this desk's foot. Not
+      // the desk on screen, whose rail has its own.
+      const oyn = on && state.deskId === d.id ? 0 : d.on_you || 0;
+      const tip = [plural(n, "panel"), working ? `${working} working` : "", oyn ? `${oyn} on you` : "", w ? `${w} to read` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" draggable="false" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
-        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${w ? `<span class="k">${icon("doc", 12, "k-ico")}${w}</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : `<span class="dot${m === "●" ? " on" : m === "◦" ? " run" : ""}"></span>`}<span class="vh">${say}</span></span>`,
+        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${oyn ? `<span class="k oy">${icon("hand", 12, "k-ico")}${oyn}</span>` : ""}${w ? `<span class="k">${icon("doc", 12, "k-ico")}${w}</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : `<span class="dot${m === "●" ? " on" : m === "◦" ? " run" : ""}"></span>`}<span class="vh">${say}</span></span>`,
         `${capability ? `<button type="button" class="row-x row-f" data-deskdir="${d.id}" data-tip="Open its folder" data-tip-sub="${esc(tilde(d.root))}" aria-label="Folder of ${esc(d.name)}">${icon("folder", 13)}</button><button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
@@ -644,7 +652,7 @@
     // A board moved, the reader's focus did, a crash's conversations came back (1.58), or a page did (1.59).
     for (const n of ["board", "focus", "restore", "page", "view"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
     // An agent ticked a line on a desk's list.
-    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); });
+    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); desksSoon(); });
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
       const j = parse(ev); if (!j) return;

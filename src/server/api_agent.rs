@@ -851,17 +851,22 @@ pub(crate) async fn pane_changes(
             let mut held = live.clone();
             held.extend(crate::routine::panes(c, desk.id)?);
             let mut a = crate::thread::take_untold(c, desk.id, &id, &held, now)?;
-            a.extend(crate::thread::quiet_asks(c, desk.id, &id, now)?);
+            let quieted = crate::thread::quiet_asks(c, desk.id, &id, now)?;
+            let moved = !quieted.is_empty();
+            a.extend(quieted);
             // Its own hand-overs still open, by id: the message may say one
-            // is done, and the agent is the one who can tell.
-            a.extend(crate::thread::open_chores(c, desk.id, &id)?);
-            Ok(a)
+            // is done, and the agent is the one who can tell. One quieted
+            // just now is among them already (1.64: errands go quiet too).
+            for t in crate::thread::open_chores(c, desk.id, &id)? {
+                if !a.iter().any(|x| x.id == t.id) {
+                    a.push(t);
+                }
+            }
+            Ok((a, moved))
         })
         .unwrap_or_default();
-    if answers
-        .iter()
-        .any(|t| t.answered_at == 0 && t.kind == "decide")
-    {
+    let (answers, quieted) = answers;
+    if quieted {
         super::api_thread::threads_moved(&app, desk.id);
     }
     if !brief_on(&app) {

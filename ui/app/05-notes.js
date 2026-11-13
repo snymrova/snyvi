@@ -255,7 +255,10 @@
     // window's page may hear it, by its capability: a tab cannot read the
     // list, and must not spend the day's arrival.
     fetch("/api/focus", { method: "POST", keepalive: true, headers: { "x-snyvi-capability": capability }, body: JSON.stringify({ focused, visible, desk: desk ?? null, page: pageMark, seq: ++focusSeq }) })
-      .then(r => r.json()).then(j => j.open && corner(m => m.open())).catch(() => {});
+      // Not over Home (1.64, C2): its box is the same list, and the tray
+      // opened over it said the count four times. The day is spent all
+      // the same: the next page is not ambushed later.
+      .then(r => r.json()).then(j => j.open && state.view !== "home" && corner(m => m.open())).catch(() => {});
   }
   const beacon = () => sayFocus();
   onPlace = beacon;

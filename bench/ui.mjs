@@ -4016,14 +4016,16 @@ async function panelRows(cdp, base, token) {
     rows.push(["two hand-overs at once rise as one card that says +1 more", !!burst,
       bIds.length !== 2 ? "the hand-overs were refused" : `the corner: ${await q.ev(`document.querySelector('#onyou')?.textContent.slice(0, 120) || ""`)}`]);
 
-    // B1: a card of questions answered elsewhere goes with one ✕, and its
-    // one Undo brings every question back.
+    // B1: a card of questions answered elsewhere goes with one ✕ -- its
+    // Later menu's "Answered in the chat" (1.64, C5) -- and its one Undo
+    // brings every question back.
     const g2 = await (await agent("ask", { by: "bench-agent", questions: [
       { question: "bench: all one?", options: ["A", "B"] }, { question: "bench: all two?", options: ["A", "B"] }] })).json().catch(() => ({}));
     const g2Id = g2.turns?.[0]?.id;
     if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
-    const gx = !!g2Id && await until(`!!document.querySelector('#onyou [data-a="tn-gx"][data-g="${g2Id}"]')`, 40);
-    if (gx) await q.clickOn(`#onyou [data-a="tn-gx"][data-g="${g2Id}"]`);
+    const gx = !!g2Id && await until(`!!document.querySelector('#onyou [data-a="tn-lt-open"][data-g="${g2Id}"]')`, 40);
+    if (gx) await q.clickOn(`#onyou [data-a="tn-lt-open"][data-g="${g2Id}"]`);
+    if (gx && await until(`!!document.querySelector('#onyou .tn-later [data-a="tn-lt"][data-v="done"]')`, 20)) await q.clickOn(`#onyou .tn-later [data-a="tn-lt"][data-v="done"]`);
     const gxGone = gx && await until(`!document.querySelector('.dk-turn.grp[data-g="${g2Id}"]') && !!document.querySelector('#onyou [data-a="fd-back"][data-k="g"]')`, 30);
     if (gxGone) await q.clickOn('#onyou [data-a="fd-back"][data-k="g"]');
     const gxBack = gxGone && await until(`document.querySelectorAll('.dk-turn.grp[data-g="${g2Id}"] .tn-gq').length === 2`, 40);

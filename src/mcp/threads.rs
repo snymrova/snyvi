@@ -91,7 +91,8 @@ pub(super) fn specs() -> Vec<Value> {
                         "question": { "type": "string", "description": "One sentence." },
                         "options": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 4, "description": "Short labels." },
                         "recommended": { "type": "integer", "description": "The index of the option you recommend, from 0." }
-                    }, "required": ["question", "options"], "additionalProperties": false } }
+                    }, "required": ["question", "options"], "additionalProperties": false } },
+                "replaces": { "type": "integer", "description": "The id of a card of yours this one asks again, changed: it is taken off, with every question on it, as this goes on. The same question in the same words is never asked twice: it is folded into its card." }
             }, "additionalProperties": false },
             "annotations": ann(false)
         }),
@@ -282,7 +283,19 @@ impl Session {
         if let Some(q) = many {
             body["questions"] = json!(q);
         }
+        if let Some(r) = args.get("replaces").and_then(Value::as_i64) {
+            body["replaces"] = json!(r);
+        }
         match self.thread_call("ask", body) {
+            // Already waiting, in the same words (C8): folded, not asked twice.
+            Ok(v) if v.get("again").and_then(Value::as_bool) == Some(true) => {
+                let id = v.pointer("/turn/id").and_then(Value::as_i64).unwrap_or(0);
+                let n = v
+                    .pointer("/turn/asked")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(2);
+                said(format!("Already on the user's On you list as #{id}, unanswered: not asked again (asked {n} times now). The answer comes with their next message; to change the question, ask with replaces: {id}.") + &also_open(&v), false)
+            }
             Ok(v) => {
                 let n = v.get("turns").and_then(Value::as_array).map_or(1, Vec::len);
                 let head = if n > 1 {

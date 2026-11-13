@@ -176,6 +176,10 @@ const OLD_1_47: &str =
      ALTER TABLE threads DROP COLUMN told_how; ALTER TABLE threads DROP COLUMN ask_told_at;
      DROP TABLE home_state; ALTER TABLE desks DROP COLUMN rule_asked_at;";
 
+/// 1.64's step, taken back (step 39, `thread::ASKED_COLUMN_1_64`): how many
+/// times a question was asked.
+const OLD_1_64: &str = "ALTER TABLE turns DROP COLUMN asked;";
+
 /// 1.63's step, taken back (step 38, `routine::TRIGGER_COLUMNS_1_63`): a
 /// routine's times and events, its gate, watch, shape, model, effort,
 /// context and drops, and a run's window and what woke it.
@@ -1108,7 +1112,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1397,7 +1401,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1932,7 +1936,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1975,7 +1979,7 @@ fn a_1_46_1_database_keeps_its_panel_names() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
+        "{OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
     ))
     .unwrap();
     drop(conn);
@@ -2036,7 +2040,7 @@ fn a_1_56_database_opens_with_no_tabs_and_its_first_tab_moves_nothing() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} PRAGMA user_version = 34;"
+        "{OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} PRAGMA user_version = 34;"
     ))
     .unwrap();
     drop(conn);
@@ -2190,7 +2194,7 @@ fn a_1_62_routine_opens_with_its_one_hour_as_its_one_time() {
             .id
     };
     let conn = Connection::open(&paths.db_path).unwrap();
-    conn.execute_batch(&format!("{OLD_1_63} PRAGMA user_version = 37;"))
+    conn.execute_batch(&format!("{OLD_1_64} {OLD_1_63} PRAGMA user_version = 37;"))
         .unwrap();
     conn.execute(
         "INSERT INTO routines(desk_id, name, cmd, every, due_at, created_at, started_at)

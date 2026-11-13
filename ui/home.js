@@ -110,6 +110,7 @@ const CSS = `
 .hm-wh .hm-gap { flex: 1; }
 .hm-wh h2 { margin: 0; font-size: var(--fs-ui); font-weight: 600; color: var(--fg-2); }
 .hm-wh h2 .n { margin-left: 6px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.hm-wh .hm-wcl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-micro); color: var(--fg-2); }
 .hm-wh .hm-act { margin-left: auto; }
 /* Hide, said: the ✕ that was here meant "remove" everywhere else on the page,
    and showed only under the pointer. */
@@ -776,7 +777,8 @@ function status(j) {
     }
     // On you opens the corner's tray, the one every page has, so its coming
     // moves nothing (audit 67d008cb6f, plan b0bca0a11f).
-    if (on) bits.push(`<button type="button" class="hm-onyou" data-hm="turns" aria-haspopup="dialog" data-key="ctrl+alt+y">${on === 1 ? "One thing is" : `${on} things are`} on you ›</button>`);
+    // With the ranked list, the box beside it says it, once (1.64, C2).
+    if (on && !oy) bits.push(`<button type="button" class="hm-onyou" data-hm="turns" aria-haspopup="dialog" data-key="ctrl+alt+y">${on === 1 ? "One thing is" : `${on} things are`} on you ›</button>`);
     // Lines due by tonight, and what has waited on the reader (1.47): the
     // box at the head of the side column has them.
     const due = oy ? 0 : (j.due || []).length, wt = oy ? 0 : (j.wait || []).length;
@@ -1580,7 +1582,9 @@ function onyouBox(j) {
   const rows = cornerMod.onyouHtml(true);
   if (!o.left && !quietRows && !o.ran_quiet && !o.older) return "";
   const more = `<button type="button" class="hm-link" data-hm="arrive" data-n="${o.arrive_off ? "on" : "off"}" aria-pressed="${!o.arrive_off}" data-tip="${o.arrive_off ? "Open On you when I arrive" : "Don't open it when I arrive"}" data-tip-sub="the first time your window is in front each day, and again when more became yours">${o.arrive_off ? "Opens: off" : "Opens on arrival"}</button>`;
-  return `<section class="hm-w hm-wait" data-part="home.wait" aria-label="On you"><div class="hm-wh"><h2>On you${o.left ? ` <span class="n">${o.left}</span>` : ""}</h2><span class="hm-gap"></span>${more}</div>` +
+  // The count once, and the sentence's clauses beside it, not again under it (C2).
+  const cl = o.left && o.clauses ? `<span class="hm-wcl" data-tip-overflow data-tip="${esc(o.clauses)}">· ${esc(o.clauses)}</span>` : "";
+  return `<section class="hm-w hm-wait" data-part="home.wait" aria-label="On you"><div class="hm-wh"><h2>On you${o.left ? ` <span class="n">${o.left}</span>` : ""}</h2>${cl}<span class="hm-gap"></span>${more}</div>` +
     `<div class="oy-home">${rows}${quietRows ? `<ul class="hm-arr">${quietRows}</ul>` : ""}</div></section>`;
 }
 
@@ -1817,7 +1821,7 @@ function wire() {
   el.dataset.wired = "1"; tabLinks(el); rsKeys(el);
   el.addEventListener("click", async e => {
     // Lately's rows are the corner's, and so are their buttons.
-    const cn = e.target.closest("button[data-a^='cn-']");
+    const cn = e.target.closest("button[data-a^='cn-'], [data-a^='cn-tn-']");
     if (cn && cornerMod?.act(cn.dataset.a, cn)) return;
     // A click anywhere else closes a Keep on list.
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }

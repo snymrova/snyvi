@@ -96,6 +96,10 @@ pub(crate) const COPY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/copy.js
 /// show: a reader no agent has spoken to never pays for it.
 pub(crate) const CORNER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/corner.js"));
 
+/// The one card an agent puts on the reader (1.64, C1), drawn the same on a
+/// desk, in the corner and on Home: fetched by corner.js and desk.js.
+pub(crate) const TURN_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/turn.js"));
+
 /// The tip every control names itself with (docs/DESIGN.md §8.1), fetched on
 /// the first pointer resting on one, or the first Tab.
 pub(crate) const TIP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/tip.js"));
@@ -1093,6 +1097,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("nav.js", NAV_JS, JS),
     ("copy.js", COPY_JS, JS),
     ("corner.js", CORNER_JS, JS),
+    ("turn.js", TURN_JS, JS),
     ("tip.js", TIP_JS, JS),
     ("home.js", HOME_JS, JS),
     ("peer.js", PEER_JS, JS),
