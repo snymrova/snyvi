@@ -161,7 +161,7 @@ fn a_routines_line_with_its_card_open_is_one_row() {
     assert_eq!(kinds(&gather(&c, NOW).unwrap()), ["routine"]);
 }
 
-/// Seven rows in the tray, the rest counted with their desks.
+/// Seven rows in the tray, newest first, the rest counted with their desks.
 #[test]
 fn past_seven_the_rest_is_counted_with_its_desks() {
     let (c, _d) = db();
@@ -170,8 +170,12 @@ fn past_seven_the_rest_is_counted_with_its_desks() {
         card(&c, ds[i % 3], &format!("card {i}"), NOW - 100 + i as i64);
     }
     let oy = gather(&c, NOW).unwrap();
-    assert_eq!((oy.left, oy.more), (9, 2));
-    assert_eq!(oy.more_desks, 2, "cards 7 and 8 are on desks b and c");
+    assert_eq!((oy.left, oy.more, oy.tray), (9, 2, 7));
+    assert_eq!(oy.rows[0].text, "card 8", "the newest card first (C4)");
+    assert_eq!(
+        oy.more_desks, 2,
+        "cards 1 and 0, the oldest, are on desks b and a"
+    );
     assert!(
         oy.sentence.starts_with("Nine things are on you."),
         "{}",
@@ -277,4 +281,106 @@ fn the_sentence_says_one_thing_and_days_away() {
     assert_eq!(oy.sentence, "One thing is on you: a do card on bos_dog.");
     oy.days_away = 4;
     assert!(sentence(&oy, NOW).starts_with("Four days away. One thing"));
+}
+
+/// At most four cards before the rest of the list (C4): a plan or a
+/// left-off is never folded away under a day of cards; the other cards
+/// come after it, newest first, and the tray still holds seven.
+#[test]
+fn four_cards_then_the_rest_then_the_other_cards() {
+    let (c, _d) = db();
+    let a = desk(&c, "alpha");
+    let b = desk(&c, "beta");
+    for i in 0..6 {
+        card(&c, a, &format!("card {i}"), NOW - 600 + i as i64);
+    }
+    c.execute(
+        "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by) VALUES(?1, 'keep this', ?2, 'claude-code')",
+        params![b, NOW - 50],
+    )
+    .unwrap();
+    left_off(&c, b, "Approve the plan", NOW - LEFT - 10, "p-session");
+    let oy = gather(&c, NOW).unwrap();
+    assert_eq!(
+        kinds(&oy),
+        [
+            "card",
+            "card",
+            "card",
+            "card",
+            "suggested",
+            "left",
+            "card",
+            "card"
+        ]
+    );
+    let texts: Vec<&str> = oy.rows.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(
+        (texts[0], texts[3], texts[6], texts[7]),
+        ("card 5", "card 2", "card 1", "card 0")
+    );
+    assert_eq!((oy.left, oy.tray, oy.more), (8, 7, 1));
+}
+
+/// A card of questions asked together is one row and one thing (U3), its
+/// questions in it; one answered in snyvi and not yet told stays in it,
+/// folded (C7); all answered, the card is gone.
+#[test]
+fn a_card_of_questions_is_one_row() {
+    let (c, _d) = db();
+    let a = desk(&c, "alpha");
+    for (i, q) in ["Types?", "Names?", "Tests?"].iter().enumerate() {
+        c.execute(
+            "INSERT INTO turns(desk_id, by, kind, via, text, created_at, ask_group) VALUES(?1, 'claude-code', 'decide', 'agent', ?2, ?3, 9)",
+            params![a, q, NOW - 60 + i as i64],
+        )
+        .unwrap();
+    }
+    let oy = gather(&c, NOW).unwrap();
+    assert_eq!((kinds(&oy), oy.left), (vec!["card"], 1));
+    assert_eq!(oy.rows[0].turns.len(), 3);
+    assert!(
+        oy.sentence.starts_with("One thing is on you"),
+        "{}",
+        oy.sentence
+    );
+
+    let first = oy.rows[0].turns[0].id;
+    c.execute(
+        "UPDATE turns SET answer = 'Integers', answered_at = ?2, answered_in = 'snyvi' WHERE id = ?1",
+        params![first, NOW - 5],
+    )
+    .unwrap();
+    let oy = gather(&c, NOW).unwrap();
+    let ms = &oy.rows[0].turns;
+    assert_eq!(ms.len(), 3, "the answered question keeps its place");
+    assert_eq!((ms[0].id, ms[0].answer.as_str()), (first, "Integers"));
+
+    c.execute(
+        "UPDATE turns SET answer = 'x', answered_at = ?1, answered_in = 'snyvi' WHERE answered_at = 0",
+        params![NOW - 1],
+    )
+    .unwrap();
+    assert!(gather(&c, NOW).unwrap().rows.is_empty());
+}
+
+/// A card whose panel was prompted since is quiet (C3): last, apart, and
+/// not one of the things on the reader.
+#[test]
+fn a_quiet_card_is_last_and_not_counted() {
+    let (c, _d) = db();
+    let a = desk(&c, "alpha");
+    let q = card(&c, a, "Run the migration", NOW - 30);
+    card(&c, a, "Add the key", NOW - 600);
+    c.execute(
+        "UPDATE turns SET quiet_at = ?2 WHERE id = ?1",
+        params![q, NOW - 10],
+    )
+    .unwrap();
+    let oy = gather(&c, NOW).unwrap();
+    let texts: Vec<&str> = oy.rows.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(texts, ["Add the key", "Run the migration"]);
+    assert_eq!((oy.left, oy.quiet, oy.tray), (1, 1, 1));
+    assert!(oy.rows[1].quiet);
+    assert_eq!(oy.clauses, "a do card on alpha");
 }

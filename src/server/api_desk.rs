@@ -501,7 +501,17 @@ pub(crate) async fn desks(
 /// not, blocked or not, and the rest of what the rail draws.
 pub(crate) fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json::Value {
     let mut v = serde_json::to_value(desks).unwrap_or_default();
+    let on_you = on_you_by_desk(app);
     for d in v.as_array_mut().into_iter().flatten() {
+        // 1.64 (C6): the cards fresh on the reader here, a card of several
+        // questions once, for the sidebar's row: a desk's own On you said
+        // only in its own rail, or a tooltip, was a desk no one went to.
+        if let Some(n) = on_you
+            .get(&d["id"].as_i64().unwrap_or(0))
+            .filter(|n| **n > 0)
+        {
+            d["on_you"] = json!(n);
+        }
         // 1.58: how many conversations are on offer here, for the head's
         // Resume (`restore_run`). Only when there are any.
         let offers = super::restore_run::offers_on(app, d["id"].as_i64().unwrap_or(0));
@@ -514,6 +524,23 @@ pub(crate) fn with_status(app: &App, desks: &[crate::desk::Desk]) -> serde_json:
         }
     }
     v
+}
+
+/// Fresh cards waiting on the reader, by desk: not Claude's own dialog,
+/// not gone quiet or old, a card of questions counted once.
+fn on_you_by_desk(app: &App) -> std::collections::HashMap<i64, usize> {
+    let waiting = app
+        .store
+        .clocked(|c, now| crate::thread::waiting(c, now))
+        .unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    let mut n = std::collections::HashMap::new();
+    for t in waiting.iter().filter(|t| !t.stale && t.via != "dialog") {
+        if seen.insert(if t.ask_group != 0 { t.ask_group } else { t.id }) {
+            *n.entry(t.desk_id).or_insert(0) += 1;
+        }
+    }
+    n
 }
 
 /// A new desk, on a folder, on a project's folder, or on none.

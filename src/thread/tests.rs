@@ -18,6 +18,8 @@ fn db() -> Connection {
     conn.execute_batch(PR_STATE_1_43).unwrap();
     conn.execute_batch(AWAY_COLUMN_1_44).unwrap();
     conn.execute_batch(REMOVED_BY_1_53).unwrap();
+    conn.execute_batch(ASKED_COLUMN_1_64).unwrap();
+    conn.execute_batch(crate::routine::SCHEMA).unwrap();
     conn.execute_batch(crate::onyou::TURN_COLUMN_1_54).unwrap();
     conn.execute_batch(crate::due::COLUMNS_1_47).unwrap();
     conn.execute_batch(crate::onyou::NOTE_COLUMN_1_54).unwrap();
@@ -617,8 +619,11 @@ fn questions_asked_together_are_one_card() {
     assert!(answer(&conn, d, ts[1].id, "Off", "snyvi", 2)
         .unwrap()
         .is_some());
-    // One question alone has no group.
-    let Asked::Turn(one) = ask_group(&mut conn, d, &three[..1], 3).unwrap() else {
+    // One question alone has no group. (One of the card's again would
+    // fold into the card, C8.)
+    let Asked::Turn(one) =
+        ask_group(&mut conn, d, &[q("Ship on Friday?", &["Yes", "No"])], 3).unwrap()
+    else {
         panic!()
     };
     assert_eq!(one.ask_group, 0);
@@ -1335,7 +1340,9 @@ fn a_question_answered_in_the_conversation_settles() {
     let Asked::Turn(qt) = ask(&mut conn, d, &q, 1).unwrap() else {
         panic!()
     };
-    ask(&mut conn, d, &key, 1).unwrap();
+    let Asked::Turn(kt) = ask(&mut conn, d, &key, 1).unwrap() else {
+        panic!()
+    };
     ask(
         &mut conn,
         d,
@@ -1346,9 +1353,13 @@ fn a_question_answered_in_the_conversation_settles() {
         1,
     )
     .unwrap();
-    // Panel 1's prompt quiets its question, not its key, nor panel 2's.
+    // Panel 1's prompt quiets its question and its key (1.64, C3): the
+    // reader may have done it there. Not panel 2's.
     let quiet = quiet_asks(&conn, d, "p1", 2).unwrap();
-    assert_eq!(quiet.iter().map(|t| t.id).collect::<Vec<_>>(), [qt.id]);
+    assert_eq!(
+        quiet.iter().map(|t| t.id).collect::<Vec<_>>(),
+        [qt.id, kt.id]
+    );
     assert!(quiet_asks(&conn, d, "p1", 3).unwrap().is_empty(), "once");
     let w = waiting_on(&conn, d, false, 3).unwrap();
     assert_eq!(
@@ -1356,7 +1367,7 @@ fn a_question_answered_in_the_conversation_settles() {
             .filter(|t| t.stale)
             .map(|t| t.id)
             .collect::<Vec<_>>(),
-        [qt.id]
+        [qt.id, kt.id]
     );
     // A question asked after the prompt is not the prompt's to quiet.
     let Asked::Turn(after) = ask(&mut conn, d, &q, 5).unwrap() else {
@@ -1770,4 +1781,169 @@ fn a_panel_hears_its_own_open_hand_overs() {
     assert_eq!(lines.len(), 1);
     assert!(lines[0].starts_with("Your hand-overs still open on the user's On you list: #"));
     assert!(lines[0].contains("remove_card"));
+}
+
+/// A panel's errands go quiet at its prompt as its questions do (C3), but
+/// not a routine's: its panel is prompted by its runs, not by the reader.
+/// Still to do brings one back loud, and it is not quieted again.
+#[test]
+fn a_panels_errands_go_quiet_but_not_a_routines_and_still_to_do_stays() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let chore = |kind: &str, text: &str, pane: &str| Ask {
+        kind: kind.into(),
+        text: text.into(),
+        pane: pane.into(),
+        ..Ask::default()
+    };
+    let Asked::Turn(k) = ask(&mut conn, d, &chore("key", "Add the R2 key", "p1"), 1).unwrap()
+    else {
+        panic!()
+    };
+    ask(&mut conn, d, &chore("do", "Sign in to Stripe", "p2"), 1).unwrap();
+    conn.execute(
+        "INSERT INTO routines(desk_id, name, cmd, every, due_at, pane, created_at) VALUES(?1, 'nightly', '', 'every day 07:30', 99, 'p2', 0)",
+        params![d],
+    )
+    .unwrap();
+    let quiet = quiet_asks(&conn, d, "p1", 2).unwrap();
+    assert_eq!(quiet.iter().map(|t| t.id).collect::<Vec<_>>(), [k.id]);
+    assert!(
+        quiet_asks(&conn, d, "p2", 2).unwrap().is_empty(),
+        "a routine's panel"
+    );
+    assert!(restore_turn(&conn, d, k.id).unwrap());
+    assert_eq!(turn(&conn, d, k.id).unwrap().unwrap().quiet_at, -1);
+    assert!(
+        quiet_asks(&conn, d, "p1", 4).unwrap().is_empty(),
+        "Still to do stays"
+    );
+    assert!(!waiting_on(&conn, d, false, 4)
+        .unwrap()
+        .iter()
+        .any(|t| t.id == k.id && t.stale));
+}
+
+/// The same open question asked again, in the same words, is folded into
+/// its card (C8): no second card, an `asked` count. With `replaces` it is a
+/// new card in the old one's place; a card of questions folds, and is
+/// replaced, whole.
+#[test]
+fn the_same_question_asked_again_folds_into_its_card() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let q = |text: &str| Ask {
+        kind: "decide".into(),
+        text: text.into(),
+        options: vec!["Yes".into(), "No".into()],
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let Asked::Turn(t) = ask(&mut conn, d, &q("Ship on Friday?"), 1).unwrap() else {
+        panic!()
+    };
+    let Asked::Again(again) = ask(&mut conn, d, &q("ship  on Friday?"), 2).unwrap() else {
+        panic!("folded")
+    };
+    assert_eq!((again.id, again.asked), (t.id, 2));
+    assert_eq!(waiting_on(&conn, d, false, 2).unwrap().len(), 1);
+    let Asked::Turn(n) = ask(
+        &mut conn,
+        d,
+        &Ask {
+            replaces: t.id,
+            ..q("Ship on Friday?")
+        },
+        3,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    let ids = |conn: &Connection, at| {
+        waiting_on(conn, d, false, at)
+            .unwrap()
+            .iter()
+            .map(|x| x.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&conn, 3), [n.id]);
+
+    let two = [q("Integers?"), q("Tabs?")];
+    let Asked::Group(g) = ask_group(&mut conn, d, &two, 4).unwrap() else {
+        panic!()
+    };
+    assert!(matches!(
+        ask_group(&mut conn, d, &two, 5).unwrap(),
+        Asked::Again(_)
+    ));
+    assert_eq!(ids(&conn, 5).len(), 3);
+    let mut said_again = two.clone();
+    said_again[0].replaces = g[1].id;
+    let Asked::Group(g2) = ask_group(&mut conn, d, &said_again, 6).unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        ids(&conn, 6),
+        [n.id, g2[0].id, g2[1].id],
+        "the old card went whole"
+    );
+}
+
+/// An answer given in snyvi can be changed until its panel is told (C7),
+/// and Undo takes it back; told, or from the panel, the first one stands.
+#[test]
+fn an_answer_given_here_can_be_changed_until_it_is_told() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let Asked::Turn(t) = ask(
+        &mut conn,
+        d,
+        &Ask {
+            kind: "decide".into(),
+            text: "Integers?".into(),
+            options: vec!["Yes".into(), "No".into()],
+            pane: "p1".into(),
+            ..Ask::default()
+        },
+        1,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    answer(&conn, d, t.id, "Yes", "snyvi", 2).unwrap().unwrap();
+    assert!(answer(&conn, d, t.id, "Maybe", "panel", 3)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        answer(&conn, d, t.id, "No", "snyvi", 3)
+            .unwrap()
+            .unwrap()
+            .answer,
+        "No"
+    );
+    assert!(restore_turn(&conn, d, t.id).unwrap());
+    let back = turn(&conn, d, t.id).unwrap().unwrap();
+    assert_eq!((back.answered_at, back.answer.as_str()), (0, ""));
+    answer(&conn, d, t.id, "Yes", "snyvi", 4).unwrap().unwrap();
+    let live = vec!["p1".to_string()];
+    assert_eq!(take_untold(&conn, d, "p1", &live, 5).unwrap().len(), 1);
+    assert!(
+        answer(&conn, d, t.id, "No", "snyvi", 6).unwrap().is_none(),
+        "told: it stands"
+    );
+}
+
+/// snyvi's own "Who should know?" card, on no panel, retires after a day
+/// rather than three (C8, U10).
+#[test]
+fn a_tell_on_no_panel_retires_after_a_day() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    conn.execute(
+        "INSERT INTO turns(desk_id, by, kind, via, text, created_at) VALUES(?1, 'snyvi', 'tell', 'ask', 'Shipped: who should know?', 0)",
+        params![d],
+    )
+    .unwrap();
+    assert_eq!(retire(&conn, TELL_RETIRE_S - 1).unwrap(), 0);
+    assert_eq!(retire(&conn, TELL_RETIRE_S + 1).unwrap(), 1);
 }

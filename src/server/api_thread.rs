@@ -78,6 +78,12 @@ pub(crate) fn place_turns(app: &App, v: &mut serde_json::Value) {
             if let Some(t) = r.get_mut("turn") {
                 place_turn(app, t);
             }
+            // A card of several questions carries each (1.64).
+            if let Some(ts) = r.get_mut("turns").and_then(serde_json::Value::as_array_mut) {
+                for t in ts {
+                    place_turn(app, t);
+                }
+            }
         }
         return;
     }
@@ -244,7 +250,8 @@ pub(crate) struct AskBody {
     cmd: String,
     /// `key` only: the key's name, so adding it settles the turn.
     key: String,
-    /// `hand_over` only: a card of the desk's this one says again.
+    /// A card of the desk's this one says again (`hand_over`, and `ask`
+    /// since 1.64, where a question names its whole card).
     replaces: i64,
     /// `ask` with several questions, as one card (#110): each one's text,
     /// options and recommended, in place of the body's own.
@@ -290,6 +297,17 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
             (
                 StatusCode::CREATED,
                 Json(json!({ "turn": ts[0], "turns": ts, "open": open })),
+            )
+                .into_response()
+        }
+        // Asked again in the same words while it waits (C8): nothing new
+        // on the reader, and the agent told which card has it.
+        Ok(Asked::Again(t)) => {
+            threads_moved(app, desk);
+            let open = also_open(app, desk, &[t.id]);
+            (
+                StatusCode::OK,
+                Json(json!({ "turn": t, "again": true, "open": open })),
             )
                 .into_response()
         }
@@ -366,6 +384,8 @@ async fn pane_turn(
             "kind is try, merge, key, run or do",
         );
     }
+    // A dialog is Claude's own question, which replaces nothing.
+    let dialog = decide && b.via == "dialog";
     let a = Ask {
         kind,
         text: b.text,
@@ -380,7 +400,7 @@ async fn pane_turn(
         pane: id,
         cmd: b.cmd,
         key_name: b.key,
-        replaces: if decide { 0 } else { b.replaces },
+        replaces: if dialog { 0 } else { b.replaces },
     };
     let desk = placed.desk_id;
     // Several questions are one card; a hand-over has no questions to put.
@@ -1141,12 +1161,15 @@ pub(crate) async fn desk_threads(
     // the sweep finds comes as the `desknotes` event, and the rail reads again.
     tokio::spawn(merges_unseen(app.clone(), id));
     notes_landed(&app, id).await;
+    // What has waited three days is put away first (`thread::retire`). Its
+    // event is said after the closure, never inside it: `threads_moved` reaches
+    // the store again (`offer_shipped`), and the store's one std Mutex is not
+    // re-entrant, so calling it while `clocked` held the lock froze the whole
+    // daemon on the first aged turn after 1.59 (11-09, 11-10, 11-12).
     let r = app.store.clocked(|c, now| {
-        // What has waited three days is put away first (`thread::retire`).
-        if thread::retire(c, now)? > 0 {
-            threads_moved(&app, id);
-        }
+        let retired = thread::retire(c, now)? > 0;
         Ok((
+            retired,
             thread::for_desk(c, id)?,
             thread::turns(c, id, now - ANSWERED_SHOWN, now)?,
             thread::suggestions(c, id)?,
@@ -1154,7 +1177,10 @@ pub(crate) async fn desk_threads(
         ))
     });
     match r {
-        Ok((threads, turns, suggestions, away)) => {
+        Ok((retired, threads, turns, suggestions, away)) => {
+            if retired {
+                threads_moved(&app, id);
+            }
             let mut turns = json!(turns);
             super::routine_run::mark_waits(&app, id, &mut turns);
             place_turns(&app, &mut turns);

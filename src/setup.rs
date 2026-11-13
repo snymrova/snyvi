@@ -348,7 +348,7 @@ fn claude_md_path() -> Result<PathBuf> {
 /// Claude reads when the work calls for it -- a document to send, a desk
 /// note, a widget. In the binary, so an update keeps it in step with the
 /// tools it describes.
-const SKILL: [(&str, &str); 6] = [
+const SKILL: [(&str, &str); 7] = [
     ("SKILL.md", include_str!("skill/SKILL.md")),
     ("widgets.md", include_str!("skill/widgets.md")),
     ("board.md", include_str!("skill/board.md")),
@@ -357,7 +357,15 @@ const SKILL: [(&str, &str); 6] = [
     ("grow.md", include_str!("skill/grow.md")),
     // 1.63: what a routine's command, gate and watch hold to.
     ("routine.md", include_str!("skill/routine.md")),
+    // 1.64: a note's bookkeeping, out of SKILL.md, which is ordered by the loop.
+    ("notes.md", include_str!("skill/notes.md")),
 ];
+
+/// The same files for the MCP server to serve as resources (1.64), so an
+/// agent without a skill folder can read what a description points at.
+pub(crate) fn skill_files() -> &'static [(&'static str, &'static str)] {
+    &SKILL
+}
 
 /// The line every file of the skill carries: ours to rewrite and to take
 /// out. A `snyvi` skill without it is the reader's own.
@@ -1196,6 +1204,20 @@ mod skill_tests {
             assert!(grow.contains(rule), "{rule}");
         }
         assert!(crate::launch::TEMPLATE.contains("suggest_launch"));
+        // 1.64: ordered by the loop, with what to read first, and a note's
+        // bookkeeping in a file of its own that the main one points at.
+        let at = |h: &str| main.find(h).unwrap_or_else(|| panic!("no {h}"));
+        assert!(at("## Start here") < at("## Build"));
+        assert!(at("## Build") < at("## Release") && at("## Release") < at("## Get users"));
+        assert!(main.contains("[notes.md](notes.md)"));
+        for (name, text) in SKILL {
+            assert!(text.contains(SKILL_MARK), "{name}");
+            // A file the main one never names is a file never read.
+            assert!(
+                name == "SKILL.md" || main.contains(&format!("]({name})")),
+                "{name}"
+            );
+        }
         // Every tool the skill names is one the server has.
         for tool in [
             "read_widgets",

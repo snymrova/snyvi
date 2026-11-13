@@ -127,6 +127,7 @@ function makeView(p) {
     // The page this panel sent and the reader has not opened (rail.js `pageChips`).
     const pg = e.target.closest(".pn-page");
     if (pg) { e.preventDefault(); ctx.read(pg.dataset.read); return; }
+    if (e.target.closest(".pn.asks .pn-state")) { asksAt(v.pane.id); return; }
     if (e.target.closest(".pn-full")) { focused = v.id; zoom(); return; }
     if (e.target.closest(".pn-ren")) { renamePanel(v); return; }
     const x = e.target.closest(".pn-x");
@@ -553,11 +554,18 @@ function usualAccount(v) {
   return best;
 }
 
+/** "asks you · 2" in a panel's head (C6): a click (makeView's head) or
+ *  its keys, as a button's, open the tray at that panel's card. */
+document.addEventListener("keydown", e => {
+  const st = (e.key === "Enter" || e.key === " ") && e.target.closest?.(".pn.asks .pn-state");
+  if (st) { e.preventDefault(); asksAt(st.closest(".pn").dataset.id); }
+});
+
 /** A double-click in a panel's head: on the name it renames it there, as a
  *  tab's does (1.60, C8); anywhere else but its buttons it is full view. */
 function headTwice(v, e) {
   if (e.target.closest(".pn-cmd")) { e.preventDefault(); renamePanel(v); return; }
-  if (!e.target.closest(".pn-full, .pn-ren, .pn-x, .pn-page")) { focused = v.id; zoom(); }
+  if (!e.target.closest(".pn-full, .pn-ren, .pn-x, .pn-page, .pn.asks .pn-state")) { focused = v.id; zoom(); }
 }
 
 function header(v) {
@@ -611,7 +619,17 @@ function header(v) {
   tipOf(cx, cp == null ? "" : ctxTip(s));
   paintUsage();
   if (s.agent) heardFrom(v);
-  put($(".pn-state"), v.switching ? `↻ as ${v.switching}…` : s.agent === "needs_you" ? "! needs you" : s.blocked ? "! needs you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : v.pane.held ? "○ ready" : "○ stopped");
+  // A panel whose agent has a card open on the reader says so in its head
+  // (C6), in place of "running" or "working": which panel waits on them,
+  // not only that one does. "Needs you" from the agent's own prompt wins.
+  const asks = !v.switching && s.running && s.agent !== "needs_you" && !s.blocked ? asksOf(v.pane.id) : 0;
+  put($(".pn-state"), v.switching ? `↻ as ${v.switching}…` : s.agent === "needs_you" ? "! needs you" : s.blocked ? "! needs you" : asks ? `asks you · ${asks}` : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : v.pane.held ? "○ ready" : "○ stopped");
+  if (v.el.classList.contains("asks") !== !!asks) {
+    v.el.classList.toggle("asks", !!asks);
+    const st = $(".pn-state");
+    if (asks) { st.role = "button"; st.tabIndex = 0; st.dataset.tip = "On you"; st.dataset.tipSub = "opens the tray at its card"; }
+    else { st.removeAttribute("role"); st.removeAttribute("tabindex"); delete st.dataset.tip; delete st.dataset.tipSub; }
+  }
   // Said once, to a reader who cannot see the dot: a panel that needs the
   // reader, or has finished. Working and running are the quiet states.
   const word = s.agent === "needs_you" || s.blocked ? "needs you" : s.agent === "done" ? "done" : "";

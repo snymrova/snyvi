@@ -12,55 +12,29 @@ use super::{arg, said, Session};
 use crate::client;
 use serde_json::{json, Value};
 
-const SET: &str = "Show a small status box in this snyvi desk's rail, kept up to date as the work goes. Only \
-when the user asked for one. A box is for a figure that changes by itself and that they would otherwise go and \
-check: CI 3/5 green, a deploy running, a dev server up. Never for what waits on them (that is hand_over), how to \
-do something (say it in your reply), news (a document), or what changes only when they act. Put the figure in \
-count and one short line in the body (\"**deploy** 3/5 green\"), no instructions. The first time, the user gets \
-a card on their On you list to allow the box, and nothing shows until they do; after that the same name updates it \
-freely, and an empty body clears it. If they said not now, or removed it, leave it. Optional: for (today, week, \
-panel: while this panel is open) suggests how long it lasts, tone (ok, warn, bad) colours the count, lines is its \
-height (1-6, keep it 1), stale_after the seconds before it dims as old (default 1800).";
+const SET: &str = "Show a small status box in this desk's rail, only when the user asked for one: a figure that changes by \
+itself and that they would otherwise go and check (CI 3/5 green, a deploy running). Never what waits on them \
+(hand_over), how to do something, or news. The figure goes in `count`, one short line in `body`. The first \
+time, the user allows it from a card; after that the same `name` updates it, and an empty body clears it. If \
+they said not now or removed it, leave it.";
 
-const PROPOSE: &str = "Propose a widget file to the user, for a status worth keeping after this session ends: \
-snyvi runs its command on a timer while this desk is in view and shows what it prints (Markdown, or \
-{\"body\",\"tone\",\"count\"} JSON). Only when the user asked for a widget. The same test as set_widget: a \
-figure that changes by itself and that they would otherwise go and check, printed as count plus one short line, \
-never a to-do of theirs or how to do it. The user gets a card on \
-their On you list showing the script, where it runs and how often, can try it once, and adds it or not; nothing \
-runs before. It is this desk's own: it runs in this desk's folder and on no other desk, and only the user can \
-share it. The script's folder is first on PATH and in $SNYVI_WIDGET_DIR, so name the script bare as the command \
-(run.sh, not ./run.sh or sh run.sh), or write \"$SNYVI_WIDGET_DIR/run.sh\"; snyvi refuses a command that hands \
-one of the files it was given to an interpreter by a bare name, or names it by a relative path. Give the script \
-whole as script with its file name as script_name (it gets the desk and settings as JSON on stdin), with any \
-files it reads and the settings the user would change. A key the script needs (an API token on this desk's Keys \
-list) goes in keys, by name: the card shows the names, and the run gets each as $NAME in its environment; snyvi \
-key does not work in a run. Try it first: write widget.json and the script to a folder of your own (never the \
-widgets folder) and run snyvi widget check NAME --dir FOLDER from the desk's folder, which runs it as snyvi \
-would, with the same environment. Proposing the same name again replaces the card waiting for it. If the user \
-said not now to a name, it is refused: leave it. for suggests how long it lasts: today, week, panel (while this \
-panel is open), or leave it out for until the user turns it off.";
+const PROPOSE: &str = "Propose a widget file, only when the user asked for a figure kept in view after this session: snyvi runs its \
+command on a timer while the desk is in view and shows what it prints (Markdown, or \
+{\"body\",\"tone\",\"count\"} JSON). Nothing runs before the user adds it from the card on their On you \
+list. Read the skill's widgets.md first: how the command is named, `keys`, and `snyvi widget check NAME \
+--dir FOLDER` to try it. A name the user said not now to is refused: leave it.";
 
-const READ: &str = "Read the widgets on this snyvi desk and where each stands: the boxes panels push \
-(waiting on the user's card, allowed, not now, removed, again after the user took a no back, ended when its \
-time was up) and the widget files snyvi runs (showing, waits for the user's Allow, changed since allowed, waits \
-for a key, off, stopped after failing, or failing with the error), what each shows, which are yours, and the \
-cards still waiting. A widget that waits for Allow or a key is not failing: nothing of the script's to fix. Read \
-it before set_widget or propose_widget, to update your own box rather than make a second, to pick a name that \
-is free, and to leave alone what the user said not now to or removed: boxes, proposals and widget files alike. \
-A desk has room for six.";
+const READ: &str = "Read the widgets on this snyvi desk: the boxes panels push and the widget files snyvi runs, where each \
+stands (allowed, waiting on the user's card, not now, removed, off, failing with its error), what each \
+shows, and which are yours. One that waits for Allow or a key is not failing. Read it before set_widget or \
+propose_widget: update your own box rather than make a second, pick a free name, and leave alone what the \
+user said not now to or removed. A desk has room for six.";
 
-const GALLERY: &str = "Show what an image or video model made for the user (OpenRouter, fal, Replicate, a local \
-model, a render) as a tile in this snyvi desk's gallery: a box in the desk's rail with the newest outputs, which \
-the user opens big, steps through, and picks from; their pick, with a line, comes back to you on your next prompt. \
-file is a picture (png, jpg, gif, webp, avif) or a clip (mp4, webm, mov, m4v) on this machine: download a model's \
-output first, never pass a URL. snyvi copies it in, so it stays after your folder is cleaned. For a slow model, \
-call it first with a job and no file -- the tile says it is being made -- then again with the same job and the \
-file, or with failed and why. Give caption (a few words: what differs from the others), model, the prompt, and \
-cost in dollars when you know them; a clip can have a poster, its first frame as a picture. The first add on a \
-desk asks the user with a card on their On you list; outputs added meanwhile are kept and show when they allow \
-it. If they said not now, or removed it, stop adding. Not for screenshots of your work or documents: those go \
-with send_document.";
+const GALLERY: &str = "Show what an image or video model made as a tile in this desk's gallery, where the user opens, compares and \
+picks; their pick comes back with your next prompt. `file` is a picture or clip on this machine: download a \
+model's output first, never pass a URL. For a slow model, call first with a `job` and no file, then again \
+with the same job and the file, or `failed`. Give `caption`, `model`, `prompt` and `cost` when known. If the \
+user said not now, stop. Not for screenshots or documents.";
 
 pub(super) fn specs() -> Vec<Value> {
     vec![

@@ -630,6 +630,10 @@ to write a widget, which Claude reads when the work calls for it. An update
 keeps it in step with the binary; a `snyvi` skill of your own is left alone;
 `uninstall-claude` takes it out.
 
+The same files are the MCP server's resources (`snyvi://skill/SKILL.md` and
+the rest), so an agent with no skill folder -- Codex, Gemini CLI, Cursor --
+can read what a tool's description points at.
+
 It also sets Claude Code's status line to `snyvi statusline`, which tells a
 desk panel which model it runs and how full its context window is. In a desk
 panel it also prints one line under Claude's prompt -- `Opus 5.5 · 242k / 1M

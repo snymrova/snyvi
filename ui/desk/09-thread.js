@@ -130,106 +130,130 @@ function threadLine(d, pane, esc) {
   return (field ? `<li class="th-edit" data-t="${t.id}">${field}</li>` : "") + errLine(`t${t.id}`, esc);
 }
 
-/** What the turn's buttons send, by its kind; and what a button says when
- *  that is not the word it sends. A merge card's "Merged" read as the PR's
- *  status, beside a PR that was not merged (#168): the button says what the
- *  reader did, and sends the word it always sent. */
-const ANSWERS = { try: ["Looks good", "Needs changes…"], merge: ["Merged"], key: ["Added"] };
-const SAYS = { merge: { Merged: "I merged it" } };
-/** Where a link goes, in the card's by-line, so Open ↗ needs no tip to say. */
-const hostOf = u => { try { return new URL(u).host.replace(/^www\./, ""); } catch { return ""; } };
+/** The one card (ui/turn.js, 1.64 C1): the desk's own, moved out so the
+ *  corner and Home draw the very same. Fetched with the desk; a tray drawn
+ *  before it is in is drawn again once it is. */
+let T = null;
+import(`/assets/turn.js${new URL(import.meta.url).search}`).then(m => { T = m; m.style(); if (ctx && current()) rail(); }, () => {});
 
-/** A turn's question at the rail's width (1.43): its head as a title line,
- *  bold and one line, when the text has one -- up to a colon, a full stop
- *  or a question mark in its first eighty characters -- and the rest under
- *  it, at most two lines in the tray, a click opening it in place to the
- *  whole. Text between backticks is code, as in a document. The four- and
- *  seven-line walls the tray was are what this ends. */
+/** The questions opened whole in the tray, by turn id; whether the rows
+ *  drawn now are the tray's (`trayHtml`), where a question is cut to its
+ *  lines; the card whose Later menu is open, and its Not mine field; and
+ *  the answers being changed before they are sent (C7). */
 const qOpen = new Set();
-/** Whether the rows drawn now are the tray's: only there is a question cut
- *  to its lines, so only there is it a thing to click (`trayHtml`). */
 let qClamp = false;
+const tLater = { key: "", not: false };
+const changing = new Set();
 const inlineCode = (t, esc) => esc(t).replace(/`([^`\n]+)`/g, "<code>$1</code>");
-/* A question's own first sentence is its title when it is short enough to
- * read whole on one line; the rest is the body. A stop inside "e.g." or
- * "(see 2.1)" is no sentence's end: the break is a stop, a space and a
- * capital, and outside brackets. With no such break the text is all body,
- * clamped, never a title cut mid-word that loses what it asked. */
-function qParts(text) {
-  const m = /^([^()]{6,56}?[:.?])\s+([A-Z`"“(][\s\S]*)$/.exec(text);
-  if (m && !/\b(?:e\.g|i\.e|etc|vs)\.$/i.test(m[1])) return [m[1].replace(/[:.]$/, ""), m[2]];
-  return text.length <= 48 ? [text, ""] : ["", text];
-}
+/* The walk-through's card (16-steps.js) draws its own question and by-line
+ * with these, as the one card does. */
 function qHtml(w, esc, text = w.text) {
-  const [head, body] = qParts(text || "");
+  const [head, body] = T ? T.qParts(text || "") : ["", text || ""];
   const open = qOpen.has(w.id), more = qClamp && body;
   const attrs = more ? ` data-a="tn-more" data-w="${w.id}" role="button" tabindex="0" aria-expanded="${open}"` : "";
   return `<div class="tn-q${open ? " open" : ""}"${attrs}>` + (head ? `<b class="tn-qh">${inlineCode(head, esc)}</b>` : "") +
     (body ? `<span class="tn-qb">${inlineCode(body, esc)}</span>` : "") + `</div>`;
 }
-/** The line under a turn: who asked, the panel by its name, how long ago
- *  -- "Claude · Plan vs code · 4m" -- the one meta line a card has wherever
- *  it is drawn (1.56, audit B3; corner.js `turnRow` adds the desk off it),
- *  with what kind of turn it is in its tip. It was "panel 1 · 4m", a
- *  number, while the rail named that panel. */
 function byHtml(w, d, esc, extra = "") {
   const n = slotOf(d, w.pane), v = views.get(w.pane);
   const panel = (v?.pane?.name) || (n ? `panel ${n}` : "");
   const who = /^claude/i.test(w.by || "") ? "Claude" : w.by || "an agent";
-  // A tell card is snyvi's own, after a merge (src/told.rs): on no panel.
-  // 1.61 (C6): the card says a panel can draft what it asks for.
-  const where = w.kind === "tell" ? "snyvi · after the merge · a panel drafts it: /snyvi:post" : w.via === "dialog" ? `Claude asks in ${panel || "a panel"}` : `${who} · ${panel || "panel closed"}`;
-  const tip = `${w.kind === "decide" ? "A decision" : w.kind} · ${fromOf(d, w)}${n ? ` · panel ${n}` : ""}`;
-  return `<p class="tn-by"><span data-tip="${esc(tip)}">${esc(where)} · ${esc(ctx.relShort(w.created_at))}</span>${extra}</p>`;
+  return `<p class="tn-by"><span data-tip="${esc(`${w.kind} · ${fromOf(d, w)}`)}">${esc(`${who} · ${panel || "panel closed"}`)} · ${esc(ctx.relShort(w.created_at))}</span>${extra}</p>`;
+}
+const fromOf = (d, w) => {
+  const n = slotOf(d, w.pane);
+  return w.via === "dialog" ? `Claude is asking in panel ${n || "?"}` : n ? `from panel ${n}` : "from a panel since closed";
+};
+
+/** What the one card needs to know of this desk (ui/turn.js `env`). */
+function tEnv(d, esc) {
+  return {
+    esc, ico, rel: t => ctx.relShort(t), off: false, deskName: () => d.name,
+    panel: w => { const n = slotOf(d, w.pane); return n ? { slot: n, name: views.get(w.pane)?.pane?.name || `panel ${n}` } : null; },
+    runsHere: w => runsHere(views.get(w.pane)), sendsHere: w => sendsHere(views.get(w.pane)),
+    routine: w => { const rt = rtPane(w.pane); return rt ? { name: rt.name, ok: !!w.waits_ok } : null; },
+    anyway: w => !!(rowErr && rowErr.k === `w${w.id}` && /Waits list/.test(rowErr.raw || "")),
+    steps: w => stepsRow(d, w, slotOf(d, w.pane), fromOf(d, w), esc),
+    sendable: w => sendable.has(w.id),
+    field: w => thField && thField.id === w.id ? thField.kind : "",
+    open: id => qOpen.has(id), clamp: qClamp,
+    later: k => tLater.key === k ? (tLater.not && thField?.kind === "not" ? "not" : "menu") : "",
+    changing: id => changing.has(id),
+    err: k => errLine(k, esc),
+  };
+}
+
+/** A card's questions as the one card draws them: the open ones, and the
+ *  answered ones while any is open or theirs is still to send, so an
+ *  answer keeps its place (C7). */
+function groupOf(f, g) {
+  const ms = f.turns.filter(x => x.ask_group === g);
+  const open = ms.some(x => !x.answered_at || changing.has(x.id));
+  return ms.filter(x => !x.answered_at || open || sendable.has(x.id));
 }
 
 /** A turn's card, or its group's (#110): questions asked together are one
- *  card, each still a turn of its own, answered and put away on its own. */
+ *  card, each still a turn of its own. A due card is the desk's own. */
 function turnCard(d, f, w, esc) {
-  if (!w.ask_group) return w.answered_at ? saidRow(d, w, esc) : turnRow(d, w, esc);
-  return groupCard(d, w.ask_group, f.turns.filter(x => x.ask_group === w.ask_group && (!x.answered_at || sendable.has(x.id))), esc);
+  if (!T) return "";
+  if (w.kind === "due" && !w.answered_at) return dueRow(w, esc);
+  const env = tEnv(d, esc);
+  if (!w.ask_group) return T.card(env, w);
+  const ms = groupOf(f, w.ask_group);
+  return ms.length ? T.card(env, ms[0], ms) : "";
 }
 
-/** The fresh turns, or the older ones, as the tray lists them: newest
- *  first, so the one that just rang is at the top rather than a scroll
- *  down (audit e0a854b732, U6); by when each was asked, so an answer keeps
- *  its card's place and nothing moves under the hand. An answer still to be
- *  sent stays with the fresh. */
-function turnRows(d, f, esc, older) {
-  const drawn = new Set();
-  const card = w => older && qClamp && !oldOpen.has(w.ask_group || w.id) ? olderLine(d, f, w, esc) : turnCard(d, f, w, esc);
-  return f.turns.filter(w => shown(w) && (w.answered_at ? !older && sendable.has(w.id) : fresh(d, w) !== older))
+/** Which of the tray's lists a card is in: `fresh`, `quiet` -- its panel
+ *  prompted since, so maybe done there (C3) -- or `older`. A card of
+ *  questions goes by its open ones. An answer still to be sent, or being
+ *  changed, stays with the fresh. */
+/** The cards a panel has open on the reader (C6): fresh and not quieted,
+ *  a group once. Its head says "asks you · N". */
+function asksOf(pane) {
+  const d = current();
+  if (!d || filedAt !== d.id) return 0;
+  const ws = filed.turns.filter(w => w.pane === pane && shown(w) && fresh(d, w) && !(w.quiet_at > 0) && w.kind !== "due" && w.kind !== "tell");
+  return new Set(ws.map(w => w.ask_group || w.id)).size;
+}
+/** The chip's click: the tray, at that panel's newest card, lit. */
+function asksAt(pane) {
+  const d = current();
+  const w = d && filed.turns.filter(x => x.pane === pane && shown(x) && fresh(d, x)).sort((a, b) => b.id - a.id)[0];
+  if (!w) return;
+  oy.lit = w.ask_group ? `[data-g="${w.ask_group}"]` : `[data-w="${w.id}"]`;
+  if (oy.open) rail(); else oyToggle();
+}
+
+function trayOf(d, f, w) {
+  const ms = w.ask_group ? groupOf(f, w.ask_group) : [w];
+  const open = ms.filter(x => !x.answered_at);
+  if (!open.length || ms.some(x => changing.has(x.id))) return ms.some(x => sendable.has(x.id) || changing.has(x.id)) ? "fresh" : "";
+  if (open.some(x => fresh(d, x))) return "fresh";
+  return open.every(x => x.quiet_at > 0) ? "quiet" : "older";
+}
+
+/** The tray's cards of one list, newest first, so the one that just rang
+ *  is at the top (U6); by when each was asked, so an answer keeps its card's
+ *  place. An older one is one line until opened. */
+function turnRows(d, f, esc, which) {
+  const drawn = new Set(), env = T && tEnv(d, esc);
+  return f.turns.filter(w => shown(w) && (!w.answered_at || sendable.has(w.id) || changing.has(w.id) || w.ask_group))
     .sort((a, b) => b.id - a.id)
     .map(w => {
-      if (!w.ask_group) return card(w);
-      if (drawn.has(w.ask_group)) return "";
-      drawn.add(w.ask_group);
-      return card(w);
+      const k = w.ask_group || w.id;
+      if (drawn.has(k) || trayOf(d, f, w) !== which) return "";
+      drawn.add(k);
+      if (which === "older" && qClamp && !oldOpen.has(k) && T) {
+        const n = w.ask_group ? groupOf(f, k).filter(x => !x.answered_at).length : 1;
+        return T.olderLine(env, w, n);
+      }
+      return turnCard(d, f, w, esc);
     }).join("");
 }
 
 /** The older asks opened from their line in the tray, by turn or card id;
  *  forgotten when the tray closes. */
 const oldOpen = new Set();
-/** An older ask in the tray (#174): Lately's row -- its title, then where
- *  and when, quiet -- a click from its whole card. Its panel closed, or it
- *  was asked over half an hour ago: no one is waiting on it this minute,
- *  and at full height three of them were most of the tray. Not a fold of
- *  them all, which 1.43 took out: each is still there, and its ✕ with it.
- *  One row grammar for On you and Lately (audit 98b9d67a7d). */
-function olderLine(d, f, w, esc) {
-  const g = w.ask_group, n = g ? f.turns.filter(x => x.ask_group === g && !x.answered_at).length : 1;
-  const [head, body] = qParts(w.text || "");
-  const what = (n > 1 ? `${n} decisions · ` : "") + (head || body);
-  const slot = slotOf(d, w.pane), where = slot ? `panel ${slot}` : "panel closed";
-  const x = g
-    ? `<button type="button" class="cn-rx" data-a="tn-gx" data-g="${g}" data-tip="Not now, all" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(what)}">${ico("x")}</button>`
-    : `<button type="button" class="cn-rx" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button>`;
-  return `<li class="cn-row"${g ? ` data-g="${g}"` : ` data-w="${w.id}"`}><span class="cn-b">` +
-    `<span class="cn-tl"><button type="button" class="cn-t" data-a="tn-old" data-w="${g || w.id}" aria-expanded="false" data-tip="${esc(w.text)}"><span class="cn-tx">${inlineCode(what, esc)}</span></button></span>` +
-    `<span class="cn-bl"><span class="cn-w" data-tip="${esc(fromOf(d, w))}">${esc(where)} · ${esc(w.kind === "decide" ? "decision" : w.kind)}</span><span class="cn-at">${esc(ctx.relShort(w.created_at))}</span></span>` +
-    `</span>${x}</li>`;
-}
 
 /** Cards an agent removed in the last day (#174): Lately's row, its title
  *  and Bring back, then who removed it and why -- "Removed by panel 1:
@@ -242,72 +266,6 @@ function awayRows(f, esc) {
     `<button type="button" class="tn-opt quiet" data-a="tn-back" data-w="${w.id}">Bring back</button></span>` +
     `<span class="cn-bl"><span class="cn-w">Removed by ${esc(w.away)}</span><span class="cn-at">${esc(ctx.relShort(w.removed_at))}</span></span>` +
     `</span></li>` + errLine(`b${w.id}`, esc)).join("");
-}
-
-/** A decide's options, the recommended one marked -- with a star, in
- *  words for a reader of the screen, not only an accent border a hover
- *  also draws (U5) -- and Other…. */
-const picks = (w, esc) => w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` aria-label="${esc(o)}, recommended" data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"><span class="tn-star" aria-hidden="true">★</span>` : ">"}${esc(o)}</button>`).join("") +
-  // A tell card's rows are all it takes (src/told.rs): no Other….
-  (w.kind === "tell" ? "" : `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`);
-/** The field Other… or Needs changes… opens under a turn. */
-const otherIn = w => thField && thField.id === w.id && (thField.kind === "other" || thField.kind === "change")
-  ? `<input class="th-in" data-for="${thField.kind}" placeholder="${thField.kind === "change" ? "What needs to change" : "Your answer"}" aria-label="Your answer" spellcheck="false">` : "";
-const fromOf = (d, w) => {
-  const n = slotOf(d, w.pane);
-  return w.via === "dialog" ? `Claude is asking in panel ${n || "?"}` : n ? `from panel ${n}` : "from a panel since closed";
-};
-
-/** Several questions an agent asked at once (#110), as one card: a row for
- *  each, its options until it is answered and what you said after; and once
- *  every one is answered, Send answers, which types them all into the panel
- *  that asked as one message -- or they go with your next one. */
-function groupCard(d, g, ms, esc) {
-  if (!ms.length) return "";
-  const n = slotOf(d, ms[0].pane), v = views.get(ms[0].pane);
-  const open = ms.filter(w => !w.answered_at).length;
-  const rows = ms.map(w => w.answered_at
-    ? `<div class="tn-gq said">${qHtml(w, esc)}<p class="tn-by">You said <b>${esc(w.answer)}</b></p></div>`
-    : `<div class="tn-gq" data-w="${w.id}">${qHtml(w, esc)}` +
-      `<div class="tn-acts">${picks(w, esc)}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="this question; nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>${otherIn(w)}</div>` + errLine(`w${w.id}`, esc)).join("");
-  const foot = open
-    ? `<span class="tn-wait">${open} of ${ms.length} to answer</span>`
-    : (sendsHere(v)
-      ? `<button type="button" class="tn-opt rec" data-a="tn-gsend" data-g="${g}" data-tip="Send answers" data-tip-sub="Types all ${ms.length} into panel ${n} as one message and presses Enter">Send answers</button>`
-      : `<span class="tn-wait">${n ? `they go with your next message to panel ${n}` : "they go to the next panel that asks"}</span>`) +
-      `<button type="button" class="tn-x" data-a="tn-gunsend" data-g="${g}" data-tip="Leave them for the next message" aria-label="Leave them for the next message">${ico("x")}</button>`;
-  // One ✕ for the card's open questions (B1): four questions answered in
-  // the conversation were four ✕ to clear.
-  const all = open ? `<button type="button" class="tn-x tn-gx" data-a="tn-gx" data-g="${g}" data-tip="Not now, all" data-tip-sub="every question still open on this card; nothing is deleted" aria-label="Not now: all ${open} open questions">${ico("x")}</button>` : "";
-  return `<li class="dk-turn grp${open ? "" : " said"}" data-g="${g}">${byHtml({ ...ms[0], kind: "decide" }, d, esc).replace('<p class="tn-by">', `<p class="tn-by">${ms.length} decisions · `)}${all}${rows}` +
-    `<div class="tn-acts tn-gfoot">${foot}</div></li>`;
-}
-
-function turnRow(d, w, esc) {
-  const n = slotOf(d, w.pane);
-  const from = fromOf(d, w);
-  if (w.kind === "run") return runRow(d, w, n, from, esc);
-  if (w.kind === "due") return dueRow(w, esc);
-  const buttons = w.kind === "decide" || w.kind === "tell"
-    ? picks(w, esc)
-    : (ANSWERS[w.kind] || ["Done"]).map(o => o.endsWith("…")
-      ? `<button type="button" class="tn-opt quiet" data-a="tn-change" data-w="${w.id}">${esc(o)}</button>`
-      : `<button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}">${esc(SAYS[w.kind]?.[o] || o)}</button>`).join("");
-  const web = /^https?:\/\//.test(w.link || "");
-  // A merge card leads with its PR: merging is done there, and the card's
-  // own button only says it was (#168). Its card settles by itself when the
-  // merge is seen.
-  const openPr = w.kind === "merge" && web ? `<button type="button" class="tn-opt rec" data-a="tn-link" data-u="${esc(w.link)}" data-tip="Open the PR ↗" data-tip-sub="${esc(w.link)}">Open PR ↗</button>` : "";
-  // Otherwise the link is its host, in the by-line: an Open ↗ beside Looks
-  // good and Needs changes… wrapped the three onto two lines in the rail.
-  const link = web && !openPr ? `<button type="button" class="tn-host" data-a="tn-link" data-u="${esc(w.link)}" data-tip="Open ↗" data-tip-sub="${esc(w.link)}">${esc(hostOf(w.link) || "link")} ↗</button>` : "";
-  // A key is added on this desk's keys sheet: the card opens it (#114),
-  // rather than leave the reader to find it with the card in the way.
-  const add = w.kind === "key" ? `<button type="button" class="tn-opt rec" data-a="tn-key" data-tip="Add key…" data-tip-sub="This desk's keys: a panel started after has it">Add key…</button>` : "";
-  const rest = link ? ` · ${link}` : w.link && !openPr ? ` · ${esc(w.link)}` : "";
-  return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` + byHtml(w, d, esc, rest) +
-    `<div class="tn-acts">${add}${openPr}${buttons}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
-    otherIn(w) + `</li>` + errLine(`w${w.id}`, esc);
 }
 
 /** At the hour a line was due (1.47, src/due.rs): snyvi's own card, on no
@@ -345,41 +303,6 @@ async function dueAnswer(d, w, later) {
  *  ends. */
 const runsHere = v => !!(v && v.status.running && v.status.agent_in && /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || ""));
 
-/** A command handed over (#95): the whole of it, wrapped and never cut, and
- *  Run, which types it into the panel that asked as Claude Code's `!` shell
- *  mode, so its output lands in that conversation and the agent carries on.
- *  New panel runs it in a shell of its own; Copy is for anywhere else. */
-function runRow(d, w, n, from, esc) {
-  // A walk-through of several (#164) is a card of its own (16-steps.js).
-  if (w.options && w.options.length) return stepsRow(d, w, n, from, esc);
-  // A routine's card (1.50): Run starts the command as its panel's process.
-  // One click for a command on the routine's Waits list; any other takes a
-  // second, Run anyway, once the daemon has said so under the card (1.53).
-  const rt = rtPane(w.pane);
-  if (rt) {
-    const ok = w.waits_ok, anyway = !ok && rowErr && rowErr.k === `w${w.id}` && /Waits list/.test(rowErr.raw || "");
-    const v = anyway ? "Run anyway" : "Run";
-    return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` +
-      `<code class="sg-cmd tn-cmd">${esc(w.cmd)}</code>` + byHtml(w, d, esc, ` · ${rt.name} · ${ok ? "✓ on your Waits list" : "not on your Waits list"}`) +
-      `<div class="tn-acts"><button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${v}" data-tip="${v} in ${esc(rt.name)}'s panel" data-tip-sub="As that panel's process, in the desk's folder with its keys">${v}</button>` +
-      `<button type="button" class="tn-opt quiet" data-a="tn-copy" data-w="${w.id}" data-c="${esc(w.cmd)}">Copy</button>` +
-      `<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
-      `</li>` + (anyway ? "" : errLine(`w${w.id}`, esc));
-  }
-  const here = runsHere(views.get(w.pane));
-  const run = here
-    ? `<button type="button" class="tn-opt" data-a="tn-run" data-w="${w.id}" data-tip="Run it in panel ${n}" data-tip-sub="Typed into its prompt as a ! command, after anything typed there. Its output goes to the agent">Run in panel ${n}</button>`
-    : "";
-  return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` +
-    `<code class="sg-cmd tn-cmd">${esc(w.cmd)}</code>` +
-    byHtml(w, d, esc, here ? "" : " · Run needs that panel's Claude") +
-    `<div class="tn-acts">${run}` +
-    `<button type="button" class="tn-opt${here ? " quiet" : ""}" data-a="tn-newpanel" data-w="${w.id}" data-tip="Run it in a new panel" data-tip-sub="A shell of its own: the agent does not see the output">New panel</button>` +
-    `<button type="button" class="tn-opt quiet" data-a="tn-copy" data-w="${w.id}" data-c="${esc(w.cmd)}">Copy</button>` +
-    `<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
-    `</li>` + errLine(`w${w.id}`, esc);
-}
-
 /** Whether a panel is at its prompt with nothing under way. */
 const idle = v => v && v.status.running && v.mode && v.mode[1] && v.status.agent !== "working" && Date.now() - (v.typed || 0) > TYPED_MS;
 /** Whether Send now may type into a panel: idle, and a Claude session in
@@ -387,16 +310,7 @@ const idle = v => v && v.status.running && v.mode && v.mode[1] && v.status.agent
  *  exited, where what it typed ran as a command (audit e0a854b732, S1). */
 const sendsHere = v => idle(v) && runsHere(v);
 
-/** An answer given here: what was said, and Send now while the panel that
- *  asked is idle; otherwise it says where the answer will go. */
-function saidRow(d, w, esc) {
-  const n = slotOf(d, w.pane), v = views.get(w.pane), rt = rtPane(w.pane);
-  const now = rt ? `<span class="tn-wait">starts ${ctx.esc(rt.name)}'s next run</span>` : sendsHere(v)
-    ? `<button type="button" class="tn-opt" data-a="tn-send" data-w="${w.id}" data-tip="Send now" data-tip-sub="Types it into panel ${n} and presses Enter">Send now</button>`
-    : `<span class="tn-wait">${n ? `goes with your next message to panel ${n}` : "goes to the next panel that asks"}</span>`;
-  return `<li class="dk-turn said">${qHtml(w, esc)}<p class="tn-by">You said <b>${esc(w.answer)}</b></p>` +
-    `<div class="tn-acts">${now}<button type="button" class="tn-x" data-a="tn-unsend" data-w="${w.id}" data-tip="Leave it for the next message" aria-label="Leave it for the next message">${ico("x")}</button></div></li>`;
-}
+
 
 /** What the reader picked on a widget's or a box's card: how long it
  *  lasts, by card id; what Try once printed; whose script is open. */
@@ -528,6 +442,8 @@ async function getFiled(id, again) {
   // An answer that is not here any more, or was taken up by the panel, has
   // nothing left to send.
   for (const k of sendable.keys()) if (!filed.turns.some(w => w.id === k)) sendable.delete(k);
+  // Each panel's head says whether it asks the reader something (C6).
+  for (const v of views.values()) header(v);
   // The corner sees what is new as it draws (onYou).
   if (current()) rail();
 }
@@ -724,6 +640,9 @@ async function filedAct(a, b, d) {
   // The corner's own -- Lately's rows, an offer, a card from outside.
   if (a.startsWith("cn-")) return !!ctx.corner?.()?.act(a, b);
   if (!a.startsWith("th-") && !a.startsWith("tn-") && !a.startsWith("sg-") && !a.startsWith("oy-") && a !== "fd-back") return false;
+  // Any other press closes a card's Later menu (C5).
+  if (!a.startsWith("tn-lt") && tLater.key) { tLater.key = ""; tLater.not = false; if (a === "oy-open") rail(); }
+  if (a.startsWith("tn-lt")) { await laterAct(a, b, d); return true; }
   if (a === "oy-open") { oyToggle(); return true; }
   if (a === "tn-more") { const id = +b.dataset.w; if (!qOpen.delete(id)) qOpen.add(id); rail(); return true; }
   if (a === "oy-pin") { oyPin(d); return true; }
@@ -745,7 +664,13 @@ async function filedAct(a, b, d) {
     putAway("t", t.id, t.name, restOf(d, t) ? "" : t.pane); rail();
     await told({ ...b.dataset }, `t${t.id}`, "Could not remove it", () => { filed.threads.push(t); filedGone = null; },
       filedAway(() => ctx.api(`/api/desks/${d.id}/threads/${t.id}/remove`, {})));
-  } else if (a === "tn-pick" && w) await answer(d, w, b.dataset.v, undefined, w.kind !== "tell");
+  } else if (a === "tn-pick" && w) { changing.delete(w.id); await answer(d, w, b.dataset.v, undefined, w.kind !== "tell"); }
+  else if (a === "tn-rechange" && w) { changing.add(w.id); rail(); }
+  else if (a === "tn-keep" && w) {
+    // Still to do (C3): back in amber, and it does not go quiet again.
+    if (await told({ ...b.dataset }, `w${w.id}`, "Could not keep it", () => {},
+      () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/restore`, {}))) await getFiled(d.id, true);
+  }
   else if ((a === "tn-due-done" || a === "tn-later") && w) { dueMore.delete(w.id); await dueAnswer(d, w, a === "tn-later" ? b.dataset.v : ""); }
   else if (a === "tn-due-more" && w) { dueMore.add(w.id); rail(); ctx.tocEl.querySelector(`.tn-due-in[data-w="${w.id}"]`)?.focus(); }
   else if ((a === "tn-other" || a === "tn-change") && w) { thField = { kind: a === "tn-other" ? "other" : "change", id: w.id }; thDraft = ""; rail(); }
@@ -765,14 +690,6 @@ async function filedAct(a, b, d) {
     putAway("w", w.id, w.text); rail();
     await told({ ...b.dataset }, `w${w.id}`, "Could not put it away", () => { filed.turns.push(w); filedGone = null; },
       filedAway(() => ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, {})));
-  } else if (a === "tn-gx") {
-    // A card's open questions, put away as one, with one Undo (B1).
-    const g = +b.dataset.g, ws = filed.turns.filter(x => x.ask_group === g && !x.answered_at);
-    if (!ws.length) return true;
-    filed.turns = filed.turns.filter(x => !ws.includes(x));
-    putAway("g", g, `${ws.length} question${ws.length === 1 ? "" : "s"}: ${ws[0].text}`, "", ws.map(x => x.id)); rail();
-    await told({ ...b.dataset }, `g${g}`, "Could not put them away", () => { filed.turns.push(...ws); filedGone = null; },
-      filedAway(() => Promise.all(ws.map(x => ctx.api(`/api/desks/${d.id}/turns/${x.id}/remove`, {})))));
   } else if (a === "sg-x" && s) {
     filed.suggestions = filed.suggestions.filter(x => x !== s);
     putAway("s", s.id, s.kind === "desk" ? s.folder : s.name || s.cmd); rail();
@@ -859,13 +776,51 @@ async function saveField() {
     if (t && text) await moveThread(d, t, { stage: "told", url: text }); else rail();
   } else {
     const w = filed.turns.find(x => x.id === f.id);
-    if (w && text) await answer(d, w, f.kind === "change" ? `Needs changes: ${text}` : text); else rail();
+    if (f.kind === "not") await laterGo(d, f.id, "not", text);
+    else if (w && text) { changing.delete(w.id); await answer(d, w, f.kind === "change" ? `Something's off: ${text}` : text); } else rail();
   }
 }
 
+/** The turns a Later key names: one, or a card's open questions. */
+function laterTurns(key) {
+  const id = +key.slice(1);
+  return key[0] === "g" ? filed.turns.filter(x => x.ask_group === id && !x.answered_at) : filed.turns.filter(x => x.id === id);
+}
+
+/** Later's clicks (C5): its menu opened or shut, Not mine's field, and its
+ *  answers. */
+async function laterAct(a, b, d) {
+  const key = b.dataset.k;
+  if (a === "tn-lt-open") { tLater.not = false; tLater.key = tLater.key === key ? "" : key; return rail(); }
+  if (a === "tn-lt-not") { tLater.key = key; tLater.not = true; thField = { kind: "not", id: key }; thDraft = ""; return rail(); }
+  if (a === "tn-lt") return laterGo(d, key, b.dataset.v, "");
+}
+
+/** Tomorrow, Next week, Already done or Not mine, on a card or a card of
+ *  questions: it goes from the tray at once and holds its Undo (undo where
+ *  the click was), and the daemon is told -- the agent hears it in its
+ *  brief. Already done answers it, which the agent is told as an answer. */
+async function laterGo(d, key, v, word) {
+  const ws = laterTurns(key);
+  tLater.key = ""; tLater.not = false;
+  if (!ws.length) return rail();
+  const said = v === "done" ? "Done" : v === "not" ? `Not mine${word ? ` (“${word}”)` : ""}` : `Back ${v}`;
+  const k = key[0] === "g" ? "g" : "w", id = +key.slice(1);
+  filed.turns = filed.turns.filter(x => !ws.includes(x));
+  for (const w of ws) stepsForget(w.id);
+  putAway(k, id, `${said}: ${ws[0].text}`, "", ws.map(x => x.id)); rail();
+  const one = w => v === "done"
+    ? ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.kind === "decide" ? "answered in the chat" : T.DONE[w.kind] || "Done" })
+    : ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, v === "not" ? { not: word } : { later: v });
+  await told({ a: "tn-lt", k: key, v }, `${k}${id}`, "Could not do that", () => { filed.turns.push(...ws); filedGone = null; },
+    filedAway(() => Promise.all(ws.map(one))));
+}
+
 const THREAD_CSS = `
-.dk-threads, .dk-turn-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.dk-turn, .dk-sugcard { padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
+.dk-threads { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dk-sugcard { position: relative; padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
+.sg-what { margin: 0; color: var(--fg); }
+.th-in { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }
 /* A panel's thread: its stage, a chip on the panel's row between the name
    and the context, in the rail's quiet ink; the name gives way before it does. */
 .dk-pth { flex: none; margin-left: auto; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 500; line-height: 16px; color: var(--fg-2); }
@@ -876,53 +831,6 @@ const THREAD_CSS = `
 .dk-focus .dk-pth + .ctx { margin-left: 0; padding-left: 0; }
 .th-edit { padding: 0 3px 2px 51px; }
 .th-edit .th-in { margin: 0; }
-.th-in { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }
-.tn-q, .sg-what { margin: 0; color: var(--fg); }
-.tn-q { overflow-wrap: anywhere; }
-.tn-qh, .tn-qb { display: block; }
-.tn-qh { font-weight: 600; }
-.tn-q code { padding: 0 3px; border-radius: var(--r-xs); background: var(--bg); font-family: var(--mono); font-size: .92em; }
-/* In the tray (10-onyou.js) a question is its title line and two lines of
-   the rest -- three with no title -- and a click opens it where it is. */
-.oy-tray .tn-q:not(.open) .tn-qh { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.oy-tray .tn-q:not(.open) .tn-qb { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.oy-tray .tn-q:not(.open) .tn-qb:first-child { -webkit-line-clamp: 3; }
-.tn-q[data-a] { cursor: pointer; }
-.tn-q[data-a]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-xs); }
-.tn-by { margin: 2px 0 0; font-size: var(--fs-micro); color: var(--fg-3); }
-.tn-by b { font-weight: inherit; color: var(--fg-2); }
-.tn-host { padding: 0; border: 0; background: none; font: inherit; color: var(--fg-2); text-decoration: underline dotted; cursor: pointer; }
-.tn-host:hover { color: var(--accent); }
-.tn-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }
-.tn-opt { padding: 1px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
-.tn-opt:hover { color: var(--fg); border-color: var(--accent); }
-.tn-opt.rec { border-color: var(--accent); color: var(--fg); }
-/* The recommended answer: the star and the outline, as off the desk (1.56).
-   The star is the button's own span (picks): a ::before here as well drew
-   two (1.63, U11). */
-.tn-opt.quiet { border-style: dashed; }
-.tn-x { margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
-.tn-x:hover { background: var(--rule-2); color: var(--fg); }
-/* A card's ✕ is its top-right corner, out of the buttons' row: in the row,
-   three buttons and a link left it a line of its own (audit e0a854b732, U4).
-   A card of questions has one for all of them, and one on each question. */
-.dk-turn, .tn-gq { position: relative; }
-.dk-turn:not(.grp) > .tn-acts > .tn-x, .tn-gq > .tn-acts > .tn-x, .tn-gx { position: absolute; top: 4px; right: 4px; margin: 0; }
-.tn-gq > .tn-acts > .tn-x { top: 4px; right: -4px; }
-.dk-turn:not(.grp) > .tn-q, .tn-gq > .tn-q, .dk-turn.grp > .tn-by:first-child { padding-right: 20px; }
-.tn-star { margin-right: 3px; color: var(--accent); font-size: .85em; }
-.tn-wait { font-size: var(--fs-micro); color: var(--fg-3); }
-.dk-turn.said { border-style: dashed; }
-/* Questions asked together: one card, a row for each, ruled apart. */
-.tn-gq { padding: 6px 0 0; margin-top: 6px; border-top: 1px solid var(--rule); }
-.tn-gq .tn-acts { margin-top: 4px; }
-.tn-gq.said .tn-q { color: var(--fg-2); }
-.tn-gfoot { padding-top: 6px; border-top: 1px solid var(--rule); }
-/* A handed-over command is shown whole: what Run types is what is read. */
-/* A command breaks where it has spaces, so "--repo" and "snymrova/snyvi"
-   stay whole (#174); only a word longer than the line -- a hash, a token --
-   breaks inside itself. */
-.sg-cmd.tn-cmd { white-space: pre-wrap; word-break: normal; overflow-wrap: break-word; text-overflow: clip; max-height: 9em; overflow-y: auto; }
 .sg-for { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; }
 .sg-chip { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); font-size: var(--fs-micro); color: var(--fg-2); }
 .sg-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }

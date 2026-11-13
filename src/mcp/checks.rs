@@ -7,13 +7,11 @@ use super::{arg, said, Session};
 use crate::client;
 use serde_json::{json, Value};
 
-const SUGGEST: &str = "Suggest checks the user will hold against one of their notes on this snyvi desk: \
-each one line, under 160 characters, in their terms, of what they will try once the work is done (\"after \
-Download I can see where the file went\"), not a test you will run. Offer them when you plan the note, \
-alongside mark_desk_note planned, from what the note implies about how they work. They wait beside the note \
-until the user keeps or removes them, and you will not be shown them again: read_desk_notes and the brief say \
-only how many checks are held. When the work is done the user runs their list, and a failed check reopens the \
-note with its words. At most 5 per call and 3 waiting on a note.";
+const SUGGEST: &str = "Suggest checks the user will hold against one of their notes: each one line under 160 characters, in their \
+terms, of what they will try once the work is done (\"after Download I can see where the file went\"), not a \
+test you will run. Offer them when you plan the note. They wait beside it until the user keeps or removes \
+them, and you are not shown them again, only how many are held. A failed check reopens the note. At most 5 \
+per call, 3 waiting on a note.";
 
 pub(super) fn specs() -> Vec<Value> {
     vec![json!({

@@ -47,6 +47,11 @@ ALTER TABLE home_state ADD COLUMN arrive_off INTEGER NOT NULL DEFAULT 0;";
 /// The tray shows this many rows, then *and N more, on K desks*: today's
 /// list was nine rows, and at twenty routines it is a page.
 pub const TRAY_ROWS: usize = 7;
+/// Of them, at most this many cards first (1.64, C4): every card was rank
+/// one, oldest first, so seven old cards filled the tray and the plan to
+/// approve, the left-off and the line to keep fell into "and 3 more" (audit
+/// e863bf93a5, U4). The rest of the list is always in the tray after them.
+pub const CARDS_FIRST: usize = 4;
 /// The tray opens itself again, the window back in front, when things
 /// became the reader's since it last did -- and not within this long of
 /// the last time, so a day of coming and going is not a day of trays.
@@ -78,6 +83,16 @@ pub struct Row {
     pub doc_title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn: Option<crate::thread::Turn>,
+    /// A card of several questions is one row (1.64, C1): each of them,
+    /// still open, in the order they were asked; `turn` is the first. A
+    /// card of four counted as four things and was four rows (U3).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub turns: Vec<crate::thread::Turn>,
+    /// Gone quiet (C3): its panel was prompted since, so it may be done or
+    /// answered there. Last in the list, under its own head, and not in the
+    /// count, the sentence or the amber.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
     #[serde(skip_serializing_if = "is_zero")]
     pub note: i64,
     /// The routine whose line it is, by name and id.
@@ -107,9 +122,16 @@ fn is_zero(n: &i64) -> bool {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct OnYou {
     pub sentence: String,
+    /// The sentence after its count, for a head that says the count (C2).
+    pub clauses: String,
     pub rows: Vec<Row>,
-    /// How many rows there are: the pill's number.
+    /// How many rows there are, quiet ones aside: the pill's number.
     pub left: usize,
+    /// How many of the rows are quiet (C3), at the end of `rows`.
+    pub quiet: usize,
+    /// How many of the rows the tray shows (C4): `TRAY_ROWS`, or more when
+    /// the rest of the list past the first cards needs it.
+    pub tray: usize,
     /// Past the tray's `TRAY_ROWS`: how many more, on how many desks.
     pub more: usize,
     pub more_desks: usize,
@@ -135,11 +157,12 @@ pub fn gather(conn: &Connection, now: i64) -> Result<OnYou> {
     due_rows(conn, now, &desks, &mut rows)?;
     let routine_desks = routine_rows(conn, now, &desks, &mut rows)?;
     waiting_rows(conn, now, &desks, &routine_desks, &mut rows)?;
-    rows.sort_by_key(|r| (r.rank, r.at, r.desk));
-    let left = rows.len();
-    let more = left.saturating_sub(TRAY_ROWS);
+    let (rows, tray) = ordered(rows);
+    let quiet = rows.iter().filter(|r| r.quiet).count();
+    let left = rows.len() - quiet;
+    let more = left.saturating_sub(tray);
     let more_desks = {
-        let mut ds: Vec<i64> = rows.iter().skip(TRAY_ROWS).map(|r| r.desk).collect();
+        let mut ds: Vec<i64> = rows.iter().take(left).skip(tray).map(|r| r.desk).collect();
         ds.sort_unstable();
         ds.dedup();
         ds.len()
@@ -171,8 +194,11 @@ pub fn gather(conn: &Connection, now: i64) -> Result<OnYou> {
     };
     let mut oy = OnYou {
         sentence: String::new(),
+        clauses: String::new(),
         rows,
         left,
+        quiet,
+        tray,
         more,
         more_desks,
         ran_quiet: ran_quiet as usize,
@@ -182,10 +208,34 @@ pub fn gather(conn: &Connection, now: i64) -> Result<OnYou> {
         arrive_off,
     };
     oy.sentence = sentence(&oy, now);
+    oy.clauses = clauses(&oy, now);
     Ok(oy)
 }
 
-/// Rank 1: the cards.
+/// The list in the tray's order (C4), and how many rows the tray shows:
+/// the newest `CARDS_FIRST` cards, newest first; then the rest of the list
+/// in rank, oldest first, every one of it in the tray; then the other cards,
+/// newest first; and the quiet cards last, newest first.
+fn ordered(mut rows: Vec<Row>) -> (Vec<Row>, usize) {
+    rows.sort_by_key(|r| (r.rank, r.at, r.desk));
+    let (cards, rest): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| r.kind == "card");
+    let (mut quiet, mut cards): (Vec<Row>, Vec<Row>) = cards.into_iter().partition(|r| r.quiet);
+    for v in [&mut cards, &mut quiet] {
+        v.sort_by_key(|r| (std::cmp::Reverse(r.at), r.desk));
+    }
+    let later = cards.split_off(CARDS_FIRST.min(cards.len()));
+    // The rest of the list is always in the tray; room it leaves is the
+    // later cards'.
+    let tray = TRAY_ROWS.max(cards.len() + rest.len());
+    cards.extend(rest);
+    cards.extend(later);
+    let tray = tray.min(cards.len());
+    cards.extend(quiet);
+    (cards, tray)
+}
+
+/// Rank 1: the cards, a card of several questions as one row; rank 6, one
+/// gone quiet.
 fn card_rows(
     conn: &Connection,
     now: i64,
@@ -197,9 +247,22 @@ fn card_rows(
     // one too: the corner kept those apart as Older after half an hour,
     // which is exactly the card the reader arriving in the evening needs
     // to see first. `stale` rides in the turn for the row to grey.
+    let at = rows.len();
     for t in crate::thread::waiting(conn, now)? {
         if t.via == "dialog" {
             continue;
+        }
+        // The rest of a card's questions go into its row.
+        if t.ask_group != 0 {
+            if let Some(r) = rows[at..]
+                .iter_mut()
+                .find(|r| r.turn.as_ref().is_some_and(|f| f.ask_group == t.ask_group))
+            {
+                r.at = r.at.max(t.created_at);
+                r.quiet &= t.quiet_at > 0;
+                r.turns.push(t);
+                continue;
+            }
         }
         let (doc, doc_title) = doc_titled(conn, &t.link);
         rows.push(Row {
@@ -212,9 +275,28 @@ fn card_rows(
             doc,
             doc_title,
             by: t.by.clone(),
+            quiet: t.quiet_at > 0,
+            turns: if t.ask_group != 0 {
+                vec![t.clone()]
+            } else {
+                Vec::new()
+            },
             turn: Some(t),
             ..Row::default()
         });
+    }
+    for r in &mut rows[at..] {
+        if r.quiet {
+            r.rank = 6;
+        }
+        // A card's questions answered here and not yet told stay on it,
+        // folded where they were asked, so an answer keeps its place and
+        // can be changed until it is sent (C7).
+        let g = r.turn.as_ref().map_or(0, |t| t.ask_group);
+        if g != 0 {
+            r.turns.extend(crate::thread::group_said(conn, g)?);
+            r.turns.sort_by_key(|t| t.id);
+        }
     }
 
     Ok(())
@@ -446,12 +528,27 @@ pub fn sentence(oy: &OnYou, now: i64) -> String {
         n => format!("{} days away. ", cap(&count(n as usize))),
     };
     let n = oy.left;
-    if n == 0 {
-        return format!("{away}Nothing is on you.");
+    let what = clauses(oy, now);
+    match n {
+        0 => format!("{away}Nothing is on you."),
+        1 => format!("{away}One thing is on you: {what}."),
+        _ if what.is_empty() => format!("{away}{} things are on you.", cap(&count(n))),
+        _ => format!(
+            "{away}{} things are on you. {}.",
+            cap(&count(n)),
+            cap(&what)
+        ),
     }
-    if n == 1 {
+}
+
+/// What the sentence says after its count: for one thing, what it is and
+/// where; for more, the routines' share and the first dated line. Home's
+/// box has the count in its head and says only this beside it (C2), so
+/// the number is said once.
+pub fn clauses(oy: &OnYou, now: i64) -> String {
+    if oy.left == 1 {
         let r = &oy.rows[0];
-        let what = match r.kind {
+        return match r.kind {
             "card" => format!(
                 "a {} card on {}",
                 r.turn.as_ref().map_or("", |t| t.kind.as_str()),
@@ -473,7 +570,6 @@ pub fn sentence(oy: &OnYou, now: i64) -> String {
             "suggested" => format!("a line to keep on {}", r.desk_name),
             _ => format!("{} on {}", crate::thread::line(&r.text, 60), r.desk_name),
         };
-        return format!("{away}One thing is on you: {what}.");
     }
     let mut clauses: Vec<String> = Vec::new();
     let routines = oy.rows.iter().filter(|r| r.kind == "routine").count();
@@ -492,12 +588,7 @@ pub fn sentence(oy: &OnYou, now: i64) -> String {
             format!("one at {}", hm(due.at))
         });
     }
-    let tail = if clauses.is_empty() {
-        String::new()
-    } else {
-        format!(" {}.", cap(&clauses.join(", ")))
-    };
-    format!("{away}{} things are on you.{tail}", cap(&count(n)))
+    clauses.join(", ")
 }
 
 /// A small count in words, as a sentence says it.

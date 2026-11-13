@@ -25,6 +25,26 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "one-card"
+since = "1.64.0"
+title = "One card for what's on you"
+line = "A card looks and works the same on a desk, in the corner and on Home: a merge keeps Open PR, a key keeps Add key, and a card of questions is one thing, with Other on each and an answer that stays where you gave it. Its x opens Later: tomorrow, next week, already done, or not mine."
+
+[[feature]]
+id = "quiet-errands"
+since = "1.64.0"
+title = "Errands go quiet once you're in the panel"
+line = "A command or a key you handled in the panel goes quiet after your next message there, with Done and Still to do, instead of staying amber for days. Home no longer opens the tray over its own list."
+small = "yes"
+
+[[feature]]
+id = "where-it-waits"
+since = "1.64.0"
+title = "See where a card waits"
+line = "A desk in the sidebar shows how many cards wait on you there, and the panel that asked says asks you in its head: one click opens the tray at its card."
+small = "yes"
+
+[[feature]]
 id = "routine-wakes"
 since = "1.63.0"
 title = "Routines that wake when something happens"

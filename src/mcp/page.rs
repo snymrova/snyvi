@@ -10,24 +10,18 @@ use crate::client;
 use serde_json::{json, Value};
 
 /// Written as notes for a colleague: when it is worth a card, and when not.
-const POST: &str = "Offer something that shipped to this snyvi desk's page: a card in the desk's corner says \
-your words, and the user's Have a look opens their page with it as a moment, where they decide whether it \
-goes on the wall. Nothing is published by this call. Once per thing that shipped -- a chapter accepted, a \
-release, a clip worth showing -- never after a step, never twice for the same thing, never for a plan. Write \
-it in the maker's words, short: what happened and why it matters, one picture or clip at most. `about` is what \
-it is about, and the key: a document's id, a path in the desk's folder, gallery ids, or the thread's name; a \
-second call about the same thing updates the card rather than making another.";
+const POST: &str = "Offer something that shipped to this desk's page: a card says your words, and the user's Have a look opens \
+their page with it as a moment, where they decide whether it goes on the wall. Nothing is published by this \
+call. Once per thing that shipped (a release, a chapter accepted, a clip worth showing): never after a step, \
+never for a plan, never twice for the same thing. In the maker's words, short, one picture at most. `about` \
+is its key: a second call about the same thing updates the card.";
 
 /// When to fill the page, and what each field is for.
-const DRAFT: &str = "Fill this snyvi desk's page, its landing page, with words: only when the user asked you to build or \
-update it (the Page view's Ask Claude types that for them). Read the project first -- the README, what it does, \
-who it is for -- and write as its maker would, plainly, no hype. `title` is the name; `lede` one or two lines on \
-what it is and for whom; `cta` the one main link (an https:// URL and a button's few words: \"Try the beta\"); \
-`points` three short reasons, each a title and a line; `story` a few paragraphs on why it is being built, in the \
-first person, blank lines between. `cover` and `logo` are paths of pictures in the desk's folder (take a \
-screenshot of the work into the folder first if there is none). Every field is optional; one left out stays as \
-it is. A page that does not exist yet is started. Nothing is published, and who sees it and its address stay \
-the user's: tell them it is ready to look at in Page, and that Publish is theirs.";
+const DRAFT: &str = "Fill this desk's page, its landing page, only when the user asked you to build or update it. Read the \
+project first (the README, what it does, who it is for) and write as its maker would, plainly, no hype: \
+`title`, a `lede` of one or two lines, one main link (`cta`), three `points`, the `story` in the first \
+person, and `cover` and `logo` as paths in the desk's folder. A field left out stays as it is. Nothing is \
+published: say it is ready to look at in Page, and that Publish is theirs.";
 
 pub(super) fn specs() -> Vec<Value> {
     let link = json!({

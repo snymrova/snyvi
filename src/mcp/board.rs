@@ -13,15 +13,11 @@ before acting on \"this\" or \"these\": the selection is what they mean. Leave `
 boards (the user can make empty ones, by name). A board is design/<board>/ in the desk's folder; frame_write \
 makes one. Pass `since` (the last read's hash) to learn only whether it changed.";
 
-const WRITE: &str = "Draw one section on a board in this snyvi desk, whole: a self-contained HTML fragment (CSS \
-inline in a <style>, tokens as var(--…) with tokens.css's :root copied in, no network), 300 to 3,000 bytes, at a \
-width in CSS pixels; its height is its content's unless you give one. A new board's name makes the board. Sections \
-are drawn together in one page, each in its own shadow root: `body`, `html` and `:root` in your CSS mean the section \
-itself, and a section runs no script -- one that has a <script> is drawn alone, in its own sandboxed frame, so keep \
-scripts for what a static section cannot show. The user, watching the board, sees it arrive. A section is rewritten \
-whole; a write to the same one within 20 s is the same version. Show options as several sections side by side \
-(hero-a, hero-b), not as prose. `html: null` hides one: its file and versions stay, and say so. Look at what you \
-drew before saying done (frame_look).";
+const WRITE: &str = "Draw one section on a board in this snyvi desk, whole: a self-contained HTML fragment (CSS inline in a \
+<style>, no network, no script), 300 to 3,000 bytes, at a width in CSS pixels. A new board's name makes the \
+board. Show options as several sections side by side (hero-a, hero-b), not as prose. `html: null` hides one; \
+its versions stay. Read the skill's board.md before the first section, and look at what you drew \
+(frame_look) before saying done.";
 
 const ARRANGE: &str =
     "Move, reorder or name frames on a board in this snyvi desk, or name the board, or make a frame \

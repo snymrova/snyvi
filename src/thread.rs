@@ -150,8 +150,18 @@ pub const AWAY_COLUMN_1_44: &str = "ALTER TABLE turns ADD COLUMN away TEXT NOT N
 /// `store::MIGRATIONS`, never in `SCHEMA`.
 pub const REMOVED_BY_1_53: &str =
     "ALTER TABLE turns ADD COLUMN removed_by TEXT NOT NULL DEFAULT ''";
-/// How long a turn an agent put away is still said in the tray.
+/// 1.64: how many times an open question was asked (C8). An agent that asks
+/// what is already waiting -- one question six times on one desk, five more
+/// twice (audit e863bf93a5, U11) -- folds into the card that has it: no new
+/// card, this goes up, and the card says "asked 3 times". Version 39 of
+/// `store::MIGRATIONS`, never in `SCHEMA`.
+pub const ASKED_COLUMN_1_64: &str = "ALTER TABLE turns ADD COLUMN asked INTEGER NOT NULL DEFAULT 1";
+/// How long a waiting turn an agent put away is still said in the tray.
 pub const AWAY_SHOWN_S: i64 = 86400;
+/// snyvi's own "Who should know?" card after a merge (`crate::told`) is on
+/// no panel, so no agent can settle it: it waited out the three days
+/// (U10). It goes after one, as a retire puts any away, recoverable.
+pub const TELL_RETIRE_S: i64 = 86400;
 
 /// How long a waiting turn is fresh: after it, it is "older" -- no rising,
 /// no sound, out of the cap, the brief's list, the band and Home's count.
@@ -326,10 +336,16 @@ pub struct Turn {
     pub created_at: i64,
     #[serde(skip_serializing_if = "is_zero")]
     pub removed_at: i64,
-    /// When the panel that asked was next prompted, its question still open
-    /// (`quiet_asks`): the reader may have answered it there.
-    #[serde(skip)]
+    /// When the panel that asked was next prompted, its card still open
+    /// (`quiet_asks`): the reader may have answered it, or done it, there.
+    /// -1 once the reader said Still to do: it does not go quiet again. The
+    /// page draws a quiet card under its own head (1.64, C3).
+    #[serde(skip_serializing_if = "not_positive")]
     pub quiet_at: i64,
+    /// How many times it was asked (`ASKED_COLUMN_1_64`): 1 but for a
+    /// question asked again while it waited.
+    #[serde(skip_serializing_if = "once")]
+    pub asked: i64,
     /// Tomorrow or Next week on the reader's ✕ (1.54, `crate::onyou`):
     /// off every list until then, and fresh again from then.
     #[serde(skip_serializing_if = "is_zero")]
@@ -388,6 +404,14 @@ pub struct Suggestion {
 
 fn is_zero(n: &i64) -> bool {
     *n == 0
+}
+
+fn not_positive(n: &i64) -> bool {
+    *n <= 0
+}
+
+fn once(n: &i64) -> bool {
+    *n <= 1
 }
 
 /// One line of at most `chars` characters, whitespace runs folded.
@@ -1247,7 +1271,7 @@ pub fn moved_since(conn: &Connection, desk_id: i64, pane: &str, since: i64) -> R
 const TURN_COLS: &str =
     "id, desk_id, thread_id, pane, by, kind, via, text, options, recommended, link,
      answer, answered_in, answered_at, told_at, created_at, removed_at, cmd, ask_group,
-     quiet_at, key_name, away, until";
+     quiet_at, key_name, away, until, asked";
 
 fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
     let options: String = r.get(8)?;
@@ -1279,6 +1303,7 @@ fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
         key_name: r.get(20)?,
         away: r.get(21)?,
         until: r.get(22)?,
+        asked: r.get(23)?,
         stale: false,
     })
 }
@@ -1304,7 +1329,7 @@ pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()>
             };
         // A card moved to Tomorrow is fresh again from then (1.54).
         let since = t.created_at.max(t.until);
-        t.stale = closed || t.quiet_at != 0 || now - since >= OLDER_S;
+        t.stale = closed || t.quiet_at > 0 || now - since >= OLDER_S;
     }
     Ok(())
 }
@@ -1314,8 +1339,10 @@ pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()>
 /// where turns are read, so no timer is needed. How many went.
 pub fn retire(conn: &Connection, now: i64) -> Result<usize> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = ?1, removed_by = 'aged' WHERE answered_at = 0 AND removed_at = 0 AND created_at < ?2 AND until < ?2",
-        params![now, now - RETIRE_S],
+        "UPDATE turns SET removed_at = ?1, removed_by = 'aged' WHERE answered_at = 0 AND removed_at = 0
+         AND ((created_at < ?2 AND until < ?2) OR (kind = 'tell' AND created_at < ?3 AND until < ?3
+              AND NOT EXISTS (SELECT 1 FROM panes p WHERE p.id = turns.pane)))",
+        params![now, now - RETIRE_S, now - TELL_RETIRE_S],
     )?)
 }
 
@@ -1366,6 +1393,19 @@ pub fn waiting_on(conn: &Connection, desk_id: i64, dialog: bool, now: i64) -> Re
     Ok(v)
 }
 
+/// A card's questions the reader answered in snyvi that their panel has
+/// not been told yet: the card keeps them, folded (C7).
+pub fn group_said(conn: &Connection, group: i64) -> Result<Vec<Turn>> {
+    let mut st = conn.prepare(&format!(
+        "SELECT {TURN_COLS} FROM turns WHERE ask_group = ?1 AND answered_at > 0 AND answered_in = 'snyvi'
+         AND told_at = 0 AND removed_at = 0 ORDER BY id"
+    ))?;
+    let v = st
+        .query_map(params![group], row_to_turn)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(v)
+}
+
 /// What is waiting on the reader across every open desk, oldest first, each
 /// marked fresh or stale: Home's On you.
 pub fn waiting(conn: &Connection, now: i64) -> Result<Vec<Turn>> {
@@ -1411,6 +1451,10 @@ pub enum Asked {
     Turn(Box<Turn>),
     /// Two to four questions put as one card (`ask_group`).
     Group(Vec<Turn>),
+    /// Already open from this panel, asked in the same words (C8): folded into
+    /// the card that has it, its `asked` one up, nothing new on the reader.
+    /// The first of its questions.
+    Again(Box<Turn>),
     Full,
     Empty,
     /// `decide` needs two to four options; the others take none.
@@ -1584,12 +1628,20 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
     // used to hold a place, so a desk whose six were days old refused the
     // one question that mattered now (audit e0a854b732, B2).
     retire(&tx, now)?;
+    // A question asked again in the same words, while it waits: folded into
+    // its card, not asked twice (C8). Not a dialog, which is Claude's own.
+    if asks[0].kind == "decide" && checked[0].via == "ask" && asks[0].replaces <= 0 {
+        if let Some(first) = fold_again(&tx, desk_id, &asks[0].pane, &checked)? {
+            tx.commit()?;
+            return Ok(Asked::Again(Box::new(first)));
+        }
+    }
     if let [c] = checked.as_slice() {
         supersede(&tx, desk_id, c, now)?;
-        // Out first, so a card said again is not refused for the room the
-        // one it replaces still holds.
-        replace(&tx, desk_id, asks[0].replaces, now)?;
     }
+    // Out first, so a card said again is not refused for the room the one
+    // it replaces still holds. A group's card goes whole (1.64).
+    replace(&tx, desk_id, asks[0].replaces, now)?;
     let waiting = waiting_on(&tx, desk_id, false, now)?
         .iter()
         .filter(|t| !t.stale)
@@ -1626,9 +1678,10 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
             ],
         )?;
         let id = tx.last_insert_rowid();
-        if asks.len() == 1 && a.replaces > 0 {
+        if turns.is_empty() && a.replaces > 0 {
             tx.execute(
-                "UPDATE turns SET away = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_by = 'replaced' AND removed_at = ?4",
+                "UPDATE turns SET away = ?3 WHERE desk_id = ?1 AND removed_by = 'replaced' AND removed_at = ?4
+                 AND (id = ?2 OR (ask_group != 0 AND ask_group = (SELECT g.ask_group FROM turns g WHERE g.desk_id = ?1 AND g.id = ?2)))",
                 params![desk_id, a.replaces, replaced_by(&c.by, id), now],
             )?;
         }
@@ -1666,7 +1719,16 @@ pub fn answer(
     let Some(t) = turn(conn, desk_id, id)? else {
         return Ok(None);
     };
-    if t.answered_at != 0 || t.removed_at != 0 {
+    // Changed before it was told (C7): a question answered here, whose
+    // panel has not heard it yet, takes the new word. Only a question: a
+    // Run or a Done did what it said when it was pressed.
+    let change = in_ == "snyvi"
+        && t.answered_at != 0
+        && t.kind == "decide"
+        && t.answered_in == "snyvi"
+        && t.told_at == 0
+        && t.via != "dialog";
+    if (t.answered_at != 0 && !change) || t.removed_at != 0 {
         return Ok(None);
     }
     // A question answered in the panel, or Claude's own question answered
@@ -1678,8 +1740,8 @@ pub fn answer(
     };
     let n = conn.execute(
         "UPDATE turns SET answer = ?3, answered_in = ?4, answered_at = ?5, told_at = ?6
-         WHERE desk_id = ?1 AND id = ?2 AND answered_at = 0",
-        params![desk_id, id, answer, in_, now, told],
+         WHERE desk_id = ?1 AND id = ?2 AND (answered_at = 0 OR (?7 AND told_at = 0))",
+        params![desk_id, id, answer, in_, now, told, change],
     )?;
     if n == 0 {
         return Ok(None);
@@ -1719,11 +1781,17 @@ pub fn remove_turn(conn: &Connection, desk_id: i64, id: i64, by: &str, now: i64)
 }
 
 /// Back on the reader: a Not this gives its word back too, and Tomorrow
-/// its day (1.54).
+/// its day (1.54). An answer given in snyvi that its panel has not been
+/// told yet is taken back (1.64): the Undo of Done, Already done or a
+/// pick off the desk. A quiet card stays loud: Still to do (C3).
 pub fn restore_turn(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     Ok(conn.execute(
         "UPDATE turns SET removed_at = 0, away = '', until = 0,
-                answer = CASE WHEN removed_by = 'not' THEN '' ELSE answer END, removed_by = ''
+                answer = CASE WHEN removed_by = 'not' OR (answered_at > 0 AND answered_in = 'snyvi' AND told_at = 0)
+                         THEN '' ELSE answer END, removed_by = '',
+                answered_at = CASE WHEN answered_in = 'snyvi' AND told_at = 0 THEN 0 ELSE answered_at END,
+                answered_in = CASE WHEN answered_in = 'snyvi' AND told_at = 0 THEN '' ELSE answered_in END,
+                quiet_at = CASE WHEN quiet_at > 0 THEN -1 ELSE quiet_at END
          WHERE desk_id = ?1 AND id = ?2",
         params![desk_id, id],
     )? > 0)
@@ -1794,15 +1862,75 @@ fn supersede(conn: &Connection, desk_id: i64, c: &Checked, now: i64) -> Result<u
 /// folder looked alike and were each run. Any waiting card on the desk, as
 /// `put_away` takes; recoverable, said in the tray as replaced by the new
 /// one. How many (0 or 1).
+/// A question in a group names the group: every question of it still
+/// open goes (1.64, `ask` takes `replaces` too).
 fn replace(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<usize> {
     if id <= 0 {
         return Ok(0);
     }
     Ok(conn.execute(
         "UPDATE turns SET removed_at = ?3, removed_by = 'replaced'
-         WHERE desk_id = ?1 AND id = ?2 AND answered_at = 0 AND removed_at = 0",
+         WHERE desk_id = ?1 AND answered_at = 0 AND removed_at = 0
+         AND (id = ?2 OR (ask_group != 0 AND ask_group = (SELECT g.ask_group FROM turns g WHERE g.desk_id = ?1 AND g.id = ?2)))",
         params![desk_id, id, now],
     )?)
+}
+
+/// A question's words as two askings are compared: case and spacing aside.
+fn same_words(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Questions asked again while they wait (C8): each matched to an open
+/// `decide` of the same panel in the same words, and all of a group's to one
+/// card (one on its own, or one group). When every one is, each is asked
+/// once more (`asked`), and the first comes back; when any is new, nothing
+/// is touched and the ask goes on as a new card.
+/// Only its own panel's, and only one not yet quieted: an answer is told to
+/// the panel whose card it is, so another panel's question folded in would
+/// never hear it; and asked again after its prompt quieted it, the question
+/// is a fresh one, on a card of its own that is not quiet.
+fn fold_again(
+    conn: &Connection,
+    desk_id: i64,
+    pane: &str,
+    checked: &[Checked],
+) -> Result<Option<Turn>> {
+    let open: Vec<(i64, i64, String)> = conn
+        .prepare_cached(
+            "SELECT id, ask_group, text FROM turns WHERE desk_id = ?1 AND pane = ?2 AND kind = 'decide'
+             AND via = 'ask' AND answered_at = 0 AND removed_at = 0 AND quiet_at = 0 ORDER BY id",
+        )?
+        .query_map(params![desk_id, pane], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut hit: Vec<(i64, i64)> = Vec::with_capacity(checked.len());
+    for c in checked {
+        let w = same_words(&c.text);
+        match open.iter().find(|(id, g, t)| {
+            same_words(t) == w
+                && !hit.iter().any(|(h, _)| h == id)
+                && hit.first().is_none_or(|(_, hg)| hg == g)
+        }) {
+            Some((id, g, _)) => hit.push((*id, *g)),
+            None => return Ok(None),
+        }
+    }
+    // A group asked again is the same group, not one question of it.
+    if checked.len() > 1 && hit[0].1 == 0 {
+        return Ok(None);
+    }
+    let mut up = conn.prepare_cached("UPDATE turns SET asked = asked + 1 WHERE id = ?1")?;
+    for (id, _) in &hit {
+        up.execute(params![id])?;
+    }
+    turn(
+        conn,
+        desk_id,
+        hit.iter().map(|(id, _)| *id).min().unwrap_or(0),
+    )
 }
 
 /// What the tray says under a card a newer one replaced: as `put_away`
@@ -1861,14 +1989,21 @@ pub fn put_away_lately(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<
 /// The panel that asked was prompted: its questions asked before the prompt
 /// and still open go quiet -- stale, folded, still answerable. Half the
 /// questions agents put on On you were answered in the conversation and
-/// then cleared by hand, one ✕ each (audit e0a854b732, B1). Only `decide`
-/// asked with `ask`: typing in the chat adds no key and merges nothing, and
-/// Claude's own dialog settles by itself. The ones it quieted, for the
-/// agent to be told.
+/// then cleared by hand, one ✕ each (audit e0a854b732, B1). Claude's own
+/// dialog settles by itself, and a merge settles on the merge seen.
+///
+/// 1.64 (C3): its errands too, a do, a key, a try, a run. Four in five were
+/// never answered in snyvi: the agent removed them within the half hour, or
+/// they aged out, amber all the while (audit e863bf93a5, U4) -- the work
+/// was done in the panel. Quiet, a card no longer rings, rises or counts
+/// amber; it waits under its own head, Done or Still to do (-1, which it
+/// keeps). Not a routine's: its panel is prompted by the routine. The ones
+/// it quieted, for the agent to be told.
 pub fn quiet_asks(conn: &Connection, desk_id: i64, pane: &str, now: i64) -> Result<Vec<Turn>> {
     let mut st = conn.prepare(&format!(
-        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND pane = ?2 AND kind = 'decide'
+        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND pane = ?2 AND kind IN ('decide', 'do', 'key', 'try', 'run')
          AND via = 'ask' AND answered_at = 0 AND removed_at = 0 AND quiet_at = 0 AND created_at < ?3
+         AND (kind = 'decide' OR NOT EXISTS (SELECT 1 FROM routines r WHERE r.pane = ?2 AND r.removed_at = 0))
          ORDER BY id"
     ))?;
     let quiet: Vec<Turn> = st

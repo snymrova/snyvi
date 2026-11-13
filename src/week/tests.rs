@@ -25,6 +25,8 @@ fn db() -> Connection {
     conn.execute_batch(crate::thread::GROUP_COLUMN).unwrap();
     conn.execute_batch(crate::thread::AWAY_COLUMN_1_44).unwrap();
     conn.execute_batch(crate::thread::REMOVED_BY_1_53).unwrap();
+    conn.execute_batch(crate::thread::ASKED_COLUMN_1_64)
+        .unwrap();
     conn.execute_batch(crate::onyou::TURN_COLUMN_1_54).unwrap();
     for c in crate::thread::ON_YOU_1_36 {
         conn.execute_batch(c).unwrap();
