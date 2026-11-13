@@ -134,7 +134,7 @@ function threadLine(d, pane, esc) {
  *  corner and Home draw the very same. Fetched with the desk; a tray drawn
  *  before it is in is drawn again once it is. */
 let T = null;
-import(`/assets/turn.js${new URL(import.meta.url).search}`).then(m => { T = m; m.style(); if (current()) rail(); }, () => {});
+import(`/assets/turn.js${new URL(import.meta.url).search}`).then(m => { T = m; m.style(); if (ctx && current()) rail(); }, () => {});
 
 /** The questions opened whole in the tray, by turn id; whether the rows
  *  drawn now are the tray's (`trayHtml`), where a question is cut to its
