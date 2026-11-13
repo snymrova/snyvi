@@ -1451,7 +1451,7 @@ pub enum Asked {
     Turn(Box<Turn>),
     /// Two to four questions put as one card (`ask_group`).
     Group(Vec<Turn>),
-    /// Already open on the desk, asked in the same words (C8): folded into
+    /// Already open from this panel, asked in the same words (C8): folded into
     /// the card that has it, its `asked` one up, nothing new on the reader.
     /// The first of its questions.
     Again(Box<Turn>),
@@ -1631,7 +1631,7 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
     // A question asked again in the same words, while it waits: folded into
     // its card, not asked twice (C8). Not a dialog, which is Claude's own.
     if asks[0].kind == "decide" && checked[0].via == "ask" && asks[0].replaces <= 0 {
-        if let Some(first) = fold_again(&tx, desk_id, &checked)? {
+        if let Some(first) = fold_again(&tx, desk_id, &asks[0].pane, &checked)? {
             tx.commit()?;
             return Ok(Asked::Again(Box::new(first)));
         }
@@ -1885,17 +1885,26 @@ fn same_words(s: &str) -> String {
 }
 
 /// Questions asked again while they wait (C8): each matched to an open
-/// `decide` on the desk in the same words, and all of a group's to one
+/// `decide` of the same panel in the same words, and all of a group's to one
 /// card (one on its own, or one group). When every one is, each is asked
 /// once more (`asked`), and the first comes back; when any is new, nothing
 /// is touched and the ask goes on as a new card.
-fn fold_again(conn: &Connection, desk_id: i64, checked: &[Checked]) -> Result<Option<Turn>> {
+/// Only its own panel's, and only one not yet quieted: an answer is told to
+/// the panel whose card it is, so another panel's question folded in would
+/// never hear it; and asked again after its prompt quieted it, the question
+/// is a fresh one, on a card of its own that is not quiet.
+fn fold_again(
+    conn: &Connection,
+    desk_id: i64,
+    pane: &str,
+    checked: &[Checked],
+) -> Result<Option<Turn>> {
     let open: Vec<(i64, i64, String)> = conn
         .prepare_cached(
-            "SELECT id, ask_group, text FROM turns WHERE desk_id = ?1 AND kind = 'decide' AND via = 'ask'
-             AND answered_at = 0 AND removed_at = 0 ORDER BY id",
+            "SELECT id, ask_group, text FROM turns WHERE desk_id = ?1 AND pane = ?2 AND kind = 'decide'
+             AND via = 'ask' AND answered_at = 0 AND removed_at = 0 AND quiet_at = 0 ORDER BY id",
         )?
-        .query_map(params![desk_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .query_map(params![desk_id, pane], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
     let mut hit: Vec<(i64, i64)> = Vec::with_capacity(checked.len());
     for c in checked {
