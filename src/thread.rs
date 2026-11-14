@@ -167,8 +167,9 @@ pub const TELL_RETIRE_S: i64 = 86400;
 /// no sound, out of the cap, the brief's list, the band and Home's count.
 /// The page's `OLDER_S`, said once here so every reader agrees (B3).
 pub const OLDER_S: i64 = 30 * 60;
-/// How long a waiting turn is kept on view at all: after it, it is put away
-/// by itself (`retire`), as a ✕ would, and stays recoverable.
+/// How long a chore was kept on view before 1.66, when it was put away by
+/// itself; it no longer is (`retire`). Kept for the tests that say so.
+#[cfg(test)]
 pub const RETIRE_S: i64 = 3 * 86400;
 /// A question goes after one day (1.65): the desk's Decisions shelf holds it
 /// from then (`crate::ledger`), so On you need not.
@@ -1345,16 +1346,21 @@ pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()>
     Ok(())
 }
 
-/// Waiting turns older than `RETIRE_S`, put away by themselves, as a ✕
-/// puts one away: recoverable by id (`restore_turn`), never deleted. Run
-/// where turns are read, so no timer is needed. How many went.
+/// Waiting turns past their time, put away by themselves, as a ✕ puts one
+/// away: recoverable by id (`restore_turn`), never deleted. Run where turns
+/// are read, so no timer is needed. How many went.
+///
+/// 1.66: a question after a day (the desk's Decisions keep it) and snyvi's
+/// own "Who should know?" after a day; a chore never. A DNS record or a GA4
+/// id is the reader's until they say Done or Can't: of 101 errands, 72 were
+/// cleared by an agent or aged out at three days, most of them not done.
 pub fn retire(conn: &Connection, now: i64) -> Result<usize> {
     Ok(conn.execute(
         "UPDATE turns SET removed_at = ?1, removed_by = 'aged' WHERE answered_at = 0 AND removed_at = 0
-         AND ((created_at < ?2 AND until < ?2) OR (kind = 'decide' AND created_at < ?4 AND until < ?4)
-              OR (kind = 'tell' AND created_at < ?3 AND until < ?3
+         AND ((kind = 'decide' AND created_at < ?3 AND until < ?3)
+              OR (kind = 'tell' AND created_at < ?2 AND until < ?2
               AND NOT EXISTS (SELECT 1 FROM panes p WHERE p.id = turns.pane)))",
-        params![now, now - RETIRE_S, now - TELL_RETIRE_S, now - ASK_RETIRE_S],
+        params![now, now - TELL_RETIRE_S, now - ASK_RETIRE_S],
     )?)
 }
 
@@ -2011,11 +2017,13 @@ pub fn put_away_lately(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<
 /// amber; it waits under its own head, Done or Still to do (-1, which it
 /// keeps). Not a routine's: its panel is prompted by the routine. The ones
 /// it quieted, for the agent to be told.
+///
+/// 1.66: questions only. A chore is in To do until the reader says, and a
+/// prompt in the panel is not the reader saying (plan e7fda1ca90).
 pub fn quiet_asks(conn: &Connection, desk_id: i64, pane: &str, now: i64) -> Result<Vec<Turn>> {
     let mut st = conn.prepare(&format!(
-        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND pane = ?2 AND kind IN ('decide', 'do', 'key', 'try', 'run')
+        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND pane = ?2 AND kind = 'decide'
          AND via = 'ask' AND answered_at = 0 AND removed_at = 0 AND quiet_at = 0 AND created_at < ?3
-         AND (kind = 'decide' OR NOT EXISTS (SELECT 1 FROM routines r WHERE r.pane = ?2 AND r.removed_at = 0))
          ORDER BY id"
     ))?;
     let quiet: Vec<Turn> = st

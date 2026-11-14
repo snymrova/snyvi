@@ -360,3 +360,62 @@ mod tests {
         assert!(same_script("", ""));
     }
 }
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct WakeBody {
+    pub name: String,
+    pub line: String,
+    pub desk: Option<i64>,
+    pub cwd: String,
+}
+
+/// `snyvi routine wake <name> "<line>"` (1.66): `POST /api/routines/wake`
+/// (token). A line from a script or a local service, kept as an event the
+/// way a watch's line is -- through the routine's shape, in its batch --
+/// so a service that already knows when something happened need not be a
+/// watch. A token wakes only a live routine, and only with a line in the
+/// shape the reader allowed: it starts nothing else.
+pub(crate) async fn routine_wake(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<WakeBody>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let desks = app.store.desks().unwrap_or_default();
+    let desk = match b.desk {
+        Some(id) => desks.into_iter().find(|d| d.id == id),
+        None => desks
+            .into_iter()
+            .filter(|d| !d.root.is_empty() && FsPath::new(&b.cwd).starts_with(&d.root))
+            .max_by_key(|d| d.root.len()),
+    };
+    let Some(desk) = desk else {
+        return said(StatusCode::NOT_FOUND, "no desk here: run it in the desk's folder, or pass --desk");
+    };
+    let cmd = b.name.trim().trim_start_matches('/');
+    let Ok(Some(r)) = app.store.clocked(|c, _| routine::by_cmd(c, desk.id, cmd)) else {
+        return said(StatusCode::NOT_FOUND, format!("no routine /{cmd} on {}", desk.name));
+    };
+    if r.state() != "live" {
+        return said(StatusCode::CONFLICT, format!("/{cmd} is {}: only a live routine wakes", r.state()));
+    }
+    let pushed = app
+        .store
+        .clocked(|c, now| routine::events::push(c, r.id, &r.shape, b.line.trim(), now));
+    match pushed {
+        Ok(routine::events::Pushed::Kept) => {
+            super::routine_run::changed(&app, desk.id);
+            let (batch, _) = routine::events::pace(r.fast);
+            Json(json!({ "said": format!("/{cmd} woken: it runs within {batch} s with what else came") })).into_response()
+        }
+        Ok(routine::events::Pushed::Same) => Json(json!({ "said": format!("/{cmd} already has that line waiting") })).into_response(),
+        Ok(routine::events::Pushed::Dropped) => said(
+            StatusCode::BAD_REQUEST,
+            format!("not in /{cmd}'s shape ({}), or too many lines wait", if r.shape.is_empty() { "up to four short words" } else { r.shape.as_str() }),
+        ),
+        Err(e) => err(e),
+    }
+}

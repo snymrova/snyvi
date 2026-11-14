@@ -1028,24 +1028,6 @@ pub fn change(conn: &mut Connection, id: i64, c: &Change, now: i64) -> Result<bo
     Ok(true)
 }
 
-/// A routine's times as `Line`s again, one hour a line: what an Undo puts
-/// back.
-pub fn lines_of(conn: &Connection, id: i64) -> Result<Vec<times::Line>> {
-    Ok(times::times_of(conn, id)?
-        .into_iter()
-        .filter_map(|t| {
-            let e = crate::due::every::every(&t.every)?;
-            Some(times::Line {
-                times: Times {
-                    cadence: e.cadence,
-                    at: vec![e.at],
-                },
-                words: t.words,
-                gated: t.gated,
-            })
-        })
-        .collect())
-}
 
 /// A change as News says it: `added 21:30, model sonnet`. Empty when
 /// nothing a reader would see moved.

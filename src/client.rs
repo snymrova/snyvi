@@ -1207,6 +1207,33 @@ pub fn leave_off(
     }
 }
 
+/// `snyvi routine wake`: one line for a routine, as its watch prints one
+/// (1.66). What the daemon said back, in words.
+pub fn routine_wake(paths: &Paths, name: &str, line: &str, desk: Option<i64>, cwd: &str) -> Result<String> {
+    ensure_daemon()?;
+    let (status, j) = post(
+        paths,
+        "/api/routines/wake",
+        serde_json::json!({ "name": name, "line": line, "desk": desk, "cwd": cwd }),
+        Duration::from_secs(10),
+    )?;
+    let said = j["said"].as_str().or(j["error"].as_str()).unwrap_or_default().to_string();
+    match status {
+        200 => Ok(said),
+        401 => bail!("the daemon refused the token; is this the same user it runs as?"),
+        404 if said.is_empty() => bail!("this daemon is older than `snyvi routine wake`; run `snyvi restart`"),
+        _ => bail!("{said}"),
+    }
+}
+
+/// An agent's routine, made or updated in one call: `offer_routine` (1.66).
+pub fn offer_routine(paths: &Paths, pane: &str, body: Value) -> Result<(u16, Value)> {
+    let mut resp = pane_post(paths, &format!("{pane}/routine"), body)?;
+    let status = resp.status().as_u16();
+    let j = resp.body_mut().read_json::<Value>().unwrap_or(Value::Null);
+    Ok((status, j))
+}
+
 /// Suggest a line for this pane's desk's list: `suggest_desk_note`.
 pub fn suggest_desk_note(
     paths: &Paths,

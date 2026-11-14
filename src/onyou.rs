@@ -24,6 +24,24 @@
 //! a dated line due today, a routine's line, a plan or a suggested line,
 //! a session's left-off that has needed the reader a day.
 
+//!
+//! 1.66 (rethink e36434e663, plan e7fda1ca90): three shelves, one count.
+//! One list held four things with four lifetimes -- Claude's own dialog,
+//! answered in seconds in the terminal; an agent's question, an agent stuck;
+//! a chore only the reader can do, which takes days; and a notice with
+//! nothing to answer -- and the reader sorted them in their head each time
+//! they looked. Every row now has a `shelf`:
+//!
+//! - **Waiting**: an agent is stuck on the reader -- a question, a plan to
+//!   approve, a routine's run waiting for Go ahead, a routine to Start or
+//!   Allow, one that cannot run. The only count, and it counts agents.
+//! - **To do**: what only the reader can do -- a hand-over, a dated line, a
+//!   line to keep. No count, and it never ages out.
+//! - **News**: what happened (`crate::news`, and a merge's tick). No count.
+//!
+//! The tray's cap and its order of cards first are gone with it, and so is
+//! the tray opening itself on arrival: the count is the one signal.
+
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -44,18 +62,6 @@ pub const HOME_COLUMNS_1_54: &str =
 ALTER TABLE home_state ADD COLUMN arrived_left INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE home_state ADD COLUMN arrive_off INTEGER NOT NULL DEFAULT 0;";
 
-/// The tray shows this many rows, then *and N more, on K desks*: today's
-/// list was nine rows, and at twenty routines it is a page.
-pub const TRAY_ROWS: usize = 7;
-/// Of them, at most this many cards first (1.64, C4): every card was rank
-/// one, oldest first, so seven old cards filled the tray and the plan to
-/// approve, the left-off and the line to keep fell into "and 3 more" (audit
-/// e863bf93a5, U4). The rest of the list is always in the tray after them.
-pub const CARDS_FIRST: usize = 4;
-/// The tray opens itself again, the window back in front, when things
-/// became the reader's since it last did -- and not within this long of
-/// the last time, so a day of coming and going is not a day of trays.
-pub const ARRIVE_AGAIN_S: i64 = 3600;
 /// How long a Not this on a card is said in the brief.
 pub const NOT_SAID_S: i64 = 7 * 86_400;
 /// A thread two weeks still is the older pile: one grey line, never rows.
@@ -68,6 +74,8 @@ pub const OLDER_S: i64 = 14 * 86_400;
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Row {
     pub kind: &'static str,
+    /// 1.66: `waiting`, `todo` or `news`.
+    pub shelf: &'static str,
     pub rank: u8,
     pub desk: i64,
     pub desk_name: String,
@@ -112,6 +120,16 @@ pub struct Row {
     /// which is the nudge.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub no_doc: bool,
+    /// 1.66, a routine to Start or Allow: what the reader asked for, what
+    /// the agent's try did, when it runs and what it may run.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub asked: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub tried: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub when: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub may: Vec<String>,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -124,26 +142,24 @@ pub struct OnYou {
     pub sentence: String,
     /// The sentence after its count, for a head that says the count (C2).
     pub clauses: String,
+    /// Waiting first, newest first; then To do, in rank and time; then the
+    /// News rows (a merge's tick); then Waiting's quiet questions.
     pub rows: Vec<Row>,
-    /// How many rows there are, quiet ones aside: the pill's number.
+    /// 1.66: the agents stuck on the reader, quiet ones aside: the pill's
+    /// number, and the only count. A card of four questions is one agent.
     pub left: usize,
     /// How many of the rows are quiet (C3), at the end of `rows`.
     pub quiet: usize,
-    /// How many of the rows the tray shows (C4): `TRAY_ROWS`, or more when
-    /// the rest of the list past the first cards needs it.
-    pub tray: usize,
-    /// Past the tray's `TRAY_ROWS`: how many more, on how many desks.
-    pub more: usize,
-    pub more_desks: usize,
+    /// 1.66: rows on To do, and News lines not seen: said, never a badge.
+    pub todo: usize,
+    pub news_unseen: i64,
+    /// 1.66: News, newest first (`crate::news`).
+    pub news: Vec<crate::news::Item>,
     /// Routines that ran today and wrote nothing for the reader.
     pub ran_quiet: usize,
     /// Threads two weeks still, and their desks: the pile, one grey line.
     pub older: usize,
     pub older_desks: usize,
-    /// Days since the tray last opened itself, for the sentence.
-    pub days_away: i64,
-    /// The box's ⋯: the tray does not open itself.
-    pub arrive_off: bool,
 }
 
 /// Everything that is the reader's now, ranked, with its counts.
@@ -155,18 +171,13 @@ pub fn gather(conn: &Connection, now: i64) -> Result<OnYou> {
     let mut rows: Vec<Row> = Vec::new();
     card_rows(conn, now, &desks, &mut rows)?;
     due_rows(conn, now, &desks, &mut rows)?;
-    let routine_desks = routine_rows(conn, now, &desks, &mut rows)?;
-    waiting_rows(conn, now, &desks, &routine_desks, &mut rows)?;
-    let (rows, tray) = ordered(rows);
+    routine_rows(conn, now, &desks, &mut rows)?;
+    routine_waiting(conn, &desks, &mut rows)?;
+    waiting_rows(conn, now, &desks, &mut rows)?;
+    let rows = ordered(rows);
     let quiet = rows.iter().filter(|r| r.quiet).count();
-    let left = rows.len() - quiet;
-    let more = left.saturating_sub(tray);
-    let more_desks = {
-        let mut ds: Vec<i64> = rows.iter().take(left).skip(tray).map(|r| r.desk).collect();
-        ds.sort_unstable();
-        ds.dedup();
-        ds.len()
-    };
+    let left = agents(&rows);
+    let todo = rows.iter().filter(|r| r.shelf == "todo").count();
 
     // Routines that ran today and left nothing for the reader: one grey
     // line, so twenty quiet runs are not twenty rows and not nothing.
@@ -186,52 +197,166 @@ pub fn gather(conn: &Connection, now: i64) -> Result<OnYou> {
         params![now - OLDER_S],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    let (arrived_at, _, arrive_off) = home(conn)?;
-    let days_away = if arrived_at > 0 {
-        (now - arrived_at) / 86_400
-    } else {
-        0
-    };
     let mut oy = OnYou {
         sentence: String::new(),
         clauses: String::new(),
         rows,
         left,
         quiet,
-        tray,
-        more,
-        more_desks,
+        todo,
+        news_unseen: crate::news::unseen(conn, None, now)?,
+        news: crate::news::list(conn, None, now)?,
         ran_quiet: ran_quiet as usize,
         older: older as usize,
         older_desks: older_desks as usize,
-        days_away,
-        arrive_off,
     };
     oy.sentence = sentence(&oy, now);
     oy.clauses = clauses(&oy, now);
     Ok(oy)
 }
 
-/// The list in the tray's order (C4), and how many rows the tray shows:
-/// the newest `CARDS_FIRST` cards, newest first; then the rest of the list
-/// in rank, oldest first, every one of it in the tray; then the other cards,
-/// newest first; and the quiet cards last, newest first.
-fn ordered(mut rows: Vec<Row>) -> (Vec<Row>, usize) {
-    rows.sort_by_key(|r| (r.rank, r.at, r.desk));
-    let (cards, rest): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| r.kind == "card");
-    let (mut quiet, mut cards): (Vec<Row>, Vec<Row>) = cards.into_iter().partition(|r| r.quiet);
-    for v in [&mut cards, &mut quiet] {
-        v.sort_by_key(|r| (std::cmp::Reverse(r.at), r.desk));
+/// How many agents are stuck on the reader (1.66): Waiting's rows, quiet
+/// ones aside, one per panel that asked, per routine, per plan.
+pub fn agents(rows: &[Row]) -> usize {
+    let mut who: Vec<String> = rows
+        .iter()
+        .filter(|r| r.shelf == "waiting" && !r.quiet)
+        .map(|r| match (&r.turn, r.routine_id) {
+            (Some(t), _) if !t.pane.is_empty() => format!("p{}", t.pane),
+            (Some(t), _) => format!("t{}", t.id),
+            (None, id) if id != 0 => format!("r{id}"),
+            _ => format!("{}{}{}", r.kind, r.desk, r.doc),
+        })
+        .collect();
+    who.sort();
+    who.dedup();
+    who.len()
+}
+
+/// The shelves in order (1.66): Waiting, newest first; To do in rank and
+/// time; News's rows, newest first; and Waiting's quiet questions last.
+fn ordered(rows: Vec<Row>) -> Vec<Row> {
+    let (mut quiet, rest): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| r.quiet);
+    let shelf = |s: &str| -> Vec<Row> { rest.iter().filter(|r| r.shelf == s).cloned().collect() };
+    let mut waiting = shelf("waiting");
+    let mut todo = shelf("todo");
+    let mut news = shelf("news");
+    waiting.sort_by_key(|r| (std::cmp::Reverse(r.at), r.desk));
+    todo.sort_by_key(|r| (r.rank, r.at, r.desk));
+    news.sort_by_key(|r| (std::cmp::Reverse(r.at), r.desk));
+    quiet.sort_by_key(|r| (std::cmp::Reverse(r.at), r.desk));
+    waiting.extend(todo);
+    waiting.extend(news);
+    waiting.extend(quiet);
+    waiting
+}
+
+/// The shelf a card is on (1.66): a question is an agent stuck, a merge's
+/// tick is News, and every other card is a chore only the reader can do.
+pub fn shelf_of(kind: &str) -> &'static str {
+    match kind {
+        "decide" => "waiting",
+        "tell" => "news",
+        _ => "todo",
     }
-    let later = cards.split_off(CARDS_FIRST.min(cards.len()));
-    // The rest of the list is always in the tray; room it leaves is the
-    // later cards'.
-    let tray = TRAY_ROWS.max(cards.len() + rest.len());
-    cards.extend(rest);
-    cards.extend(later);
-    let tray = tray.min(cards.len());
-    cards.extend(quiet);
-    (cards, tray)
+}
+
+/// 1.66: a routine an agent made, waiting for Start; one an agent changed in
+/// what it may run, waiting for Allow; and one that cannot run. Each is an
+/// agent stuck on the reader, and each is one press.
+fn routine_waiting(
+    conn: &Connection,
+    desks: &HashMap<i64, String>,
+    rows: &mut Vec<Row>,
+) -> Result<()> {
+    let name = |id: i64| desks.get(&id).cloned().unwrap_or_default();
+    let all: Vec<i64> = conn
+        .prepare_cached(
+            "SELECT r.id FROM routines r JOIN desks d ON d.id = r.desk_id
+             WHERE r.removed_at = 0 AND d.closed_at = 0
+               AND ((r.suggested_by != '' AND r.started_at = 0)
+                    OR (r.started_at != 0 AND (r.pending != '' OR r.stuck != '')))
+             ORDER BY r.id",
+        )?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for id in all {
+        let Some(r) = crate::routine::get(conn, id)? else {
+            continue;
+        };
+        rows.push(routine_row(conn, &r, name(r.desk_id))?);
+    }
+    Ok(())
+}
+
+/// One routine's Waiting row: Start, Allow, or why it cannot run.
+fn routine_row(conn: &Connection, r: &crate::routine::Routine, desk_name: String) -> Result<Row> {
+    let times = crate::routine::times::times_of(conn, r.id)?;
+    let mut when: Vec<String> = crate::routine::times::lines(&times)
+        .iter()
+        .map(|l| {
+            if l.words.is_empty() {
+                l.every.clone()
+            } else {
+                format!("{} {}", l.every, l.words)
+            }
+        })
+        .collect();
+    if !r.watch.is_empty() {
+        when.push(if r.fast { "on watch, fast" } else { "on watch" }.into());
+    }
+    let mut may: Vec<String> = r.waits.iter().map(|w| format!("waits for you: {w}")).collect();
+    for (what, line) in [("watch", &r.watch), ("gate", &r.gate)] {
+        if !line.is_empty() {
+            may.push(format!("{what}: {line}"));
+        }
+    }
+    let (kind, text, at) = if r.started_at == 0 {
+        ("routine_start", format!("Start {}?", r.name), r.created_at)
+    } else if !r.stuck.is_empty() {
+        (
+            "routine_stuck",
+            format!("{} can't run: {}", r.name, r.stuck),
+            r.stuck_at,
+        )
+    } else {
+        let p: crate::routine::Pending = serde_json::from_str(&r.pending).unwrap_or_default();
+        let mut what: Vec<String> = Vec::new();
+        if let Some(w) = &p.waits {
+            what.push(format!(
+                "waits for you: {}",
+                if w.is_empty() { "nothing".into() } else { w.join(", ") }
+            ));
+        }
+        for (k, v) in [("watch", &p.watch), ("gate", &p.gate), ("shape", &p.shape)] {
+            if let Some(v) = v {
+                what.push(format!("{k}: {}", if v.is_empty() { "none" } else { v }));
+            }
+        }
+        may = what;
+        (
+            "routine_allow",
+            format!("{} wants to run more. Allow it?", r.name),
+            r.allowed_at.max(r.created_at),
+        )
+    };
+    Ok(Row {
+        kind,
+        shelf: "waiting",
+        rank: 3,
+        desk: r.desk_id,
+        desk_name,
+        text,
+        at,
+        routine: r.name.clone(),
+        routine_id: r.id,
+        by: r.suggested_by.clone(),
+        asked: r.asked.clone(),
+        tried: r.tried.clone(),
+        when: when.join("; "),
+        may,
+        ..Row::default()
+    })
 }
 
 /// Rank 1: the cards, a card of several questions as one row; rank 6, one
@@ -267,6 +392,7 @@ fn card_rows(
         let (doc, doc_title) = doc_titled(conn, &t.link);
         rows.push(Row {
             kind: "card",
+            shelf: shelf_of(&t.kind),
             rank: 1,
             desk: t.desk_id,
             desk_name: name(t.desk_id),
@@ -328,6 +454,7 @@ fn due_rows(
         let (doc, doc_title) = doc_titled(conn, &doc);
         rows.push(Row {
             kind: "due",
+            shelf: "todo",
             rank: 2,
             desk,
             desk_name: name(desk),
@@ -390,6 +517,7 @@ fn routine_rows(
         let (doc, doc_title) = doc_titled(conn, &about);
         rows.push(Row {
             kind: "routine",
+            shelf: "waiting",
             rank: 3,
             desk,
             desk_name: name(desk),
@@ -413,7 +541,6 @@ fn waiting_rows(
     conn: &Connection,
     now: i64,
     desks: &HashMap<i64, String>,
-    routine_desks: &[i64],
     rows: &mut Vec<Row>,
 ) -> Result<()> {
     let name = |id: i64| desks.get(&id).cloned().unwrap_or_default();
@@ -423,6 +550,7 @@ fn waiting_rows(
         if w.kind == "plan" {
             rows.push(Row {
                 kind: "plan",
+                shelf: "waiting",
                 rank: 4,
                 desk: w.desk,
                 desk_name: name(w.desk),
@@ -434,23 +562,9 @@ fn waiting_rows(
                 by: w.by,
                 ..Row::default()
             });
-        } else if !routine_desks.contains(&w.desk) {
-            let (doc, doc_title) = doc_titled(conn, &w.doc);
-            rows.push(Row {
-                kind: "left",
-                rank: 5,
-                desk: w.desk,
-                desk_name: name(w.desk),
-                text: w.text,
-                at: w.at,
-                no_doc: doc.is_empty(),
-                doc,
-                doc_title,
-                by: w.by,
-                go: true,
-                ..Row::default()
-            });
         }
+        // 1.66: a session's left-off is the desk's head, not On you: what
+        // only the reader can do is a hand-over, one door (plan e7fda1ca90).
     }
     let suggested: Vec<(i64, i64, String, i64, String, String)> = conn
         .prepare_cached(
@@ -474,6 +588,7 @@ fn waiting_rows(
         let (doc, doc_title) = doc_titled(conn, &doc);
         rows.push(Row {
             kind: "suggested",
+            shelf: "todo",
             rank: 4,
             desk,
             desk_name: name(desk),
@@ -522,22 +637,14 @@ fn title_of(conn: &Connection, doc: &str) -> String {
 /// a run card on bos_dog.* · *Four days away. Three things are on you.* ·
 /// *Nothing is on you.*
 pub fn sentence(oy: &OnYou, now: i64) -> String {
-    let away = match oy.days_away {
-        0 => String::new(),
-        1 => "A day away. ".to_string(),
-        n => format!("{} days away. ", cap(&count(n as usize))),
-    };
     let n = oy.left;
     let what = clauses(oy, now);
     match n {
-        0 => format!("{away}Nothing is on you."),
-        1 => format!("{away}One thing is on you: {what}."),
-        _ if what.is_empty() => format!("{away}{} things are on you.", cap(&count(n))),
-        _ => format!(
-            "{away}{} things are on you. {}.",
-            cap(&count(n)),
-            cap(&what)
-        ),
+        0 => "Nothing is waiting on you.".to_string(),
+        1 if what.is_empty() => "One agent is waiting on you.".to_string(),
+        1 => format!("One agent is waiting on you: {what}."),
+        _ if what.is_empty() => format!("{} agents are waiting on you.", cap(&count(n))),
+        _ => format!("{} agents are waiting on you, {what}.", cap(&count(n))),
     }
 }
 
@@ -545,50 +652,33 @@ pub fn sentence(oy: &OnYou, now: i64) -> String {
 /// where; for more, the routines' share and the first dated line. Home's
 /// box has the count in its head and says only this beside it (C2), so
 /// the number is said once.
-pub fn clauses(oy: &OnYou, now: i64) -> String {
+pub fn clauses(oy: &OnYou, _now: i64) -> String {
+    let waiting: Vec<&Row> = oy.rows.iter().filter(|r| r.shelf == "waiting" && !r.quiet).collect();
     if oy.left == 1 {
-        let r = &oy.rows[0];
+        let Some(r) = waiting.first() else { return String::new() };
         return match r.kind {
-            "card" => format!(
-                "a {} card on {}",
-                r.turn.as_ref().map_or("", |t| t.kind.as_str()),
-                r.desk_name
-            ),
-            "routine" => format!(
-                "{} on {}, from {}",
-                crate::thread::line(&r.text, 60),
-                r.desk_name,
-                r.routine
-            ),
-            "due" => format!(
-                "{} at {} on {}",
-                crate::thread::line(&r.text, 60),
-                hm(r.at),
-                r.desk_name
-            ),
+            "card" if r.turns.len() > 1 => format!("{} questions on {}", count(r.turns.len()), r.desk_name),
+            "card" => format!("a question on {}", r.desk_name),
+            "routine" => format!("{} on {}, from {}", crate::thread::line(&r.text, 60), r.desk_name, r.routine),
             "plan" => format!("a plan to approve on {}", r.desk_name),
-            "suggested" => format!("a line to keep on {}", r.desk_name),
+            "routine_start" => format!("start {} on {}", r.routine, r.desk_name),
+            "routine_allow" => format!("allow {}'s change on {}", r.routine, r.desk_name),
+            "routine_stuck" => format!("{} can't run, on {}", r.routine, r.desk_name),
             _ => format!("{} on {}", crate::thread::line(&r.text, 60), r.desk_name),
         };
     }
-    let mut clauses: Vec<String> = Vec::new();
-    let routines = oy.rows.iter().filter(|r| r.kind == "routine").count();
-    if routines > 0 {
-        let when = if hour(now) < 12 {
-            "this morning"
-        } else {
-            "today"
-        };
-        clauses.push(format!("{} from routines {when}", count(routines)));
+    // More than one: where, by desk, the first three.
+    let mut names: Vec<&str> = Vec::new();
+    for r in &waiting {
+        if !names.contains(&r.desk_name.as_str()) {
+            names.push(&r.desk_name);
+        }
     }
-    if let Some(due) = oy.rows.iter().find(|r| r.kind == "due") {
-        clauses.push(if due.at < now {
-            format!("one overdue since {}", hm(due.at))
-        } else {
-            format!("one at {}", hm(due.at))
-        });
+    match names.len() {
+        0 => String::new(),
+        1..=3 => format!("on {}", names.join(", ")),
+        n => format!("on {} and {} more desks", names[..2].join(", "), n - 2),
     }
-    clauses.join(", ")
 }
 
 /// A small count in words, as a sentence says it.
@@ -616,79 +706,8 @@ fn cap(s: &str) -> String {
     }
 }
 
-/// `10:00`, in the reader's time.
-fn hm(at: i64) -> String {
-    time::OffsetDateTime::from_unix_timestamp(at)
-        .map(|t| {
-            let t = t.to_offset(crate::due::offset());
-            format!("{:02}:{:02}", t.hour(), t.minute())
-        })
-        .unwrap_or_default()
-}
 
-fn hour(at: i64) -> u8 {
-    time::OffsetDateTime::from_unix_timestamp(at)
-        .map(|t| t.to_offset(crate::due::offset()).hour())
-        .unwrap_or(12)
-}
 
-/// The reader's date for a time, in their offset.
-fn local_date(at: i64) -> Option<time::Date> {
-    time::OffsetDateTime::from_unix_timestamp(at)
-        .ok()
-        .map(|t| t.to_offset(crate::due::offset()).date())
-}
-
-/// `(arrived_at, arrived_left, arrive_off)` from Home's one row.
-fn home(conn: &Connection) -> Result<(i64, usize, bool)> {
-    Ok(conn
-        .query_row(
-            "SELECT arrived_at, arrived_left, arrive_off FROM home_state WHERE id = 1",
-            [],
-            |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get::<_, i64>(1)? as usize,
-                    r.get::<_, i64>(2)? != 0,
-                ))
-            },
-        )
-        .optional()?
-        .unwrap_or((0, 0, false)))
-}
-
-/// A window came to the front (`events::focus`): does the tray open itself?
-/// Yes the first time in a day, and again when things became the reader's
-/// since it last did, an hour or more later -- with something to show. Never
-/// with the box's ⋯ off. The gather runs only once the date or the hour says
-/// it might, so the beacon stays cheap; the stamp moves on every such look,
-/// so at most one gather an hour comes of it.
-pub fn arrive(conn: &Connection, now: i64) -> Result<Option<OnYou>> {
-    let (at, left_was, off) = home(conn)?;
-    if off {
-        return Ok(None);
-    }
-    let fresh_day = at == 0 || local_date(now) != local_date(at);
-    if !fresh_day && now - at < ARRIVE_AGAIN_S {
-        return Ok(None);
-    }
-    let oy = gather(conn, now)?;
-    conn.execute(
-        "UPDATE home_state SET arrived_at = ?1, arrived_left = ?2 WHERE id = 1",
-        params![now, oy.left as i64],
-    )?;
-    let open = oy.left > 0 && (fresh_day || oy.left > left_was);
-    Ok(open.then_some(oy))
-}
-
-/// The box's ⋯: *Open On you when I arrive*, off or on.
-pub fn set_arrive_off(conn: &Connection, off: bool) -> Result<()> {
-    conn.execute(
-        "UPDATE home_state SET arrive_off = ?1 WHERE id = 1",
-        params![off as i64],
-    )?;
-    Ok(())
-}
 
 /// Tomorrow or Next week on a left-off's row: it is off the list until
 /// then, the sentence as it was. 0 brings it back (Undo).

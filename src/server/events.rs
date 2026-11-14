@@ -77,22 +77,10 @@ pub(crate) async fn focus(State(app): S, headers: HeaderMap, body: Bytes) -> Res
     if focused {
         *app.last_focus.lock().unwrap() = Instant::now();
     }
-    // In front and seen: the first time today, or an hour on with more
-    // become the reader's, On you's tray opens itself (1.54,
-    // `crate::onyou::arrive`). The answer says so; the page opens it. Only
-    // a page that names itself asks: a beacon from before 1.27 does not.
-    // And only to the window's page: a browser tab has no capability, cannot
-    // read the list, and would spend the day's arrival on an empty tray.
-    let open = focused
-        && named
-        && refuse_desk(&app, &headers, &HashMap::new()).is_none()
-        && b.visible.unwrap_or(focused)
-        && app
-            .store
-            .clocked(|c, now| crate::onyou::arrive(c, now))
-            .ok()
-            .flatten()
-            .is_some();
+    // 1.54's tray that opened itself on arrival is gone (1.66): the count of
+    // agents waiting is the one signal. A page that still asks is told no.
+    let open = false;
+    let _ = (named, &headers);
     Json(json!({ "open": open })).into_response()
 }
 

@@ -504,7 +504,22 @@ pub(crate) async fn pane_away(
     let who = format!("panel {}", placed.pane.slot);
     match app
         .store
-        .clocked(|c, now| thread::put_away(c, desk, b.turn, &who, &b.why, now))
+        .clocked(|c, now| {
+            let t = thread::put_away(c, desk, b.turn, &who, &b.why, now)?;
+            // 1.66: said in News, with Undo (`crate::news`): nothing an agent
+            // takes off the reader's lists goes silently.
+            if let Some(t) = &t {
+                let text = format!("{who} took back \"{}\": {}", crate::thread::line(&t.text, 90), b.why.trim());
+                let undo = json!({ "turn": t.id }).to_string();
+                crate::news::add(
+                    c,
+                    desk,
+                    &crate::news::New { kind: "took_back", text: &text, undo: &undo, by: &who, turn_id: t.id, ..Default::default() },
+                    now,
+                )?;
+            }
+            Ok(t)
+        })
     {
         Ok(Some(t)) => {
             threads_moved(&app, desk);
