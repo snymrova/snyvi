@@ -25,6 +25,13 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "later-clock"
+since = "1.66.0"
+title = "Later is a clock"
+line = "On you's rows ask when with a clock, not a close: Tomorrow, Next week, Already done or Not mine, the whole menu in view on the last row too. A card an agent put away sits under its own head, dimmed, with Bring back."
+small = "yes"
+
+[[feature]]
 id = "decisions"
 since = "1.65.0"
 title = "Decisions: every question an agent asked you, kept"

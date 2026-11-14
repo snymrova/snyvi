@@ -184,6 +184,9 @@ function trayHtml(d, f, esc) {
   // Gone quiet (C3): its panel was prompted since, so it may be done there.
   const quiet = hushed ? `<p class="oy-qh">Quiet · its panel was prompted since</p><ul class="dk-turn-list" data-part="desk.quiet">${hushed}</ul>` : "";
   const K = ctx.corner?.(), offers = K ? K.offersHtml() : "", lines = K?.linesHtml?.() || "";
+  // What an agent removed in the last day (#174), under a head of its own
+  // and dimmed (1.66): it sat in the list at a live row's weight, so a
+  // card closed by its merge read as one more thing to do. Bring back stays.
   const away = awayRows(f, esc);
   // This desk's own rest of On you (1.54): its dated line, routine's line,
   // plan and left-off. The other desks' are not here (1.56): the rail is
@@ -191,7 +194,7 @@ function trayHtml(d, f, esc) {
   // column and the Inbox pill's. 1.54 listed them under their own head.
   const here = K?.onyouHtml?.(false, d.id, "here") || "";
   const n = oyCounts(d, f), count = n.now + n.old;
-  const all = said + older + here + quiet + (away ? `<ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
+  const all = said + older + here + quiet + (away ? `<p class="oy-qh">Removed by agents · today</p><ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
     (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d);
   oy.empty = !all;
   const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +
@@ -265,6 +268,8 @@ function onYou(d) {
   const drew = drawIn(el, news + card + tray + pill);
   drawing = false;
   if (drew && was && !el.contains(document.activeElement)) el.querySelector(was)?.focus({ preventScroll: true });
+  // Later shown whole, not cut at the tray's foot (turn.js fitLater).
+  T?.fitLater?.(el);
   // What rang into an open tray is lit there a moment: the chime's line.
   if (oy.lit) { el.querySelector(`.oy-tray li${oy.lit}`)?.classList.add("oy-lit"); oy.lit = ""; }
   // The corner's toasts sit above it while it shows, not on it (toast.js,
@@ -475,6 +480,8 @@ const ONYOU_CSS = `
 .oy-tray .cn-list > li { opacity: .72; }
 .oy-tray .cn-list > li:is(:hover, :focus-within) { opacity: 1; }
 .oy-tray .dk-turn-list + .cn-list > li:first-child, .oy-tray .cn-list + .cn-list > li:first-child { border-top: 1px solid var(--rule); }
+.oy-away > li { opacity: .72; }
+.oy-away > li:hover, .oy-away > li:focus-within { opacity: 1; }
 .oy-away .cn-bl { white-space: normal; }
 .oy-away .cn-tl > .tn-opt { flex: none; }
 .oy .dk-note.gone { list-style: none; display: flex; align-items: center; gap: 6px; border: 1px dashed var(--rule-2); background: var(--bg-raise); }

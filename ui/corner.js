@@ -555,6 +555,8 @@ function redraw() {
   if (c.onDesk()) return c.deskRedraw?.();
   draw();
   c.homeRedraw?.();
+  // Home draws the same card and its Later in its own column.
+  if (L.tn.later) T?.fitLater?.(document.getElementById("main"));
 }
 
 /** The corner off a desk: the card or the tray, and the pill under them.
@@ -581,6 +583,8 @@ function draw() {
     el.innerHTML = el.$html = html;
     if (was) el.querySelector(was)?.focus({ preventScroll: true });
   }
+  // Later shown whole, not cut at the tray's foot (turn.js fitLater).
+  T?.fitLater?.(el);
   // The toasts sit above the corner while it shows (toast.js --oy-h).
   const top = el.getBoundingClientRect().top;
   lift(Math.max(0, Math.round(innerHeight - top - 20 + 8)));
@@ -758,7 +762,7 @@ function oyRow(r, all = false) {
 }
 
 /** A row's ✕: it opens the row's answers in place. */
-const oyX = (key, text) => `<button type="button" class="cn-rx" data-a="cn-oy-x" data-k="${c.esc(key)}" aria-expanded="${L.pop === key}" aria-label="Not now: ${c.esc(text)}" data-tip="Not now" data-tip-sub="Tomorrow, next week, or not this">${c.glyph("x", 10)}</button>`;
+const oyX = (key, text) => `<button type="button" class="cn-rx" data-a="cn-oy-x" data-k="${c.esc(key)}" aria-expanded="${L.pop === key}" aria-label="Later: ${c.esc(text)}" data-tip="Later" data-tip-sub="Tomorrow, next week, or not this">${c.glyph("clock", 10)}</button>`;
 
 /** The ✕'s answers, in the row: a dated line moves its date or leaves the
  *  view; anything else comes back tomorrow or next week, or is Not this,
