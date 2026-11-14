@@ -2491,5 +2491,6 @@ pub fn widget_heard(conn: &Connection, owner: i64, name: &str, live: &[String]) 
     Ok(pane.is_some() && !live.is_empty())
 }
 
+pub mod pr_turns;
 #[cfg(test)]
 mod tests;

@@ -1017,19 +1017,27 @@ struct Looked {
 async fn merges_unseen(app: Arc<App>, desk: i64) {
     static LOOKED: std::sync::Mutex<Vec<(i64, std::time::Instant)>> =
         std::sync::Mutex::new(Vec::new());
-    let Ok(open) = app.store.clocked(|c, _| thread::sweep_due(c, desk)) else {
+    let Ok((open, asks)) = app.store.clocked(|c, _| {
+        Ok((thread::sweep_due(c, desk)?, thread::pr_turns::unfollowed(c, desk)?))
+    }) else {
         return;
     };
-    let due: Vec<_> = {
+    // Threads by id, and (1.66, C4) merge hand-overs on a PR no thread
+    // follows by their turn's id below zero: each at most every MERGE_LOOK.
+    let (due, asks): (Vec<_>, Vec<_>) = {
         let mut looked = LOOKED.lock().unwrap_or_else(|e| e.into_inner());
         looked.retain(|(_, at)| at.elapsed() < MERGE_LOOK);
-        let due: Vec<_> = open
-            .into_iter()
-            .filter(|d| !looked.iter().any(|(l, _)| *l == d.id))
-            .collect();
-        looked.extend(due.iter().map(|d| (d.id, std::time::Instant::now())));
-        due
+        let seen = |k: i64| looked.iter().any(|(l, _)| *l == k);
+        let due: Vec<_> = open.into_iter().filter(|d| !seen(d.id)).collect();
+        let asks: Vec<_> = asks.into_iter().filter(|a| !seen(-a.0)).collect();
+        let now = std::time::Instant::now();
+        looked.extend(due.iter().map(|d| (d.id, now)));
+        looked.extend(asks.iter().map(|a| (-a.0, now)));
+        (due, asks)
     };
+    if !asks.is_empty() {
+        merges_asked(&app, desk, asks).await;
+    }
     if due.is_empty() {
         return;
     }
@@ -1048,6 +1056,42 @@ async fn merges_unseen(app: Arc<App>, desk: i64) {
         .unwrap_or(false);
     if moved {
         threads_moved(&app, desk);
+    }
+}
+
+/// 1.66 (C4): merge hand-overs whose PR no thread follows, asked of GitHub
+/// in the desk's folder; a merged one settles as a thread's merge would.
+async fn merges_asked(app: &Arc<App>, desk: i64, asks: Vec<(i64, String, String)>) {
+    let Ok(Some(d)) = app.store.desk(desk) else {
+        return;
+    };
+    let root = std::path::PathBuf::from(&d.root);
+    let merged = tokio::task::spawn_blocking(move || {
+        asks.into_iter()
+            .filter_map(|(id, n, link)| {
+                let pr = crate::gh::view(&root, &n)?;
+                (pr.state == "merged" && thread::pr_turns::same_pr(&link, &pr.url))
+                    .then_some((id, pr.merge))
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    if merged.is_empty() {
+        return;
+    }
+    let n = app
+        .store
+        .clocked(|c, now| {
+            let mut n = 0;
+            for (id, merge) in &merged {
+                n += usize::from(thread::pr_turns::merged(c, *id, merge, now)?);
+            }
+            Ok(n)
+        })
+        .unwrap_or(0);
+    if n > 0 {
+        threads_moved(app, desk);
     }
 }
 
