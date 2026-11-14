@@ -41,7 +41,8 @@ resources: `snyvi://skill/notes.md`.
 ## Build
 
 When `SNYVI_SESSION` is set you are in a panel of a desk: one project, its
-notes, its threads, the user's On you list.
+notes, its threads, and On you: the user's Waiting (agents stuck on them),
+To do (what only they can do) and News (what changed without their press).
 
 - `name_panel` when you take on a task; `start_thread` to file the work.
   Keep one thread on one branch: a commit on another is not counted for it.
@@ -58,35 +59,35 @@ notes, its threads, the user's On you list.
   merge to tick.
 - Dates, the user's checks, a reopened note, what a merge does:
   [notes.md](notes.md).
-- `leave_off` when a stretch ends: the next step first, then its condition, one line,
-  with `needs: you` only for what truly only the user can do (a payment, a
-  sign-in, a post from their account, a merge, a phone); a step you may do
-  with their permission is `needs: claude`, and their Go ahead in On you
-  says so. `time` when it waits on the world. A day of `you` puts it in On
-  you; a routine's line is there at once. Name its document with `about`, or
-  the command, or the line is not finished.
+- `leave_off` when a stretch ends: the next step first, then its condition,
+  one line. It is the desk's head, never On you: what only the user can do
+  is a `hand_over`. `needs` is whose the next step is (`you`, `claude`,
+  `time`). Name its document with `about`.
 
 ## Hand over and ask
 
-- `hand_over` is for what blocks you that only they can do: a command to run
-  (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
+- On you in four lines: **`ask`** a decision you are stuck on (Waiting; the
+  press comes back as your next message, so stop). **`hand_over`** what only
+  they can do and blocks you (To do, until Done): a merge, a key, a command
+  as `run`. **`settle`** when they answered or did it in the chat. Nothing
+  else puts anything on them.
 - Before you ask, `read_desk` with `sections: ["decisions"]` (and a `query`
   when you know the subject): a question answered, or dropped, is not asked
   again. A question about a document carries it as `about`, so the user
   finds the plan's decisions together.
-- Answered in the chat instead of in snyvi: `settle_asks` with `answers`,
-  each the question's id and what they said in their words. The desk keeps
-  it, and the next agent reads it.
+- Answered in the chat instead of in snyvi: `settle` with `answers`, each
+  the question's id and what they said in their words. The desk keeps it,
+  and the next agent reads it.
 - `read_desk` also says which checkout is live (worktrees, each against
   main), the threads with the resting ones, and the other panels. Read it
   when you start in a project you do not know, not at every step.
 - A merge hand-over carries the PR's page as its `link`: snyvi settles it
   itself when GitHub says that PR merged.
-- A hand-over ends when it is done, not when it is old. When the user says
-  in the chat they did one (the key is in, the build ran), `remove_card` it
-  with why; each prompt tells you yours still open, by id. A card you need
-  to say again, changed (a new command, a new step), goes with
-  `replaces: <its id>`, so the old one does not wait beside it.
+- A hand-over ends when it is done, never when it is old. When the user says
+  in the chat they did one (the key is in, the build ran), `settle` it with
+  its id and why; each prompt tells you yours still open, by id. Taking one
+  back is said in their News, with Undo. A card you need to say again,
+  changed, goes with `replaces: <its id>`.
 - The user's *Not this* on a row reaches you in the brief with their word:
   do not hand that thing to them again.
 - A friend on the list can be offered a document (`offer_document`) or a line
@@ -196,14 +197,10 @@ before writing a widget file.
 
 ## Routines
 
-A **routine** is a line that comes back: one of the project's or the user's
-slash commands or skills that snyvi runs on its own -- at the hours the
-user set, or when its watch sees something happen -- in a panel in the
-back. When the user asks for something to happen on its own, it is a
-routine, never cron, `/loop` or `/schedule`, which end with your session.
-Write the command first if it is new (`.claude/commands/<name>.md`, or a
-skill). You never start one; you write it and offer it (`offer_routine`),
-and only the user's Start makes it run. **Before you write a command, a gate
-or a watch a routine runs, read [routine.md](routine.md).** When the brief
-says this panel is a routine, you are that run: when it says it is a try,
-the user is watching.
+When the user wants something to happen on its own, it is a **routine**:
+one of the project's commands that snyvi runs at the hours given or when
+its watch sees something, never cron, `/loop` or `/schedule`. You write the
+command, try it once here and `offer_routine` it; the same command updates
+the one there is. Only the user's Start runs it. **Read
+[routine.md](routine.md) first: it is the recipe.** When the brief says
+this panel is a routine, you are that run.
