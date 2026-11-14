@@ -25,15 +25,14 @@ parked), and with parked the next step to pick it up by. Add a PR number or more
 work changes stage. Shipped, then told with url once the user posts it and says where: you never post, you \
 draft.";
 
-const ASK: &str = "Ask the user to decide, when you are stuck on it: a question, two to four short options, the \
-one you recommend; up to four at once as questions. It goes to their Waiting. Their press is typed into this \
-panel as your next message, so stop after asking unless other work does not depend on it. about: the document \
-it is asked under. At this panel, your own question tool.";
+const ASK: &str = "Ask the user to decide what you are stuck on: a question, two to four short options, the one \
+you recommend; up to four as questions. It goes to their Waiting; their press comes into this panel as your \
+next message, so stop after asking. about: the document it is under. At this panel, use your question tool.";
 
 const HAND_OVER: &str = "Hand the user what only they can do and blocks you: a PR to merge (its link), a key to add \
 (key: its name), a command you were blocked from (cmd, one line, or steps: their Run types it here and you get \
-its output), or anything else (pay, sign in, post). It goes to their To do and stays until they say Done or \
-Can't. One sentence. Never ask them to paste a command.";
+its output), or else (pay, sign in, post). It stays in their To do until Done or Can't. One sentence. Never \
+ask them to paste a command.";
 
 /// `hand_over`'s description is at its 350 (the test below), so a run in
 /// steps (#164) is explained on its own field, which the agent reads as well.

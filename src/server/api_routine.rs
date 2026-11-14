@@ -1135,10 +1135,10 @@ mod save_tests {
         assert!(t[2].gated, "ticked by the reader");
         assert!(
             times_ok(&body(
-                json!([{ "every": "every day 1 2 3 4" }, { "every": "every mon 1 2 3" }])
+                json!([{ "every": "every day 1 2 3 4 5 6" }, { "every": "every mon 1 2 3 4 5 6" }, { "every": "every sun 7" }])
             ))
             .is_err(),
-            "six at most"
+            "twelve at most"
         );
         assert!(times_ok(&body(json!([{ "every": "every fortnight" }]))).is_err());
         assert!(times_ok(&body(json!([{ "every": "every day", "words": "/rm" }]))).is_err());

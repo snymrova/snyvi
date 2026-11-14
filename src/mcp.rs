@@ -54,8 +54,8 @@ id as `about` and one line of what you will do as `say`; send_document's `notes`
 not a stage: that is tick_desk_note.";
 
 const LEAVE_OFF_DESCRIPTION: &str = "Say where the work on this desk stands, in one sentence of at most 200 characters, for the user or the next \
-agent here. Next step first, then its condition. Call it when a stretch of work ends, not after every step; \
-it replaces the one before; it is the desk's head, not a list. `needs`: `you` when the next step is the \
+agent here. Next step first, then its condition. Call it when a stretch of work ends, not each step; it \
+replaces the one before. `needs`: `you` when the next step is the \
 user's, `claude` for an agent's, `time` when it waits on the world. Something only they can do that blocks \
 you is a hand_over, not this. A line for the user names its document (`about`).";
 
@@ -80,11 +80,11 @@ grow.md; you never post.";
 /// `offer_routine` (1.53.1, audit 566d17f746 A3): a tool of its own, where
 /// it was the last clause of `suggest_desk_note`'s -- Claude picks a tool by
 /// its name, and "every morning" found cron, `/loop` or `/schedule` first.
-const ROUTINE_DESCRIPTION: &str = "Make or update a routine: a slash command or skill of this project that snyvi runs on its own, at the \
-hours in `when` or when its watch sees something. Use it whenever the user wants work done on a schedule; cron, \
-/loop and /schedule end with your session. First write the command, try it once in your panel, then call this \
-with what the user asked and what your try did. The same command updates its routine; never a second one. \
-Nothing runs until the user presses Start. The skill's routine.md is the recipe.";
+const ROUTINE_DESCRIPTION: &str = "Make or update a routine: a command of this project snyvi runs on its own, at the hours in \
+`when` or when its watch sees something. Use it whenever the user wants work on a schedule; cron, /loop and \
+/schedule end with your session. Write the command, try it once here, then call this with what the user asked \
+and what your try did. The same command updates its routine, never a second. Nothing runs until the user \
+presses Start. The skill's routine.md is the recipe.";
 const OFFER_DESCRIPTION: &str = "Offer to send one of the user's snyvi documents to one of their friends on snyvi, by the friend's name (the \
 desk brief lists them) and the document's id from send_document. Nothing is sent by this call: the user is \
 shown the offer, with your name on it, and presses Send or Not now. Offer only when the user asked for it to \
@@ -1691,7 +1691,10 @@ mod tests {
         }
         assert!(TOOLS.iter().any(|(n, _)| *n == "offer_routine"));
         let spec = routine_spec();
-        assert_eq!(spec["inputSchema"]["required"], json!(["command"]));
+        assert_eq!(
+            spec["inputSchema"]["required"],
+            json!(["command", "when", "asked", "tried"])
+        );
         assert_eq!(spec["inputSchema"]["additionalProperties"], false);
         assert!(suggest_spec()["inputSchema"]["properties"]
             .get("every")

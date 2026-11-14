@@ -350,6 +350,7 @@ mod tests {
             cwd: dir.path.clone(),
             dir: Some(scripts),
             keys: vec![("N".into(), "5304".into())],
+            state: dir.path.join("state"),
         };
         let said = run("gate.sh", &g, &[], Duration::from_secs(10)).await;
         assert_eq!(said, Said::Yes(vec!["tag 5304".into(), "tok=none".into()]));
