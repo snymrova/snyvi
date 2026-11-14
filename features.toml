@@ -25,6 +25,32 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "three-shelves"
+since = "1.66.0"
+title = "On you is Waiting, To do and News"
+line = "On you counts the agents waiting on you, not every line. Waiting is a question or a routine to start; To do is what only you can do, and it stays until you say Done; News is what changed without your press, with Undo where you can take it back."
+show = "home .hm-wait"
+
+[[feature]]
+id = "press-sends"
+since = "1.66.0"
+title = "Your answer goes when you press it"
+line = "An answer you give in snyvi is typed into the panel that asked if its Claude is at its prompt, and one still at work hears it as its turn ends. No Send now to remember."
+
+[[feature]]
+id = "routine-by-agent"
+since = "1.66.0"
+title = "Ask an agent for a routine"
+line = "Say what should happen on its own and an agent writes it, tries it once and offers it: you see what you asked, what its try did and when it runs, and press Start. Asked again, it changes the same routine; copies you had are one routine now, with every time they had."
+
+[[feature]]
+id = "routine-health"
+since = "1.66.0"
+title = "A routine says how it is"
+line = "Each routine shows whether it is fine, late, paused or stopped, and when it runs next. A routine that cannot run says why in Waiting instead of going quiet, and a reworded command runs on and shows the change in News."
+small = "yes"
+
+[[feature]]
 id = "later-clock"
 since = "1.66.0"
 title = "Later is a clock"
