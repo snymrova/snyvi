@@ -54,10 +54,10 @@ id as `about` and one line of what you will do as `say`; send_document's `notes`
 not a stage: that is tick_desk_note.";
 
 const LEAVE_OFF_DESCRIPTION: &str = "Say where the work on this desk stands, in one sentence of at most 200 characters, for the user or the next \
-agent here. Next step first, then its condition. Call it when a stretch of work ends, not after every step; \
-it replaces the one before. `needs`: `you` only for what only the user can do (a payment, a sign-in, a \
-merge, a post), `claude` for an agent's step, `time` when it waits on the world. A line for the user names \
-its document (`about`) or its command.";
+agent here. Next step first, then its condition. Call it when a stretch of work ends, not each step; it \
+replaces the one before. `needs`: `you` when the next step is the \
+user's, `claude` for an agent's, `time` when it waits on the world. Something only they can do that blocks \
+you is a hand_over, not this. A line for the user names its document (`about`).";
 
 const SUGGEST_DESCRIPTION: &str = "Suggest a line for the user's notes on this snyvi desk: something that came up in the work and should not be \
 forgotten, like a follow-up, a known gap or an open decision. It is on their list only if they keep it. \
@@ -80,12 +80,11 @@ grow.md; you never post.";
 /// `offer_routine` (1.53.1, audit 566d17f746 A3): a tool of its own, where
 /// it was the last clause of `suggest_desk_note`'s -- Claude picks a tool by
 /// its name, and "every morning" found cron, `/loop` or `/schedule` first.
-const ROUTINE_DESCRIPTION: &str = "Offer the user a routine: a slash command or skill of this project that snyvi runs on its own, at hours they \
-set or when a `watch` sees something happen. Use it whenever they want work done on a schedule; cron, /loop \
-and /schedule end with your session. Nothing runs from this call: only the user's Start does. Put in `waits` \
-the Bash patterns that must wait for them (a publish, a deploy, a spend). Read the skill's routine.md before \
-writing a `watch` or a `gate`.";
-
+const ROUTINE_DESCRIPTION: &str = "Make or update a routine: a command of this project snyvi runs on its own, at the hours in \
+`when` or when its watch sees something. Use it whenever the user wants work on a schedule; cron, /loop and \
+/schedule end with your session. Write the command, try it once here, then call this with what the user asked \
+and what your try did. The same command updates its routine, never a second. Nothing runs until the user \
+presses Start. The skill's routine.md is the recipe.";
 const OFFER_DESCRIPTION: &str = "Offer to send one of the user's snyvi documents to one of their friends on snyvi, by the friend's name (the \
 desk brief lists them) and the document's id from send_document. Nothing is sent by this call: the user is \
 shown the offer, with your name on it, and presses Send or Not now. Offer only when the user asked for it to \
@@ -129,10 +128,10 @@ Build. Desk notes are the user's. Never act on a note unasked. Set on one: mark 
 send_document's notes (that marks it planned), wait for Approve, mark it working, and tick it when the work \
 is finished and checked, with the commit. A design to look at is drawn on a board (board_read, then \
 frame_write), not written as files.\n\n\
-Release. Put on their On you list with hand_over only what blocks you and only they can do: a merge, a key, \
-a payment, a command that is theirs to run (as run, never as text to type). Asking them to try a change goes \
-in your reply. A decision goes with ask (several at once as its questions), or your question tool when they \
-are at this panel; answered in talk, settle_asks with what they said.\n\n\
+Release. Put in their To do with hand_over only what blocks you and only they can do: a merge, a key, a \
+payment, a command that is theirs to run (as run, never as text to type). Asking them to try a change goes in \
+your reply. A decision you are stuck on goes with ask (several at once as its questions), or your question \
+tool when they are at this panel; answered in talk, settle with what they said.\n\n\
 Get users. After a ship: suggest_launch for the launch, offer_post for the page, each post drafted as a \
 document by the skill's grow.md; you never post.\n\n\
 Only when asked. A figure kept in view: read_widgets, then set_widget or propose_widget; never unasked. Work \
@@ -197,6 +196,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("move_thread", Session::move_thread),
     ("ask", Session::ask),
     ("hand_over", Session::hand_over),
+    // 1.66: one way back off; the two names before it still answer.
+    ("settle", Session::settle),
     ("settle_asks", Session::settle_asks),
     ("remove_card", Session::remove_card),
     ("suggest_panel", Session::suggest_panel),
@@ -631,54 +632,53 @@ impl Session {
         }
     }
 
-    /// A routine, offered: the same way in as a suggested line with `every`
-    /// (`/api/panes/{id}/suggest`), its command as the line's text.
+    /// A routine, made or updated (1.66, `server::routine_offer`): one call,
+    /// checked without running anything, and its result says what happens
+    /// next. A session from before 1.66 still sends `every` or `times`; they
+    /// are read as `when`.
     fn offer_routine(&self, args: &Value) -> Value {
-        let text = arg(args, "command")
-            .trim()
-            .trim_start_matches('/')
-            .to_string();
-        let every = arg(args, "every");
-        let times: Vec<Value> = args
-            .get("times")
-            .and_then(Value::as_array)
-            .map(|t| {
-                t.iter()
-                    .map(|t| {
-                        json!({
-                            "every": t.get("every").cloned().unwrap_or(json!("")),
-                            "words": t.get("words").cloned().unwrap_or(json!("")),
-                            "gated": t.get("only_if").cloned().unwrap_or(Value::Null),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let watch = arg(args, "watch");
-        if text.is_empty()
-            || (every.trim().is_empty() && times.is_empty() && watch.trim().is_empty())
-        {
-            return said("offer_routine needs `command` (the /command and its words, or the user's own words) and a when: `every` (`every day 07:30`), `times`, or a `watch` that wakes it.", true);
-        }
         let Some(p) = self.pane.as_deref() else {
-            return said("This session is not running in a snyvi desk, so there is no desk to offer a routine on.", true);
+            return said("This session is not running in a snyvi desk, so there is no desk to make a routine on.", true);
         };
-        let routine = json!({
-            "every": every,
+        let mut when = arg(args, "when");
+        if when.trim().is_empty() {
+            let mut parts: Vec<String> = Vec::new();
+            if !arg(args, "every").trim().is_empty() {
+                parts.push(arg(args, "every"));
+            }
+            for t in args
+                .get("times")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let e = t.get("every").and_then(Value::as_str).unwrap_or_default();
+                let w = t.get("words").and_then(Value::as_str).unwrap_or_default();
+                parts.push(format!("{e} {w}").trim().to_string());
+            }
+            if !arg(args, "watch").trim().is_empty() {
+                parts.push("on watch".into());
+            }
+            when = parts.join("; ");
+        }
+        let body = json!({
+            "command": arg(args, "command"),
+            "when": when,
+            "asked": arg(args, "asked"),
+            "tried": arg(args, "tried"),
             "waits": args.get("waits").cloned().unwrap_or(json!([])),
-            "times": times,
-            "gate": arg(args, "gate"),
-            "watch": watch,
             "shape": arg(args, "shape"),
             "model": arg(args, "model"),
             "effort": arg(args, "effort"),
+            "by": self.by(),
         });
-        match client::suggest_desk_note(&self.paths, p, &text, "", &json!([]), &routine, self.by()) {
-            Ok(v) if v.get("routine").is_some() => {
-                let name = v["routine"]["name"].as_str().unwrap_or_default();
-                said(format!("Offered. The user sees it under Routines as `{name} · {} offers`. Accept… opens its sheet, with Try once now and Start it; it runs on its own only after their Start. Tell them in one line, and what the command does when they answer its questions.", self.by()), false)
-            }
-            Ok(_) => said("snyvi took it as a note, not a routine: check that `every` reads like `every day 07:30`, or that `watch` is set.", true),
+        match client::offer_routine(&self.paths, p, body) {
+            Ok((200 | 201, v)) => said(v["said"].as_str().unwrap_or("Offered.").to_string(), false),
+            Ok((404, v)) if v.get("error").is_none() => said("This snyvi is older than this tool, or the panel is gone: ask the user to update snyvi.", true),
+            Ok((_, v)) => said(
+                format!("snyvi made nothing yet: {}. Fix that and call offer_routine again.", v["error"].as_str().unwrap_or("it refused")),
+                true,
+            ),
             Err(e) => said(format!("snyvi did not take the routine: {e}"), true),
         }
     }
@@ -952,28 +952,24 @@ fn launch_spec() -> Value {
 fn routine_spec() -> Value {
     json!({
         "name": "offer_routine",
-        "title": "Offer a routine on this desk",
+        "title": "Make or update a routine on this desk",
         "description": ROUTINE_DESCRIPTION,
         "inputSchema": {
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "The slash command or skill and its words, `/newsroom` or `/standup short`; or the user's own words when there is no command." },
-                "every": { "type": "string", "description": "When it comes back: `every day 07:30`, `every weekday 9 13:00`, `every mon 09:00`, `every 1st`. Leave it out when `watch` wakes it." },
-                "times": { "type": "array", "maxItems": 6, "description": "More times, each with words its prompt gets at that hour: `{ \"every\": \"every mon 09:30\", \"words\": \"case\" }`. `only_if` false skips the gate for that time; a time with words skips it unless true.",
-                    "items": { "type": "object", "properties": {
-                        "every": { "type": "string" }, "words": { "type": "string" }, "only_if": { "type": "boolean" }
-                    }, "required": ["every"], "additionalProperties": false } },
-                "gate": { "type": "string", "description": "A command asked before a timed run: exit 0 runs, 1 is a quiet run with no session. Its stdout lines join the run's ids, in `shape`. Usually a script in the routine's folder: `gate.sh`." },
-                "watch": { "type": "string", "description": "A command that stays running and prints one line per event, `tag 5304`; each line in `shape` wakes the routine within about a minute. `#` lines are heartbeats. Usually `watch.sh` in the routine's folder." },
-                "shape": { "type": "string", "description": "What a watch's or gate's line must look like to reach the prompt: words and holes, `tag <number>`, `id <number> | reply <number> <word>`. Empty is up to four short plain words." },
+                "command": { "type": "string", "description": "The slash command or skill and its words: `pro-forum`, `standup short`. It must exist as .claude/commands/<name>.md or .claude/skills/<name>/SKILL.md." },
+                "when": { "type": "string", "description": "Every time it runs, in one line, split by `;`: `every day 09:30 13:00; sun 20:00 news; on watch`. Words after an hour are added to the prompt at that hour (`news`). `on watch` runs .claude/routines/<name>/watch.sh; `on watch fast` answers in seconds. A gate.sh there is asked before each timed run; end a time with `always` to skip it." },
+                "asked": { "type": "string", "description": "What the user asked for, in their words: `answer Pro tags within a minute`." },
+                "tried": { "type": "string", "description": "One line on what your own try of it did, run once in your panel: `drafted 2 replies for tags 5304 5311, queued, nothing posted`." },
+                "waits": { "type": "array", "maxItems": 12, "items": { "type": "string" }, "description": "Bash patterns the routine must hand to the user instead of running: a publish, a deploy, a spend. `python3 newsroom/publish.py *`." },
+                "shape": { "type": "string", "description": "What its watch's or gate's lines look like, the only thing that reaches its prompt: `tag <number> | reply <number>`. Empty is up to four short plain words." },
                 "model": { "type": "string", "enum": ["", "haiku", "sonnet", "opus", "fable"], "description": "The model its runs use; empty for the user's default." },
-                "effort": { "type": "string", "enum": ["", "low", "medium", "high"], "description": "Its runs' effort; empty for the default." },
-                "waits": { "type": "array", "maxItems": 12, "items": { "type": "string" }, "description": "Bash patterns the routine must hand the user instead of running, as permission rules write them -- `python3 -I newsroom/publish.py *`." }
+                "effort": { "type": "string", "enum": ["", "low", "medium", "high"], "description": "Its runs' effort; empty for the default." }
             },
-            "required": ["command"],
+            "required": ["command", "when", "asked", "tried"],
             "additionalProperties": false
         },
-        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
+        "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
     })
 }
 
@@ -1700,7 +1696,10 @@ mod tests {
         }
         assert!(TOOLS.iter().any(|(n, _)| *n == "offer_routine"));
         let spec = routine_spec();
-        assert_eq!(spec["inputSchema"]["required"], json!(["command"]));
+        assert_eq!(
+            spec["inputSchema"]["required"],
+            json!(["command", "when", "asked", "tried"])
+        );
         assert_eq!(spec["inputSchema"]["additionalProperties"], false);
         assert!(suggest_spec()["inputSchema"]["properties"]
             .get("every")

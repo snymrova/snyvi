@@ -3993,14 +3993,13 @@ async function panelRows(cdp, base, token) {
     const one = await (await agent("ask", { text: "bench: $(echo never typed)?", options: ["Yes", "No"], by: "bench-agent" })).json().catch(() => ({}));
     const oneId = one.turn?.id;
     const oneUp = !!oneId && await until(`!!document.querySelector('#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]')`, 60);
-    if (oneUp) await q.clickOn(`#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]`);
-    const sendUp = oneUp && await until(`!!document.querySelector('#onyou [data-a="tn-send"][data-w="${oneId}"]')`, 30);
+    // 1.66: the press is the send -- Yes types the answer, no Send now.
     await q.ev(`window.__typed = []; 1`);
-    if (sendUp) await q.clickOn(`#onyou [data-a="tn-send"][data-w="${oneId}"]`);
-    const sentTyped = sendUp && await until(`window.__typed.length >= 2`, 30) ? await q.ev("window.__typed") : [];
+    if (oneUp) await q.clickOn(`#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]`);
+    const sentTyped = oneUp && await until(`window.__typed.length >= 2`, 30) ? await q.ev("window.__typed") : [];
     const said1 = (sentTyped[0] || "").replace("\u001b[200~", "").replace("\u001b[201~", "");
-    rows.push(["Send now types only the reader's answer, into a Claude", said1 === "Answered in snyvi: Yes" && sentTyped[1] === "\r",
-      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : !sendUp ? "no Send now with a Claude at its prompt" : `typed ${JSON.stringify(sentTyped)}`]);
+    rows.push(["Yes types only the reader's answer, into a Claude at its prompt", said1 === "Answered in snyvi: Yes" && sentTyped[1] === "\r",
+      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : `typed ${JSON.stringify(sentTyped)}`]);
     rmSync(paste, { force: true });
 
     // U1, U2: the corner is the rail's column, over no panel, and above the

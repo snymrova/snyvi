@@ -187,6 +187,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: GalleryCmd,
     },
+    /// A routine from a script or a service: `snyvi routine wake pro-forum "tag 5304"` wakes it as its watch would.
+    Routine {
+        #[command(subcommand)]
+        cmd: RoutineCmd,
+    },
     /// Show daemon status.
     Status,
     /// Say hello: the face, the version and the address. Not in the help; for whoever thought to ask.
@@ -300,6 +305,20 @@ enum WidgetCmd {
 }
 
 #[derive(Subcommand)]
+enum RoutineCmd {
+    /// Wake a routine with one line, as its watch would: the line must be in the routine's shape, and runs in its batch. The routine is found by its command on the desk of the folder you are in, or by --desk.
+    Wake {
+        /// The routine's command: `pro-forum`.
+        name: String,
+        /// One line in its shape: `tag 5304`.
+        line: String,
+        /// On this desk, by its id, from anywhere.
+        #[arg(long)]
+        desk: Option<i64>,
+    },
+}
+
+#[derive(Subcommand)]
 enum UpdateCmd {
     /// Say whether a newer version is out, and stop. Exit 10 when one is, 0 on the latest, 1 when the check failed.
     Check,
@@ -307,6 +326,14 @@ enum UpdateCmd {
     On,
     /// Automatic updates off. `snyvi update` still works when you ask.
     Off,
+}
+
+/// `snyvi routine wake`: one line to a routine, as its watch would say it.
+fn routine_cmd(paths: &config::Paths, cmd: RoutineCmd) -> Result<()> {
+    let RoutineCmd::Wake { name, line, desk } = cmd;
+    let cwd = project_dir(None).unwrap_or_default();
+    println!("{}", client::routine_wake(paths, &name, &line, desk, &cwd)?);
+    Ok(())
 }
 
 pub(crate) fn run() -> Result<()> {
@@ -417,6 +444,7 @@ pub(crate) fn run() -> Result<()> {
         Cmd::Key { name } => print_key(&paths, &name),
         Cmd::Widget { cmd } => widget_cmd(&paths, cmd),
         Cmd::Gallery { cmd } => gallery_cmd(&paths, cmd),
+        Cmd::Routine { cmd } => routine_cmd(&paths, cmd),
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),

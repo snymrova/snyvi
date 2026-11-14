@@ -176,6 +176,16 @@ const OLD_1_47: &str =
      ALTER TABLE threads DROP COLUMN told_how; ALTER TABLE threads DROP COLUMN ask_told_at;
      DROP TABLE home_state; ALTER TABLE desks DROP COLUMN rule_asked_at;";
 
+/// 1.66's step, taken back (step 40, `news::SCHEMA_1_66` and
+/// `routine::YOU_COLUMNS_1_66`): News, a turn's seen stamp, a routine's two
+/// hashes, its ask and try, what waits for Allow, its pace, fold and stop.
+const OLD_1_66: &str = "DROP TABLE news; ALTER TABLE turns DROP COLUMN seen_at;
+  ALTER TABLE routines DROP COLUMN may_hash; ALTER TABLE routines DROP COLUMN words_hash;
+  ALTER TABLE routines DROP COLUMN words_text; ALTER TABLE routines DROP COLUMN asked;
+  ALTER TABLE routines DROP COLUMN tried; ALTER TABLE routines DROP COLUMN pending;
+  ALTER TABLE routines DROP COLUMN fast; ALTER TABLE routines DROP COLUMN merged_into;
+  ALTER TABLE routines DROP COLUMN stuck; ALTER TABLE routines DROP COLUMN stuck_at;";
+
 /// 1.64's step, taken back (step 39, `thread::ASKED_COLUMN_1_64`): how many
 /// times a question was asked.
 const OLD_1_64: &str = "ALTER TABLE turns DROP COLUMN asked;";
@@ -1112,7 +1122,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_66} {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1401,7 +1411,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_66} {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1936,7 +1946,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_66} {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} {OLD_1_45} {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1979,7 +1989,7 @@ fn a_1_46_1_database_keeps_its_panel_names() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
+        "{OLD_1_66} {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} {OLD_1_54} {OLD_1_53} {OLD_1_49_BACK} {OLD_1_48} {OLD_1_47} {OLD_1_46_2} {OLD_1_46_1} UPDATE panes SET name = 'auth refactor'; PRAGMA user_version = 26;"
     ))
     .unwrap();
     drop(conn);
@@ -2040,7 +2050,7 @@ fn a_1_56_database_opens_with_no_tabs_and_its_first_tab_moves_nothing() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} PRAGMA user_version = 34;"
+        "{OLD_1_66} {OLD_1_64} {OLD_1_63} {OLD_1_62} {OLD_1_58} {OLD_1_57} PRAGMA user_version = 34;"
     ))
     .unwrap();
     drop(conn);
@@ -2194,8 +2204,10 @@ fn a_1_62_routine_opens_with_its_one_hour_as_its_one_time() {
             .id
     };
     let conn = Connection::open(&paths.db_path).unwrap();
-    conn.execute_batch(&format!("{OLD_1_64} {OLD_1_63} PRAGMA user_version = 37;"))
-        .unwrap();
+    conn.execute_batch(&format!(
+        "{OLD_1_66} {OLD_1_64} {OLD_1_63} PRAGMA user_version = 37;"
+    ))
+    .unwrap();
     conn.execute(
         "INSERT INTO routines(desk_id, name, cmd, every, due_at, created_at, started_at)
          VALUES(?1, 'news', 'news', 'every day 07:30', 1800000000, 1, 1)",
@@ -2221,5 +2233,115 @@ fn a_1_62_routine_opens_with_its_one_hour_as_its_one_time() {
             t[0].due_at
         ),
         ("every day 07:30", "", true, 1_800_000_000)
+    );
+}
+
+/// A 1.65 database with two live copies of one command (blog-next #3/#4 on
+/// the maker's desk) opens as one routine (step 40): the newest keeps
+/// every time either had and the waiting lines, the older is put away with
+/// where it went, and News says so once. Nothing is deleted.
+#[test]
+fn a_1_65_database_folds_its_copies_of_a_routine_into_one() {
+    let dir = crate::store::tempdir::Dir::new("snyvi-fold-1-66");
+    let paths = crate::config::Paths {
+        data_dir: dir.path.clone(),
+        config_dir: dir.path.clone(),
+        docs_dir: dir.path.join("docs"),
+        db_path: dir.path.join("t.db"),
+        token_path: dir.path.join("token"),
+    };
+    let desk = {
+        let s = Store::open(&paths).unwrap();
+        s.create_desk(dir.path.to_str().unwrap(), Some("blog"))
+            .unwrap()
+            .id
+    };
+    let conn = Connection::open(&paths.db_path).unwrap();
+    conn.execute_batch(&format!("{OLD_1_66} PRAGMA user_version = 39;"))
+        .unwrap();
+    let mut ids = Vec::new();
+    for (every, due) in [
+        ("every day 07:30", 1_800_000_000_i64),
+        ("every sun 21:30", 1_800_100_000),
+    ] {
+        conn.execute(
+            "INSERT INTO routines(desk_id, name, cmd, every, due_at, created_at, started_at)
+             VALUES(?1, 'blog-next', 'blog-next', ?2, ?3, 1, 1)",
+            params![desk, every, due],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO routine_times(routine_id, every, due_at) VALUES(?1, ?2, ?3)",
+            params![id, every, due],
+        )
+        .unwrap();
+        ids.push(id);
+    }
+    // One a reader has not started is not a copy: it stays as it is.
+    conn.execute(
+        "INSERT INTO routines(desk_id, name, cmd, every, due_at, created_at, started_at, suggested_by)
+         VALUES(?1, 'blog-next', 'blog-next', 'every day 09:00', 0, 1, 0, 'claude-code')",
+        [desk],
+    )
+    .unwrap();
+    let offer = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO routine_events(routine_id, line, at) VALUES(?1, 'PR 9 merged', 5)",
+        [ids[0]],
+    )
+    .unwrap();
+    drop(conn);
+
+    let s = Store::open(&paths).unwrap();
+    let conn = s.conn.lock().unwrap();
+    let (old, keep) = (ids[0], ids[1]);
+    let (removed, into): (i64, i64) = conn
+        .query_row(
+            "SELECT removed_at, merged_into FROM routines WHERE id = ?1",
+            [old],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert!(removed > 0);
+    assert_eq!(into, keep);
+    let mut times: Vec<String> = crate::routine::times::times_of(&conn, keep)
+        .unwrap()
+        .into_iter()
+        .map(|t| t.every)
+        .collect();
+    times.sort();
+    assert_eq!(times, ["every day 07:30", "every sun 21:30"]);
+    let due: i64 = conn
+        .query_row("SELECT due_at FROM routines WHERE id = ?1", [keep], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(due, 1_800_000_000, "the soonest of its times");
+    let moved: i64 = conn
+        .query_row("SELECT routine_id FROM routine_events", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(moved, keep);
+    let offered: i64 = conn
+        .query_row(
+            "SELECT removed_at FROM routines WHERE id = ?1",
+            [offer],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(offered, 0);
+    let news: Vec<(String, i64)> = conn
+        .prepare("SELECT text, routine_id FROM news WHERE kind = 'folded'")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        news,
+        [(
+            "blog-next: 2 copies are one routine now, with every time they had".to_string(),
+            keep
+        )]
     );
 }

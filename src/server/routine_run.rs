@@ -162,6 +162,119 @@ pub(crate) fn changed(app: &App, desk: i64) {
     emit(app, "desknotes", json!({ "desk": desk, "routines": true }));
 }
 
+/// A line in `daemon.log` with its time (1.66): a watch's start, exit,
+/// restart and stop, and a routine stuck or reworded. The watch that
+/// stopped silently (bug 0f204f3135) left nothing to read back.
+pub(crate) fn log(what: &str) {
+    let t = time::OffsetDateTime::now_utc().to_offset(crate::due::offset());
+    eprintln!(
+        "{}-{:02}-{:02} {:02}:{:02}:{:02} snyvi: {what}",
+        t.year(),
+        u8::from(t.month()),
+        t.day(),
+        t.hour(),
+        t.minute(),
+        t.second()
+    );
+}
+
+/// A routine cannot run, and why (1.66): said once, loudly -- a row in
+/// Waiting (`onyou`), the rail redrawn, a log line. Its events stay
+/// waiting (`run_id 0`) and run on the reader's Allow.
+pub(crate) fn stuck(app: &App, r: &Routine, why: &str) {
+    let news = app
+        .store
+        .clocked(|c, now| routine::stuck(c, r.id, why, now))
+        .unwrap_or(false);
+    if news {
+        log(&format!("routine {} ({}) cannot run: {why}", r.id, r.name));
+        changed(app, r.desk_id);
+        super::api_thread::threads_moved(app, r.desk_id);
+    }
+}
+
+/// A reason a run cannot start that waits for the reader: its file, and
+/// nothing a minute will mend (a run under way, a limit, a parked desk).
+pub(crate) fn stuck_kind(no: &str) -> bool {
+    no.starts_with("changed") || no.contains(" is gone") || no.starts_with("two /")
+}
+
+/// A routine's file as it stands (1.66), with what that settles. A pre-1.66
+/// routine whose file is as it was allowed gets its two hashes; one whose
+/// words alone changed keeps them as allowed, says so in News with the
+/// diff, and runs on. What is left -- `changed` (what it may run), `gone`,
+/// `two`, `new` -- blocks; `ok` and `words` do not. A file that is back as
+/// allowed takes the routine out of Waiting.
+pub(crate) async fn file_now(app: &App, r: &Routine, root: &std::path::Path) -> &'static str {
+    let (root, rr) = (root.to_path_buf(), r.clone());
+    let (state, split) = tokio::task::spawn_blocking(move || {
+        let st = routine::file_state(&root, &rr);
+        let split = if (st == "ok" && rr.may_hash.is_empty()) || st == "reworded" {
+            routine::split_now(&root, &rr)
+        } else {
+            None
+        };
+        (st, split)
+    })
+    .await
+    .unwrap_or(("gone", None));
+    let state = match (state, split) {
+        ("ok", Some((h, s))) => {
+            let _ = app
+                .store
+                .clocked(|c, _| routine::set_split(c, r.id, &h, &s));
+            "ok"
+        }
+        ("reworded", Some((h, s))) => {
+            let said = app.store.clocked(|c, now| {
+                let Some(was) = routine::reworded(c, r.id, &h, &s)? else {
+                    return Ok(false);
+                };
+                let detail = crate::news::diff(&was, &s.text, 40);
+                let text = format!(
+                    "{}'s command was reworded. It runs on with the new words.",
+                    r.name
+                );
+                crate::news::add(
+                    c,
+                    r.desk_id,
+                    &crate::news::New {
+                        kind: "reworded",
+                        text: &text,
+                        detail: &detail,
+                        routine_id: r.id,
+                        ..Default::default()
+                    },
+                    now,
+                )?;
+                Ok(true)
+            });
+            if matches!(said, Ok(true)) {
+                log(&format!(
+                    "routine {} ({}): its command was reworded, runs on",
+                    r.id, r.name
+                ));
+                changed(app, r.desk_id);
+                super::api_thread::threads_moved(app, r.desk_id);
+            }
+            "ok"
+        }
+        ("reworded", None) => "gone",
+        (s, _) => s,
+    };
+    if matches!(state, "ok" | "words")
+        && r.stuck.starts_with("changed")
+        && app
+            .store
+            .clocked(|c, _| routine::unstuck(c, r.id))
+            .unwrap_or(false)
+    {
+        changed(app, r.desk_id);
+        super::api_thread::threads_moved(app, r.desk_id);
+    }
+    state
+}
+
 /// Raise one card on the reader's On you list about a routine: a watch that
 /// gave up, failed gates, a run that did not start.
 pub(crate) fn card(app: &App, r: &Routine, text: &str) {
@@ -259,10 +372,7 @@ async fn blocked(app: &App, r: &Routine, desk: &crate::desk::Desk, why: &str) ->
     }
     if !r.words() {
         let root = std::path::PathBuf::from(&desk.root);
-        let rr = r.clone();
-        let state = tokio::task::spawn_blocking(move || routine::file_state(&root, &rr))
-            .await
-            .unwrap_or("gone");
+        let state = file_now(app, r, &root).await;
         match state {
             "gone" => {
                 return Some(format!(
@@ -454,6 +564,10 @@ async fn start_with(
         Some(_) => blocked(app, &r, &desk, why).await,
     };
     if let Some(no) = no {
+        // 1.66: what only the reader can fix is said once, in Waiting.
+        if (why == "clock" || why == "event") && stuck_kind(&no) {
+            stuck(app, &r, &no);
+        }
         // Run now refused is said where it was clicked; an hour passed by
         // is kept on the row and in the history.
         if why == "event" {
@@ -626,6 +740,18 @@ async fn start_now(
     let settings = settings_file(&app.paths.data_dir, r, dirs::home_dir().as_deref())?;
     let mut env = super::api_desk::pane_env(app, &placed).await.env;
     env.push(("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE".into(), "85".into()));
+    // 1.66: its own state folder, as its watch and gate have it.
+    let root = std::path::PathBuf::from(&desk.root);
+    let rr = r.clone();
+    let scripts = tokio::task::spawn_blocking(move || {
+        routine::places::from_file(&root, &rr.file)
+            .and_then(|p| routine::places::scripts(&p, &rr.cmd))
+    })
+    .await
+    .ok()
+    .flatten();
+    let state = super::routine_gate::state_dir(&app.paths.data_dir, r, scripts.as_deref());
+    env.push(("SNYVI_STATE".into(), state.to_string_lossy().into_owned()));
     process(app, &placed, "claude", &args_of(&settings, begin, r), &env).await
 }
 
@@ -903,7 +1029,7 @@ fn event_run(app: &Arc<App>, r: &Routine, now: i64) {
     }
     let ready = app
         .store
-        .clocked(|c, now| events::ready(c, r.id, now))
+        .clocked(|c, now| events::ready(c, r.id, r.fast, now))
         .unwrap_or(false);
     if !ready || (!r.pane.is_empty() && app.panes.status(&r.pane).agent == "working") {
         return;

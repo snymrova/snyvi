@@ -247,24 +247,49 @@ async fn look(app: &Arc<App>) {
     for (r, desk) in want {
         // Its file as allowed, checked every half a minute: a changed
         // script stops the watch until the reader allows it again.
+        //
+        // 1.66: only what it may run stops it (`routine::file_state`); its
+        // words reworded run on, said in News (`routine_run::file_now`). A
+        // stop is loud: the routine goes to Waiting once, the rail redraws,
+        // and its lines wait as events for the reader's Allow. It stopped
+        // with only "changed · Allow" in memory before, and the row read
+        // as done (bug 0f204f3135).
         let check = live(r.id).is_none_or(|l| now - l.checked_at >= CHECK_S);
         if check && !r.words() {
             let root = std::path::PathBuf::from(&desk.root);
-            let rr = r.clone();
-            let state = tokio::task::spawn_blocking(move || routine::file_state(&root, &rr))
-                .await
-                .unwrap_or("gone");
-            let mut m = LIVE.lock().unwrap();
-            let l = m.entry(r.id).or_default();
-            l.checked_at = now;
-            l.changed = state != "ok";
-            if l.changed {
-                stop(l);
-                l.said = "changed · Allow".into();
+            let state = super::routine_run::file_now(app, &r, &root).await;
+            let blocked = !matches!(state, "ok" | "words");
+            let why = match state {
+                "gone" => format!("/{} is gone: no command or skill by that name", r.cmd),
+                "two" => format!("two /{}: rename one", r.cmd),
+                _ => "changed · Allow".to_string(),
+            };
+            let newly = {
+                let mut m = LIVE.lock().unwrap();
+                let l = m.entry(r.id).or_default();
+                l.checked_at = now;
+                let was = l.changed;
+                l.changed = blocked;
+                if blocked {
+                    if l.watching {
+                        super::routine_run::log(&format!(
+                            "watch of routine {} ({}) stopped: {why}",
+                            r.id, r.name
+                        ));
+                    }
+                    stop(l);
+                    l.said = why.clone();
+                } else if was {
+                    l.said.clear();
+                }
+                blocked && !was
+            };
+            if blocked {
+                if newly {
+                    super::routine_run::changed(app, r.desk_id);
+                }
+                super::routine_run::stuck(app, &r, &why);
                 continue;
-            }
-            if l.said == "changed · Allow" {
-                l.said.clear();
             }
         }
         let start = {
@@ -301,6 +326,10 @@ async fn begin(app: &Arc<App>, r: &Routine, desk: &crate::desk::Desk) {
         }
     };
     let pid = child.id();
+    super::routine_run::log(&format!(
+        "watch of routine {} ({}) started: {}",
+        r.id, r.name, r.watch
+    ));
     if let Some(pid) = pid {
         let f = pidfile(app, r.id);
         if let Some(d) = f.parent() {
@@ -378,6 +407,10 @@ fn backoff(n: usize) -> i64 {
 /// The watch ended on its own: backed off, or stopped for good with one card.
 fn exited(app: &App, r: &Routine, why: &str) {
     let now = crate::store::now();
+    super::routine_run::log(&format!(
+        "watch of routine {} ({}) exited: {why}",
+        r.id, r.name
+    ));
     let _ = std::fs::remove_file(pidfile(app, r.id));
     let gave_up = {
         let Ok(mut m) = LIVE.lock() else { return };
@@ -398,13 +431,11 @@ fn exited(app: &App, r: &Routine, why: &str) {
         gave_up
     };
     if gave_up {
-        super::routine_run::card(
+        // 1.66: a Waiting row of the routine's own, not a card on no panel.
+        super::routine_run::stuck(
             app,
             r,
-            &format!(
-                "The watch of routine \"{}\" stopped after {GIVE_UP} exits in ten minutes: {why}. Save its sheet to try again.",
-                r.name
-            ),
+            &format!("its watch stopped after {GIVE_UP} exits in ten minutes: {why}"),
         );
     }
     super::routine_run::changed(app, r.desk_id);

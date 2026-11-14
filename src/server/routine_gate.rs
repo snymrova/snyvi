@@ -34,6 +34,35 @@ pub(crate) struct Ground {
     /// The scripts folder, first on PATH (`places::scripts`).
     pub dir: Option<PathBuf>,
     pub keys: Vec<(String, String)>,
+    /// 1.66: `SNYVI_STATE`, the routine's own folder for what its scripts
+    /// remember (`state_dir`).
+    pub state: PathBuf,
+}
+
+/// A routine's own state folder (1.66): `<data>/routines/<id>/state`, made
+/// when first asked for. Two routines on one scripts folder shared its
+/// `state/` -- `pro-forum` #22 and #23 wrote one cursor file -- so each has
+/// its own now, passed as `SNYVI_STATE` to its watch, gate and runs. The
+/// first time, what the shared `state/` held is copied in, so a cursor is
+/// not lost: the scripts read the new folder from then on.
+pub(crate) fn state_dir(data_dir: &Path, r: &Routine, scripts: Option<&Path>) -> PathBuf {
+    let d = data_dir
+        .join("routines")
+        .join(r.id.to_string())
+        .join("state");
+    if !d.is_dir() {
+        let _ = std::fs::create_dir_all(&d);
+        if let Some(old) = scripts.map(|s| s.join(places::STATE)) {
+            if let Ok(rd) = std::fs::read_dir(&old) {
+                for e in rd.flatten() {
+                    if e.file_type().is_ok_and(|t| t.is_file()) {
+                        let _ = std::fs::copy(e.path(), d.join(e.file_name()));
+                    }
+                }
+            }
+        }
+    }
+    d
 }
 
 /// The routine's command place, as it was allowed.
@@ -75,8 +104,10 @@ pub(crate) async fn ground(app: &App, r: &Routine, desk: &crate::desk::Desk) -> 
             .await
             .unwrap_or_default()
     };
+    let state = state_dir(&app.paths.data_dir, r, dir.as_deref());
     Ground {
         cwd: PathBuf::from(&desk.root),
+        state,
         dir,
         keys,
     }
@@ -137,6 +168,7 @@ pub(crate) fn command(line: &str, g: &Ground, extra: &[(&str, String)]) -> tokio
     if let Some(d) = &g.dir {
         cmd.env("SNYVI_ROUTINE_DIR", d);
     }
+    cmd.env("SNYVI_STATE", &g.state);
     for (k, v) in &g.keys {
         cmd.env(k, v);
     }
@@ -321,6 +353,7 @@ mod tests {
             cwd: dir.path.clone(),
             dir: Some(scripts),
             keys: vec![("N".into(), "5304".into())],
+            state: dir.path.join("state"),
         };
         let said = run("gate.sh", &g, &[], Duration::from_secs(10)).await;
         assert_eq!(said, Said::Yes(vec!["tag 5304".into(), "tok=none".into()]));

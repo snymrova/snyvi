@@ -141,6 +141,13 @@ pub(crate) async fn doc_blob(State(app): S, Path(id): Path<String>, req: HeaderM
             .first_or_octet_stream()
             .to_string()
     };
+    let src = app.store.src_path(&id);
+    // Text is read once more only to see whether it is UTF-8 (#233).
+    let mime = if is_text(&mime) {
+        with_charset(mime, &tokio::fs::read(&src).await.unwrap_or_default())
+    } else {
+        mime
+    };
     let mut headers = HeaderMap::new();
     if let Ok(v) = HeaderValue::from_str(&mime) {
         headers.insert(header::CONTENT_TYPE, v);
@@ -151,7 +158,33 @@ pub(crate) async fn doc_blob(State(app): S, Path(id): Path<String>, req: HeaderM
         HeaderValue::from_static("private, max-age=31536000"),
     );
     protect(&mut headers, &ext);
-    serve_file(&app.store.src_path(&id), headers, &req).await
+    serve_file(&src, headers, &req).await
+}
+
+/// A type whose bytes are text, so a character set applies to it.
+fn is_text(mime: &str) -> bool {
+    mime.starts_with("text/")
+        || matches!(
+            mime,
+            "application/javascript"
+                | "application/json"
+                | "application/xml"
+                | "application/xhtml+xml"
+                | "image/svg+xml"
+        )
+}
+
+/// A text document is said as UTF-8 when its bytes are (#233). Without a
+/// charset a browser reads `text/html` as windows-1252, so a board frame's
+/// `·` `✕` `◷` came out as mojibake. Bytes that are not UTF-8 (a Latin-1
+/// file sent by its path is stored as it came) keep no charset, and the
+/// page's own `<meta charset>` still decides: a header would overrule it.
+fn with_charset(mime: String, bytes: &[u8]) -> String {
+    if std::str::from_utf8(bytes).is_ok() {
+        format!("{mime}; charset=utf-8")
+    } else {
+        mime
+    }
 }
 
 #[derive(Deserialize)]
@@ -1199,5 +1232,26 @@ pub(crate) async fn open_download(
             Json(json!({ "error": "nothing on this machine opens it" })),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod charset_tests {
+    use super::{is_text, with_charset};
+
+    /// A board frame is UTF-8 HTML, and is served as that (#233); a page
+    /// that is not UTF-8 keeps its own say, and a picture has no charset.
+    #[test]
+    fn text_is_said_as_utf8_only_when_it_is() {
+        let frame = "<p>panel 1 · ✕ ◷</p>".as_bytes();
+        assert!(is_text("text/html"));
+        assert_eq!(
+            with_charset("text/html".into(), frame),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(with_charset("text/plain".into(), b"caf\xe9"), "text/plain");
+        assert!(is_text("image/svg+xml"));
+        assert!(!is_text("image/png"));
+        assert!(!is_text("application/pdf"));
     }
 }

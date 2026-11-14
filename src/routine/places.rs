@@ -507,13 +507,74 @@ pub fn hash_with(p: &Place, cmd: &str) -> Option<String> {
     let Some(dir) = scripts(p, cmd) else {
         return Some(main);
     };
+    if script_files(&dir).is_some_and(|f| f.is_empty()) {
+        return Some(main);
+    }
     let mut h = blake3::Hasher::new();
     h.update(main.as_bytes());
-    match script_files(&dir) {
-        Some(files) if files.is_empty() => return Some(main),
+    fold_scripts(&mut h, &dir);
+    Some(h.finalize().to_hex().to_string())
+}
+
+/// A routine's file split in two (1.66, plan e7fda1ca90): what it **may**
+/// run, and its **words**. Only a change to what it may run stops it until
+/// the reader allows it again; its words are a prompt to a Claude that runs
+/// under the reader's deny rules and waits whatever they say, so a reworded
+/// command runs on and is told in News. What it may run is:
+///
+/// - the frontmatter (`allowed-tools`, `model`, …): it widens the session;
+/// - a skill's other files, which can be scripts the skill tells Claude to run;
+/// - the routine's scripts folder, which snyvi runs itself (watch, gate).
+///
+/// `None` when the file is gone.
+pub struct Split {
+    pub may: String,
+    pub words: String,
+    /// The body as it is now, for News's diff next time it changes.
+    pub text: String,
+}
+
+pub fn split_hash(p: &Place, cmd: &str) -> Option<Split> {
+    let raw = std::fs::read(&p.path).ok()?;
+    let text = String::from_utf8_lossy(&raw).to_string();
+    let (_, body) = front(&text);
+    let head = &text[..text.len() - body.len()];
+    let mut h = blake3::Hasher::new();
+    h.update(b"may\0");
+    h.update(head.as_bytes());
+    h.update(&[0]);
+    if let Some(dir) = p.folder() {
+        match folder_files(dir) {
+            Some(files) => {
+                for f in files.into_iter().filter(|f| *f != p.path) {
+                    h.update(slashed(f.strip_prefix(dir).unwrap_or(&f)).as_bytes());
+                    h.update(&[0]);
+                    h.update(&std::fs::read(&f).unwrap_or_default());
+                    h.update(&[0]);
+                }
+            }
+            None => {
+                h.update(b"large\0");
+            }
+        }
+    }
+    if let Some(dir) = scripts(p, cmd) {
+        fold_scripts(&mut h, &dir);
+    }
+    Some(Split {
+        may: h.finalize().to_hex().to_string(),
+        words: blake3::hash(body.as_bytes()).to_hex().to_string(),
+        text: body.to_string(),
+    })
+}
+
+/// A scripts folder's files, paths and bytes, folded into `h`; past the
+/// bounds, their names and sizes.
+fn fold_scripts(h: &mut blake3::Hasher, dir: &Path) {
+    match script_files(dir) {
         Some(files) => {
             for f in files {
-                h.update(slashed(f.strip_prefix(&dir).unwrap_or(&f)).as_bytes());
+                h.update(slashed(f.strip_prefix(dir).unwrap_or(&f)).as_bytes());
                 h.update(&[0]);
                 h.update(&std::fs::read(&f).unwrap_or_default());
                 h.update(&[0]);
@@ -521,13 +582,12 @@ pub fn hash_with(p: &Place, cmd: &str) -> Option<String> {
         }
         None => {
             h.update(b"large\0");
-            for e in walkdir_names(&dir, &dir.join(STATE)) {
+            for e in walkdir_names(dir, &dir.join(STATE)) {
                 h.update(e.as_bytes());
                 h.update(&[0]);
             }
         }
     }
-    Some(h.finalize().to_hex().to_string())
 }
 
 /// A large folder's files by name and size, sorted, a few thousand at most.

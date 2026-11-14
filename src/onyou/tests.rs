@@ -55,14 +55,28 @@ fn routine(c: &Connection, desk: i64, name: &str, pane: &str) -> i64 {
     c.last_insert_rowid()
 }
 
+/// A question an agent is stuck on, from its panel.
+fn ask(c: &Connection, desk: i64, text: &str, at: i64, pane: &str) -> i64 {
+    c.execute(
+        "INSERT INTO turns(desk_id, by, kind, via, text, created_at, pane) VALUES(?1, 'claude-code', 'decide', 'agent', ?2, ?3, ?4)",
+        params![desk, text, at, pane],
+    )
+    .unwrap();
+    c.last_insert_rowid()
+}
+
 fn kinds(oy: &OnYou) -> Vec<&'static str> {
     oy.rows.iter().map(|r| r.kind).collect()
 }
 
-/// One of each, in the one order: a card an agent is blocked on, a dated
-/// line due, a routine's line, a line to Accept, a session's left-off.
+const LEFT: i64 = crate::waiting::LEFT_WAIT_S;
+
+/// Each row on its shelf (1.66): Waiting is the agents stuck on the reader,
+/// newest first; To do is what only the reader can do, in rank. A
+/// session's left-off is the desk's head, never a row; and the count is
+/// Waiting's agents, never the To do.
 #[test]
-fn every_kind_is_a_row_in_rank_order() {
+fn every_kind_is_on_its_shelf() {
     let (c, _d) = db();
     let a = desk(&c, "alpha");
     let b = desk(&c, "beta");
@@ -88,12 +102,14 @@ fn every_kind_is_a_row_in_rank_order() {
     )
     .unwrap();
     card(&c, a, "Add OpenRouter credits", NOW - 60);
+    ask(&c, a, "Which port?", NOW - 40, "p-a");
 
     let oy = gather(&c, NOW).unwrap();
-    assert_eq!(kinds(&oy), ["card", "due", "routine", "suggested", "left"]);
-    assert_eq!(oy.left, 5);
-    assert_eq!((oy.more, oy.more_desks), (0, 0));
-    let routine_row = &oy.rows[2];
+    assert_eq!(kinds(&oy), ["card", "routine", "card", "due", "suggested"]);
+    let shelves: Vec<&str> = oy.rows.iter().map(|r| r.shelf).collect();
+    assert_eq!(shelves, ["waiting", "waiting", "todo", "todo", "todo"]);
+    assert_eq!((oy.left, oy.todo), (2, 3));
+    let routine_row = &oy.rows[1];
     assert_eq!(
         (
             routine_row.routine.as_str(),
@@ -102,15 +118,12 @@ fn every_kind_is_a_row_in_rank_order() {
         ),
         ("blog-next", true, true)
     );
-    assert!(oy.rows[4].go, "a session's left-off has Go ahead (Approve)");
 }
 
-const LEFT: i64 = crate::waiting::LEFT_WAIT_S;
-
 /// A routine's line is the reader's the moment it is said; a session's
-/// waits a day, as Home's did.
+/// left-off is never On you's, however long it waits (1.66).
 #[test]
-fn a_routines_line_does_not_wait_and_a_sessions_waits_a_day() {
+fn a_routines_line_waits_and_a_sessions_left_off_is_not_a_row() {
     let (c, _d) = db();
     let r = desk(&c, "routines");
     let s = desk(&c, "session");
@@ -118,16 +131,12 @@ fn a_routines_line_does_not_wait_and_a_sessions_waits_a_day() {
     left_off(&c, r, "Read the digest", NOW - 60, "p-routine");
     left_off(&c, s, "Approve the plan", NOW - 60, "p-session");
     assert_eq!(kinds(&gather(&c, NOW).unwrap()), ["routine"]);
-    assert_eq!(
-        kinds(&gather(&c, NOW - 60 + LEFT).unwrap()),
-        ["routine", "left"]
-    );
+    assert_eq!(kinds(&gather(&c, NOW - 60 + LEFT).unwrap()), ["routine"]);
 }
 
-/// A routine whose panel has a card open on the reader is one row, the
-/// card: its line said the same ask again, and On you counted it twice
-/// (#202). Answered, the line is the row again; and the desk's left-off
-/// never comes back as a session's.
+/// A routine whose panel has a question open on the reader is one row, the
+/// question: its line said the same ask again, and On you counted it twice
+/// (#202). Answered, the line is the row again.
 #[test]
 fn a_routines_line_with_its_card_open_is_one_row() {
     let (c, _d) = db();
@@ -140,9 +149,7 @@ fn a_routines_line_with_its_card_open_is_one_row() {
         NOW - 60,
         "p-eva",
     );
-    let t = card(&c, r, "2 · Explainer: leash pulling", NOW - 120);
-    c.execute("UPDATE turns SET pane = 'p-eva' WHERE id = ?1", params![t])
-        .unwrap();
+    let t = ask(&c, r, "2 · Explainer: leash pulling", NOW - 120, "p-eva");
     assert_eq!(kinds(&gather(&c, NOW + LEFT).unwrap()), ["card"]);
 
     // Another panel's card on the same desk leaves the line alone.
@@ -151,7 +158,7 @@ fn a_routines_line_with_its_card_open_is_one_row() {
         params![t],
     )
     .unwrap();
-    assert_eq!(kinds(&gather(&c, NOW).unwrap()), ["card", "routine"]);
+    assert_eq!(kinds(&gather(&c, NOW).unwrap()), ["routine", "card"]);
 
     c.execute(
         "UPDATE turns SET pane = 'p-eva', answered_at = ?2 WHERE id = ?1",
@@ -161,43 +168,60 @@ fn a_routines_line_with_its_card_open_is_one_row() {
     assert_eq!(kinds(&gather(&c, NOW).unwrap()), ["routine"]);
 }
 
-/// Seven rows in the tray, newest first, the rest counted with their desks.
+/// The count is agents, not questions (1.66): nine questions from three
+/// panels are three agents waiting; the To do beside them is not counted.
 #[test]
-fn past_seven_the_rest_is_counted_with_its_desks() {
+fn the_count_is_agents_not_questions() {
     let (c, _d) = db();
     let ds: Vec<i64> = ["a", "b", "c"].iter().map(|n| desk(&c, n)).collect();
     for i in 0..9 {
-        card(&c, ds[i % 3], &format!("card {i}"), NOW - 100 + i as i64);
+        let pane = format!("p{}", i % 3);
+        ask(
+            &c,
+            ds[i % 3],
+            &format!("question {i}"),
+            NOW - 100 + i as i64,
+            &pane,
+        );
     }
+    card(&c, ds[0], "Pay the invoice", NOW - 500);
+    card(&c, ds[1], "Add the key", NOW - 400);
     let oy = gather(&c, NOW).unwrap();
-    assert_eq!((oy.left, oy.more, oy.tray), (9, 2, 7));
-    assert_eq!(oy.rows[0].text, "card 8", "the newest card first (C4)");
-    assert_eq!(
-        oy.more_desks, 2,
-        "cards 1 and 0, the oldest, are on desks b and a"
-    );
-    assert!(
-        oy.sentence.starts_with("Nine things are on you."),
-        "{}",
-        oy.sentence
-    );
+    assert_eq!((oy.left, oy.todo), (3, 2));
+    assert_eq!(oy.rows[0].text, "question 8", "the newest first");
+    assert_eq!(oy.sentence, "Three agents are waiting on you, on c, b, a.");
 }
 
-/// Tomorrow keeps a card and a left-off off the list until then; Not this
-/// keeps a left-off off for good, and the brief hears the word.
+/// A chore never ages off (1.66): a do card a month old is still To do,
+/// while a question a day old is retired.
+#[test]
+fn a_chore_never_ages_and_a_question_does() {
+    let (c, _d) = db();
+    let a = desk(&c, "a");
+    card(&c, a, "Renew the domain", NOW - 30 * DAY);
+    ask(&c, a, "Tabs or spaces?", NOW - 2 * DAY, "p");
+    crate::thread::retire(&c, NOW).unwrap();
+    let oy = gather(&c, NOW).unwrap();
+    assert_eq!(kinds(&oy), ["card"]);
+    assert_eq!(oy.rows[0].shelf, "todo");
+    assert_eq!(oy.left, 0);
+}
+
+/// Tomorrow keeps a card off the list until then; Not this keeps it off for
+/// good, and the brief hears the word.
 #[test]
 fn tomorrow_and_not_this_take_rows_off() {
     let (c, _d) = db();
     let a = desk(&c, "a");
     let s = desk(&c, "s");
-    let t = card(&c, a, "Sign in to Cloudflare", NOW - 60);
+    let t = ask(&c, a, "Sign in to Cloudflare?", NOW - 60, "p");
     left_off(&c, s, "Pay the invoice", NOW - LEFT - 60, "p");
-    assert_eq!(gather(&c, NOW).unwrap().left, 2);
+    assert_eq!(gather(&c, NOW).unwrap().left, 1);
 
     assert!(crate::thread::later_turn(&c, a, t, NOW + DAY).unwrap());
     assert!(later_left_off(&c, s, NOW + DAY).unwrap());
     assert_eq!(gather(&c, NOW).unwrap().left, 0);
-    assert_eq!(gather(&c, NOW + DAY).unwrap().left, 2, "back the next day");
+    assert_eq!(gather(&c, NOW + DAY).unwrap().left, 1, "back the next day");
 
     assert!(crate::thread::not_turn(&c, a, t, "done by hand", NOW).unwrap());
     assert!(not_left_off(&c, s, Some("not mine")).unwrap());
@@ -206,7 +230,7 @@ fn tomorrow_and_not_this_take_rows_off() {
     assert_eq!(
         said,
         [(
-            "Sign in to Cloudflare".to_string(),
+            "Sign in to Cloudflare?".to_string(),
             "done by hand".to_string(),
             NOW
         )]
@@ -217,11 +241,10 @@ fn tomorrow_and_not_this_take_rows_off() {
     );
     assert_eq!(nots(&c, s, NOW).unwrap()[0].1, "not mine");
 
-    // Undo: the card back with its word gone, the left-off the reader's again.
+    // Undo: the card back with its word gone.
     assert!(crate::thread::restore_turn(&c, a, t).unwrap());
     assert!(not_left_off(&c, s, None).unwrap());
-    assert!(later_left_off(&c, s, 0).unwrap());
-    assert_eq!(gather(&c, NOW + DAY).unwrap().left, 2);
+    assert_eq!(gather(&c, NOW + DAY).unwrap().left, 1);
     assert!(nots(&c, a, NOW + 1).unwrap().is_empty());
 }
 
@@ -238,91 +261,88 @@ fn a_quiet_routine_is_counted_not_listed() {
     .unwrap();
     let oy = gather(&c, NOW).unwrap();
     assert_eq!((oy.left, oy.ran_quiet), (0, 1));
-    assert_eq!(oy.sentence, "Nothing is on you.");
+    assert_eq!(oy.sentence, "Nothing is waiting on you.");
 }
 
-/// The tray opens itself once a day with something in it, again an hour
-/// on when more became the reader's, never with the box's ⋯ off.
+/// The sentence for one agent says what it waits on and where.
 #[test]
-fn the_tray_opens_on_arrival_once_a_day_and_when_more_came() {
-    let (c, _d) = db();
-    let a = desk(&c, "a");
-    assert!(arrive(&c, NOW).unwrap().is_none(), "nothing to show");
-    card(&c, a, "one", NOW);
-    let later = NOW + DAY;
-    assert_eq!(arrive(&c, later).unwrap().map(|o| o.left), Some(1));
-    assert!(
-        arrive(&c, later + 60).unwrap().is_none(),
-        "not twice in the hour"
-    );
-    assert!(
-        arrive(&c, later + ARRIVE_AGAIN_S + 1).unwrap().is_none(),
-        "nothing new"
-    );
-    card(&c, a, "two", later + ARRIVE_AGAIN_S + 2);
-    assert!(
-        arrive(&c, later + ARRIVE_AGAIN_S + 10).unwrap().is_none(),
-        "the hour runs from the last look"
-    );
-    assert!(arrive(&c, later + 2 * ARRIVE_AGAIN_S + 20)
-        .unwrap()
-        .is_some());
-    set_arrive_off(&c, true).unwrap();
-    assert!(arrive(&c, later + 3 * DAY).unwrap().is_none());
-}
-
-/// The sentence for one row names it, and days away lead.
-#[test]
-fn the_sentence_says_one_thing_and_days_away() {
+fn the_sentence_says_one_thing() {
     let (c, _d) = db();
     let a = desk(&c, "bos_dog");
-    card(&c, a, "Pay", NOW);
-    let mut oy = gather(&c, NOW).unwrap();
-    assert_eq!(oy.sentence, "One thing is on you: a do card on bos_dog.");
-    oy.days_away = 4;
-    assert!(sentence(&oy, NOW).starts_with("Four days away. One thing"));
-}
-
-/// At most four cards before the rest of the list (C4): a plan or a
-/// left-off is never folded away under a day of cards; the other cards
-/// come after it, newest first, and the tray still holds seven.
-#[test]
-fn four_cards_then_the_rest_then_the_other_cards() {
-    let (c, _d) = db();
-    let a = desk(&c, "alpha");
-    let b = desk(&c, "beta");
-    for i in 0..6 {
-        card(&c, a, &format!("card {i}"), NOW - 600 + i as i64);
-    }
-    c.execute(
-        "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by) VALUES(?1, 'keep this', ?2, 'claude-code')",
-        params![b, NOW - 50],
-    )
-    .unwrap();
-    left_off(&c, b, "Approve the plan", NOW - LEFT - 10, "p-session");
+    ask(&c, a, "Pay?", NOW, "p");
     let oy = gather(&c, NOW).unwrap();
     assert_eq!(
-        kinds(&oy),
-        [
-            "card",
-            "card",
-            "card",
-            "card",
-            "suggested",
-            "left",
-            "card",
-            "card"
-        ]
+        oy.sentence,
+        "One agent is waiting on you: a question on bos_dog."
     );
-    let texts: Vec<&str> = oy.rows.iter().map(|r| r.text.as_str()).collect();
-    assert_eq!(
-        (texts[0], texts[3], texts[6], texts[7]),
-        ("card 5", "card 2", "card 1", "card 0")
-    );
-    assert_eq!((oy.left, oy.tray, oy.more), (8, 7, 1));
 }
 
-/// A card of questions asked together is one row and one thing (U3), its
+/// A routine an agent made waits for Start, one changed in what it may run
+/// waits for Allow, and one that cannot run says why: each a Waiting row,
+/// each one agent (1.66).
+#[test]
+fn a_routine_to_start_allow_or_mend_waits() {
+    let (c, _d) = db();
+    let a = desk(&c, "a");
+    c.execute(
+        "INSERT INTO routines(desk_id, name, cmd, every, due_at, pane, created_at, started_at, suggested_by, asked, tried)
+         VALUES(?1, 'digest', 'digest', 'every day 07:30', 0, '', ?2, 0, 'claude-code', 'a digest each morning', 'ran once, 3 lines')",
+        params![a, NOW - 30],
+    )
+    .unwrap();
+    let start = c.last_insert_rowid();
+    c.execute(
+        "INSERT INTO routine_times(routine_id, every, due_at) VALUES(?1, 'every day 07:30', 0)",
+        params![start],
+    )
+    .unwrap();
+    let oy = gather(&c, NOW).unwrap();
+    assert_eq!(kinds(&oy), ["routine_start"]);
+    let row = &oy.rows[0];
+    assert_eq!(
+        (
+            row.routine_id,
+            row.asked.as_str(),
+            row.tried.as_str(),
+            row.when.as_str()
+        ),
+        (
+            start,
+            "a digest each morning",
+            "ran once, 3 lines",
+            "every day 07:30"
+        )
+    );
+    assert_eq!(
+        oy.sentence,
+        "One agent is waiting on you: start digest on a."
+    );
+
+    c.execute(
+        "UPDATE routines SET started_at = ?2 WHERE id = ?1",
+        params![start, NOW - 20],
+    )
+    .unwrap();
+    assert!(
+        gather(&c, NOW).unwrap().rows.is_empty(),
+        "started, nothing waits"
+    );
+    assert!(crate::routine::stuck(&c, start, "its command is gone", NOW - 10).unwrap());
+    let oy = gather(&c, NOW).unwrap();
+    assert_eq!(kinds(&oy), ["routine_stuck"]);
+    assert_eq!(oy.rows[0].text, "digest can't run: its command is gone");
+    crate::routine::unstuck(&c, start).unwrap();
+    c.execute(
+        "UPDATE routines SET pending = '{\"watch\":\"watch.sh\"}' WHERE id = ?1",
+        params![start],
+    )
+    .unwrap();
+    let oy = gather(&c, NOW).unwrap();
+    assert_eq!(kinds(&oy), ["routine_allow"]);
+    assert_eq!(oy.rows[0].may, ["watch: watch.sh"]);
+}
+
+/// A card of questions asked together is one row and one agent (U3), its
 /// questions in it; one answered in snyvi and not yet told stays in it,
 /// folded (C7); all answered, the card is gone.
 #[test]
@@ -339,10 +359,9 @@ fn a_card_of_questions_is_one_row() {
     let oy = gather(&c, NOW).unwrap();
     assert_eq!((kinds(&oy), oy.left), (vec!["card"], 1));
     assert_eq!(oy.rows[0].turns.len(), 3);
-    assert!(
-        oy.sentence.starts_with("One thing is on you"),
-        "{}",
-        oy.sentence
+    assert_eq!(
+        oy.sentence,
+        "One agent is waiting on you: three questions on alpha."
     );
 
     let first = oy.rows[0].turns[0].id;
@@ -364,14 +383,14 @@ fn a_card_of_questions_is_one_row() {
     assert!(gather(&c, NOW).unwrap().rows.is_empty());
 }
 
-/// A card whose panel was prompted since is quiet (C3): last, apart, and
-/// not one of the things on the reader.
+/// A question whose panel was prompted since is quiet (C3): last, apart,
+/// and not one of the agents waiting.
 #[test]
 fn a_quiet_card_is_last_and_not_counted() {
     let (c, _d) = db();
     let a = desk(&c, "alpha");
-    let q = card(&c, a, "Run the migration", NOW - 30);
-    card(&c, a, "Add the key", NOW - 600);
+    let q = ask(&c, a, "Run the migration?", NOW - 30, "p1");
+    ask(&c, a, "Add the key?", NOW - 600, "p2");
     c.execute(
         "UPDATE turns SET quiet_at = ?2 WHERE id = ?1",
         params![q, NOW - 10],
@@ -379,8 +398,8 @@ fn a_quiet_card_is_last_and_not_counted() {
     .unwrap();
     let oy = gather(&c, NOW).unwrap();
     let texts: Vec<&str> = oy.rows.iter().map(|r| r.text.as_str()).collect();
-    assert_eq!(texts, ["Add the key", "Run the migration"]);
-    assert_eq!((oy.left, oy.quiet, oy.tray), (1, 1, 1));
+    assert_eq!(texts, ["Add the key?", "Run the migration?"]);
+    assert_eq!((oy.left, oy.quiet), (1, 1));
     assert!(oy.rows[1].quiet);
-    assert_eq!(oy.clauses, "a do card on alpha");
+    assert_eq!(oy.clauses, "a question on alpha");
 }

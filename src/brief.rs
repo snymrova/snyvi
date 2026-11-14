@@ -438,27 +438,60 @@ fn routine_lines(
         }
         return vec![s];
     }
-    // A draft is not the desk's yet: only what runs on its own is named.
-    let live: Vec<&&crate::routine::Routine> = real.iter().filter(|r| r.started_at != 0).collect();
-    if live.is_empty() {
-        return Vec::new();
-    }
-    let named: Vec<String> = live
+    // 1.66: every routine on the desk, with how it stands, so an agent never
+    // makes a second for a job that has one (`pro-forum` was made thirteen
+    // times) and knows which is stuck. A draft the user typed is theirs and
+    // not named; an agent's offer is, as waiting for Start.
+    let named: Vec<String> = routines
         .iter()
-        .take(4)
+        .filter(|r| r.removed_at == 0 && (r.started_at != 0 || !r.suggested_by.is_empty()))
+        .take(6)
         .map(|r| {
-            let last = if r.last_at > 0 {
-                format!(", ran {}, {}", ago(now - r.last_at), cut(&r.last_state, 30))
-            } else {
-                String::new()
-            };
-            format!("{} ({}{last})", cut(&r.name, 40), when_of(r))
+            format!(
+                "{} ({}): {}",
+                cut(&r.name, 40),
+                when_of(r),
+                standing(r, now)
+            )
         })
         .collect();
+    if named.is_empty() {
+        return Vec::new();
+    }
     vec![format!(
-        "Routines on this desk, snyvi's to start at their hour, never yours: {}.",
+        "Routines on this desk, snyvi's to start at their hour, never yours; offer_routine with the same command updates one, never adds a second: {}.",
         named.join("; ")
     )]
+}
+
+/// How a routine stands, as the brief says it (1.66): what the row's dot
+/// says, without reading its files.
+fn standing(r: &crate::routine::Routine, now: i64) -> String {
+    if r.started_at == 0 {
+        return "waiting for the user's Start".into();
+    }
+    if !r.stuck.is_empty() {
+        return format!("can't run, {}", cut(&r.stuck, 60));
+    }
+    if r.paused_at != 0 {
+        return "paused".into();
+    }
+    let mut s = if !r.pending.is_empty() {
+        "ok, a change waits for the user's Allow".to_string()
+    } else {
+        "ok".to_string()
+    };
+    if r.last_at > 0 {
+        s.push_str(&format!(
+            ", ran {}, {}",
+            ago(now - r.last_at),
+            cut(&r.last_state, 30)
+        ));
+    }
+    if r.due_at > now {
+        s.push_str(&format!(", next in {}", ago_words(r.due_at - now)));
+    }
+    s
 }
 
 /// A routine's when as the brief says it: its times, or its watch alone.
@@ -705,7 +738,9 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
         )),
     }
     if n_older > 0 {
-        lines.push("One you can see is done (a tag, a merge), remove_card with why.".to_string());
+        lines.push(
+            "One you can see is done (a tag, a merge): settle it with ids and why.".to_string(),
+        );
     }
     // Cards from panels since closed (C8): no one else can settle them, and
     // the user's answer to one comes to whichever panel asks next.
@@ -717,7 +752,7 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
         .collect();
     if !orphans.is_empty() {
         lines.push(format!(
-            "{} from panels since closed {} yours now: the user's answer comes to you, and one that is done or moot is yours to remove_card with why.",
+            "{} from panels since closed {} yours now: the user's answer comes to you, and one that is done or moot is yours to settle with ids and why.",
             orphans.join(", "),
             if orphans.len() == 1 { "is" } else { "are" }
         ));
@@ -775,12 +810,12 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
         .collect();
     if !open.is_empty() {
         lines.push(format!(
-            "Still open on the user's On you list, from you: {}. If their message answers them, call settle_asks with what they said, by id; if not, leave them, they wait there.",
+            "Still waiting on the user, from you: {}. If their message answers them, call settle with answers, by id and in their words; if not, leave them, they wait there.",
             open.join("; ")
         ));
     }
-    // Its own hand-overs still open (`thread::open_chores`), by id: settle_asks
-    // does not take them, remove_card does.
+    // Its own hand-overs still open (`thread::open_chores`), by id: settle
+    // with ids and why takes one back.
     let chores: Vec<String> = answers
         .iter()
         .filter(|t| t.answered_at == 0 && t.kind != "decide")
@@ -793,9 +828,9 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
         .any(|t| t.answered_at == 0 && t.kind != "decide" && t.quiet_at > 0);
     if !chores.is_empty() {
         lines.push(format!(
-            "Your hand-overs still open on the user's On you list: {}.{} If their message says one is done, remove_card it with why; if not, leave it.",
+            "Your hand-overs still in the user's To do: {}.{} If their message says one is done, settle it with ids and why; if not, leave it.",
             chores.join("; "),
-            if hushed { " They have gone quiet there, since the user is in this panel." } else { "" }
+            if hushed { " They stay there until the user says Done or Can't." } else { "" }
         ));
     }
     lines
@@ -1884,10 +1919,12 @@ mod tests {
         assert!(said.contains("(when its watch prints a line)"), "{said}");
         assert!(said.contains("It woke on: tag 5304 ; tag 5311."), "{said}");
         let other = brief_of(&d, 1, &work, &[], &[], None, now);
-        assert!(other.contains("Routines on this desk, snyvi's to start at their hour, never yours: newsroom (every day 07:30, ran 1 day ago, done)."), "{other}");
+        // 1.66: every routine, offers too, with where it stands, so an agent
+        // updates the one there is instead of offering a second.
+        assert!(other.contains("Routines on this desk, snyvi's to start at their hour, never yours; offer_routine with the same command updates one, never adds a second: newsroom (every day 07:30): ok, ran 1 day ago, done; bench (every weekday 09:00): waiting for the user's Start."), "{other}");
         assert!(
-            !other.contains("bench") && !mine.contains("bench"),
-            "an offer is named to no one"
+            !mine.contains("bench"),
+            "a routine's own panel hears only itself"
         );
         // 1.53: a draft in its try says so, and is named to no other panel.
         let draft = crate::routine::Routine {

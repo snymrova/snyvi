@@ -83,18 +83,20 @@ function orphan(env, w) {
   return `<p class="tn-by tn-orphan">Its panel closed: the next Claude on ${env.esc(env.deskName(w))} picks up your answer.</p>`;
 }
 
-/** The ✕, low but always there (C5): Not now got no press in fifteen days
- *  while it showed only on hover (U5). It opens Later beside the row; the
- *  row's own buttons stay. */
+/** Later, a clock, low but always there (C5): Not now got no press in
+ *  fifteen days while it showed only on hover (U5). It opens Later beside
+ *  the row; the row's own buttons stay. A clock and not a ✕ (1.66): a ✕
+ *  promises close, and this asks when, so the reader pressed close and got
+ *  Tomorrow. A ✕ on On you is the card's own close and nothing else. */
 function xBtn(env, key, text, g = 0, kind = "") {
   const { esc } = env, open = env.later(key);
   const ds = g ? `data-g="${g}"` : `data-w="${key.slice(1)}"`;
-  return `<button type="button" class="tn-x" data-a="tn-lt-open" data-k="${key}" ${ds} aria-haspopup="menu" aria-expanded="${!!open}" data-tip="Later" data-tip-sub="tomorrow, next week, already done, or not mine; nothing is deleted" aria-label="Later: ${esc(text)}">${env.ico("x")}</button>` +
+  return `<button type="button" class="tn-x" data-a="tn-lt-open" data-k="${key}" ${ds} aria-haspopup="menu" aria-expanded="${!!open}" data-tip="Later" data-tip-sub="tomorrow, next week, already done, or not mine; nothing is deleted" aria-label="Later: ${esc(text)}">${env.ico("clock")}</button>` +
     (open ? laterMenu(env, key, ds, g || kind === "decide", open === "not") : "");
 }
 
-/** Later, over the card beside its ✕: what a ✕ means said as its four
- *  answers, each told to the agent. Not mine takes a word, in its field. */
+/** Later, over the card beside its clock: when, said as its four answers,
+ *  each told to the agent. Not mine takes a word, in its field. */
 function laterMenu(env, key, ds, asked, not) {
   const done = asked ? "Answered in the chat" : "Already done";
   const item = (v, l, sub) => `<button type="button" role="menuitem" data-a="tn-lt" data-k="${key}" ${ds} data-v="${v}"><span>${l}</span><small>${sub}</small></button>`;
@@ -241,6 +243,28 @@ export function olderLine(env, w, n = 1) {
     `<span class="cn-tl"><button type="button" class="cn-t" data-a="tn-old" data-w="${g || w.id}" aria-expanded="false" data-tip="${esc(w.text)}"><span class="cn-tx">${code(what, esc)}</span></button></span>` +
     `<span class="cn-bl"><span class="cn-w">${esc(where)} · ${esc(w.kind === "decide" ? "decision" : w.kind)}</span><span class="cn-at">${esc(env.rel(w.created_at))}</span></span>` +
     `</span>${xBtn(env, g ? `g${g}` : `w${w.id}`, w.text, g)}</li>`;
+}
+
+/** Later shown whole (1.66). It hangs under its clock inside a box that
+ *  scrolls (On you's tray, the corner), so on the last rows its foot went
+ *  under the box's edge: the reader saw Tomorrow and Next week, half of
+ *  Already done, and no Not mine. Each host calls this after it draws. A
+ *  menu that would pass the box's foot opens above its clock when the room
+ *  is there, and otherwise the box scrolls just enough to show it. The menu
+ *  is an overlay either way: nothing under it moves. */
+export function fitLater(root) {
+  for (const m of root?.querySelectorAll(".tn-later") || []) {
+    m.style.top = "";
+    let box = m.parentElement;
+    while (box && box !== document.body && !/auto|scroll|hidden/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+    const lim = box && box !== document.body ? box.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+    const r = m.getBoundingClientRect();
+    if (r.bottom <= lim.bottom) continue;
+    const x = m.previousElementSibling;
+    const room = x ? x.getBoundingClientRect().top - lim.top : 0;
+    if (x && x.offsetParent === m.offsetParent && room >= r.height + 2) m.style.top = `${x.offsetTop - r.height - 2}px`;
+    else m.scrollIntoView({ block: "nearest" });
+  }
 }
 
 let styled = false;

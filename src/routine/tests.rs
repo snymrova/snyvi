@@ -10,6 +10,8 @@ fn db() -> Connection {
     conn.execute_batch(DRAFT_COLUMNS_1_53).unwrap();
     conn.execute_batch(LATE_COLUMNS_1_54).unwrap();
     conn.execute_batch(TRIGGER_COLUMNS_1_63).unwrap();
+    conn.execute_batch(crate::news::SCHEMA_1_66).unwrap();
+    conn.execute_batch(YOU_COLUMNS_1_66).unwrap();
     conn.execute(
         "INSERT INTO desks(id, name, root, created_at) VALUES(1, 'news', '/tmp/news', 1)",
         [],
@@ -154,6 +156,9 @@ fn a_routine_from_before_1_53_stays_live_with_its_file() {
     conn.execute_batch(DRAFT_COLUMNS_1_53).unwrap();
     conn.execute_batch(LATE_COLUMNS_1_54).unwrap();
     conn.execute_batch(TRIGGER_COLUMNS_1_63).unwrap();
+    conn.execute_batch(crate::thread::SCHEMA).unwrap();
+    conn.execute_batch(crate::news::SCHEMA_1_66).unwrap();
+    conn.execute_batch(YOU_COLUMNS_1_66).unwrap();
     let a = get(&conn, 1).unwrap().unwrap();
     assert_eq!(
         (a.state(), a.started_at, a.file.as_str()),
@@ -504,14 +509,15 @@ fn a_routines_soonest_is_its_times_and_a_draft_with_none_never_rings() {
             &c,
             r.id,
             &[
-                when("every day 1 2 3 4", "", true),
-                when("every day 5 6 7", "", true)
+                when("every day 1 2 3 4 5 6", "", true),
+                when("every day 7 8 9 10 11 12", "", true),
+                when("every sun 13", "", true)
             ],
             now
         )
         .unwrap()
         .is_none(),
-        "six at most"
+        "twelve at most"
     );
     times::set(&c, r.id, &[], now).unwrap();
     assert_eq!(get(&c, r.id).unwrap().unwrap().due_at, 0);
@@ -609,10 +615,10 @@ fn a_watchs_lines_wait_batch_and_are_taken_once() {
         "dropped, counted, never trimmed"
     );
     assert!(
-        !events::ready(&c, r.id, now + 59).unwrap(),
+        !events::ready(&c, r.id, false, now + 59).unwrap(),
         "the batch waits a minute"
     );
-    assert!(events::ready(&c, r.id, now + 60).unwrap());
+    assert!(events::ready(&c, r.id, false, now + 60).unwrap());
     assert_eq!(events::take(&c, r.id).unwrap(), ["tag 1", "tag 2"]);
     let run = began(&c, r.id, "event", "/tick tag 1 ; tag 2", SESSION, now + 61).unwrap();
     events::bind(&c, r.id, run).unwrap();
@@ -629,10 +635,10 @@ fn a_watchs_lines_wait_batch_and_are_taken_once() {
     }
     events::push(&c, r.id, shape, "tag 3", now + 200).unwrap();
     assert!(
-        !events::ready(&c, r.id, now + 300).unwrap(),
+        !events::ready(&c, r.id, false, now + 300).unwrap(),
         "six this hour"
     );
-    assert!(events::ready(&c, r.id, now + 3700).unwrap());
+    assert!(events::ready(&c, r.id, false, now + 3700).unwrap());
     // Two hundred wait at most.
     for i in 0..events::CAP {
         events::push(&c, r.id, shape, &format!("tag {}", 1000 + i), now).unwrap();

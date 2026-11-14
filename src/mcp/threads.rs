@@ -1,10 +1,15 @@
 //! The #90 tools, for an agent in a desk's panel: start_thread and
-//! move_thread file a piece of work, ask and hand_over put what only the
-//! reader can do on On you, settle_asks takes back the questions the reader
-//! answered in the conversation, remove_card removes a card that is no longer
-//! on the reader, and suggest_panel and suggest_desk offer a card the reader
-//! clicks or not (`crate::thread`). Each description is kept short: all eight
-//! are in every panel session's tool list.
+//! move_thread file a piece of work, ask puts a decision in the reader's
+//! Waiting and hand_over a chore in their To do, settle takes the agent's
+//! own back off, and suggest_panel and suggest_desk offer a card the reader
+//! clicks or not (`crate::thread`). Each description is kept short: all
+//! seven are in every panel session's tool list.
+//!
+//! 1.66 (plan e7fda1ca90): one door each. `hand_over` has no kind -- snyvi
+//! reads it from what is given, and `try` is gone, since "try this" is a
+//! question (0 of 7 were answered as a chore) -- and `settle` is the one way
+//! back off, where `settle_asks` and `remove_card` were two. A session from
+//! before 1.66 still has those names; they answer as before.
 
 use super::{arg, said, Session};
 use crate::client;
@@ -20,32 +25,26 @@ parked), and with parked the next step to pick it up by. Add a PR number or more
 work changes stage. Shipped, then told with url once the user posts it and says where: you never post, you \
 draft.";
 
-const ASK: &str = "Put a decision on the user's On you list: a question, two to four short options, the one \
-you recommend; up to four at once as questions. It does not wait: answers come with their next message and \
-stay in the desk's decisions (read_desk). about: the document it is asked under. At this panel, your own \
-question tool.";
+const ASK: &str = "Ask the user to decide what you are stuck on: a question, two to four short options, the one \
+you recommend; up to four as questions. It goes to their Waiting; their press comes into this panel as your \
+next message, so stop after asking. about: the document it is under. At this panel, use your question tool.";
 
-const HAND_OVER: &str = "Put what blocks you and only the user can do on their On you list: merge (a PR), key \
-(pass key, its name), try (a change only they can try), run (a command you were blocked from: pass cmd, one \
-line; their Run types it here, you get its output), or do (all else: pay, sign in, approve). Never ask \
-them to paste a command. One sentence, a link if any.";
+const HAND_OVER: &str = "Hand the user what only they can do and blocks you: a PR to merge (its link), a key to add \
+(key: its name), a command you were blocked from (cmd, one line, or steps: their Run types it here and you get \
+its output), or else (pay, sign in, post). It stays in their To do until Done or Can't. One sentence. Never \
+ask them to paste a command.";
 
 /// `hand_over`'s description is at its 350 (the test below), so a run in
 /// steps (#164) is explained on its own field, which the agent reads as well.
-const STEPS: &str = "run only, in place of cmd, when it takes several commands or things done by hand between \
+const STEPS: &str = "In place of cmd, when it takes several commands or things done by hand between \
 them (a setup, a device to plug in): one run with steps, never commands written in your reply. Each step a cmd \
 (one line) or a say (a thing done by hand), at most 12. They run each with a click, in order, here or in a \
 shell of its own when it asks for a password (sudo), and tick each done.";
 
-const SETTLE_ASKS: &str = "Take your open questions off the user's On you list when their message here \
-answered them, with what they said: answers, each a question's id and their words. snyvi keeps it as the \
-decision, heard in the panel; they can change it. Your hand-overs stay. Their next message says which of \
-yours are still open.";
-
-const REMOVE_CARD: &str = "Remove a card from the user's On you list in snyvi once it is no longer on them: you see \
-it is done (a tag, a merge, the key there), they say here they did it, or a newer card asks the same. Any \
-card on this desk, by its id from the brief or a reply; never only because it is old. Say why, in a few \
-words: the user sees it and can bring it back.";
+const SETTLE: &str = "Take your own things off the user's lists. With answers: the questions their message here \
+answered, each by id with their words, kept as the decision. With ids and why: cards no longer on them (it is \
+done, a newer one asks it, they said so here); never only because it is old. Each removal shows in their News \
+with Undo.";
 
 const SUGGEST_PANEL: &str = "Suggest a panel on this desk: a name, the exact command it would run, and why. \
 The user sees a card with the command and opens it or not; nothing runs until they click. Three wait at \
@@ -102,35 +101,28 @@ pub(super) fn specs() -> Vec<Value> {
             "name": "hand_over", "title": "Hand something to the user", "description": HAND_OVER,
             "inputSchema": { "type": "object", "properties": {
                 "text": { "type": "string", "description": "One sentence: what to do." },
-                "kind": { "type": "string", "enum": ["try", "merge", "key", "run", "do"] },
-                "link": { "type": "string", "description": "A URL or a port, if there is one." },
-                "cmd": { "type": "string", "description": "run only: one command line, exactly as it should run." },
+                "link": { "type": "string", "description": "A URL or a port, if there is one: a PR's link makes it a merge." },
+                "cmd": { "type": "string", "description": "A command you were blocked from: one line, exactly as it should run." },
                 "steps": { "type": "array", "maxItems": 12, "description": STEPS, "items": { "type": "object", "properties": {
                     "cmd": { "type": "string", "description": "One command line, exactly as it should run." },
                     "say": { "type": "string", "description": "A thing done by hand, or the line over cmd when both are given." }
                 }, "additionalProperties": false } },
-                "key": { "type": "string", "description": "key only: its name, e.g. CLOUDFLARE_API_TOKEN. Adding it settles this." },
+                "key": { "type": "string", "description": "A key to add, by its name, e.g. CLOUDFLARE_API_TOKEN. Adding it settles this." },
                 "replaces": { "type": "integer", "description": "The id of a card of yours this one says again, changed: it is taken off as this goes on." }
-            }, "required": ["text", "kind"], "additionalProperties": false },
+            }, "required": ["text"], "additionalProperties": false },
             "annotations": ann(false)
         }),
         json!({
-            "name": "settle_asks", "title": "Settle questions answered in the conversation", "description": SETTLE_ASKS,
+            "name": "settle", "title": "Take your own off the user's lists", "description": SETTLE,
             "inputSchema": { "type": "object", "properties": {
-                "answers": { "type": "array", "description": "What the user said to each question, in their words.",
+                "answers": { "type": "array", "description": "Questions their message here answered, in their words.",
                     "items": { "type": "object", "properties": {
                         "id": { "type": "integer", "description": "The question's id, as ask said it." },
                         "answer": { "type": "string", "description": "Their answer, short." }
-                    }, "required": ["id", "answer"], "additionalProperties": false } }
+                    }, "required": ["id", "answer"], "additionalProperties": false } },
+                "ids": { "type": "array", "items": { "type": "integer" }, "description": "Cards no longer on the user, by id." },
+                "why": { "type": "string", "description": "With ids: a few words, what shows they are no longer on the user." }
             }, "additionalProperties": false },
-            "annotations": ann(true)
-        }),
-        json!({
-            "name": "remove_card", "title": "Remove a card from On you", "description": REMOVE_CARD,
-            "inputSchema": { "type": "object", "properties": {
-                "id": { "type": "integer", "description": "The card's id." },
-                "why": { "type": "string", "description": "A few words: what shows it is no longer on the user." }
-            }, "required": ["id", "why"], "additionalProperties": false },
             "annotations": ann(true)
         }),
         json!({
@@ -335,23 +327,62 @@ impl Session {
 
     pub(super) fn hand_over(&self, args: &Value) -> Value {
         let steps = run_steps(args);
+        let kind = handed_kind(args, !steps.is_empty());
         let body = json!({
-            "kind": arg(args, "kind"), "text": arg(args, "text"), "link": arg(args, "link"),
+            "kind": kind, "text": arg(args, "text"), "link": arg(args, "link"),
             "cmd": arg(args, "cmd"), "key": arg(args, "key"), "by": self.by(), "options": steps,
             "replaces": args.get("replaces").and_then(Value::as_i64).unwrap_or(0),
         });
-        let run = arg(args, "kind") == "run";
+        let run = kind == "run";
         let head = if run && !steps.is_empty() {
             "Handed over as steps. The user runs each command with a click, in order -- typed into this panel as a ! command, its output arriving here as their message, or into a shell panel of its own where you do not see it -- and ticks each step done. When all are, their answer says which ran where. Say so in your reply; do not repeat the commands for them to paste."
         } else if run {
             "Handed over. When the user clicks Run, it is typed into this panel as a ! command, and its output arrives here as their message. Say so in your reply; do not ask them to paste it."
         } else {
-            "Handed over. It is on the user's On you list in snyvi; their answer comes with their next message. Say so in your reply."
+            "Handed over. It is in the user's To do in snyvi until they press Done or Can't, which is typed into this panel as a message. Say so in your reply."
         };
         match self.thread_call("handover", body) {
             Ok(v) => said(head.to_string() + &also_open(&v), false),
             Err(e) => e,
         }
+    }
+
+    /// `settle` (1.66): answers given here, and cards no longer on the
+    /// reader, in one call.
+    pub(super) fn settle(&self, args: &Value) -> Value {
+        let ids: Vec<i64> = args
+            .get("ids")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_i64).collect())
+            .unwrap_or_default();
+        let why = arg(args, "why");
+        let mut out: Vec<String> = Vec::new();
+        let mut failed = false;
+        if args.get("answers").is_some() || ids.is_empty() {
+            let r = self.settle_asks(args);
+            failed |= r["isError"] == true;
+            out.push(text_of(&r));
+        }
+        if !ids.is_empty() && why.is_empty() {
+            return said("settle with ids needs why: a few words on what shows they are no longer on the user.", true);
+        }
+        let mut gone: Vec<String> = Vec::new();
+        for id in &ids {
+            match self.thread_call("away", json!({ "turn": id, "why": why })) {
+                Ok(_) => gone.push(format!("#{id}")),
+                Err(e) => {
+                    failed = true;
+                    out.push(format!("#{id}: {}", text_of(&e)));
+                }
+            }
+        }
+        if !gone.is_empty() {
+            out.push(format!(
+                "Removed {}. The user sees it in News, with Undo.",
+                gone.join(", ")
+            ));
+        }
+        said(out.join(" "), failed && gone.is_empty())
     }
 
     /// The reader answered this panel's questions in the conversation: off
@@ -379,7 +410,7 @@ impl Session {
         let id = args.get("id").and_then(Value::as_i64).unwrap_or(0);
         match self.thread_call("away", json!({ "turn": id, "why": arg(args, "why") })) {
             Ok(_) => said(
-                "Removed. It is off the user's On you list; the tray says why for a day, with Bring back.",
+                "Removed. It is off the user's lists; their News says why, with Undo.",
                 false,
             ),
             Err(e) => e,
@@ -412,6 +443,38 @@ impl Session {
             Err(e) => e,
         }
     }
+}
+
+/// What a hand-over is, read from what was given (1.66): a key's name is a
+/// key, a PR's link a merge, a command or steps a run, anything else a do.
+/// A session from before 1.66 passes `kind`; it is kept, but `try`, which
+/// is a question and goes to `ask`.
+fn handed_kind(args: &Value, steps: bool) -> &'static str {
+    match arg(args, "kind").as_str() {
+        "merge" => return "merge",
+        "key" => return "key",
+        "run" => return "run",
+        "do" | "try" => return "do",
+        _ => {}
+    }
+    let link = arg(args, "link");
+    if !arg(args, "key").is_empty() {
+        "key"
+    } else if !arg(args, "cmd").is_empty() || steps {
+        "run"
+    } else if link.contains("/pull/") || link.contains("/merge_requests/") {
+        "merge"
+    } else {
+        "do"
+    }
+}
+
+/// A tool result's text.
+fn text_of(v: &Value) -> String {
+    v.pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// `hand_over`'s steps as the turn keeps them (`thread::steps`): `$ cmd` a
@@ -448,12 +511,12 @@ fn run_steps(args: &Value) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Eight tools in every panel session: each says what it does in a few
+    /// Seven tools in every panel session: each says what it does in a few
     /// lines, takes only what it names, and none is destructive.
     #[test]
-    fn the_eight_are_short_and_take_only_what_they_name() {
+    fn the_seven_are_short_and_take_only_what_they_name() {
         let specs = specs();
-        assert_eq!(specs.len(), 8);
+        assert_eq!(specs.len(), 7);
         for s in &specs {
             let d = s["description"].as_str().unwrap();
             assert!(d.len() <= 350, "{}: {} chars", s["name"], d.len());
@@ -461,6 +524,24 @@ mod tests {
             assert_eq!(s["annotations"]["destructiveHint"], false);
             assert!(super::super::TOOLS.iter().any(|(n, _)| *n == s["name"]));
         }
+    }
+
+    /// A hand-over's kind is read from what it carries (1.66).
+    #[test]
+    fn a_hand_over_says_its_kind_by_what_it_carries() {
+        let k = |v: Value| handed_kind(&v, false);
+        assert_eq!(k(json!({ "text": "add it", "key": "CF_TOKEN" })), "key");
+        assert_eq!(
+            k(json!({ "text": "merge", "link": "https://github.com/a/b/pull/12" })),
+            "merge"
+        );
+        assert_eq!(
+            k(json!({ "text": "deploy", "cmd": "npm run deploy" })),
+            "run"
+        );
+        assert_eq!(k(json!({ "text": "sign in to GA4" })), "do");
+        assert_eq!(k(json!({ "text": "try it", "kind": "try" })), "do");
+        assert_eq!(handed_kind(&json!({ "text": "set up" }), true), "run");
     }
 
     #[test]

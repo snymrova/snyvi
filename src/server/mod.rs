@@ -20,6 +20,7 @@ mod api_friend;
 mod api_gallery;
 mod api_groups;
 mod api_media;
+mod api_news;
 mod api_page;
 mod api_peer;
 mod api_pipeline;
@@ -37,6 +38,7 @@ mod peer_link;
 mod pipeline_run;
 mod restore_run;
 mod routine_gate;
+mod routine_offer;
 mod routine_run;
 mod routine_watch;
 #[cfg(test)]
@@ -55,6 +57,7 @@ use api_friend::*;
 use api_gallery::*;
 use api_groups::*;
 use api_media::*;
+use api_news::*;
 use api_page::*;
 use api_peer::*;
 use api_pipeline::*;
@@ -70,6 +73,7 @@ use events::*;
 use lifecycle::*;
 pub use lifecycle::{relaunch, Leaving};
 use peer_link::*;
+use routine_offer::{pane_offer_routine, routine_wake};
 use ws::*;
 
 use crate::browse::Browser;
@@ -450,6 +454,9 @@ fn pane_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/keys/{name}", get(pane_key))
         .route("/api/panes/{id}/leftoff", post(pane_left_off))
         .route("/api/panes/{id}/suggest", post(pane_suggest_note))
+        // 1.66: offer_routine, one call that makes or updates (`routine_offer`).
+        .route("/api/panes/{id}/routine", post(pane_offer_routine))
+        .route("/api/routines/wake", post(routine_wake))
         .route("/api/panes/{id}/offer", post(pane_offer))
         .route(
             "/api/panes/{id}/paste",
@@ -648,6 +655,9 @@ fn pipeline_routes() -> Router<Arc<App>> {
             get(routine_sheet).post(save_routine),
         )
         .route("/api/desks/{id}/routines/{row}/{act}", post(routine_act))
+        // 1.66: News, seen and undone (`api_news`).
+        .route("/api/news/seen", post(news_seen))
+        .route("/api/news/{id}/undo", post(news_undo))
 }
 
 /// Claude accounts (`api_accounts`): the list, adding one with its token,

@@ -591,6 +591,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (37, crate::page::COLUMNS_1_62), // 1.62: the page's main link, points and story
     (38, crate::routine::TRIGGER_COLUMNS_1_63), // 1.63: a routine's times, gate, watch, events
     (39, crate::thread::ASKED_COLUMN_1_64), // 1.64: a question asked again folds into its card
+    // 1.66: a routine's two hashes, its ask and try, copies folded into one
+    // (`crate::routine`), after News (`crate::news`), which says each fold
+    (40, crate::news::SCHEMA_1_66),
+    (40, crate::routine::YOU_COLUMNS_1_66),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
