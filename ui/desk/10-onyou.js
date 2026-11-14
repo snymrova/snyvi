@@ -193,9 +193,11 @@ function trayHtml(d, f, esc) {
   // the desk's, always; what is on the reader across desks is Home's
   // column and the Inbox pill's. 1.54 listed them under their own head.
   const here = K?.onyouHtml?.(false, d.id, "here") || "";
+  const news = K?.deskNews?.(d.id) || "";
   const n = oyCounts(d, f), count = n.now + n.old;
   const all = said + older + here + quiet + (away ? `<p class="oy-qh">Removed by agents · today</p><ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
-    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d);
+    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d) +
+    (news ? `<p class="oy-qh">News · what changed without your press</p>${news}` : "");
   oy.empty = !all;
   const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +
     (count ? `<span class="sec-n${n.now ? " warn" : ""}">${count}</span>` : "");

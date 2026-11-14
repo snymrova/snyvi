@@ -328,6 +328,14 @@ enum UpdateCmd {
     Off,
 }
 
+/// `snyvi routine wake`: one line to a routine, as its watch would say it.
+fn routine_cmd(paths: &config::Paths, cmd: RoutineCmd) -> Result<()> {
+    let RoutineCmd::Wake { name, line, desk } = cmd;
+    let cwd = project_dir(None).unwrap_or_default();
+    println!("{}", client::routine_wake(paths, &name, &line, desk, &cwd)?);
+    Ok(())
+}
+
 pub(crate) fn run() -> Result<()> {
     let paths = config::paths();
     match Cli::parse().cmd {
@@ -436,14 +444,7 @@ pub(crate) fn run() -> Result<()> {
         Cmd::Key { name } => print_key(&paths, &name),
         Cmd::Widget { cmd } => widget_cmd(&paths, cmd),
         Cmd::Gallery { cmd } => gallery_cmd(&paths, cmd),
-        Cmd::Routine {
-            cmd: RoutineCmd::Wake { name, line, desk },
-        } => {
-            let cwd = project_dir(None).unwrap_or_default();
-            let said = client::routine_wake(&paths, &name, &line, desk, &cwd)?;
-            println!("{said}");
-            Ok(())
-        }
+        Cmd::Routine { cmd } => routine_cmd(&paths, cmd),
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),

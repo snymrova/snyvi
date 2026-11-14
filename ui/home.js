@@ -1580,11 +1580,12 @@ function onyouBox(j) {
   const quietRows = quiet.map(d => `<li><span class="hm-ab"><span class="hm-t">Quiet since ${new Date(d.touched * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${plural(d.open, "line")} open</span><span class="hm-acts">` +
     (arrSaid.get(`q${d.id}:`) ? saidRow(arrSaid.get(`q${d.id}:`)) : `<a class="hm-t hm-wt-d" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><button type="button" class="hm-link" data-hm="wpark" data-k="${d.id}" data-tip="Park it" data-tip-sub="the desk goes on the shelf; nothing on it is closed">Park it</button>`) + `</span></span></li>`).join("");
   const rows = cornerMod.onyouHtml(true);
-  if (!o.left && !quietRows && !o.ran_quiet && !o.older) return "";
-  const more = `<button type="button" class="hm-link" data-hm="arrive" data-n="${o.arrive_off ? "on" : "off"}" aria-pressed="${!o.arrive_off}" data-tip="${o.arrive_off ? "Open On you when I arrive" : "Don't open it when I arrive"}" data-tip-sub="the first time your window is in front each day, and again when more became yours">${o.arrive_off ? "Opens: off" : "Opens on arrival"}</button>`;
+  if (!o.left && !o.todo && !(o.news || []).length && !quietRows && !o.ran_quiet && !o.older) return "";
+  // 1.66: the tray no longer opens by itself, so the box has no ⋯ for it.
+  const more = "";
   // The count once, and the sentence's clauses beside it, not again under it (C2).
   const cl = o.left && o.clauses ? `<span class="hm-wcl" data-tip-overflow data-tip="${esc(o.clauses)}">· ${esc(o.clauses)}</span>` : "";
-  return `<section class="hm-w hm-wait" data-part="home.wait" aria-label="On you"><div class="hm-wh"><h2>On you${o.left ? ` <span class="n">${o.left}</span>` : ""}</h2>${cl}<span class="hm-gap"></span>${more}</div>` +
+  return `<section class="hm-w hm-wait" data-part="home.wait" aria-label="On you"><div class="hm-wh"><h2>On you${o.left ? ` <span class="n">${o.left}</span> waiting` : ""}</h2>${cl}<span class="hm-gap"></span>${more}</div>` +
     `<div class="oy-home">${rows}${quietRows ? `<ul class="hm-arr">${quietRows}</ul>` : ""}</div></section>`;
 }
 

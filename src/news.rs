@@ -52,6 +52,7 @@ const LIMIT: i64 = 60;
 pub struct Item {
     pub id: i64,
     pub desk_id: i64,
+    pub desk_name: String,
     /// `reworded` (a routine's words), `changed` (its times, model, what
     /// wakes it), `took_back` (a card an agent removed), `folded` (copies
     /// of a routine made one), `stopped`, `ran`.
@@ -120,7 +121,8 @@ fn cut(s: &str, max: usize) -> String {
 }
 
 const COLS: &str = "n.id, n.desk_id, n.kind, n.text, n.detail, n.undo != '', n.by, n.routine_id,
-    n.turn_id, n.created_at, n.seen_at != 0, n.undone_at != 0";
+    n.turn_id, n.created_at, n.seen_at != 0, n.undone_at != 0,
+    (SELECT name FROM desks WHERE id = n.desk_id)";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Item> {
     Ok(Item {
@@ -136,6 +138,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Item> {
         at: r.get(9)?,
         seen: r.get(10)?,
         undone: r.get(11)?,
+        desk_name: r.get::<_, Option<String>>(12)?.unwrap_or_default(),
     })
 }
 
@@ -158,7 +161,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<(Item, String)>> {
         .query_row(
             &format!("SELECT {COLS}, n.undo FROM news n WHERE n.id = ?1"),
             params![id],
-            |r| Ok((row(r)?, r.get(12)?)),
+            |r| Ok((row(r)?, r.get(13)?)),
         )
         .optional()?)
 }
