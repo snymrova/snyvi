@@ -2204,8 +2204,10 @@ fn a_1_62_routine_opens_with_its_one_hour_as_its_one_time() {
             .id
     };
     let conn = Connection::open(&paths.db_path).unwrap();
-    conn.execute_batch(&format!("{OLD_1_66} {OLD_1_64} {OLD_1_63} PRAGMA user_version = 37;"))
-        .unwrap();
+    conn.execute_batch(&format!(
+        "{OLD_1_66} {OLD_1_64} {OLD_1_63} PRAGMA user_version = 37;"
+    ))
+    .unwrap();
     conn.execute(
         "INSERT INTO routines(desk_id, name, cmd, every, due_at, created_at, started_at)
          VALUES(?1, 'news', 'news', 'every day 07:30', 1800000000, 1, 1)",
@@ -2258,7 +2260,10 @@ fn a_1_65_database_folds_its_copies_of_a_routine_into_one() {
     conn.execute_batch(&format!("{OLD_1_66} PRAGMA user_version = 39;"))
         .unwrap();
     let mut ids = Vec::new();
-    for (every, due) in [("every day 07:30", 1_800_000_000_i64), ("every sun 21:30", 1_800_100_000)] {
+    for (every, due) in [
+        ("every day 07:30", 1_800_000_000_i64),
+        ("every sun 21:30", 1_800_100_000),
+    ] {
         conn.execute(
             "INSERT INTO routines(desk_id, name, cmd, every, due_at, created_at, started_at)
              VALUES(?1, 'blog-next', 'blog-next', ?2, ?3, 1, 1)",
@@ -2308,7 +2313,9 @@ fn a_1_65_database_folds_its_copies_of_a_routine_into_one() {
     times.sort();
     assert_eq!(times, ["every day 07:30", "every sun 21:30"]);
     let due: i64 = conn
-        .query_row("SELECT due_at FROM routines WHERE id = ?1", [keep], |r| r.get(0))
+        .query_row("SELECT due_at FROM routines WHERE id = ?1", [keep], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(due, 1_800_000_000, "the soonest of its times");
     let moved: i64 = conn
@@ -2316,7 +2323,11 @@ fn a_1_65_database_folds_its_copies_of_a_routine_into_one() {
         .unwrap();
     assert_eq!(moved, keep);
     let offered: i64 = conn
-        .query_row("SELECT removed_at FROM routines WHERE id = ?1", [offer], |r| r.get(0))
+        .query_row(
+            "SELECT removed_at FROM routines WHERE id = ?1",
+            [offer],
+            |r| r.get(0),
+        )
         .unwrap();
     assert_eq!(offered, 0);
     let news: Vec<(String, i64)> = conn
@@ -2328,6 +2339,9 @@ fn a_1_65_database_folds_its_copies_of_a_routine_into_one() {
         .unwrap();
     assert_eq!(
         news,
-        [("blog-next: 2 copies are one routine now, with every time they had".to_string(), keep)]
+        [(
+            "blog-next: 2 copies are one routine now, with every time they had".to_string(),
+            keep
+        )]
     );
 }

@@ -220,7 +220,9 @@ pub(crate) async fn file_now(app: &App, r: &Routine, root: &std::path::Path) -> 
     .unwrap_or(("gone", None));
     let state = match (state, split) {
         ("ok", Some((h, s))) => {
-            let _ = app.store.clocked(|c, _| routine::set_split(c, r.id, &h, &s));
+            let _ = app
+                .store
+                .clocked(|c, _| routine::set_split(c, r.id, &h, &s));
             "ok"
         }
         ("reworded", Some((h, s))) => {
@@ -229,7 +231,10 @@ pub(crate) async fn file_now(app: &App, r: &Routine, root: &std::path::Path) -> 
                     return Ok(false);
                 };
                 let detail = crate::news::diff(&was, &s.text, 40);
-                let text = format!("{}'s command was reworded. It runs on with the new words.", r.name);
+                let text = format!(
+                    "{}'s command was reworded. It runs on with the new words.",
+                    r.name
+                );
                 crate::news::add(
                     c,
                     r.desk_id,
@@ -245,7 +250,10 @@ pub(crate) async fn file_now(app: &App, r: &Routine, root: &std::path::Path) -> 
                 Ok(true)
             });
             if matches!(said, Ok(true)) {
-                log(&format!("routine {} ({}): its command was reworded, runs on", r.id, r.name));
+                log(&format!(
+                    "routine {} ({}): its command was reworded, runs on",
+                    r.id, r.name
+                ));
                 changed(app, r.desk_id);
                 super::api_thread::threads_moved(app, r.desk_id);
             }
@@ -254,11 +262,15 @@ pub(crate) async fn file_now(app: &App, r: &Routine, root: &std::path::Path) -> 
         ("reworded", None) => "gone",
         (s, _) => s,
     };
-    if matches!(state, "ok" | "words") && !r.stuck.is_empty() && r.stuck.starts_with("changed") {
-        if app.store.clocked(|c, _| routine::unstuck(c, r.id)).unwrap_or(false) {
-            changed(app, r.desk_id);
-            super::api_thread::threads_moved(app, r.desk_id);
-        }
+    if matches!(state, "ok" | "words")
+        && r.stuck.starts_with("changed")
+        && app
+            .store
+            .clocked(|c, _| routine::unstuck(c, r.id))
+            .unwrap_or(false)
+    {
+        changed(app, r.desk_id);
+        super::api_thread::threads_moved(app, r.desk_id);
     }
     state
 }
@@ -732,7 +744,8 @@ async fn start_now(
     let root = std::path::PathBuf::from(&desk.root);
     let rr = r.clone();
     let scripts = tokio::task::spawn_blocking(move || {
-        routine::places::from_file(&root, &rr.file).and_then(|p| routine::places::scripts(&p, &rr.cmd))
+        routine::places::from_file(&root, &rr.file)
+            .and_then(|p| routine::places::scripts(&p, &rr.cmd))
     })
     .await
     .ok()

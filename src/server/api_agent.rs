@@ -250,7 +250,10 @@ fn answered_at_stop(app: &App, id: &str, stop: &super::pipeline_run::StopBody) -
     let answers = app
         .store
         .clocked(|c, now| {
-            if crate::routine::panes(c, placed.desk_id)?.iter().any(|p| p == id) {
+            if crate::routine::panes(c, placed.desk_id)?
+                .iter()
+                .any(|p| p == id)
+            {
                 return Ok(Vec::new());
             }
             crate::thread::take_untold_here(c, placed.desk_id, id, now)

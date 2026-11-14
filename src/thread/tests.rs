@@ -1803,13 +1803,16 @@ fn a_panels_questions_go_quiet_but_never_its_chores() {
         panic!()
     };
     ask(&mut conn, d, &one("key", "Add the R2 key", "p1"), 1).unwrap();
-    let Asked::Turn(other) = ask(&mut conn, d, &one("decide", "Post it?", "p2"), 1).unwrap()
-    else {
+    let Asked::Turn(other) = ask(&mut conn, d, &one("decide", "Post it?", "p2"), 1).unwrap() else {
         panic!()
     };
     let quiet = quiet_asks(&conn, d, "p1", 2).unwrap();
     assert_eq!(quiet.iter().map(|t| t.id).collect::<Vec<_>>(), [k.id]);
-    assert_eq!(turn(&conn, d, other.id).unwrap().unwrap().quiet_at, 0, "panel 2's");
+    assert_eq!(
+        turn(&conn, d, other.id).unwrap().unwrap().quiet_at,
+        0,
+        "panel 2's"
+    );
     assert!(restore_turn(&conn, d, k.id).unwrap());
     assert_eq!(turn(&conn, d, k.id).unwrap().unwrap().quiet_at, -1);
     assert!(
@@ -2048,6 +2051,9 @@ fn a_panels_stop_takes_its_own_answers_once() {
     }
     let got = take_untold_here(&conn, d, "p1", 3).unwrap();
     assert_eq!(got.iter().map(|t| t.id).collect::<Vec<_>>(), [mine.id]);
-    assert!(take_untold_here(&conn, d, "p1", 4).unwrap().is_empty(), "once");
+    assert!(
+        take_untold_here(&conn, d, "p1", 4).unwrap().is_empty(),
+        "once"
+    );
     assert_eq!(turn(&conn, d, theirs.id).unwrap().unwrap().told_at, 0);
 }

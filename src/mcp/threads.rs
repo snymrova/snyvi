@@ -377,7 +377,10 @@ impl Session {
             }
         }
         if !gone.is_empty() {
-            out.push(format!("Removed {}. The user sees it in News, with Undo.", gone.join(", ")));
+            out.push(format!(
+                "Removed {}. The user sees it in News, with Undo.",
+                gone.join(", ")
+            ));
         }
         said(out.join(" "), failed && gone.is_empty())
     }
@@ -528,8 +531,14 @@ mod tests {
     fn a_hand_over_says_its_kind_by_what_it_carries() {
         let k = |v: Value| handed_kind(&v, false);
         assert_eq!(k(json!({ "text": "add it", "key": "CF_TOKEN" })), "key");
-        assert_eq!(k(json!({ "text": "merge", "link": "https://github.com/a/b/pull/12" })), "merge");
-        assert_eq!(k(json!({ "text": "deploy", "cmd": "npm run deploy" })), "run");
+        assert_eq!(
+            k(json!({ "text": "merge", "link": "https://github.com/a/b/pull/12" })),
+            "merge"
+        );
+        assert_eq!(
+            k(json!({ "text": "deploy", "cmd": "npm run deploy" })),
+            "run"
+        );
         assert_eq!(k(json!({ "text": "sign in to GA4" })), "do");
         assert_eq!(k(json!({ "text": "try it", "kind": "try" })), "do");
         assert_eq!(handed_kind(&json!({ "text": "set up" }), true), "run");

@@ -502,7 +502,12 @@ pub fn set_split(conn: &Connection, id: i64, hash: &str, s: &places::Split) -> R
 /// Its words changed and nothing it may run did (1.66): the new words are
 /// kept as allowed, and the whole hash with them, so the file reads `ok`
 /// again; what the words were is returned for News's diff.
-pub fn reworded(conn: &Connection, id: i64, hash: &str, s: &places::Split) -> Result<Option<String>> {
+pub fn reworded(
+    conn: &Connection,
+    id: i64,
+    hash: &str,
+    s: &places::Split,
+) -> Result<Option<String>> {
     let was: Option<String> = conn
         .query_row(
             "SELECT words_text FROM routines WHERE id = ?1 AND may_hash = ?2",
@@ -1028,19 +1033,38 @@ pub fn change(conn: &mut Connection, id: i64, c: &Change, now: i64) -> Result<bo
     Ok(true)
 }
 
-
 /// A change as News says it: `added 21:30, model sonnet`. Empty when
 /// nothing a reader would see moved.
 pub fn change_said(was: &Routine, was_times: &[times::Time], c: &Change) -> String {
     let mut out: Vec<String> = Vec::new();
     let before: Vec<String> = times::lines(was_times)
         .iter()
-        .map(|l| format!("{}{}", l.every, if l.words.is_empty() { String::new() } else { format!(" {}", l.words) }))
+        .map(|l| {
+            format!(
+                "{}{}",
+                l.every,
+                if l.words.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", l.words)
+                }
+            )
+        })
         .collect();
     let after: Vec<String> = c
         .lines
         .iter()
-        .map(|l| format!("{}{}", l.times.words(), if l.words.is_empty() { String::new() } else { format!(" {}", l.words) }))
+        .map(|l| {
+            format!(
+                "{}{}",
+                l.times.words(),
+                if l.words.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", l.words)
+                }
+            )
+        })
         .collect();
     if before != after {
         out.push(if after.is_empty() {
@@ -1055,17 +1079,29 @@ pub fn change_said(was: &Routine, was_times: &[times::Time], c: &Change) -> Stri
     if was.model != c.model {
         out.push(format!(
             "model {}",
-            if c.model.is_empty() { "the default" } else { &c.model }
+            if c.model.is_empty() {
+                "the default"
+            } else {
+                &c.model
+            }
         ));
     }
     if was.effort != c.effort {
         out.push(format!(
             "effort {}",
-            if c.effort.is_empty() { "the default" } else { &c.effort }
+            if c.effort.is_empty() {
+                "the default"
+            } else {
+                &c.effort
+            }
         ));
     }
     if was.fast != c.fast {
-        out.push(if c.fast { "its watch is fast".into() } else { "its watch is at the usual pace".into() });
+        out.push(if c.fast {
+            "its watch is fast".into()
+        } else {
+            "its watch is at the usual pace".into()
+        });
     }
     out.join(", ")
 }

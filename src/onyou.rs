@@ -305,7 +305,11 @@ fn routine_row(conn: &Connection, r: &crate::routine::Routine, desk_name: String
     if !r.watch.is_empty() {
         when.push(if r.fast { "on watch, fast" } else { "on watch" }.into());
     }
-    let mut may: Vec<String> = r.waits.iter().map(|w| format!("waits for you: {w}")).collect();
+    let mut may: Vec<String> = r
+        .waits
+        .iter()
+        .map(|w| format!("waits for you: {w}"))
+        .collect();
     for (what, line) in [("watch", &r.watch), ("gate", &r.gate)] {
         if !line.is_empty() {
             may.push(format!("{what}: {line}"));
@@ -325,7 +329,11 @@ fn routine_row(conn: &Connection, r: &crate::routine::Routine, desk_name: String
         if let Some(w) = &p.waits {
             what.push(format!(
                 "waits for you: {}",
-                if w.is_empty() { "nothing".into() } else { w.join(", ") }
+                if w.is_empty() {
+                    "nothing".into()
+                } else {
+                    w.join(", ")
+                }
             ));
         }
         for (k, v) in [("watch", &p.watch), ("gate", &p.gate), ("shape", &p.shape)] {
@@ -653,13 +661,26 @@ pub fn sentence(oy: &OnYou, now: i64) -> String {
 /// box has the count in its head and says only this beside it (C2), so
 /// the number is said once.
 pub fn clauses(oy: &OnYou, _now: i64) -> String {
-    let waiting: Vec<&Row> = oy.rows.iter().filter(|r| r.shelf == "waiting" && !r.quiet).collect();
+    let waiting: Vec<&Row> = oy
+        .rows
+        .iter()
+        .filter(|r| r.shelf == "waiting" && !r.quiet)
+        .collect();
     if oy.left == 1 {
-        let Some(r) = waiting.first() else { return String::new() };
+        let Some(r) = waiting.first() else {
+            return String::new();
+        };
         return match r.kind {
-            "card" if r.turns.len() > 1 => format!("{} questions on {}", count(r.turns.len()), r.desk_name),
+            "card" if r.turns.len() > 1 => {
+                format!("{} questions on {}", count(r.turns.len()), r.desk_name)
+            }
             "card" => format!("a question on {}", r.desk_name),
-            "routine" => format!("{} on {}, from {}", crate::thread::line(&r.text, 60), r.desk_name, r.routine),
+            "routine" => format!(
+                "{} on {}, from {}",
+                crate::thread::line(&r.text, 60),
+                r.desk_name,
+                r.routine
+            ),
             "plan" => format!("a plan to approve on {}", r.desk_name),
             "routine_start" => format!("start {} on {}", r.routine, r.desk_name),
             "routine_allow" => format!("allow {}'s change on {}", r.routine, r.desk_name),
@@ -705,9 +726,6 @@ fn cap(s: &str) -> String {
         None => String::new(),
     }
 }
-
-
-
 
 /// Tomorrow or Next week on a left-off's row: it is off the list until
 /// then, the sentence as it was. 0 brings it back (Undo).

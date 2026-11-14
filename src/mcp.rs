@@ -646,7 +646,12 @@ impl Session {
             if !arg(args, "every").trim().is_empty() {
                 parts.push(arg(args, "every"));
             }
-            for t in args.get("times").and_then(Value::as_array).into_iter().flatten() {
+            for t in args
+                .get("times")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let e = t.get("every").and_then(Value::as_str).unwrap_or_default();
                 let w = t.get("words").and_then(Value::as_str).unwrap_or_default();
                 parts.push(format!("{e} {w}").trim().to_string());

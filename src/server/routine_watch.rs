@@ -326,7 +326,10 @@ async fn begin(app: &Arc<App>, r: &Routine, desk: &crate::desk::Desk) {
         }
     };
     let pid = child.id();
-    super::routine_run::log(&format!("watch of routine {} ({}) started: {}", r.id, r.name, r.watch));
+    super::routine_run::log(&format!(
+        "watch of routine {} ({}) started: {}",
+        r.id, r.name, r.watch
+    ));
     if let Some(pid) = pid {
         let f = pidfile(app, r.id);
         if let Some(d) = f.parent() {
@@ -404,7 +407,10 @@ fn backoff(n: usize) -> i64 {
 /// The watch ended on its own: backed off, or stopped for good with one card.
 fn exited(app: &App, r: &Routine, why: &str) {
     let now = crate::store::now();
-    super::routine_run::log(&format!("watch of routine {} ({}) exited: {why}", r.id, r.name));
+    super::routine_run::log(&format!(
+        "watch of routine {} ({}) exited: {why}",
+        r.id, r.name
+    ));
     let _ = std::fs::remove_file(pidfile(app, r.id));
     let gave_up = {
         let Ok(mut m) = LIVE.lock() else { return };

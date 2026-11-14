@@ -1209,7 +1209,13 @@ pub fn leave_off(
 
 /// `snyvi routine wake`: one line for a routine, as its watch prints one
 /// (1.66). What the daemon said back, in words.
-pub fn routine_wake(paths: &Paths, name: &str, line: &str, desk: Option<i64>, cwd: &str) -> Result<String> {
+pub fn routine_wake(
+    paths: &Paths,
+    name: &str,
+    line: &str,
+    desk: Option<i64>,
+    cwd: &str,
+) -> Result<String> {
     ensure_daemon()?;
     let (status, j) = post(
         paths,
@@ -1217,11 +1223,17 @@ pub fn routine_wake(paths: &Paths, name: &str, line: &str, desk: Option<i64>, cw
         serde_json::json!({ "name": name, "line": line, "desk": desk, "cwd": cwd }),
         Duration::from_secs(10),
     )?;
-    let said = j["said"].as_str().or(j["error"].as_str()).unwrap_or_default().to_string();
+    let said = j["said"]
+        .as_str()
+        .or(j["error"].as_str())
+        .unwrap_or_default()
+        .to_string();
     match status {
         200 => Ok(said),
         401 => bail!("the daemon refused the token; is this the same user it runs as?"),
-        404 if said.is_empty() => bail!("this daemon is older than `snyvi routine wake`; run `snyvi restart`"),
+        404 if said.is_empty() => {
+            bail!("this daemon is older than `snyvi routine wake`; run `snyvi restart`")
+        }
         _ => bail!("{said}"),
     }
 }

@@ -502,25 +502,33 @@ pub(crate) async fn pane_away(
     }
     let desk = placed.desk_id;
     let who = format!("panel {}", placed.pane.slot);
-    match app
-        .store
-        .clocked(|c, now| {
-            let t = thread::put_away(c, desk, b.turn, &who, &b.why, now)?;
-            // 1.66: said in News, with Undo (`crate::news`): nothing an agent
-            // takes off the reader's lists goes silently.
-            if let Some(t) = &t {
-                let text = format!("{who} took back \"{}\": {}", crate::thread::line(&t.text, 90), b.why.trim());
-                let undo = json!({ "turn": t.id }).to_string();
-                crate::news::add(
-                    c,
-                    desk,
-                    &crate::news::New { kind: "took_back", text: &text, undo: &undo, by: &who, turn_id: t.id, ..Default::default() },
-                    now,
-                )?;
-            }
-            Ok(t)
-        })
-    {
+    match app.store.clocked(|c, now| {
+        let t = thread::put_away(c, desk, b.turn, &who, &b.why, now)?;
+        // 1.66: said in News, with Undo (`crate::news`): nothing an agent
+        // takes off the reader's lists goes silently.
+        if let Some(t) = &t {
+            let text = format!(
+                "{who} took back \"{}\": {}",
+                crate::thread::line(&t.text, 90),
+                b.why.trim()
+            );
+            let undo = json!({ "turn": t.id }).to_string();
+            crate::news::add(
+                c,
+                desk,
+                &crate::news::New {
+                    kind: "took_back",
+                    text: &text,
+                    undo: &undo,
+                    by: &who,
+                    turn_id: t.id,
+                    ..Default::default()
+                },
+                now,
+            )?;
+        }
+        Ok(t)
+    }) {
         Ok(Some(t)) => {
             threads_moved(&app, desk);
             Json(json!({ "turn": t })).into_response()
@@ -1018,7 +1026,10 @@ async fn merges_unseen(app: Arc<App>, desk: i64) {
     static LOOKED: std::sync::Mutex<Vec<(i64, std::time::Instant)>> =
         std::sync::Mutex::new(Vec::new());
     let Ok((open, asks)) = app.store.clocked(|c, _| {
-        Ok((thread::sweep_due(c, desk)?, thread::pr_turns::unfollowed(c, desk)?))
+        Ok((
+            thread::sweep_due(c, desk)?,
+            thread::pr_turns::unfollowed(c, desk)?,
+        ))
     }) else {
         return;
     };

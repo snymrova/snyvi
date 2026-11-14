@@ -23,7 +23,10 @@ pub(crate) async fn news_seen(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    match app.store.clocked(|c, now| crate::news::seen(c, b.desk, now)) {
+    match app
+        .store
+        .clocked(|c, now| crate::news::seen(c, b.desk, now))
+    {
         Ok(n) => {
             if n > 0 {
                 emit(&app, "desknotes", json!({ "desk": b.desk.unwrap_or(0) }));
@@ -49,7 +52,11 @@ pub(crate) async fn news_undo(
         return StatusCode::NOT_FOUND.into_response();
     };
     if item.undone || undo.is_empty() {
-        return (StatusCode::CONFLICT, Json(json!({ "error": "nothing to undo" }))).into_response();
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "nothing to undo" })),
+        )
+            .into_response();
     }
     let undo: serde_json::Value = serde_json::from_str(&undo).unwrap_or_default();
     let done = match item.kind.as_str() {
@@ -66,7 +73,11 @@ pub(crate) async fn news_undo(
             super::api_thread::threads_moved(&app, item.desk_id);
             Json(json!({ "ok": true })).into_response()
         }
-        Ok(false) => (StatusCode::CONFLICT, Json(json!({ "error": "it is not there to put back" }))).into_response(),
+        Ok(false) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "it is not there to put back" })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }

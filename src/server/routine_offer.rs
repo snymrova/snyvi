@@ -57,7 +57,9 @@ fn scripts_of(p: &places::Place, cmd: &str, watch: bool) -> Result<(String, Stri
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(f).map(|m| m.permissions().mode()).unwrap_or(0);
+            let mode = std::fs::metadata(f)
+                .map(|m| m.permissions().mode())
+                .unwrap_or(0);
             if mode & 0o111 == 0 {
                 return Err(format!("{at}{name} is not executable: chmod +x it"));
             }
@@ -114,7 +116,9 @@ pub(crate) async fn pane_offer_routine(
         Err(no) => return *no,
     };
     let text = b.command.trim().trim_start_matches('/').to_string();
-    let Some(line) = routine::from_line(&format!("/{text}")).filter(|l| l.every.is_none() && !l.cmd.is_empty()) else {
+    let Some(line) =
+        routine::from_line(&format!("/{text}")).filter(|l| l.every.is_none() && !l.cmd.is_empty())
+    else {
         return said(StatusCode::BAD_REQUEST, format!("\"{text}\" is not a command: `command` is the name of a slash command or skill of this project, and its words, like `pro-forum` or `bench main`"));
     };
     let root = std::path::PathBuf::from(&placed.root);
@@ -141,7 +145,11 @@ pub(crate) async fn pane_offer_routine(
     let Some(waits) = routine::waits_ok(&b.waits.join("\n")) else {
         return said(StatusCode::BAD_REQUEST, "`waits` takes up to 12 Bash patterns of 200 characters, like `git push *` or `python3 publish.py *`");
     };
-    let by = if b.by.is_empty() { "an agent".to_string() } else { b.by.clone() };
+    let by = if b.by.is_empty() {
+        "an agent".to_string()
+    } else {
+        b.by.clone()
+    };
     let change = routine::Change {
         name: line.name.clone(),
         lines: when.lines.clone(),
@@ -157,7 +165,17 @@ pub(crate) async fn pane_offer_routine(
         .ok()
         .flatten();
     let out = match found {
-        None => create(&app, &placed, &id, &line, &place.file, &waits, &t, &change, &by),
+        None => create(
+            &app,
+            &placed,
+            &id,
+            &line,
+            &place.file,
+            &waits,
+            &t,
+            &change,
+            &by,
+        ),
         Some(r) if r.started_at == 0 => offer_again(&app, &r, &id, &waits, &t, &change, &by),
         Some(r) => update_live(&app, &r, &root, &waits, &t, &change, &by).await,
     };
@@ -165,13 +183,17 @@ pub(crate) async fn pane_offer_routine(
         Ok((code, told, r)) => {
             super::routine_run::changed(&app, placed.desk_id);
             super::api_thread::threads_moved(&app, placed.desk_id);
-            (code, Json(json!({ "said": told, "routine": r, "desk": placed.desk_name }))).into_response()
+            (
+                code,
+                Json(json!({ "said": told, "routine": r, "desk": placed.desk_name })),
+            )
+                .into_response()
         }
-        Err(resp) => resp,
+        Err(resp) => *resp,
     }
 }
 
-type Done = Result<(StatusCode, String, Option<Routine>), Response>;
+type Done = Result<(StatusCode, String, Option<Routine>), Box<Response>>;
 
 #[allow(clippy::too_many_arguments)]
 fn create(
@@ -199,9 +221,9 @@ fn create(
             let r = app.store.clocked(|conn, _| routine::get(conn, r.id)).ok().flatten();
             Ok((StatusCode::CREATED, format!("Offered /{}. {START_NEXT}", line.name), r))
         }
-        Ok(routine::Added::Full) => Err(said(StatusCode::CONFLICT, format!("this desk keeps {} routines: one of them can take this as a time of its own (`; sun 20:00 news`), or the user removes one", routine::PER_DESK))),
-        Ok(routine::Added::NoSuchDesk) => Err(StatusCode::NOT_FOUND.into_response()),
-        Err(e) => Err(err(e)),
+        Ok(routine::Added::Full) => Err(Box::new(said(StatusCode::CONFLICT, format!("this desk keeps {} routines: one of them can take this as a time of its own (`; sun 20:00 news`), or the user removes one", routine::PER_DESK)))),
+        Ok(routine::Added::NoSuchDesk) => Err(Box::new(StatusCode::NOT_FOUND.into_response())),
+        Err(e) => Err(Box::new(err(e))),
     }
 }
 
@@ -228,11 +250,25 @@ fn offer_again(
     });
     match done {
         Ok(true) => {
-            let r = app.store.clocked(|conn, _| routine::get(conn, r.id)).ok().flatten();
-            Ok((StatusCode::OK, format!("Updated the offer of /{}; it is still one row. {START_NEXT}", c.name), r))
+            let r = app
+                .store
+                .clocked(|conn, _| routine::get(conn, r.id))
+                .ok()
+                .flatten();
+            Ok((
+                StatusCode::OK,
+                format!(
+                    "Updated the offer of /{}; it is still one row. {START_NEXT}",
+                    c.name
+                ),
+                r,
+            ))
         }
-        Ok(false) => Err(said(StatusCode::CONFLICT, "it is not on view any more")),
-        Err(e) => Err(err(e)),
+        Ok(false) => Err(Box::new(said(
+            StatusCode::CONFLICT,
+            "it is not on view any more",
+        ))),
+        Err(e) => Err(Box::new(err(e))),
     }
 }
 
@@ -247,7 +283,10 @@ async fn update_live(
     c: &routine::Change,
     by: &str,
 ) -> Done {
-    let mut pending = routine::Pending { by: by.to_string(), ..Default::default() };
+    let mut pending = routine::Pending {
+        by: by.to_string(),
+        ..Default::default()
+    };
     if waits != r.waits.as_slice() {
         pending.waits = Some(waits.to_vec());
     }
@@ -288,7 +327,14 @@ async fn update_live(
             crate::news::add(
                 conn,
                 r.desk_id,
-                &crate::news::New { kind: "changed", text: &text, undo: &undo, by, routine_id: r.id, ..Default::default() },
+                &crate::news::New {
+                    kind: "changed",
+                    text: &text,
+                    undo: &undo,
+                    by,
+                    routine_id: r.id,
+                    ..Default::default()
+                },
                 now,
             )?;
         }
@@ -296,12 +342,19 @@ async fn update_live(
     });
     match done {
         Ok(true) => {}
-        Ok(false) => return Err(said(StatusCode::CONFLICT, "it is not on view any more")),
-        Err(e) => return Err(err(e)),
+        Ok(false) => {
+            return Err(Box::new(said(
+                StatusCode::CONFLICT,
+                "it is not on view any more",
+            )))
+        }
+        Err(e) => return Err(Box::new(err(e))),
     }
     let mut told = format!("Updated /{}, the one routine for it on this desk.", c.name);
     if !said_change.is_empty() {
-        told.push_str(&format!(" Live now: {said_change}. The user sees it in News, with Undo."));
+        told.push_str(&format!(
+            " Live now: {said_change}. The user sees it in News, with Undo."
+        ));
     }
     let may = !pending.is_empty() || matches!(file, "changed");
     if may {
@@ -310,9 +363,15 @@ async fn update_live(
         told.push_str(" Nothing in it changed.");
     }
     if file == "reworded" {
-        told.push_str(" Its command's words changed: it runs on with them, and News shows the user the diff.");
+        told.push_str(
+            " Its command's words changed: it runs on with them, and News shows the user the diff.",
+        );
     }
-    let r = app.store.clocked(|conn, _| routine::get(conn, r.id)).ok().flatten();
+    let r = app
+        .store
+        .clocked(|conn, _| routine::get(conn, r.id))
+        .ok()
+        .flatten();
     Ok((StatusCode::OK, told, r))
 }
 
@@ -328,7 +387,10 @@ pub(crate) fn undo_change(app: &App, undo: &serde_json::Value) -> anyhow::Result
                 .filter_map(|t| {
                     let e = crate::due::every::every(t["every"].as_str()?)?;
                     Some(times::Line {
-                        times: crate::due::every::Times { cadence: e.cadence, at: vec![e.at] },
+                        times: crate::due::every::Times {
+                            cadence: e.cadence,
+                            at: vec![e.at],
+                        },
                         words: t["words"].as_str().unwrap_or_default().to_string(),
                         gated: t["gated"].as_bool().unwrap_or(true),
                     })
@@ -344,7 +406,8 @@ pub(crate) fn undo_change(app: &App, undo: &serde_json::Value) -> anyhow::Result
         fast: undo["fast"].as_bool().unwrap_or(false),
         ..Default::default()
     };
-    app.store.clocked(|conn, now| routine::change(conn, id, &c, now))
+    app.store
+        .clocked(|conn, now| routine::change(conn, id, &c, now))
 }
 
 #[cfg(test)]
@@ -353,7 +416,10 @@ mod tests {
 
     #[test]
     fn a_script_named_the_same_is_the_same_script() {
-        assert!(same_script("sh .claude/routines/omd-brief/gate.sh", "gate.sh"));
+        assert!(same_script(
+            "sh .claude/routines/omd-brief/gate.sh",
+            "gate.sh"
+        ));
         assert!(same_script("watch.sh", "watch.sh"));
         assert!(!same_script("", "gate.sh"));
         assert!(!same_script("watch.sh", ""));
@@ -393,14 +459,23 @@ pub(crate) async fn routine_wake(
             .max_by_key(|d| d.root.len()),
     };
     let Some(desk) = desk else {
-        return said(StatusCode::NOT_FOUND, "no desk here: run it in the desk's folder, or pass --desk");
+        return said(
+            StatusCode::NOT_FOUND,
+            "no desk here: run it in the desk's folder, or pass --desk",
+        );
     };
     let cmd = b.name.trim().trim_start_matches('/');
     let Ok(Some(r)) = app.store.clocked(|c, _| routine::by_cmd(c, desk.id, cmd)) else {
-        return said(StatusCode::NOT_FOUND, format!("no routine /{cmd} on {}", desk.name));
+        return said(
+            StatusCode::NOT_FOUND,
+            format!("no routine /{cmd} on {}", desk.name),
+        );
     };
     if r.state() != "live" {
-        return said(StatusCode::CONFLICT, format!("/{cmd} is {}: only a live routine wakes", r.state()));
+        return said(
+            StatusCode::CONFLICT,
+            format!("/{cmd} is {}: only a live routine wakes", r.state()),
+        );
     }
     let pushed = app
         .store
@@ -411,10 +486,19 @@ pub(crate) async fn routine_wake(
             let (batch, _) = routine::events::pace(r.fast);
             Json(json!({ "said": format!("/{cmd} woken: it runs within {batch} s with what else came") })).into_response()
         }
-        Ok(routine::events::Pushed::Same) => Json(json!({ "said": format!("/{cmd} already has that line waiting") })).into_response(),
+        Ok(routine::events::Pushed::Same) => {
+            Json(json!({ "said": format!("/{cmd} already has that line waiting") })).into_response()
+        }
         Ok(routine::events::Pushed::Dropped) => said(
             StatusCode::BAD_REQUEST,
-            format!("not in /{cmd}'s shape ({}), or too many lines wait", if r.shape.is_empty() { "up to four short words" } else { r.shape.as_str() }),
+            format!(
+                "not in /{cmd}'s shape ({}), or too many lines wait",
+                if r.shape.is_empty() {
+                    "up to four short words"
+                } else {
+                    r.shape.as_str()
+                }
+            ),
         ),
         Err(e) => err(e),
     }

@@ -49,14 +49,21 @@ fn row_json(r: &Routine, root: &std::path::Path) -> serde_json::Value {
 /// `ok`; `late`, it ran badly or its watch is backing off and it will try
 /// again; `stopped`, it cannot run until the reader does something; and
 /// `paused`, `draft` or `offer` for the ones that are not meant to run.
-pub(crate) fn routine_health(r: &Routine, file: &str, live: Option<&super::routine_watch::Live>) -> &'static str {
+pub(crate) fn routine_health(
+    r: &Routine,
+    file: &str,
+    live: Option<&super::routine_watch::Live>,
+) -> &'static str {
     match r.state() {
         "offer" => return "offer",
         "draft" => return "draft",
         "paused" => return "paused",
         _ => {}
     }
-    if !r.stuck.is_empty() || matches!(file, "changed" | "gone" | "two") || live.is_some_and(|l| l.stopped) {
+    if !r.stuck.is_empty()
+        || matches!(file, "changed" | "gone" | "two")
+        || live.is_some_and(|l| l.stopped)
+    {
         return "stopped";
     }
     let bad = ["failed", "skipped", "gate failed", "limit", "stopped"];
@@ -909,7 +916,9 @@ fn allow_now(app: &App, r: &Routine, root: &std::path::Path, start: bool) -> Res
         // and an agent's change that waited for this Allow, taken in.
         let (root, rr) = (root.to_path_buf(), r.clone());
         if let Some((h, sp)) = routine::split_now(&root, &rr).filter(|(h, _)| *h == hash) {
-            let _ = app.store.clocked(|c, _| routine::set_split(c, r.id, &h, &sp));
+            let _ = app
+                .store
+                .clocked(|c, _| routine::set_split(c, r.id, &h, &sp));
         }
     }
     if done {

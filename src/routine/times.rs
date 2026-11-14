@@ -142,7 +142,9 @@ pub fn when(text: &str) -> std::result::Result<When, String> {
         return Err("`when` is empty: write it like `every day 09:00`, `mon 07:00; thu 07:00` or `on watch`".into());
     }
     if count(&w.lines) > MAX {
-        return Err(format!("`when` names more than {MAX} hours: one routine holds {MAX} at most"));
+        return Err(format!(
+            "`when` names more than {MAX} hours: one routine holds {MAX} at most"
+        ));
     }
     Ok(w)
 }
@@ -380,7 +382,10 @@ mod when_tests {
         assert!(w.watch && w.fast);
         assert_eq!(w.lines.len(), 3);
         assert_eq!(w.lines[0].times.cadence, Cadence::Daily);
-        assert_eq!(w.lines[0].times.at, vec![(9, 30), (13, 0), (17, 30), (21, 30)]);
+        assert_eq!(
+            w.lines[0].times.at,
+            vec![(9, 30), (13, 0), (17, 30), (21, 30)]
+        );
         assert_eq!(w.lines[0].words, "");
         assert_eq!(w.lines[1].words, "news");
         assert!(w.lines[1].gated);
@@ -394,7 +399,9 @@ mod when_tests {
         let w = when("on watch").unwrap();
         assert!(w.watch && !w.fast && w.lines.is_empty());
         assert!(when("").unwrap_err().contains("every day 09:00"));
-        assert!(when("whenever it rains").unwrap_err().contains("is not a time"));
+        assert!(when("whenever it rains")
+            .unwrap_err()
+            .contains("is not a time"));
         let many = "every day 1 2 3 4 5 6; every day 7 8 9 10 11 12; sun 13";
         assert!(when(many).unwrap_err().contains("12 at most"));
     }

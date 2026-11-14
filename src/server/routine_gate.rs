@@ -46,7 +46,10 @@ pub(crate) struct Ground {
 /// first time, what the shared `state/` held is copied in, so a cursor is
 /// not lost: the scripts read the new folder from then on.
 pub(crate) fn state_dir(data_dir: &Path, r: &Routine, scripts: Option<&Path>) -> PathBuf {
-    let d = data_dir.join("routines").join(r.id.to_string()).join("state");
+    let d = data_dir
+        .join("routines")
+        .join(r.id.to_string())
+        .join("state");
     if !d.is_dir() {
         let _ = std::fs::create_dir_all(&d);
         if let Some(old) = scripts.map(|s| s.join(places::STATE)) {

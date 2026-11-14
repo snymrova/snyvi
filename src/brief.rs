@@ -446,7 +446,14 @@ fn routine_lines(
         .iter()
         .filter(|r| r.removed_at == 0 && (r.started_at != 0 || !r.suggested_by.is_empty()))
         .take(6)
-        .map(|r| format!("{} ({}): {}", cut(&r.name, 40), when_of(r), standing(r, now)))
+        .map(|r| {
+            format!(
+                "{} ({}): {}",
+                cut(&r.name, 40),
+                when_of(r),
+                standing(r, now)
+            )
+        })
         .collect();
     if named.is_empty() {
         return Vec::new();
@@ -475,7 +482,11 @@ fn standing(r: &crate::routine::Routine, now: i64) -> String {
         "ok".to_string()
     };
     if r.last_at > 0 {
-        s.push_str(&format!(", ran {}, {}", ago(now - r.last_at), cut(&r.last_state, 30)));
+        s.push_str(&format!(
+            ", ran {}, {}",
+            ago(now - r.last_at),
+            cut(&r.last_state, 30)
+        ));
     }
     if r.due_at > now {
         s.push_str(&format!(", next in {}", ago_words(r.due_at - now)));
@@ -727,7 +738,9 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
         )),
     }
     if n_older > 0 {
-        lines.push("One you can see is done (a tag, a merge): settle it with ids and why.".to_string());
+        lines.push(
+            "One you can see is done (a tag, a merge): settle it with ids and why.".to_string(),
+        );
     }
     // Cards from panels since closed (C8): no one else can settle them, and
     // the user's answer to one comes to whichever panel asks next.
@@ -1909,7 +1922,10 @@ mod tests {
         // 1.66: every routine, offers too, with where it stands, so an agent
         // updates the one there is instead of offering a second.
         assert!(other.contains("Routines on this desk, snyvi's to start at their hour, never yours; offer_routine with the same command updates one, never adds a second: newsroom (every day 07:30): ok, ran 1 day ago, done; bench (every weekday 09:00): waiting for the user's Start."), "{other}");
-        assert!(!mine.contains("bench"), "a routine's own panel hears only itself");
+        assert!(
+            !mine.contains("bench"),
+            "a routine's own panel hears only itself"
+        );
         // 1.53: a draft in its try says so, and is named to no other panel.
         let draft = crate::routine::Routine {
             name: "open PRs, summarise".into(),

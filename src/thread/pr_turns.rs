@@ -21,7 +21,9 @@ pub fn unfollowed(conn: &Connection, desk_id: i64) -> Result<Vec<(i64, String, S
         return Ok(Vec::new());
     }
     let followed: Vec<String> = conn
-        .prepare_cached("SELECT pr FROM threads WHERE desk_id = ?1 AND pr != '' AND removed_at = 0")?
+        .prepare_cached(
+            "SELECT pr FROM threads WHERE desk_id = ?1 AND pr != '' AND removed_at = 0",
+        )?
         .query_map(params![desk_id], |r| r.get::<_, String>(0))?
         .filter_map(|p| p.ok().and_then(|p| pr_number(&p)))
         .collect();
@@ -41,22 +43,11 @@ pub fn same_pr(link: &str, url: &str) -> bool {
             .split_once("/pull/")
             .map(|(r, _)| r.to_ascii_lowercase())
     };
-    let num = |s: &str| s.split_once("/pull/").and_then(|(_, n)| n.split('/').next().map(str::to_string));
+    let num = |s: &str| {
+        s.split_once("/pull/")
+            .and_then(|(_, n)| n.split('/').next().map(str::to_string))
+    };
     url.is_empty() || (repo(link) == repo(url) && num(link) == num(url))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_link_names_its_repository_and_number() {
-        let u = "https://github.com/snymrova/snyvi/pull/133";
-        assert!(same_pr("https://github.com/snymrova/snyvi/pull/133/files", u));
-        assert!(same_pr(u, ""));
-        assert!(!same_pr("https://github.com/other/snyvi/pull/133", u));
-        assert!(!same_pr("https://github.com/snymrova/snyvi/pull/13", u));
-    }
 }
 
 /// GitHub says the hand-over's PR merged: it is answered so, as a thread's
@@ -68,4 +59,21 @@ pub fn merged(conn: &Connection, id: i64, merge: &str, now: i64) -> Result<bool>
          WHERE id = ?1 AND kind = 'merge' AND answered_at = 0",
         params![id, format!("Merged ({short}, seen by snyvi)"), now],
     )? > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_link_names_its_repository_and_number() {
+        let u = "https://github.com/snymrova/snyvi/pull/133";
+        assert!(same_pr(
+            "https://github.com/snymrova/snyvi/pull/133/files",
+            u
+        ));
+        assert!(same_pr(u, ""));
+        assert!(!same_pr("https://github.com/other/snyvi/pull/133", u));
+        assert!(!same_pr("https://github.com/snymrova/snyvi/pull/13", u));
+    }
 }

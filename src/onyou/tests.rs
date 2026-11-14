@@ -82,7 +82,13 @@ fn every_kind_is_on_its_shelf() {
     let b = desk(&c, "beta");
     let r = desk(&c, "routines");
     let s = desk(&c, "gamma");
-    left_off(&c, s, "If you merge PR 7, ship it", NOW - LEFT - 10, "p-session");
+    left_off(
+        &c,
+        s,
+        "If you merge PR 7, ship it",
+        NOW - LEFT - 10,
+        "p-session",
+    );
     c.execute(
         "INSERT INTO desk_notes(desk_id, text, created_at, suggested_by) VALUES(?1, 'keep this', ?2, 'claude-code')",
         params![b, NOW - 50],
@@ -105,7 +111,11 @@ fn every_kind_is_on_its_shelf() {
     assert_eq!((oy.left, oy.todo), (2, 3));
     let routine_row = &oy.rows[1];
     assert_eq!(
-        (routine_row.routine.as_str(), routine_row.go, routine_row.no_doc),
+        (
+            routine_row.routine.as_str(),
+            routine_row.go,
+            routine_row.no_doc
+        ),
         ("blog-next", true, true)
     );
 }
@@ -132,13 +142,22 @@ fn a_routines_line_with_its_card_open_is_one_row() {
     let (c, _d) = db();
     let r = desk(&c, "everything.dog");
     routine(&c, r, "eva-pack", "p-eva");
-    left_off(&c, r, "The explainer still waits for your answer", NOW - 60, "p-eva");
+    left_off(
+        &c,
+        r,
+        "The explainer still waits for your answer",
+        NOW - 60,
+        "p-eva",
+    );
     let t = ask(&c, r, "2 · Explainer: leash pulling", NOW - 120, "p-eva");
     assert_eq!(kinds(&gather(&c, NOW + LEFT).unwrap()), ["card"]);
 
     // Another panel's card on the same desk leaves the line alone.
-    c.execute("UPDATE turns SET pane = 'p-other' WHERE id = ?1", params![t])
-        .unwrap();
+    c.execute(
+        "UPDATE turns SET pane = 'p-other' WHERE id = ?1",
+        params![t],
+    )
+    .unwrap();
     assert_eq!(kinds(&gather(&c, NOW).unwrap()), ["routine", "card"]);
 
     c.execute(
@@ -157,7 +176,13 @@ fn the_count_is_agents_not_questions() {
     let ds: Vec<i64> = ["a", "b", "c"].iter().map(|n| desk(&c, n)).collect();
     for i in 0..9 {
         let pane = format!("p{}", i % 3);
-        ask(&c, ds[i % 3], &format!("question {i}"), NOW - 100 + i as i64, &pane);
+        ask(
+            &c,
+            ds[i % 3],
+            &format!("question {i}"),
+            NOW - 100 + i as i64,
+            &pane,
+        );
     }
     card(&c, ds[0], "Pay the invoice", NOW - 500);
     card(&c, ds[1], "Add the key", NOW - 400);
@@ -204,7 +229,11 @@ fn tomorrow_and_not_this_take_rows_off() {
     let said = nots(&c, a, NOW + 1).unwrap();
     assert_eq!(
         said,
-        [("Sign in to Cloudflare?".to_string(), "done by hand".to_string(), NOW)]
+        [(
+            "Sign in to Cloudflare?".to_string(),
+            "done by hand".to_string(),
+            NOW
+        )]
     );
     assert!(
         nots(&c, a, NOW + NOT_SAID_S + 1).unwrap().is_empty(),
@@ -242,7 +271,10 @@ fn the_sentence_says_one_thing() {
     let a = desk(&c, "bos_dog");
     ask(&c, a, "Pay?", NOW, "p");
     let oy = gather(&c, NOW).unwrap();
-    assert_eq!(oy.sentence, "One agent is waiting on you: a question on bos_dog.");
+    assert_eq!(
+        oy.sentence,
+        "One agent is waiting on you: a question on bos_dog."
+    );
 }
 
 /// A routine an agent made waits for Start, one changed in what it may run
@@ -268,14 +300,33 @@ fn a_routine_to_start_allow_or_mend_waits() {
     assert_eq!(kinds(&oy), ["routine_start"]);
     let row = &oy.rows[0];
     assert_eq!(
-        (row.routine_id, row.asked.as_str(), row.tried.as_str(), row.when.as_str()),
-        (start, "a digest each morning", "ran once, 3 lines", "every day 07:30")
+        (
+            row.routine_id,
+            row.asked.as_str(),
+            row.tried.as_str(),
+            row.when.as_str()
+        ),
+        (
+            start,
+            "a digest each morning",
+            "ran once, 3 lines",
+            "every day 07:30"
+        )
     );
-    assert_eq!(oy.sentence, "One agent is waiting on you: start digest on a.");
+    assert_eq!(
+        oy.sentence,
+        "One agent is waiting on you: start digest on a."
+    );
 
-    c.execute("UPDATE routines SET started_at = ?2 WHERE id = ?1", params![start, NOW - 20])
-        .unwrap();
-    assert!(gather(&c, NOW).unwrap().rows.is_empty(), "started, nothing waits");
+    c.execute(
+        "UPDATE routines SET started_at = ?2 WHERE id = ?1",
+        params![start, NOW - 20],
+    )
+    .unwrap();
+    assert!(
+        gather(&c, NOW).unwrap().rows.is_empty(),
+        "started, nothing waits"
+    );
     assert!(crate::routine::stuck(&c, start, "its command is gone", NOW - 10).unwrap());
     let oy = gather(&c, NOW).unwrap();
     assert_eq!(kinds(&oy), ["routine_stuck"]);
@@ -308,7 +359,10 @@ fn a_card_of_questions_is_one_row() {
     let oy = gather(&c, NOW).unwrap();
     assert_eq!((kinds(&oy), oy.left), (vec!["card"], 1));
     assert_eq!(oy.rows[0].turns.len(), 3);
-    assert_eq!(oy.sentence, "One agent is waiting on you: three questions on alpha.");
+    assert_eq!(
+        oy.sentence,
+        "One agent is waiting on you: three questions on alpha."
+    );
 
     let first = oy.rows[0].turns[0].id;
     c.execute(
