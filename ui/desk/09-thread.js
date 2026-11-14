@@ -515,8 +515,17 @@ async function answer(d, w, text, again = { a: "tn-pick", w: String(w.id), v: te
   // unanswered card has no `answered_at`) are taken off again too, or the
   // card stayed answered here and left On you with nothing on the daemon.
   const back = () => { for (const k of Object.keys(w)) if (!(k in was)) delete w[k]; Object.assign(w, was); sendable.delete(w.id); };
-  if (await told(again, `w${w.id}`, "Could not answer", back,
-    () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.answer }))) await getFiled(d.id, true);
+  if (!await told(again, `w${w.id}`, "Could not answer", back,
+    () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.answer }))) return;
+  await getFiled(d.id, true);
+  // 1.66, pressing is sending: the answer goes now, typed into a Claude at
+  // its prompt, a card's once its last question is answered. A panel at
+  // work hears it as its turn stops (the daemon's Stop hook carries it), and
+  // the row says which. Send now stays for a panel that was busy.
+  if (!sendable.has(w.id)) return;
+  if (!w.ask_group) return sendNow(d, w);
+  const rest = filed.turns.some(x => x.ask_group === w.ask_group && !x.answered_at);
+  if (!rest) sendGroup(d, w.ask_group);
 }
 
 /** Send now: the answer typed into the panel that asked, and Enter pressed
@@ -529,7 +538,7 @@ async function answer(d, w, text, again = { a: "tn-pick", w: String(w.id), v: te
 async function sendNow(d, w) {
   if (!sendable.has(w.id)) return;
   const v = views.get(w.pane), n = slotOf(d, w.pane);
-  if (!sendsHere(v)) return notSent(w.pane, n, "Your answer goes");
+  if (!sendsHere(v)) return notSent(w.pane, n, "It hears your answer when its turn ends, or with your next message.");
   // Out of `sendable` before the wait, so a second click types nothing.
   sendable.delete(w.id);
   await sent(d, [w]);
@@ -541,7 +550,7 @@ async function sendNow(d, w) {
 /** Why nothing was typed, in the row, for a moment. */
 function notSent(pane, n, what) {
   clearTimeout(rowTimer);
-  rowSaid = { p: pane, text: `Panel ${n || "?"} has no Claude at its prompt, so nothing is typed into it. ${what} with your next message.` };
+  rowSaid = { p: pane, text: `Panel ${n || "?"} is not at its prompt, so nothing is typed into it. ${what}` };
   rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
   rail();
 }
@@ -559,7 +568,7 @@ function goAhead(d, doc) {
   const xs = noteList.filter(x => x.stage_doc === doc && x.stage === "planned" && x.ok_at && !x.done);
   const pane = xs[0]?.stage_pane, v = pane && views.get(pane), n = pane && slotOf(d, pane);
   if (!xs.length || !v) return;
-  if (!sendsHere(v)) return notSent(pane, n, "It hears the approval");
+  if (!sendsHere(v)) return notSent(pane, n, "It hears the approval with your next message.");
   const lines = xs.map(x => `#${x.id}`).join(" ");
   input(v, bracket(v, oneLine(`Approved in snyvi: go ahead with the plan ${doc} for ${lines}.`)));
   setTimeout(() => input(v, "\r"), 120);
@@ -584,7 +593,7 @@ async function sendGroup(d, g) {
   const ms = filed.turns.filter(w => w.ask_group === g && w.answered_at && sendable.has(w.id)).sort((a, b) => a.id - b.id);
   if (!ms.length) return;
   const v = views.get(ms[0].pane), n = slotOf(d, ms[0].pane);
-  if (!sendsHere(v)) return notSent(ms[0].pane, n, "Your answers go");
+  if (!sendsHere(v)) return notSent(ms[0].pane, n, "It hears your answers when its turn ends, or with your next message.");
   const text = ["Answered in snyvi:", ...ms.map(w => `${w.id - g + 1}. ${oneLine(w.answer)}`)].join("\r");
   for (const w of ms) sendable.delete(w.id);
   await sent(d, ms);

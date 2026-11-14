@@ -231,7 +231,36 @@ pub(crate) async fn pane_agent(
     {
         return Json(handoff).into_response();
     }
+    if let Some(said) = b.stop.as_ref().and_then(|s| answered_at_stop(&app, &id, s)) {
+        return Json(json!({ "handoff": said })).into_response();
+    }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// 1.66, pressing is sending: answers the reader gave in snyvi to this
+/// panel's questions, not yet told, go back as its turn stops, so an agent
+/// that asked and went on hears them without the reader typing. Once a
+/// turn: a Stop hook that already kept it going is let stop. A routine's
+/// panel is left to its next run (`routine_run`), as before.
+fn answered_at_stop(app: &App, id: &str, stop: &super::pipeline_run::StopBody) -> Option<String> {
+    if stop.active {
+        return None;
+    }
+    let placed = app.store.pane(id).ok()??;
+    let answers = app
+        .store
+        .clocked(|c, now| {
+            if crate::routine::panes(c, placed.desk_id)?.iter().any(|p| p == id) {
+                return Ok(Vec::new());
+            }
+            crate::thread::take_untold_here(c, placed.desk_id, id, now)
+        })
+        .ok()?;
+    if answers.is_empty() {
+        return None;
+    }
+    super::api_thread::threads_moved(app, placed.desk_id);
+    Some(crate::brief::answers_only(&answers))
 }
 
 /// Whether what an event says about the agent is one of the words a pane

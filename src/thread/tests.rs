@@ -2019,3 +2019,35 @@ fn a_question_retires_after_a_day_and_keeps_what_was_said() {
         0
     );
 }
+
+/// Pressing is sending (1.66): at a panel's Stop it takes its own answers
+/// not yet told, once, and never another panel's or a dialog's.
+#[test]
+fn a_panels_stop_takes_its_own_answers_once() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let q = |pane: &str| Ask {
+        kind: "decide".into(),
+        text: "Lit ink?".into(),
+        options: vec!["Yes".into(), "No".into()],
+        pane: pane.into(),
+        ..Ask::default()
+    };
+    let Asked::Turn(mine) = ask(&mut conn, d, &q("p1"), 1).unwrap() else {
+        panic!()
+    };
+    let Asked::Turn(theirs) = ask(&mut conn, d, &q("p2"), 1).unwrap() else {
+        panic!()
+    };
+    for t in [mine.id, theirs.id] {
+        conn.execute(
+            "UPDATE turns SET answer = 'Yes', answered_at = 2, answered_in = 'snyvi' WHERE id = ?1",
+            params![t],
+        )
+        .unwrap();
+    }
+    let got = take_untold_here(&conn, d, "p1", 3).unwrap();
+    assert_eq!(got.iter().map(|t| t.id).collect::<Vec<_>>(), [mine.id]);
+    assert!(take_untold_here(&conn, d, "p1", 4).unwrap().is_empty(), "once");
+    assert_eq!(turn(&conn, d, theirs.id).unwrap().unwrap().told_at, 0);
+}
