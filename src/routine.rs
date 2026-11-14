@@ -111,6 +111,60 @@ pub const LATE_COLUMNS_1_54: &str =
      ALTER TABLE routine_runs ADD COLUMN slept_s INTEGER NOT NULL DEFAULT 0;
      ALTER TABLE routines ADD COLUMN slept_s INTEGER NOT NULL DEFAULT 0;";
 
+/// 1.66 (plan e7fda1ca90): a routine's file kept as two hashes, what it
+/// **may** run and its **words** (`places::split_hash`), and the words as
+/// they were, for News's diff; the user's ask and the agent's try, which
+/// the Start row says; a change that waits for Allow (`pending`); a watch
+/// read fast (`fast`); why it cannot run, said once in Waiting rather than
+/// on each skipped hour (`stuck`); and the one routine a copy was folded
+/// into.
+///
+/// Then the copies are folded, once (`pro-forum` was made 13 times, and
+/// `blog-next` and `eva-feature-reel` live twice each, one per day): on a
+/// desk, the live routines with one command become the newest of them,
+/// holding every time the others had, and their waiting events. The others
+/// are removed from view, with `merged_into` saying where they went, and
+/// keep their own times: nothing is deleted. Drafts and offers are left as
+/// they are; the next offer of the same command updates them.
+/// Each fold is a line in News (`crate::news`, which comes first in
+/// version 40). Version 40 of `store::MIGRATIONS`.
+pub const YOU_COLUMNS_1_66: &str = "
+ALTER TABLE routines ADD COLUMN may_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE routines ADD COLUMN words_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE routines ADD COLUMN words_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE routines ADD COLUMN asked TEXT NOT NULL DEFAULT '';
+ALTER TABLE routines ADD COLUMN tried TEXT NOT NULL DEFAULT '';
+ALTER TABLE routines ADD COLUMN pending TEXT NOT NULL DEFAULT '';
+ALTER TABLE routines ADD COLUMN fast INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE routines ADD COLUMN merged_into INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE routines ADD COLUMN stuck TEXT NOT NULL DEFAULT '';
+ALTER TABLE routines ADD COLUMN stuck_at INTEGER NOT NULL DEFAULT 0;
+CREATE TEMP TABLE routine_folds AS
+  SELECT r.id AS old,
+    (SELECT MAX(o.id) FROM routines o WHERE o.desk_id = r.desk_id AND o.cmd = r.cmd
+       AND o.removed_at = 0 AND o.started_at != 0 AND o.suggested_by = '') AS keep
+  FROM routines r
+  WHERE r.removed_at = 0 AND r.started_at != 0 AND r.suggested_by = '' AND r.cmd != '';
+DELETE FROM routine_folds WHERE old = keep;
+INSERT INTO routine_times(routine_id, every, words, gated, due_at)
+  SELECT f.keep, t.every, t.words, t.gated, t.due_at
+  FROM routine_folds f JOIN routine_times t ON t.routine_id = f.old
+  WHERE NOT EXISTS (SELECT 1 FROM routine_times k
+                    WHERE k.routine_id = f.keep AND k.every = t.every AND k.words = t.words);
+UPDATE routine_events SET routine_id = (SELECT keep FROM routine_folds WHERE old = routine_events.routine_id)
+  WHERE run_id = 0 AND routine_id IN (SELECT old FROM routine_folds);
+UPDATE routines SET due_at = (SELECT MIN(t.due_at) FROM routine_times t WHERE t.routine_id = routines.id AND t.due_at > 0)
+  WHERE id IN (SELECT keep FROM routine_folds);
+INSERT INTO news(desk_id, kind, text, routine_id, created_at)
+  SELECT k.desk_id, 'folded',
+    k.name || ': ' || (COUNT(*) + 1) || ' copies are one routine now, with every time they had',
+    k.id, CAST(strftime('%s','now') AS INTEGER)
+  FROM routine_folds f JOIN routines k ON k.id = f.keep GROUP BY f.keep;
+UPDATE routines SET merged_into = (SELECT keep FROM routine_folds WHERE old = routines.id),
+    removed_at = CAST(strftime('%s','now') AS INTEGER)
+  WHERE id IN (SELECT old FROM routine_folds);
+DROP TABLE routine_folds;";
+
 /// How many routines a desk keeps: a handful is the point.
 pub const PER_DESK: i64 = 6;
 /// The longest line a routine is: the reader's words are its prompt.
@@ -196,6 +250,29 @@ pub struct Routine {
     /// 1.63: what woke the run under way, or the last: written before its
     /// start, so the brief its session reads at once can say it.
     pub woke: String,
+    /// 1.66: what it may run and its words, as allowed (`places::split_hash`);
+    /// empty on a routine allowed before 1.66 until its file is read as it
+    /// was allowed (`file_state`).
+    #[serde(skip)]
+    pub may_hash: String,
+    #[serde(skip)]
+    pub words_hash: String,
+    #[serde(skip)]
+    pub words_text: String,
+    /// 1.66: what the user asked for, in their words, and what the agent's
+    /// own try of it did: the Start row says both.
+    pub asked: String,
+    pub tried: String,
+    /// 1.66: an agent's change to what a live routine may run, waiting for
+    /// the reader's Allow (`Pending`, as JSON); empty with none.
+    pub pending: String,
+    /// 1.66: its watch's lines run in ten seconds, thirty an hour.
+    pub fast: bool,
+    /// 1.66: why it cannot run, in the row's words (`changed · Allow`, its
+    /// watch gave up), and since when: one row in Waiting, loud, until the
+    /// reader allows, saves, resumes or starts it. Empty while it can run.
+    pub stuck: String,
+    pub stuck_at: i64,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -372,15 +449,87 @@ pub fn now_of(root: &Path, r: &Routine) -> Made {
 /// How a routine's file stands: `ok`, `changed` since it was allowed (its
 /// text, or the file its name now comes to), `gone`, `two`, `new` -- a
 /// draft or an offer never allowed -- or `words`, which has none.
+///
+/// 1.66: `changed` is a change to what it **may** run, and `reworded` a
+/// change to its words alone, which runs on (`places::split_hash`). A
+/// routine allowed before 1.66 has no split yet: its whole hash decides,
+/// and `split_now` gives it one once its file is as it was allowed.
 pub fn file_state(root: &Path, r: &Routine) -> &'static str {
     match now_of(root, r) {
         Made::Words => "words",
         Made::NoFile(_) => "gone",
         Made::Two(..) => "two",
         Made::File(..) if r.cmd_hash.is_empty() => "new",
-        Made::File(p, h) if h == r.cmd_hash && p.file == r.file => "ok",
-        Made::File(..) => "changed",
+        Made::File(p, _) if p.file != r.file => "changed",
+        Made::File(_, h) if r.may_hash.is_empty() => {
+            if h == r.cmd_hash {
+                "ok"
+            } else {
+                "changed"
+            }
+        }
+        Made::File(p, _) => match places::split_hash(&p, &r.cmd) {
+            None => "gone",
+            Some(s) if s.may != r.may_hash => "changed",
+            Some(s) if s.words != r.words_hash => "reworded",
+            Some(_) => "ok",
+        },
     }
+}
+
+/// The routine's file split as it is now, and the whole hash: what `allow`,
+/// `start` and the fold of pre-1.66 rows write. `None` for words or a file
+/// that is not one.
+pub fn split_now(root: &Path, r: &Routine) -> Option<(String, places::Split)> {
+    match now_of(root, r) {
+        Made::File(p, h) => places::split_hash(&p, &r.cmd).map(|s| (h, s)),
+        _ => None,
+    }
+}
+
+/// The split written as allowed: on Start, Allow and Save with the whole
+/// hash the reader saw (`hash`), and on a pre-1.66 row whose file is as it
+/// was allowed. Written only when the file still hashes to `hash`, so what
+/// is kept is what the reader saw.
+pub fn set_split(conn: &Connection, id: i64, hash: &str, s: &places::Split) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE routines SET may_hash = ?3, words_hash = ?4, words_text = ?5
+         WHERE id = ?1 AND cmd_hash = ?2",
+        params![id, hash, s.may, s.words, cap_text(&s.text)],
+    )? > 0)
+}
+
+/// Its words changed and nothing it may run did (1.66): the new words are
+/// kept as allowed, and the whole hash with them, so the file reads `ok`
+/// again; what the words were is returned for News's diff.
+pub fn reworded(conn: &Connection, id: i64, hash: &str, s: &places::Split) -> Result<Option<String>> {
+    let was: Option<String> = conn
+        .query_row(
+            "SELECT words_text FROM routines WHERE id = ?1 AND may_hash = ?2",
+            params![id, s.may],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(was) = was else { return Ok(None) };
+    conn.execute(
+        "UPDATE routines SET words_hash = ?2, words_text = ?3, cmd_hash = ?4 WHERE id = ?1",
+        params![id, s.words, cap_text(&s.text), hash],
+    )?;
+    Ok(Some(was))
+}
+
+/// Words kept for a diff, at most this long: a command is a page, not a book.
+const WORDS_KEPT: usize = 20_000;
+
+fn cap_text(t: &str) -> String {
+    if t.len() <= WORDS_KEPT {
+        return t.to_string();
+    }
+    let mut end = WORDS_KEPT;
+    while !t.is_char_boundary(end) {
+        end -= 1;
+    }
+    t[..end].to_string()
 }
 
 /// Whether a command's file reads a `continue:` form: then the reader's
@@ -441,7 +590,8 @@ const COLS: &str =
     "id, desk_id, name, cmd, every, due_at, waits, minutes, five_hour, pane, cmd_hash,
     allowed_at, last_at, last_state, last_line, runs, running_since, running, late_s,
     suggested_by, suggested_pane, paused_at, created_at, removed_at, started_at, file, slept_s,
-    gate, watch, shape, model, effort, slim, dropped, woke";
+    gate, watch, shape, model, effort, slim, dropped, woke,
+    may_hash, words_hash, words_text, asked, tried, pending, fast, stuck, stuck_at";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Routine> {
     let waits: String = r.get(6)?;
@@ -481,6 +631,15 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Routine> {
         slim: r.get::<_, i64>(32)? != 0,
         dropped: r.get(33)?,
         woke: r.get(34)?,
+        may_hash: r.get(35)?,
+        words_hash: r.get(36)?,
+        words_text: r.get(37)?,
+        asked: r.get(38)?,
+        tried: r.get(39)?,
+        pending: r.get(40)?,
+        fast: r.get::<_, i64>(41)? != 0,
+        stuck: r.get(42)?,
+        stuck_at: r.get(43)?,
     })
 }
 
@@ -650,7 +809,7 @@ pub fn save(conn: &mut Connection, id: i64, s: &Save, now: i64) -> Result<bool> 
            cmd_hash = CASE WHEN started_at = 0 OR ?6 = '' THEN cmd_hash ELSE ?6 END,
            file = CASE WHEN started_at = 0 OR ?6 = '' THEN file ELSE ?8 END,
            allowed_at = CASE WHEN started_at = 0 OR ?6 = '' THEN allowed_at ELSE ?7 END,
-           suggested_by = '', suggested_pane = '',
+           suggested_by = '', suggested_pane = '', stuck = '', stuck_at = 0, pending = '',
            gate = ?9, watch = ?10, shape = ?11, model = ?12, effort = ?13, slim = ?14
          WHERE id = ?1 AND removed_at = 0",
         params![
@@ -715,7 +874,7 @@ pub fn has_when(conn: &Connection, r: &Routine) -> Result<bool> {
 pub fn start(conn: &Connection, id: i64, hash: &str, file: &str, now: i64) -> Result<bool> {
     let n = conn.execute(
         "UPDATE routines SET started_at = ?2, cmd_hash = ?3, file = ?4,
-           allowed_at = ?2, suggested_by = '', suggested_pane = '', late_s = 0
+           allowed_at = ?2, suggested_by = '', suggested_pane = '', late_s = 0, stuck = '', stuck_at = 0
          WHERE id = ?1 AND removed_at = 0 AND started_at = 0",
         params![id, now, hash, file],
     )?;
@@ -723,6 +882,210 @@ pub fn start(conn: &Connection, id: i64, hash: &str, file: &str, now: i64) -> Re
         times::rearm_all(conn, id, now)?;
     }
     Ok(n > 0)
+}
+
+/// It cannot run, and why (1.66): `true` when this is news, so the caller
+/// says it once -- a Waiting row, a redraw, a log line -- and not on every
+/// look. A watch that stopped on a changed script was a "done" row that
+/// said nothing (bug 0f204f3135).
+pub fn stuck(conn: &Connection, id: i64, why: &str, now: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE routines SET stuck = ?2, stuck_at = ?3 WHERE id = ?1 AND removed_at = 0 AND stuck != ?2",
+        params![id, line(why, LINE_CHARS), now],
+    )? > 0)
+}
+
+/// It can run again on its own: the file is as allowed once more.
+pub fn unstuck(conn: &Connection, id: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE routines SET stuck = '', stuck_at = 0 WHERE id = ?1 AND stuck != ''",
+        params![id],
+    )? > 0)
+}
+
+fn line(s: &str, n: usize) -> String {
+    crate::thread::line(s, n)
+}
+
+/// An agent's change to what a live routine may run (1.66), kept until the
+/// reader's Allow: what waits for them, what wakes it and what lets a clock
+/// run through. The routine runs as it was allowed until then.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, serde::Deserialize)]
+pub struct Pending {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gate: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+    #[serde(default)]
+    pub by: String,
+}
+
+impl Pending {
+    pub fn is_empty(&self) -> bool {
+        self.waits.is_none() && self.gate.is_none() && self.watch.is_none() && self.shape.is_none()
+    }
+}
+
+/// Keep an agent's change for the reader's Allow; an empty one clears it.
+pub fn set_pending(conn: &Connection, id: i64, p: &Pending) -> Result<bool> {
+    let v = if p.is_empty() {
+        String::new()
+    } else {
+        serde_json::to_string(p)?
+    };
+    Ok(conn.execute(
+        "UPDATE routines SET pending = ?2 WHERE id = ?1 AND removed_at = 0",
+        params![id, v],
+    )? > 0)
+}
+
+/// The reader's Allow takes the change in: written, and cleared.
+pub fn take_pending(conn: &Connection, id: i64) -> Result<Option<Pending>> {
+    let Some(r) = get(conn, id)? else {
+        return Ok(None);
+    };
+    if r.pending.is_empty() {
+        return Ok(None);
+    }
+    let p: Pending = serde_json::from_str(&r.pending).unwrap_or_default();
+    conn.execute(
+        "UPDATE routines SET pending = '',
+           waits = COALESCE(?2, waits), gate = COALESCE(?3, gate),
+           watch = COALESCE(?4, watch), shape = COALESCE(?5, shape)
+         WHERE id = ?1",
+        params![
+            id,
+            p.waits.as_ref().map(|w| w.join("\n")),
+            p.gate,
+            p.watch,
+            p.shape
+        ],
+    )?;
+    Ok(Some(p))
+}
+
+/// The routine on a desk that runs `cmd`, newest on view (1.66): an offer
+/// of the same command updates it, never adds a second. `pro-forum` was
+/// made thirteen times, and two of them were live at once on one state
+/// file, because nothing told the agent there was one already.
+pub fn by_cmd(conn: &Connection, desk_id: i64, cmd: &str) -> Result<Option<Routine>> {
+    if cmd.is_empty() {
+        return Ok(None);
+    }
+    Ok(conn
+        .query_row(
+            &format!(
+                "SELECT {COLS} FROM routines WHERE desk_id = ?1 AND cmd = ?2 AND removed_at = 0
+                 ORDER BY started_at != 0 DESC, id DESC LIMIT 1"
+            ),
+            params![desk_id, cmd],
+            row,
+        )
+        .optional()?)
+}
+
+/// What an agent changes on a routine that is not what it may run (1.66):
+/// its line, its times, its model, effort and pace. On a live routine it is
+/// written at once and said in News with Undo; on an offer it is the offer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Change {
+    pub name: String,
+    pub lines: Vec<times::Line>,
+    pub model: String,
+    pub effort: String,
+    pub fast: bool,
+    pub asked: String,
+    pub tried: String,
+}
+
+/// Write a change whole, in one transaction; `false` when it is not on
+/// view or names too many hours.
+pub fn change(conn: &mut Connection, id: i64, c: &Change, now: i64) -> Result<bool> {
+    let tx = conn.transaction()?;
+    let n = tx.execute(
+        "UPDATE routines SET name = ?2, model = ?3, effort = ?4, fast = ?5,
+           asked = CASE WHEN ?6 = '' THEN asked ELSE ?6 END,
+           tried = CASE WHEN ?7 = '' THEN tried ELSE ?7 END
+         WHERE id = ?1 AND removed_at = 0",
+        params![
+            id,
+            c.name,
+            c.model,
+            c.effort,
+            c.fast as i64,
+            line(&c.asked, 300),
+            line(&c.tried, 300)
+        ],
+    )?;
+    if n == 0 || times::set(&tx, id, &c.lines, now)?.is_none() {
+        return Ok(false);
+    }
+    tx.commit()?;
+    Ok(true)
+}
+
+/// A routine's times as `Line`s again, one hour a line: what an Undo puts
+/// back.
+pub fn lines_of(conn: &Connection, id: i64) -> Result<Vec<times::Line>> {
+    Ok(times::times_of(conn, id)?
+        .into_iter()
+        .filter_map(|t| {
+            let e = crate::due::every::every(&t.every)?;
+            Some(times::Line {
+                times: Times {
+                    cadence: e.cadence,
+                    at: vec![e.at],
+                },
+                words: t.words,
+                gated: t.gated,
+            })
+        })
+        .collect())
+}
+
+/// A change as News says it: `added 21:30, model sonnet`. Empty when
+/// nothing a reader would see moved.
+pub fn change_said(was: &Routine, was_times: &[times::Time], c: &Change) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let before: Vec<String> = times::lines(was_times)
+        .iter()
+        .map(|l| format!("{}{}", l.every, if l.words.is_empty() { String::new() } else { format!(" {}", l.words) }))
+        .collect();
+    let after: Vec<String> = c
+        .lines
+        .iter()
+        .map(|l| format!("{}{}", l.times.words(), if l.words.is_empty() { String::new() } else { format!(" {}", l.words) }))
+        .collect();
+    if before != after {
+        out.push(if after.is_empty() {
+            "no times now".to_string()
+        } else {
+            format!("runs {}", after.join("; "))
+        });
+    }
+    if was.name != c.name {
+        out.push(format!("its line is now /{}", c.name));
+    }
+    if was.model != c.model {
+        out.push(format!(
+            "model {}",
+            if c.model.is_empty() { "the default" } else { &c.model }
+        ));
+    }
+    if was.effort != c.effort {
+        out.push(format!(
+            "effort {}",
+            if c.effort.is_empty() { "the default" } else { &c.effort }
+        ));
+    }
+    if was.fast != c.fast {
+        out.push(if c.fast { "its watch is fast".into() } else { "its watch is at the usual pace".into() });
+    }
+    out.join(", ")
 }
 
 /// What the row's menu does.
@@ -758,7 +1121,7 @@ pub fn act(conn: &Connection, id: i64, act: Act, now: i64) -> Result<bool> {
             params![id, now],
         )?,
         Act::Resume => conn.execute(
-            "UPDATE routines SET paused_at = 0 WHERE id = ?1 AND removed_at = 0",
+            "UPDATE routines SET paused_at = 0, stuck = '', stuck_at = 0 WHERE id = ?1 AND removed_at = 0",
             params![id],
         )?,
         Act::Remove => conn.execute(
@@ -784,7 +1147,7 @@ pub fn act(conn: &Connection, id: i64, act: Act, now: i64) -> Result<bool> {
 /// name now comes to. A draft is allowed by its Start, not here.
 pub fn allow(conn: &Connection, id: i64, hash: &str, file: &str, now: i64) -> Result<bool> {
     Ok(conn.execute(
-        "UPDATE routines SET cmd_hash = ?2, allowed_at = ?3, file = ?4
+        "UPDATE routines SET cmd_hash = ?2, allowed_at = ?3, file = ?4, stuck = '', stuck_at = 0
          WHERE id = ?1 AND removed_at = 0 AND suggested_by = '' AND started_at != 0",
         params![id, hash, now, file],
     )? > 0)

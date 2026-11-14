@@ -609,10 +609,10 @@ fn a_watchs_lines_wait_batch_and_are_taken_once() {
         "dropped, counted, never trimmed"
     );
     assert!(
-        !events::ready(&c, r.id, now + 59).unwrap(),
+        !events::ready(&c, r.id, false, now + 59).unwrap(),
         "the batch waits a minute"
     );
-    assert!(events::ready(&c, r.id, now + 60).unwrap());
+    assert!(events::ready(&c, r.id, false, now + 60).unwrap());
     assert_eq!(events::take(&c, r.id).unwrap(), ["tag 1", "tag 2"]);
     let run = began(&c, r.id, "event", "/tick tag 1 ; tag 2", SESSION, now + 61).unwrap();
     events::bind(&c, r.id, run).unwrap();
@@ -629,10 +629,10 @@ fn a_watchs_lines_wait_batch_and_are_taken_once() {
     }
     events::push(&c, r.id, shape, "tag 3", now + 200).unwrap();
     assert!(
-        !events::ready(&c, r.id, now + 300).unwrap(),
+        !events::ready(&c, r.id, false, now + 300).unwrap(),
         "six this hour"
     );
-    assert!(events::ready(&c, r.id, now + 3700).unwrap());
+    assert!(events::ready(&c, r.id, false, now + 3700).unwrap());
     // Two hundred wait at most.
     for i in 0..events::CAP {
         events::push(&c, r.id, shape, &format!("tag {}", 1000 + i), now).unwrap();

@@ -20,6 +20,20 @@ pub const CAP: i64 = 200;
 pub const BATCH_S: i64 = 60;
 /// The most event runs a routine starts in an hour.
 pub const PER_HOUR: i64 = 6;
+/// 1.66: a routine whose `when` says `on watch fast` -- a tag answered in a
+/// minute was the point of a watch, and a minute's batch and six an hour
+/// was the slow half of it.
+pub const FAST_BATCH_S: i64 = 10;
+pub const FAST_PER_HOUR: i64 = 30;
+
+/// A routine's pace (1.66): its batch and its runs an hour.
+pub fn pace(fast: bool) -> (i64, i64) {
+    if fast {
+        (FAST_BATCH_S, FAST_PER_HOUR)
+    } else {
+        (BATCH_S, PER_HOUR)
+    }
+}
 /// The most lines one run takes.
 pub const TAKE: i64 = 20;
 /// Alternatives in one shape, and words in one alternative.
@@ -154,7 +168,8 @@ pub fn waiting(conn: &Connection, routine_id: i64) -> Result<i64> {
 /// Whether the lines waiting make a run now: the oldest has waited out the
 /// batch, and the routine has started fewer than `PER_HOUR` event runs in
 /// the last hour.
-pub fn ready(conn: &Connection, routine_id: i64, now: i64) -> Result<bool> {
+pub fn ready(conn: &Connection, routine_id: i64, fast: bool, now: i64) -> Result<bool> {
+    let (batch, per_hour) = pace(fast);
     let oldest: Option<i64> = conn.query_row(
         "SELECT MIN(at) FROM routine_events WHERE routine_id = ?1 AND run_id = 0",
         params![routine_id],
@@ -163,7 +178,7 @@ pub fn ready(conn: &Connection, routine_id: i64, now: i64) -> Result<bool> {
     let Some(oldest) = oldest else {
         return Ok(false);
     };
-    if now - oldest < BATCH_S {
+    if now - oldest < batch {
         return Ok(false);
     }
     let ran: i64 = conn.query_row(
@@ -171,7 +186,7 @@ pub fn ready(conn: &Connection, routine_id: i64, now: i64) -> Result<bool> {
         params![routine_id, now - 3600],
         |r| r.get(0),
     )?;
-    Ok(ran < PER_HOUR)
+    Ok(ran < per_hour)
 }
 
 /// The run being started takes what waits, oldest first, at most `TAKE`:

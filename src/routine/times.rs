@@ -19,8 +19,10 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
-/// A routine's hours at most, over all its lines.
-pub const MAX: usize = 6;
+/// A routine's hours at most, over all its lines. 1.66: twelve, since one
+/// routine now holds every time its copies had (`pro-forum` ran at six
+/// hours a day and two more a week, as thirteen rows).
+pub const MAX: usize = 12;
 /// The longest set of words a time adds to the prompt.
 pub const WORDS_CHARS: usize = 60;
 
@@ -95,6 +97,92 @@ pub fn words_ok(w: &str) -> Option<String> {
     let bad =
         w.chars().count() > WORDS_CHARS || w.chars().any(char::is_control) || w.starts_with('/');
     (!bad).then(|| w.to_string())
+}
+
+/// A routine's `when` in one line (1.66, plan e7fda1ca90), as an agent
+/// writes it for `offer_routine`:
+///
+/// `every day 09:30 13:00 17:30; sun 20:00 news; on watch fast`
+///
+/// Lines split at `;`. A line is a cadence and its hours (`every` may be
+/// left out: `sun 20:00`), then the words that hour adds to the prompt
+/// (`news`), and `always` last when the gate is not asked at that hour.
+/// `on watch` turns the watch on, `on watch fast` with ten-second batches
+/// and thirty runs an hour (`events::pace`). Two ways to say times -- a
+/// cadence with several hours, and a `times` list -- were why three of nine
+/// jobs became one routine per hour.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct When {
+    pub lines: Vec<Line>,
+    pub watch: bool,
+    pub fast: bool,
+}
+
+/// `when` read, or what to write instead, in words an agent can act on.
+pub fn when(text: &str) -> std::result::Result<When, String> {
+    let mut w = When::default();
+    for seg in text.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        let low = seg.to_lowercase();
+        let low: Vec<&str> = low.split_whitespace().collect();
+        match low.as_slice() {
+            ["on", "watch"] | ["watch"] => {
+                w.watch = true;
+                continue;
+            }
+            ["on", "watch", "fast"] | ["watch", "fast"] => {
+                w.watch = true;
+                w.fast = true;
+                continue;
+            }
+            _ => {}
+        }
+        w.lines.push(when_line(seg)?);
+    }
+    if w.lines.is_empty() && !w.watch {
+        return Err("`when` is empty: write it like `every day 09:00`, `mon 07:00; thu 07:00` or `on watch`".into());
+    }
+    if count(&w.lines) > MAX {
+        return Err(format!("`when` names more than {MAX} hours: one routine holds {MAX} at most"));
+    }
+    Ok(w)
+}
+
+fn when_line(seg: &str) -> std::result::Result<Line, String> {
+    let mut toks: Vec<&str> = seg.split_whitespace().collect();
+    let gated = match toks.last() {
+        Some(l) if l.eq_ignore_ascii_case("always") => {
+            toks.pop();
+            false
+        }
+        _ => true,
+    };
+    let first = toks.first().map(|t| t.to_lowercase()).unwrap_or_default();
+    let lead = if matches!(first.as_str(), "every" | "daily" | "weekdays") {
+        String::new()
+    } else {
+        "every ".to_string()
+    };
+    let bad = || {
+        format!("`{seg}` is not a time: write it like `every day 09:00`, `weekdays 08:30`, `mon 07:00 news` or `1st 10:00`")
+    };
+    for j in (1..=toks.len()).rev() {
+        let Some(times) = crate::due::every::every_times(&format!("{lead}{}", toks[..j].join(" ")))
+        else {
+            continue;
+        };
+        let words = toks[j..].join(" ");
+        let Some(words) = words_ok(&words) else {
+            return Err(format!(
+                "`{words}` after the hours is too long: a time's words are at most {WORDS_CHARS} characters and never start with /"
+            ));
+        };
+        return Ok(Line {
+            times,
+            words,
+            gated,
+        });
+    }
+    Err(bad())
 }
 
 /// A routine's times, in the order the sheet wrote them.
@@ -279,4 +367,35 @@ pub fn rearm_fired(conn: &Connection, routine_id: i64, f: &Fired, now: i64) -> R
         }
     }
     sync(conn, routine_id)
+}
+
+#[cfg(test)]
+mod when_tests {
+    use super::*;
+    use crate::due::every::Cadence;
+
+    #[test]
+    fn one_line_says_every_time() {
+        let w = when("every day 09:30 13:00 17:30 21:30; sun 20:00 news; mon 09:30 case always; on watch fast").unwrap();
+        assert!(w.watch && w.fast);
+        assert_eq!(w.lines.len(), 3);
+        assert_eq!(w.lines[0].times.cadence, Cadence::Daily);
+        assert_eq!(w.lines[0].times.at, vec![(9, 30), (13, 0), (17, 30), (21, 30)]);
+        assert_eq!(w.lines[0].words, "");
+        assert_eq!(w.lines[1].words, "news");
+        assert!(w.lines[1].gated);
+        assert_eq!(w.lines[2].words, "case");
+        assert!(!w.lines[2].gated);
+        assert_eq!(count(&w.lines), 6);
+    }
+
+    #[test]
+    fn a_watch_alone_is_a_when_and_nonsense_says_what_to_write() {
+        let w = when("on watch").unwrap();
+        assert!(w.watch && !w.fast && w.lines.is_empty());
+        assert!(when("").unwrap_err().contains("every day 09:00"));
+        assert!(when("whenever it rains").unwrap_err().contains("is not a time"));
+        let many = "every day 1 2 3 4 5 6; every day 7 8 9 10 11 12; sun 13";
+        assert!(when(many).unwrap_err().contains("12 at most"));
+    }
 }

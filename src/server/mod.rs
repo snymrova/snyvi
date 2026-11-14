@@ -37,6 +37,7 @@ mod peer_link;
 mod pipeline_run;
 mod restore_run;
 mod routine_gate;
+mod routine_offer;
 mod routine_run;
 mod routine_watch;
 #[cfg(test)]
@@ -70,6 +71,7 @@ use events::*;
 use lifecycle::*;
 pub use lifecycle::{relaunch, Leaving};
 use peer_link::*;
+use routine_offer::pane_offer_routine;
 use ws::*;
 
 use crate::browse::Browser;
@@ -450,6 +452,8 @@ fn pane_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/keys/{name}", get(pane_key))
         .route("/api/panes/{id}/leftoff", post(pane_left_off))
         .route("/api/panes/{id}/suggest", post(pane_suggest_note))
+        // 1.66: offer_routine, one call that makes or updates (`routine_offer`).
+        .route("/api/panes/{id}/routine", post(pane_offer_routine))
         .route("/api/panes/{id}/offer", post(pane_offer))
         .route(
             "/api/panes/{id}/paste",

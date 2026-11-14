@@ -27,6 +27,7 @@ mod ledger;
 mod links;
 mod mcp;
 mod music;
+mod news;
 mod onyou;
 mod page;
 mod pane;

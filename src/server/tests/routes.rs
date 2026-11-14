@@ -882,6 +882,13 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
+    (
+        "POST",
+        "/api/panes/nope/routine",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
     ("POST", "/api/panes/nope/paste", None, Gate::Desk, true),
     (
         "POST",

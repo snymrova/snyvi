@@ -27,13 +27,45 @@ fn refused(code: StatusCode, error: impl Into<String>) -> Response {
 /// its state in one word.
 fn row_json(r: &Routine, root: &std::path::Path) -> serde_json::Value {
     let mut v = json!(r);
-    v["file"] = json!(routine::file_state(root, r));
+    let file = routine::file_state(root, r);
+    v["file"] = json!(file);
     v["state"] = json!(r.state());
     // 1.63: its watch as it stands, for the row's line.
+    let live = (!r.watch.is_empty())
+        .then(|| super::routine_watch::live(r.id))
+        .flatten();
+    v["health"] = json!(routine_health(r, file, live.as_ref()));
+    v["next_at"] = json!(r.due_at);
+    if let Some(l) = &live {
+        v["heard_at"] = json!(l.heard_at);
+    }
     if !r.watch.is_empty() {
-        v["watch_live"] = json!(super::routine_watch::live(r.id));
+        v["watch_live"] = json!(live);
     }
     v
+}
+
+/// A routine's health in one word (1.66), for its row's dot and the brief:
+/// `ok`; `late`, it ran badly or its watch is backing off and it will try
+/// again; `stopped`, it cannot run until the reader does something; and
+/// `paused`, `draft` or `offer` for the ones that are not meant to run.
+pub(crate) fn routine_health(r: &Routine, file: &str, live: Option<&super::routine_watch::Live>) -> &'static str {
+    match r.state() {
+        "offer" => return "offer",
+        "draft" => return "draft",
+        "paused" => return "paused",
+        _ => {}
+    }
+    if !r.stuck.is_empty() || matches!(file, "changed" | "gone" | "two") || live.is_some_and(|l| l.stopped) {
+        return "stopped";
+    }
+    let bad = ["failed", "skipped", "gate failed", "limit", "stopped"];
+    if bad.iter().any(|b| r.last_state.starts_with(b))
+        || live.is_some_and(|l| !l.watching && !l.said.is_empty())
+    {
+        return "late";
+    }
+    "ok"
 }
 
 /// The routine `row` when it is on the desk `id`.
@@ -873,6 +905,15 @@ fn allow_now(app: &App, r: &Routine, root: &std::path::Path, start: bool) -> Res
     super::routine_watch::forgive(r.id);
     if done && !r.words() {
         keep_allowed(&app.paths.data_dir, r.id, &text);
+        // 1.66: what it may run and its words, as the reader allowed them;
+        // and an agent's change that waited for this Allow, taken in.
+        let (root, rr) = (root.to_path_buf(), r.clone());
+        if let Some((h, sp)) = routine::split_now(&root, &rr).filter(|(h, _)| *h == hash) {
+            let _ = app.store.clocked(|c, _| routine::set_split(c, r.id, &h, &sp));
+        }
+    }
+    if done {
+        let _ = app.store.clocked(|c, _| routine::take_pending(c, r.id));
     }
     Ok(done)
 }
