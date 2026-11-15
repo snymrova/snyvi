@@ -564,11 +564,13 @@ function noteSec(d) {
   // reader is working on shows whatever its place: one being rewritten, one
   // just taken off (its Undo), one just added or ticked.
   const keep = x => x.gone || notesKept.has(x.id) || (noteField && noteField.id === x.id);
-  const opens = mine.filter(x => !x.done), dones = mine.filter(x => x.done);
+  const aged = mine.filter(x => agedCheck(x) && !keep(x));
+  const opens = mine.filter(x => !x.done && !aged.includes(x)), dones = mine.filter(x => x.done);
   const seen = opens.filter((x, i) => notesAll || i < NOTES_SHOWN || keep(x));
   const hid = opens.length - seen.length, folds = notesAll && opens.length > NOTES_SHOWN;
   const rows = seen.map(x => noteRow(x, esc)).join("") +
     (hid || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="notes-more" aria-expanded="${folds}">${folds ? "Show fewer" : `${hid} more`}</button></li>` : "") +
+    checkRows(aged, esc) +
     doneRows(d, dones, keep, esc);
   // The head has the one action in view however long the list is: a new
   // note. Removing the done half is the fold row's, with its Undo there.
@@ -605,6 +607,23 @@ function doneRows(d, dones, keep, esc) {
   if (!n) return shown;
   return `<li class="dk-done-li"><button type="button" class="dk-new dk-done-b" data-a="notes-done" aria-expanded="${notesDone}" data-tip="${notesDone ? "Fold the done notes" : "Show the done notes"}">${ico("tick")}<span>${n} done</span></button>` +
     `<button type="button" class="dk-new dk-done-x" data-a="note-clear" data-tip="Remove done notes" data-tip-sub="${ctx.plural(n, "done note")} · Undo brings them back">Remove</button></li>` + shown;
+}
+
+/** A line out on main for longer than `CHECK_FOLD_S`, still waiting for the
+ *  reader's check, with no checks held (those keep their own block). */
+const agedCheck = x => !x.done && !x.gone && !x.suggested_by && !!shippedOf(x) && !atCheck(x)
+  && x.landed_at > 0 && Date.now() / 1000 - x.landed_at > CHECK_FOLD_S;
+
+/** The aged checks as one row above the done half (#237): "3 shipped to
+ *  check", which opens them, and All work beside it, which ticks them as
+ *  the reader's. Each line opened keeps its own ✓ works and not yet…. */
+function checkRows(aged, esc) {
+  if (!aged.length) return "";
+  const n = aged.length;
+  return errLine("checks", esc) +
+    `<li class="dk-done-li"><button type="button" class="dk-new dk-done-b" data-a="notes-checks" aria-expanded="${agedOpen}" data-tip="${agedOpen ? "Fold them" : "Show them"}" data-tip-sub="out on main for more than three days, waiting for your check">${ico("tick")}<span>${n} shipped to check</span></button>` +
+    `<button type="button" class="dk-new dk-done-x" data-a="checks-all" data-tip="They all work" data-tip-sub="ticks ${ctx.plural(n, "line")} as yours, each with its commit">All work</button></li>` +
+    (agedOpen ? aged.map(x => noteRow(x, esc)).join("") : "");
 }
 
 /** The refusal for row `k`, under it: a list item, or `tag` outside a list. */
@@ -1221,7 +1240,7 @@ function waitingFirst(d, fresh, asked) {
 function forgetNotes() {
   clearTimeout(backTimer);
   forgetFiled();
-  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesDone = false; notesKept.clear(); rtField = null;
+  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesDone = false; agedOpen = false; notesKept.clear(); rtField = null;
   clearTimeout(imgTimer); pending = []; imgGone = null; closeLightbox();
 }
 

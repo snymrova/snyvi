@@ -25,6 +25,26 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "note-to-desk"
+since = "1.66.1"
+title = "A note for another desk"
+line = "An agent on one desk, or a script, can suggest a line for another desk's notes: it waits there, saying where it came from, until you keep it. The same line twice is one line."
+
+[[feature]]
+id = "approve-anywhere"
+since = "1.66.1"
+title = "Approve tells the panel, wherever you press it"
+line = "Approve on a plan's own page now types the go-ahead into the panel that planned it, as Approve on the desk does, when its Claude waits at its prompt."
+small = "yes"
+
+[[feature]]
+id = "checks-fold"
+since = "1.66.1"
+title = "Old checks fold into one row"
+line = "Lines out on main for more than three days and still waiting for your check fold into one row, with All work to tick them as yours."
+small = "yes"
+
+[[feature]]
 id = "three-shelves"
 since = "1.66.0"
 title = "On you is Waiting, To do and News"

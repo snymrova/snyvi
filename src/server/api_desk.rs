@@ -1334,7 +1334,14 @@ pub(crate) async fn approve_plan(
     {
         Ok(notes) if notes.is_empty() => StatusCode::NOT_FOUND.into_response(),
         Ok(notes) => {
-            notes_moved(&app, id);
+            // The list moved; and an Approve says which plan, so the desk
+            // page holding its panel types the go-ahead wherever the press
+            // was -- the plan's own page too, not only the desk's rail (#242).
+            if b.undo {
+                notes_moved(&app, id);
+            } else {
+                emit(&app, "desknotes", json!({ "desk": id, "approved": doc }));
+            }
             Json(json!({ "ok": true, "notes": notes })).into_response()
         }
         Err(e) => err(e),

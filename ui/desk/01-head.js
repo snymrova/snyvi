@@ -89,6 +89,11 @@ let notesAll = false;
 /** The done half is one row at the list's foot, "3 done", until clicked
  *  (audit 7c0fc42885: it was half the list, struck through). */
 let notesDone = false;
+/** Lines out on main longer than `CHECK_FOLD_S` and still unchecked fold
+ *  into one row, "3 shipped to check", until clicked (#237): each asked
+ *  "works?" with two buttons, and a week of them was the list. */
+let agedOpen = false;
+const CHECK_FOLD_S = 3 * 86_400;
 const notesKept = new Set();
 /** True only while the rail's HTML is being replaced. An element losing the
  *  focus that way is not a reader clicking away from it, and must not be read

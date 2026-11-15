@@ -1246,6 +1246,36 @@ pub fn offer_routine(paths: &Paths, pane: &str, body: Value) -> Result<(u16, Val
     Ok((status, j))
 }
 
+/// Suggest a line for a desk named by name or id, or the desk of `cwd`
+/// (1.66.1): `snyvi note suggest`, and `suggest_desk_note` with `desk`.
+pub fn suggest_to_desk(
+    paths: &Paths,
+    desk: &str,
+    cwd: &str,
+    text: &str,
+    due: &str,
+    by: &str,
+    pane: &str,
+) -> Result<Value> {
+    ensure_daemon()?;
+    let (status, j) = post(
+        paths,
+        "/api/notes/suggest",
+        serde_json::json!({ "desk": desk, "cwd": cwd, "text": text, "due": due, "by": by, "pane": pane }),
+        Duration::from_secs(5),
+    )?;
+    let why = j["error"].as_str().unwrap_or_default().to_string();
+    match status {
+        201 => Ok(j),
+        401 => bail!("the daemon refused the token; is this the same user it runs as?"),
+        404 if why.is_empty() => {
+            bail!("this daemon is older than `snyvi note suggest`; run `snyvi restart`")
+        }
+        s if why.is_empty() => bail!("snyvi answered {s}"),
+        _ => bail!("{why}"),
+    }
+}
+
 /// Suggest a line for this pane's desk's list: `suggest_desk_note`.
 pub fn suggest_desk_note(
     paths: &Paths,

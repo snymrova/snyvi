@@ -685,6 +685,14 @@ impl Session {
 
     fn suggest_desk_note(&self, args: &Value) -> Value {
         let text = arg(args, "text");
+        // Another desk, by its name (1.66.1): a line only, a suggestion there.
+        let desk = arg(args, "desk");
+        if !desk.trim().is_empty() {
+            return match client::suggest_to_desk(&self.paths, &desk, "", &text, &arg(args, "due"), self.by(), self.pane.as_deref().unwrap_or("")) {
+                Ok(v) => said(format!("Suggested on the desk \"{}\". It waits there beside the user's notes, marked as yours, until they keep it or remove it; mention it in your reply.", v["desk"].as_str().unwrap_or(&desk)), false),
+                Err(e) => said(format!("snyvi did not take the suggestion: {e}"), true),
+            };
+        }
         match self.pane.as_deref() {
             None => said("This session is not running in a snyvi desk, so there is no desk to write to.", true),
             Some(p) => match client::suggest_desk_note(&self.paths, p, &text, &arg(args, "due"), args.get("lines").unwrap_or(&json!([])), args, self.by()) {
@@ -919,7 +927,8 @@ fn suggest_spec() -> Value {
                         "due": { "type": "string", "description": "In the user's words: `28 oct 10`." }
                     }, "required": ["text"], "additionalProperties": false } },
                 "due": { "type": "string", "description": "Optional: when it is due, in the user's words -- `fri 10`, `tomorrow`, `in 3 days`, `28 oct` -- for a line with a natural day, such as a launch step or a follow-up." },
-                "doc": { "type": "string", "description": "Optional: the id of a document you sent on this desk that the line is about (the post, the run sheet). Its row and its due card open and copy it." }
+                "doc": { "type": "string", "description": "Optional: the id of a document you sent on this desk that the line is about (the post, the run sheet). Its row and its due card open and copy it." },
+                "desk": { "type": "string", "description": "Optional: another desk, by its name, when the line is for work there rather than here (one `text`, no `lines` or `doc`). It waits on that desk as a suggestion that says it came from this one." }
             },
             "additionalProperties": false
         },

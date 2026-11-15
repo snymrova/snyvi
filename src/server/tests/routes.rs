@@ -896,6 +896,13 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
+    (
+        "POST",
+        "/api/notes/suggest",
+        Some("{\"desk\":\"no such desk\",\"text\":\"x\"}"),
+        Gate::Token,
+        true,
+    ),
     ("POST", "/api/panes/nope/paste", None, Gate::Desk, true),
     (
         "POST",

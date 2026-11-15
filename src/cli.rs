@@ -192,6 +192,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RoutineCmd,
     },
+    /// A line for a desk's notes, from a script or another desk: `snyvi note suggest --desk OMD "Post on the site: …"`. It waits there as a suggestion the user keeps or removes.
+    Note {
+        #[command(subcommand)]
+        cmd: NoteCmd,
+    },
     /// Show daemon status.
     Status,
     /// Say hello: the face, the version and the address. Not in the help; for whoever thought to ask.
@@ -316,6 +321,51 @@ enum RoutineCmd {
         #[arg(long)]
         desk: Option<i64>,
     },
+}
+
+#[derive(Subcommand)]
+enum NoteCmd {
+    /// Suggest one line for a desk's notes. The desk is --desk (its name or id), else the desk of the folder you are in. It starts nothing: the user keeps it or removes it.
+    Suggest {
+        /// The line, at most 200 characters.
+        text: String,
+        /// The desk, by its name or id.
+        #[arg(long)]
+        desk: Option<String>,
+        /// When it is due, in the user's words: `fri 10`, `tomorrow`, `in 3 days`.
+        #[arg(long, default_value = "")]
+        due: String,
+        /// Who suggests it, shown on the row: `research`.
+        #[arg(long, default_value = "")]
+        by: String,
+    },
+}
+
+/// `snyvi note suggest`: one line to a desk's notes, as a suggestion.
+fn note_cmd(paths: &config::Paths, cmd: NoteCmd) -> Result<()> {
+    let NoteCmd::Suggest {
+        text,
+        desk,
+        due,
+        by,
+    } = cmd;
+    let cwd = project_dir(None).unwrap_or_default();
+    let pane = std::env::var(crate::agents::PANE_VAR).unwrap_or_default();
+    let v = client::suggest_to_desk(
+        paths,
+        desk.as_deref().unwrap_or(""),
+        &cwd,
+        &text,
+        &due,
+        &by,
+        &pane,
+    )?;
+    let at = v["desk"].as_str().unwrap_or("the desk");
+    match v["due_error"].as_str() {
+        Some(why) => println!("suggested on {at}, without a date: {why}"),
+        None => println!("suggested on {at}: it waits there until the user keeps or removes it"),
+    }
+    Ok(())
 }
 
 #[derive(Subcommand)]
@@ -445,6 +495,7 @@ pub(crate) fn run() -> Result<()> {
         Cmd::Widget { cmd } => widget_cmd(&paths, cmd),
         Cmd::Gallery { cmd } => gallery_cmd(&paths, cmd),
         Cmd::Routine { cmd } => routine_cmd(&paths, cmd),
+        Cmd::Note { cmd } => note_cmd(&paths, cmd),
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),

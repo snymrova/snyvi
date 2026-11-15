@@ -1966,6 +1966,39 @@ pub fn suggest_note_from(
     {
         return Ok(Suggested::NoSuchDesk);
     }
+    // The same line again, waiting or kept and still open, is the one
+    // already there: a host that said "for the 2025 desk…" twice made two
+    // rows of it, and the reader wrote it a third time (#237).
+    let same: Option<(i64, i64, String, String, i64, String)> = tx
+        .query_row(
+            "SELECT id, created_at, suggested_by, sent_by, due_at, doc FROM desk_notes
+             WHERE desk_id = ?1 AND removed_at = 0 AND done_at = 0 AND lower(text) = lower(?2)
+             ORDER BY id LIMIT 1",
+            params![desk_id, text],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((id, created_at, suggested_by, sent_by, due_at, doc)) = same {
+        return Ok(Suggested::Note(Box::new(DeskNote {
+            id,
+            text,
+            created_at,
+            suggested_by,
+            sent_by,
+            due_at,
+            doc,
+            ..DeskNote::default()
+        })));
+    }
     let (held, waiting): (i64, i64) = tx.query_row(
         "SELECT COUNT(*), COALESCE(SUM(suggested_by != '' AND done_at = 0), 0) FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0",

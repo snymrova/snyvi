@@ -1452,3 +1452,106 @@ pub(crate) async fn pane_suggest_note(
         Err(e) => err(e),
     }
 }
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct SuggestToBody {
+    /// The desk, by its name or its id; else the desk whose folder holds `cwd`.
+    desk: String,
+    cwd: String,
+    text: String,
+    due: String,
+    by: String,
+    /// The panel it comes from, when an agent's (`suggest_desk_note` with
+    /// `desk`): only to say on the row which desk sent it.
+    pane: String,
+}
+
+/// A line suggested for a desk the caller names (1.66.1): `snyvi note
+/// suggest --desk OMD "…"`, or `suggest_desk_note` with `desk`. The token's
+/// reach is `snyvi send -p`'s, which already files a document on any
+/// project; what lands is a suggestion, a ghost row the reader keeps or
+/// takes off, under the same cap of waiting ones as an agent's on its own
+/// desk, and the row says where it came from. It starts nothing.
+pub(crate) async fn suggest_to_desk(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<SuggestToBody>,
+) -> Response {
+    if !authorized(&app, &headers) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let no = |code: StatusCode, why: String| (code, Json(json!({ "error": why }))).into_response();
+    let desks = app.store.desks().unwrap_or_default();
+    let want = b.desk.trim();
+    let desk = if want.is_empty() {
+        desks
+            .into_iter()
+            .filter(|d| !d.root.is_empty() && std::path::Path::new(&b.cwd).starts_with(&d.root))
+            .max_by_key(|d| d.root.len())
+    } else {
+        let named: Vec<_> = desks
+            .into_iter()
+            .filter(|d| want.parse::<i64>().ok() == Some(d.id) || d.name.eq_ignore_ascii_case(want))
+            .collect();
+        if named.len() > 1 {
+            let ids: Vec<String> = named.iter().map(|d| d.id.to_string()).collect();
+            return no(
+                StatusCode::CONFLICT,
+                format!(
+                    "{} desks are called {want}; name one by its id ({})",
+                    named.len(),
+                    ids.join(", ")
+                ),
+            );
+        }
+        named.into_iter().next()
+    };
+    let Some(desk) = desk else {
+        return no(
+            StatusCode::NOT_FOUND,
+            if want.is_empty() {
+                "no desk holds this folder: pass --desk with its name".into()
+            } else {
+                format!("no open desk is called {want}")
+            },
+        );
+    };
+    // Who, and from where when it is another desk: "Claude on omd-pro-community".
+    let who = match b.by.trim() {
+        "" => "a script",
+        w => w,
+    };
+    let from = Some(b.pane.trim())
+        .filter(|p| crate::pane::valid_id(p))
+        .and_then(|p| app.store.pane(p).ok().flatten())
+        .filter(|p| p.desk_id != desk.id)
+        .map(|p| p.desk_name);
+    let by = match from {
+        Some(f) => format!("{who} on {f}"),
+        None => who.to_string(),
+    };
+    match app.store.suggest_desk_note(desk.id, &b.text, &by) {
+        Ok(crate::desk::Suggested::Note(mut note)) => {
+            let mut said = serde_json::Value::Null;
+            if !b.due.trim().is_empty() && note.due_at == 0 {
+                match crate::due::parse(&b.due, crate::store::now()) {
+                    Some(at) => {
+                        let _ = app.store.clocked(|c, now| crate::due::set(c, desk.id, note.id, at, now));
+                        note.due_at = at;
+                    }
+                    None => said = json!(format!("\"{}\" is not a date snyvi reads (try `fri 10`, `tomorrow`, `in 3 days`); the line has none", b.due.trim())),
+                }
+            }
+            notes_moved(&app, desk.id);
+            (StatusCode::CREATED, Json(json!({ "note": note, "desk": desk.name, "due_error": said }))).into_response()
+        }
+        Ok(crate::desk::Suggested::Empty) => no(StatusCode::BAD_REQUEST, "a suggestion needs a line of text".into()),
+        Ok(crate::desk::Suggested::Full) => no(
+            StatusCode::CONFLICT,
+            format!("{} already has {} suggestions waiting for the user (or its list is full); wait until they keep or remove one", desk.name, crate::desk::SUGGESTIONS_PER_DESK),
+        ),
+        Ok(crate::desk::Suggested::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
