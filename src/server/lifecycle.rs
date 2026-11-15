@@ -894,6 +894,10 @@ pub(crate) struct LaterBody {
     /// morning" in the reader's own time. Absent brings the offer back.
     #[serde(default)]
     pub(crate) until: Option<i64>,
+    /// Dismiss on the failed card: that failure is not news any more. The
+    /// same route as Later, since both put the card away for every window.
+    #[serde(default)]
+    pub(crate) dismiss: bool,
 }
 
 /// "Later" on the update card: the offer of this version waits until then,
@@ -913,6 +917,11 @@ pub(crate) async fn update_later(
         )
             .into_response();
     };
+    if b.dismiss {
+        u.dismiss_failed();
+        emit_update(&app);
+        return Json(json!({ "ok": true, "update": update_json(&app) })).into_response();
+    }
     match u.snooze(b.until, crate::store::now()) {
         Ok(()) => {
             emit_update(&app);

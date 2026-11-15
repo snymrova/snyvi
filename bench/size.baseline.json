@@ -1,7 +1,5 @@
 {
-  "files": {
-    "src/update.rs": 2920
-  },
+  "files": {},
   "functions": {
     "src/bench.rs::process_rows": 130,
     "src/pane.rs::start": 124,

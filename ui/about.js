@@ -134,8 +134,10 @@ export function card(el, u, c) {
     body = `<p class="uc-sub">This install is updated by hand:</p>` + (how ? `<div class="uc-how"><pre>${esc(how)}</pre><button type="button" class="uc-b" data-uc="copy">Copy</button></div>` : "");
     acts = (capability ? b("Later", "later") : "") + b("About", "about");
   } else if (s.card === "failed") {
+    // Dismiss is the daemon's, like Later, so every window closes it; About
+    // still says the failure. A tab, without the capability, only reads.
     body = `<p class="uc-sub">The version before was put back.</p>`;
-    acts = b("About", "about");
+    acts = b("About", "about") + (capability ? b("Dismiss", "dismiss") : "");
   }
   // snyvi behind the sidebar's card, as it is behind an aside (docs/DESIGN.md
   // §2.2's peek): at rest, for the cards that offer something -- an update
@@ -181,6 +183,11 @@ async function act(what, btn, el) {
   if (what === "later") {
     try { const j = await deskApi("/api/update/later", { until: later() }); upd = j.update; sure = false; redraw(); toast("Later", { sub: "snyvi asks again tomorrow morning", at: btn }); }
     catch (e) { toast("Could not put it off", { sub: e, at: btn }); }
+    return;
+  }
+  if (what === "dismiss") {
+    try { const j = await deskApi("/api/update/later", { dismiss: true }); upd = j.update; redraw(); }
+    catch (e) { toast("Could not dismiss", { sub: e, at: btn }); }
     return;
   }
   if (what === "copy") return copied ? copied((u.how || []).join("\n"), btn) : navigator.clipboard?.writeText((u.how || []).join("\n"));
