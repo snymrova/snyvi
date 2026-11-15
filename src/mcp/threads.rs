@@ -1,6 +1,6 @@
 //! The #90 tools, for an agent in a desk's panel: start_thread and
 //! move_thread file a piece of work, ask puts a decision in the reader's
-//! Waiting and hand_over a chore in their To do, settle takes the agent's
+//! Waiting and hand_over a chore in On you's To do, settle takes the agent's
 //! own back off, and suggest_panel and suggest_desk offer a card the reader
 //! clicks or not (`crate::thread`). Each description is kept short: all
 //! seven are in every panel session's tool list.
@@ -31,7 +31,7 @@ next message, so stop after asking. about: the document it is under. At this pan
 
 const HAND_OVER: &str = "Hand the user what only they can do and blocks you: a PR to merge (its link), a key to add \
 (key: its name), a command you were blocked from (cmd, one line, or steps: their Run types it here and you get \
-its output), or else (pay, sign in, post). It stays in their To do until Done or Can't. One sentence. Never \
+its output), or else (pay, sign in, post). It stays in On you's To do until Done or Can't. One sentence. Never \
 ask them to paste a command.";
 
 /// `hand_over`'s description is at its 350 (the test below), so a run in
@@ -175,7 +175,7 @@ fn also_open(v: &Value) -> String {
         return String::new();
     }
     format!(
-        " Also on the user's On you list on this desk: {}. If one is done, or this card repeats it, remove_card it with why.",
+        " Also on the user's On you list on this desk: {}. If one is done, or this card repeats it, settle it with why.",
         open.join("; ")
     )
 }
@@ -339,7 +339,7 @@ impl Session {
         } else if run {
             "Handed over. When the user clicks Run, it is typed into this panel as a ! command, and its output arrives here as their message. Say so in your reply; do not ask them to paste it."
         } else {
-            "Handed over. It is in the user's To do in snyvi until they press Done or Can't, which is typed into this panel as a message. Say so in your reply."
+            "Handed over. It is in On you's To do in snyvi until they press Done or Can't, which is typed into this panel as a message. Say so in your reply."
         };
         match self.thread_call("handover", body) {
             Ok(v) => said(head.to_string() + &also_open(&v), false),

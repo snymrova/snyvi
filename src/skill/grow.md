@@ -52,9 +52,9 @@ Say which of these you checked, in the draft's foot:
 
 ## After the post
 
-- The user posts. When they say where it went, tick the line with the post's
-  URL as `evidence`; `move_thread` with `told` and that `url` marks the
-  thread told.
+- The user posts, and the post's line is theirs to tick. When they say
+  where it went, `move_thread` with `told` and that `url` marks the thread
+  told.
 - The numbers a week on (stars, downloads, replies) go on the T+7 line's
   tick as its `say`, with where they came from as its `evidence`.
 - Watching whether the project is named by ChatGPT, Claude or Perplexity is

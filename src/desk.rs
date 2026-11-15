@@ -651,6 +651,15 @@ pub enum Opened {
 /// How long a panel's name is, at most: a head's worth, like a desk's.
 pub const NAME_CHARS: usize = 80;
 
+/// The other open desks' names, in the reader's order: what `read_desk`
+/// says, so an agent can name one for `--desk` (1.66.2). Names only.
+pub fn other_names(conn: &Connection, but: i64) -> Result<Vec<String>> {
+    let mut stmt =
+        conn.prepare("SELECT name FROM desks WHERE closed_at = 0 AND id != ?1 ORDER BY pos, id")?;
+    let names = stmt.query_map([but], |r| r.get(0))?;
+    Ok(names.collect::<rusqlite::Result<_>>()?)
+}
+
 /// Every desk, in the reader's order (`reorder`) -- the order they were made
 /// in until the reader moves one -- each with its panes in slot order.
 ///

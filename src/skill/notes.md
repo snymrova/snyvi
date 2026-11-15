@@ -8,13 +8,15 @@ set on it. This is the bookkeeping past the first tick.
 ## What you read
 
 `read_desk_notes` gives the desk's list, open first, each with its id.
-You cannot add, edit or remove a note, and nothing you do puts one there:
-if something belongs on the list, `suggest_desk_note` offers it and the
-user keeps it or not. A desk holds only a few suggestions waiting at once.
+You cannot edit or remove a note. If something belongs on the list,
+`suggest_desk_note` offers it and the user keeps it or not. A desk holds
+only a few suggestions waiting at once.
 A line for work on another desk goes there, not here: `suggest_desk_note`
 with `desk` (its name), and from a script outside a panel `snyvi note
 suggest --desk NAME "the line"`. It waits on that desk saying which one it
-came from; never write "for the other desk…" on this one.
+came from; never write "for the other desk…" on this one. `read_desk`
+lists the other desks' names. A document for another project goes with
+`snyvi send FILE -p FOLDER`, filed under that folder's project.
 A line can carry pictures, listed under it as files you can open and look
 at. A line another panel's agent is working on says so; leave it to that
 panel.

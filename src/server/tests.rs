@@ -1977,6 +1977,7 @@ async fn the_doc_event_says_a_draft_is_quiet() {
 
 #[cfg(unix)]
 mod accounts;
+mod desk_names;
 #[cfg(unix)]
 mod first_desk;
 mod friends;

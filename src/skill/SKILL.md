@@ -29,7 +29,7 @@ instructions say *when*; this says *how*, in the order the work goes.
 
 | File | Read it before |
 |---|---|
-| [notes.md](notes.md) | working a desk note past the first tick: dates, checks, branches, merges |
+| [notes.md](notes.md) | working a desk note past the first tick: dates, checks, branches, merges; a line for another desk |
 | [launch.md](launch.md), [grow.md](grow.md) | a launch's lines; the first draft of a post |
 | [board.md](board.md) | the first section on a board |
 | [widgets.md](widgets.md) | a widget file, a gallery, a card |
@@ -37,6 +37,26 @@ instructions say *when*; this says *how*, in the order the work goes.
 
 An agent without this folder reads the same files from the MCP server, as
 resources: `snyvi://skill/notes.md`.
+
+## How snyvi helps the user
+
+The tool is for a panel; the command for a script, a routine's run, or a
+session without the tool. None of them runs or posts anything: what lands
+waits for the user.
+
+| The user needs | In a panel | From a script or a locked run |
+|---|---|---|
+| to read it | `send_document` | `snyvi send FILE -p FOLDER` |
+| to decide | `ask` | – |
+| a step only they can do | `hand_over` | – |
+| a line not to forget, here | `suggest_desk_note` | `snyvi note suggest "…"` |
+| work for another desk | `suggest_desk_note` with `desk` | `snyvi note suggest --desk NAME "…"` |
+| a figure kept in view | `set_widget` | `snyvi widget set NAME "…"` |
+| a picture kept | `add_to_gallery` | `snyvi gallery add FILE` |
+| something on a schedule | `offer_routine` | `snyvi routine wake NAME "line"` |
+
+`read_desk` lists the other desks by name. A document sent with `-p` is
+filed under that folder's project, not this desk.
 
 ## Build
 
@@ -57,8 +77,6 @@ To do (what only they can do) and News (what changed without their press).
   URL (`evidence`). A tick with none of them reads "needs a look".
 - A commit that finishes a note names it, `(#129)`. You don't wait for the
   merge to tick.
-- Dates, the user's checks, a reopened note, what a merge does:
-  [notes.md](notes.md).
 - `leave_off` when a stretch ends: the next step first, then its condition,
   one line. It is the desk's head, never On you: what only the user can do
   is a `hand_over`. `needs` is whose the next step is (`you`, `claude`,
@@ -114,8 +132,8 @@ three pieces, and you never post any of them:
    first draft: the hour, the title's length, the disclosure.
 3. **The page**: `offer_post`, once, when it truly shipped (below).
 
-The user posts. When they say where, tick the line with the URL as
-`evidence`.
+The user posts, and the post's line is theirs to tick. When they say where
+it went, `move_thread` with `told` and that `url`.
 
 A desk can have a **page**: the builder's landing page, which they put on
 the wall for everyone or send to friends only. It is theirs: you never

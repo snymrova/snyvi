@@ -630,8 +630,8 @@ pub(crate) async fn pane_pin_link(
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub(crate) struct DeskQ {
-    /// `threads`, `panels`, `folder`, `decisions`, comma-separated; all of
-    /// them when empty.
+    /// `threads`, `panels`, `folder`, `decisions`, `desks`, comma-separated;
+    /// all of them when empty.
     sections: String,
     query: String,
 }
@@ -692,16 +692,25 @@ pub(crate) async fn pane_desk(
             } else {
                 Vec::new()
             },
+            // 1.66.2: the other desks by name, for `--desk`; nothing else of them.
+            if wants("desks") {
+                crate::desk::other_names(c, desk_id)?
+            } else {
+                Vec::new()
+            },
             now,
         ))
     });
-    let (desk, threads, decisions, now) = match read {
-        Ok((Some(d), t, l, now)) => (d, t, l, now),
+    let (desk, threads, decisions, others, now) = match read {
+        Ok((Some(d), t, l, o, now)) => (d, t, l, o, now),
         Ok((None, ..)) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => return err(e),
     };
     let slot_of = |pane: &str| desk.panes.iter().find(|p| p.id == pane).map(|p| p.slot);
     let mut out = json!({ "desk": desk.name, "now": now });
+    if wants("desks") {
+        out["desks"] = json!(others);
+    }
     if wants("threads") {
         let said: Vec<serde_json::Value> = threads
             .iter()
@@ -1483,6 +1492,9 @@ pub(crate) async fn suggest_to_desk(
     }
     let no = |code: StatusCode, why: String| (code, Json(json!({ "error": why }))).into_response();
     let desks = app.store.desks().unwrap_or_default();
+    // A name that finds no desk answers with the names there are (1.66.2):
+    // nothing listed them, and an agent stopped at "no desk is called".
+    let names: Vec<String> = desks.iter().map(|d| d.name.clone()).collect();
     let want = b.desk.trim();
     let desk = if want.is_empty() {
         desks
@@ -1510,11 +1522,15 @@ pub(crate) async fn suggest_to_desk(
     let Some(desk) = desk else {
         return no(
             StatusCode::NOT_FOUND,
-            if want.is_empty() {
-                "no desk holds this folder: pass --desk with its name".into()
-            } else {
-                format!("no open desk is called {want}")
-            },
+            format!(
+                "{}; the open desks are {}",
+                if want.is_empty() {
+                    "no desk holds this folder: pass --desk with its name".to_string()
+                } else {
+                    format!("no open desk is called {want}")
+                },
+                names.join(", ")
+            ),
         );
     };
     // Who, and from where when it is another desk: "Claude on omd-pro-community".
