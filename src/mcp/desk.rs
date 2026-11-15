@@ -15,18 +15,18 @@ use serde_json::{json, Value};
 
 const READ: &str = "Read this snyvi desk before asking the user where things stand: its threads (stage, folder, \
 branch, PR; the resting ones too), the other panels and what each is doing, the folder's checkouts against \
-main, and what the user decided (open, answered, dropped). Call it when you start, when unsure which \
-checkout is live, and before asking what may be answered already. Pass sections to read less, query to \
-find a decision by its words.";
+main, what the user decided (open, answered, dropped), and the other desks by name, for a `desk` or \
+`--desk`. Call it when you start, when unsure which checkout is live, and before asking what may be \
+answered already. Pass sections to read less, query to find a decision by its words.";
 
-const SECTIONS: [&str; 4] = ["threads", "panels", "folder", "decisions"];
+const SECTIONS: [&str; 5] = ["threads", "panels", "folder", "decisions", "desks"];
 
 pub(super) fn specs() -> Vec<Value> {
     vec![json!({
         "name": "read_desk", "title": "Read this desk", "description": READ,
         "inputSchema": { "type": "object", "properties": {
             "sections": { "type": "array", "items": { "type": "string", "enum": SECTIONS },
-                "description": "Which to read. Default all four, said short." },
+                "description": "Which to read. Default all, said short." },
             "query": { "type": "string", "description": "Words to find among the decisions: in a question, its answer, its document or its thread." }
         }, "additionalProperties": false },
         "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
@@ -102,7 +102,20 @@ pub(super) fn say_desk(v: &Value) -> String {
     if let Some(d) = v.get("decisions") {
         out.extend(say_decisions(d, now));
     }
+    if v.get("desks").is_some() {
+        out.push(say_desks(rows(v, "desks")));
+    }
     out.join("\n")
+}
+
+/// The other open desks, by name: what `desk` and `--desk` take (1.66.2).
+fn say_desks(names: &[Value]) -> String {
+    let names: Vec<&str> = names.iter().filter_map(Value::as_str).collect();
+    if names.is_empty() {
+        "Other desks: none.".to_string()
+    } else {
+        format!("Other desks, by name: {}.", names.join(", "))
+    }
 }
 
 fn say_folder(f: &Value, now: i64) -> Vec<String> {
@@ -397,7 +410,8 @@ mod tests {
                   "thread": "read_desk 1.65" },
                 { "id": 890, "state": "dropped", "text": "Telegram bell?", "answer": "not this year",
                   "asked_at": now - 9 * 86_400, "recommended": -1 }
-            ] }
+            ] },
+            "desks": ["OMD", "2025"]
         });
         let said = say_desk(&v);
         for line in [
@@ -413,6 +427,7 @@ mod tests {
             "- open #911 (asked 2 days ago; under \"Plan: read_desk\" (2d186a80c1)): Shelf on Home too? [Desk only | Home too; recommended: Desk only]",
             "- answered #900 (in a panel, as the agent heard it, 1 h ago; thread read_desk 1.65): 1.64 first? → \"1.64 first, then 1.65\"",
             "- dropped #890 (the user's Not this): Telegram bell? → \"not this year\"",
+            "Other desks, by name: OMD, 2025.",
         ] {
             assert!(said.lines().any(|l| l == line), "missing: {line}\n---\n{said}");
         }
@@ -439,7 +454,8 @@ mod tests {
         }
         assert_eq!(
             spec["inputSchema"]["properties"]["sections"]["items"]["enum"],
-            json!(["threads", "panels", "folder", "decisions"])
+            json!(["threads", "panels", "folder", "decisions", "desks"])
         );
+        assert!(d.contains("the other desks by name"), "{d}");
     }
 }

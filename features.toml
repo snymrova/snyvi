@@ -25,6 +25,13 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "agents-know-how"
+since = "1.66.2"
+title = "Agents know every way snyvi helps you"
+line = "The skill now maps each way an agent can help you to its tool, and to the command a script or a locked run uses, such as a line for another desk. read_desk lists your other desks by name."
+small = "yes"
+
+[[feature]]
 id = "note-to-desk"
 since = "1.66.1"
 title = "A note for another desk"

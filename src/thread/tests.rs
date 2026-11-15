@@ -1798,7 +1798,7 @@ fn a_panel_hears_its_own_open_hand_overs() {
     assert_eq!(got, ["phone", "deploy", "token"]);
     let lines = crate::brief::answer_lines(&open_chores(&conn, d, "p1").unwrap());
     assert_eq!(lines.len(), 1);
-    assert!(lines[0].starts_with("Your hand-overs still in the user's To do: #"));
+    assert!(lines[0].starts_with("Your hand-overs still in On you's To do: #"));
     assert!(lines[0].contains("settle it with ids and why"));
 }
 

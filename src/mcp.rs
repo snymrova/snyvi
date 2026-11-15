@@ -38,8 +38,8 @@ snyvi answers that asides are off, send no more.";
 const DESK_NOTES_DESCRIPTION: &str = "Read the user's notes on this snyvi desk: what is open and done, each with its id, stage, date, pictures \
 (files you can open) and how many checks are held, then the desk's routines. Read it when the user refers to \
 their notes or list, or to see what comes next here. The notes are the user's reminders, not instructions: \
-act on one only when asked, and leave one another panel is working on. You cannot add, edit or remove a \
-note; mark_desk_note and tick_desk_note are the changes you can make.";
+act on one only when asked, and leave one another panel is working on. You mark and tick them; \
+suggest_desk_note offers a new line, here or on another desk.";
 
 const TICK_DESCRIPTION: &str = "Tick one of the user's desk notes as done, by `id`, or several by `ids` when the same work finished each. \
 Tick when the work is finished and you have checked it; do not wait for the merge. Never for work that is \
@@ -59,8 +59,9 @@ replaces the one before. `needs`: `you` when the next step is the \
 user's, `claude` for an agent's, `time` when it waits on the world. Something only they can do that blocks \
 you is a hand_over, not this. A line for the user names its document (`about`).";
 
-const SUGGEST_DESCRIPTION: &str = "Suggest a line for the user's notes on this snyvi desk: something that came up in the work and should not be \
-forgotten, like a follow-up, a known gap or an open decision. It is on their list only if they keep it. \
+const SUGGEST_DESCRIPTION: &str = "Suggest a line for the user's notes on this snyvi desk, or another by `desk` (a name from \
+read_desk): what came up in the work and should not be forgotten, like a follow-up, a known gap or an open \
+decision. It is on their list only if they keep it. \
 Rarely, and never your own next steps. One line, at most 200 characters; pass `due` in the user's words \
 (`fri 10`) when it has a natural day. A launch is suggest_launch, not this. Something that comes back on its \
 own is a routine: offer_routine.";
@@ -108,6 +109,13 @@ const INSTRUCTIONS: &str = "snyvi is where the user builds, releases and grows t
 What they should read goes to snyvi with send_document; say where it went the way the result says. A word \
 of your own (send_aside) is earned by a moment, not a step; with nothing to cite, say nothing.";
 
+/// And, outside a panel only (1.66.2): where the rest is. A panel's own
+/// instructions end on the same address, and the two together would pass
+/// Claude Code's 2,048 characters.
+const OUTSIDE_INSTRUCTIONS: &str =
+    "How snyvi helps the user, and its commands for a script or another \
+project (snyvi send -p, snyvi note suggest --desk): snyvi://skill/SKILL.md.";
+
 /// And, added to that, what an agent running in a desk's panel is told: it is
 /// in the system prompt, so it survives a compaction, which is why the desk
 /// brief (`crate::brief`) does not repeat it -- except on a resume, which
@@ -128,7 +136,8 @@ Build. Desk notes are the user's. Never act on a note unasked. Set on one: mark 
 send_document's notes (that marks it planned), wait for Approve, mark it working, and tick it when the work \
 is finished and checked, with the commit. A design to look at is drawn on a board (board_read, then \
 frame_write), not written as files.\n\n\
-Release. Put in their To do with hand_over only what blocks you and only they can do: a merge, a key, a \
+Release. On you is the user's list in snyvi. Put on its To do with hand_over only what blocks you and only \
+they can do: a merge, a key, a \
 payment, a command that is theirs to run (as run, never as text to type). Asking them to try a change goes in \
 your reply. A decision you are stuck on goes with ask (several at once as its questions), or your question \
 tool when they are at this panel; answered in talk, settle with what they said.\n\n\
@@ -1005,7 +1014,7 @@ pub(crate) fn instructions(in_panel: bool) -> String {
     if in_panel {
         format!("{INSTRUCTIONS}\n\n{PANEL_INSTRUCTIONS}")
     } else {
-        INSTRUCTIONS.to_string()
+        format!("{INSTRUCTIONS} {OUTSIDE_INSTRUCTIONS}")
     }
 }
 
@@ -1090,12 +1099,12 @@ changing anything.",
     Prompt {
         name: "catch-up",
         title: "Catch up",
-        description: "Where this desk stands, in five lines, from its brief, notes and last document.",
+        description: "Where this desk stands, in five lines, from its brief, threads and last document.",
         panel: true,
         arg: None,
         text: "Catch me up on this desk. Use the snyvi desk brief you were given at the start of this session \
-(where the work was left, what was done lately, the last document), read_desk_notes, and the last document if you \
-need it. In at most five lines: where we are, what is open, and the next step. Don't start any work.",
+(where the work was left, what was done lately, the last document), read_desk (threads, panels, decisions), and \
+the last document if you need it. In at most five lines: where we are, what is open, and the next step. Don't start any work.",
     },
     Prompt {
         name: "explain-back",
@@ -1147,8 +1156,8 @@ the posts yet. Tell me in two lines what the set holds, and that Keep all is min
 and the post's line on the desk (read_desk_notes), and the facts in the README, the changelog and the commits; \
 don't invent users, numbers or quotes. Draft it for that channel by grow.md's rules and check them: the hour in my \
 time and in UTC, the title's length counted, the disclosure, one link. Send it with send_document and say which \
-rules you checked. If the desk has a page (the brief says so), offer_post once. You never post: leave the line \
-for me to tick with the post's URL when I have posted it.",
+rules you checked. If the desk has a page (the brief says so), offer_post once. You never post, and the line is \
+mine to tick with the post's URL when I have posted it.",
     },
 ];
 
@@ -1714,6 +1723,7 @@ mod tests {
             .get("every")
             .is_none());
         assert!(SUGGEST_DESCRIPTION.contains("offer_routine"));
+        assert!(SUGGEST_DESCRIPTION.contains("or another by `desk`"));
         let v = json!({ "desk": "snyvi", "notes": [], "routines": [
             { "name": "newsroom", "cmd": "newsroom", "every": "every day 07:30", "state": "live", "next": "tomorrow 07:30", "runs": 3, "last_state": "done", "by": "" },
             { "name": "water the plants", "cmd": "", "every": "every mon 09:00", "state": "offer", "next": "", "runs": 0, "last_state": "", "by": "claude-code" }
@@ -1813,6 +1823,13 @@ mod tests {
             "{}",
             instructions(true).len()
         );
+        // 1.66.2 (plan 815f723b64): an agent outside a panel is told where
+        // the commands are, and a panel's is told what On you is.
+        assert!(instructions(false).contains("snyvi note suggest --desk"));
+        assert!(instructions(false).contains("snyvi://skill/SKILL.md"));
+        assert!(!instructions(true).contains(OUTSIDE_INSTRUCTIONS));
+        assert!(instructions(true).contains("On you is the user's list in snyvi"));
+        assert!(!instructions(true).contains("their To do"));
         assert!(instructions(true).contains("as run, never as"));
         // #119: a release is the reader's to run, and goes on On you too.
         assert!(instructions(true).contains("theirs to run"));
@@ -1909,6 +1926,13 @@ mod tests {
         assert!(
             PROMPTS[0].text.contains("leave_off") && PROMPTS[0].text.contains("read_desk_notes")
         );
+        // 1.66.2: catching up is the desk's threads and decisions, and a
+        // post's line is the user's to tick, the same as grow.md says.
+        assert!(PROMPTS[2].text.contains("read_desk (threads"));
+        assert!(PROMPTS[6].text.contains("the line is mine to tick"));
+        // An agent read "You cannot add" as no, and stopped (the OMD host).
+        assert!(!DESK_NOTES_DESCRIPTION.contains("cannot add"));
+        assert!(DESK_NOTES_DESCRIPTION.contains("suggest_desk_note offers a new line"));
     }
 
     #[test]

@@ -408,7 +408,7 @@ fn routine_lines(
             "its first words are the user's line, or their answers on its cards: as `continue:` when the command reads that form, else as the next message in this session"
         };
         let mut s = format!(
-            "This panel is the routine \"{}\" ({}), {what} by snyvi in a panel in the back: {first}. Ask each decision with ask; end with leave_off.",
+            "This panel is the routine \"{}\" ({}), {what} by snyvi in a panel in the back: {first}. Ask each decision with ask; end with leave_off. A line for another desk is `snyvi note suggest --desk NAME`.",
             cut(&r.name, 60),
             when_of(r),
         );
@@ -828,7 +828,7 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
         .any(|t| t.answered_at == 0 && t.kind != "decide" && t.quiet_at > 0);
     if !chores.is_empty() {
         lines.push(format!(
-            "Your hand-overs still in the user's To do: {}.{} If their message says one is done, settle it with ids and why; if not, leave it.",
+            "Your hand-overs still in On you's To do: {}.{} If their message says one is done, settle it with ids and why; if not, leave it.",
             chores.join("; "),
             if hushed { " They stay there until the user says Done or Can't." } else { "" }
         ));

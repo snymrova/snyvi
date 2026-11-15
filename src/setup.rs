@@ -1218,6 +1218,28 @@ mod skill_tests {
                 "{name}"
             );
         }
+        // 1.66.2 (plan 815f723b64): the map says each way to help with its
+        // command, and no file says an agent cannot offer a line or ticks
+        // the user's post. The OMD host read "nothing you do" and stopped.
+        for way in [
+            "## How snyvi helps the user",
+            "suggest_desk_note",
+            "snyvi note suggest --desk NAME",
+            "snyvi send FILE -p FOLDER",
+            "snyvi widget set NAME",
+            "snyvi routine wake NAME",
+        ] {
+            assert!(main.contains(way), "{way}");
+        }
+        for (name, text) in SKILL {
+            for stale in [
+                "nothing you do puts one",
+                "tick the line with",
+                "remove_card",
+            ] {
+                assert!(!text.contains(stale), "{name}: {stale}");
+            }
+        }
         // Every tool the skill names is one the server has.
         for tool in [
             "read_widgets",
