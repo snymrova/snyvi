@@ -447,6 +447,28 @@ fn only_the_readers_merge_ticks() {
     assert!(mine.iter().all(|x| !x.done && x.landed_commit == "b6e235b"));
 }
 
+/// Someone else's merge whose commits gh listed lands only the lines they
+/// name: a follow-up on the thread is not out because the code is (#237).
+#[test]
+fn someone_elses_merge_lands_only_the_named() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    start_as(&mut conn, d, "A", "p1", &n[..2]);
+    let m = Seen {
+        pr: "https://github.com/o/r/pull/68".into(),
+        merged: "C0FFEE1".into(),
+        merged_by: "trapti".into(),
+        named: Some(vec![n[0]]),
+        ..Seen::default()
+    };
+    seen(&mut conn, d, "p1", &m, 3).unwrap().unwrap();
+    let notes = crate::desk::notes(&conn, d).unwrap();
+    let of = |id: i64| notes.iter().find(|x| x.id == id).unwrap();
+    assert_eq!(of(n[0]).landed_commit, "c0ffee1");
+    assert_eq!(of(n[1]).landed_commit, "");
+    assert!(!of(n[0]).done && !of(n[1]).done);
+}
+
 /// GitHub's word puts right what a guess got wrong: a PR still open takes
 /// back a merge git guessed, the PR's own branch is the thread's, and its
 /// merge, the reader's, ticks the notes and settles the card that names

@@ -39,7 +39,7 @@ async function act(b, byKey) {
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = !docsAll; rail(); }
-    else if (a === "notes-more" || a === "notes-done") { a === "notes-more" ? notesAll = !notesAll : notesDone = !notesDone; rail(); }
+    else if (a === "notes-more" || a === "notes-done" || a === "notes-checks") { a === "notes-more" ? notesAll = !notesAll : a === "notes-done" ? notesDone = !notesDone : agedOpen = !agedOpen; rail(); }
     // Off this desk's list, and back: the row keeps its place with an Undo,
     // as a note's does, and the daemon is told after the rail has changed.
     else if (a === "doc-x") {
@@ -120,7 +120,7 @@ async function act(b, byKey) {
     else if (a === "note-num") copySha(b, "✓");
     else if (a === "note-doc") ctx.read(b.dataset.d);
     else if (a === "note-ev" || a === "note-open") { if (webLinks(b.dataset.u || "").length) openLink(b.dataset.u); }
-    else if (a === "note-keep" || a === "note-works" || a === "note-broken") await noteAct(a, b, d);
+    else if (a === "note-keep" || a === "note-works" || a === "note-broken" || a === "checks-all") await noteAct(a, b, d);
     else if (a === "note-tell") await tellNote(d, b);
     else if (a === "left-edit") leftOffEdit(d);
     else if (a === "left-back") leftOffBack(d);
@@ -252,6 +252,7 @@ const VERB = { new: "open a new panel", stop: "stop the panel", start: "start th
  *  not yet..., a field over the line for what is still wrong, which Enter
  *  sends to reopen it (06-rail.js `saveNote`). Out of `act`, which is long. */
 async function noteAct(a, b, d) {
+  if (a === "checks-all") return allWork(d, b);
   const x = noteList.find(y => y.id === +b.dataset.n);
   if (!x) return;
   if (a === "note-broken") { noteField = { kind: "broken", id: x.id }; noteDraft = ""; noteCaret = 0; rail(); return; }
@@ -271,6 +272,19 @@ async function noteAct(a, b, d) {
   rail();
   if (await told(b.dataset, `n${x.id}`, "Could not keep it", () => { for (const y of set) y.suggested_by = by; },
     () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep${all ? "?all=1" : ""}`, {}))) await getNotes(d.id, true);
+}
+
+/** All work (#237): every line in the folded "shipped to check" row ticked
+ *  as the reader's, each by the check a line's own ✓ works sends, so each
+ *  keeps the commit it landed with. Only on this press; nothing ticks a
+ *  line by itself. They go to the done fold, which says how many. */
+async function allWork(d, b) {
+  const xs = noteList.filter(agedCheck);
+  if (!xs.length) return;
+  for (const x of xs) x.done = true;
+  rail();
+  if (await told(b.dataset, "checks", "Could not tick them", () => { for (const x of xs) x.done = false; },
+    () => Promise.all(xs.map(x => ctx.api(`/api/desks/${d.id}/notes/${x.id}/check`, { works: true }))))) await getNotes(d.id, true);
 }
 
 /** Tell Trapti ✓ on a friend's ticked line: said in the row at once, put

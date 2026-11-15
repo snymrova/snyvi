@@ -957,8 +957,11 @@ pub(crate) struct PanelNoteBody {
     text: String,
 }
 
-/// `/note` in a panel with the mod: a line on the desk's list, the reader's
-/// own -- they typed it -- with no turn spent.
+/// `/note` in a panel with the mod: a line on the desk's list with no turn
+/// spent. A suggestion the reader keeps (1.66.1, audit fc82b3fdcb N4): the
+/// token is all this route sees, and anything holding it could call it, so
+/// it cannot be the reader's own line until they say so. The row says
+/// "/note" as who, and Keep makes it theirs.
 pub(crate) async fn pane_note(
     State(app): S,
     headers: HeaderMap,
@@ -969,15 +972,20 @@ pub(crate) async fn pane_note(
         Ok(p) => p,
         Err(no) => return *no,
     };
-    match app.store.add_desk_note(placed.desk_id, &b.text) {
-        Ok(Some(note)) => {
+    match app
+        .store
+        .suggest_desk_note(placed.desk_id, &b.text, "/note")
+    {
+        Ok(crate::desk::Suggested::Note(note)) => {
             notes_moved(&app, placed.desk_id);
             (StatusCode::CREATED, Json(json!({ "note": note }))).into_response()
         }
-        Ok(None) => refused(
+        Ok(crate::desk::Suggested::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
+        Ok(_) => refused(
             StatusCode::CONFLICT,
             format!(
-                "an empty line, or the desk keeps {} notes",
+                "an empty line, {} suggestions waiting already, or the desk keeps {} notes",
+                crate::desk::SUGGESTIONS_PER_DESK,
                 crate::desk::NOTES_PER_DESK
             ),
         ),

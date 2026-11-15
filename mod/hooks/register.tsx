@@ -267,7 +267,7 @@ export const register: Register = on => {
     const text = String(e.args || '').trim()
     if (!text) return { text: 'Usage: /note what to remember' }
     const r = await call($, 'note', { text })
-    if (r?.status === 201) $.ui.toast(`Note #${r.json.note.id} added to the desk`)
+    if (r?.status === 201) $.ui.toast(`Note #${r.json.note.id} is on the desk: Keep it there`)
     else $.ui.toast(r?.json?.error ? `Not added: ${r.json.error}` : 'snyvi is not reachable')
     return {}
   })

@@ -457,6 +457,8 @@ fn pane_routes() -> Router<Arc<App>> {
         // 1.66: offer_routine, one call that makes or updates (`routine_offer`).
         .route("/api/panes/{id}/routine", post(pane_offer_routine))
         .route("/api/routines/wake", post(routine_wake))
+        // 1.66.1: a line suggested for a desk the caller names (#237).
+        .route("/api/notes/suggest", post(suggest_to_desk))
         .route("/api/panes/{id}/offer", post(pane_offer))
         .route(
             "/api/panes/{id}/paste",

@@ -568,10 +568,28 @@ function goAhead(d, doc) {
   const xs = noteList.filter(x => x.stage_doc === doc && x.stage === "planned" && x.ok_at && !x.done);
   const pane = xs[0]?.stage_pane, v = pane && views.get(pane), n = pane && slotOf(d, pane);
   if (!xs.length || !v) return;
+  // One press, one go-ahead: the rail's Approve and the event its own write
+  // brings back (`approvedHere`) both land here, a moment apart.
+  if (Date.now() - (wentAhead.get(doc) || 0) < GO_ONCE_MS) return;
   if (!sendsHere(v)) return notSent(pane, n, "It hears the approval with your next message.");
+  wentAhead.set(doc, Date.now());
   const lines = xs.map(x => `#${x.id}`).join(" ");
   input(v, bracket(v, oneLine(`Approved in snyvi: go ahead with the plan ${doc} for ${lines}.`)));
   setTimeout(() => input(v, "\r"), 120);
+}
+const wentAhead = new Map(), GO_ONCE_MS = 5000;
+
+/** An Approve pressed anywhere (#242): on the plan's own page, which only
+ *  told the daemon, the desk's panel sat idle until the reader typed. The
+ *  daemon's `desknotes` event names the plan, and the desk on this page --
+ *  its panels still on their sockets while a document is read beside it --
+ *  types the go-ahead as the rail's Approve does. Only in a window in view:
+ *  a second window on the same desk does not type it twice. */
+export async function approvedHere(id, doc) {
+  if (!ctx || id !== deskId || document.visibilityState !== "visible") return;
+  await getNotes(id, true);
+  const d = current();
+  if (d) goAhead(d, doc);
 }
 
 /** An answer on one line: the reader's Other… is a field, but a pasted line

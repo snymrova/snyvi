@@ -1948,3 +1948,34 @@ fn a_documents_link_after_a_line_is_its_document() {
     assert!(set_note_doc(&conn, d, gone.id, "93ebc26095").unwrap());
     assert!(!set_note_doc(&conn, d, gone.id, "1111111111").unwrap());
 }
+
+/// The same line suggested again is the one already there, waiting or
+/// kept, in any case: #243 and #245 were one line twice (#237). Once it is
+/// done, the line may come again.
+#[test]
+fn the_same_suggestion_twice_is_one_line() {
+    let mut conn = db();
+    let d = create(&conn, "/w", None, 0).unwrap().id;
+    let Suggested::Note(a) = suggest_note(&mut conn, d, "Post on the site", "host", 1).unwrap()
+    else {
+        panic!()
+    };
+    let Suggested::Note(b) = suggest_note(&mut conn, d, "post on the site ", "host", 2).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(a.id, b.id);
+    assert_eq!(notes(&conn, d).unwrap().len(), 1);
+    assert!(keep_note(&conn, d, a.id).unwrap());
+    let Suggested::Note(c) = suggest_note(&mut conn, d, "Post on the site", "host", 3).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(c.id, a.id, "kept and open: still the one line");
+    assert!(tick_note(&conn, d, a.id, &by("me"), 4).unwrap());
+    let Suggested::Note(e) = suggest_note(&mut conn, d, "Post on the site", "host", 5).unwrap()
+    else {
+        panic!()
+    };
+    assert_ne!(e.id, a.id, "done: it may come again");
+}

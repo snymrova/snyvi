@@ -1088,12 +1088,27 @@ pub fn pr_facts(
         }
     } else {
         // Out, but not by the reader's hand: "check it", as a commit on main
-        // that names a line lands it (`desk::land_notes`).
-        conn.execute(
-            "UPDATE desk_notes SET landed_commit = ?3, landed_at = ?4
-             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
-            params![desk_id, id, merge, at],
-        )?;
+        // that names a line lands it (`desk::land_notes`). Only the lines
+        // the PR's commits name, when gh listed them, as the reader's own
+        // merge ticks only those: a follow-up filed on the thread ("write
+        // the release note") is not out because the code is (audit
+        // fc82b3fdcb, #237). Unlisted, every line of the thread waits for
+        // its check, as before.
+        let land = "UPDATE desk_notes SET landed_commit = ?3, landed_at = ?4
+             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''";
+        match f.named.as_deref() {
+            Some(named) => {
+                for note in named {
+                    conn.execute(
+                        &format!("{land} AND id = ?5"),
+                        params![desk_id, id, merge, at, note],
+                    )?;
+                }
+            }
+            None => {
+                conn.execute(land, params![desk_id, id, merge, at])?;
+            }
+        }
     }
     let pr = if t.pr.is_empty() {
         pr_number(&f.url).unwrap_or_default()

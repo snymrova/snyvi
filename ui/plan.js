@@ -14,7 +14,7 @@ const SAY = {
   0: ["Approve", "The go-ahead for this plan: its panel hears it at its next prompt", "Approve, and its panel hears it at its next prompt."],
   // A panel idle at its prompt has no next prompt of its own (#223): the
   // note's line on the desk then reads "approved · start", which tells it.
-  1: ["Approved ✓", "Approved by you: its panel goes ahead. Click to take it back", "Approved by you just now · if its panel waits at its prompt, Start on the note's line tells it · press again to take it back"],
+  1: ["Approved ✓", "Approved by you: its panel goes ahead. Click to take it back", "Approved by you just now · its panel is told now if its desk is open in this window, else Start on the note's line tells it · press again to take it back"],
 };
 
 export async function press(b, api, cache) {
