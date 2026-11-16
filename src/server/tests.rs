@@ -361,7 +361,16 @@ fn gated_app_with(
 /// say what it answers to before the build is green.
 #[tokio::test]
 async fn every_route_answers_to_its_gate_and_to_this_host_only() {
-    let (_tmp, router, leaves) = gated_router("snyvi-routes");
+    // Desk 1 is rooted in a temp folder, made before the table runs. The
+    // table's own `POST /api/desks` names no folder, which is the home
+    // directory: while that desk was desk 1, every run of this test made an
+    // empty board in the real `~/design` (boards audit ef7024c7dc).
+    let desk_dir = crate::store::tempdir::Dir::new("snyvi-routes-desk");
+    let root = desk_dir.path.to_string_lossy().into_owned();
+    let (_tmp, router, leaves) = gated_router_with("snyvi-routes", |store| {
+        let desk = store.create_desk(&root, Some("routes")).unwrap();
+        assert_eq!(desk.id, 1, "the table's desk routes name desk 1");
+    });
 
     // The table is the router. Git on Windows checks this file out with CRLF.
     // `router`, the panels' and the friends' routes it merges, and the
