@@ -64,6 +64,10 @@ function qHtml(env, w, text = w.text) {
     (body ? `<span class="tn-qb">${code(body, esc)}</span>` : "") + `</div>`;
 }
 
+/** How old a hand-over is before its card asks "still yours?", and the
+ *  kinds that are hand-overs: what only the reader can do. */
+const STILL_S = 2 * 86400, STILL_KINDS = ["do", "merge", "key", "run"];
+
 /** Who asked, from which panel, on which desk off a desk -- the desk's name
  *  is Go to desk -- how long ago, and how often (C8). */
 function byHtml(env, w, extra = "", lead = "") {
@@ -73,6 +77,14 @@ function byHtml(env, w, extra = "", lead = "") {
     : w.kind === "due" ? "due" : `${who} · ${p ? p.name : "panel closed"}`;
   const desk = env.off ? ` · <button type="button" class="tn-dn" data-a="tn-desk" data-w="${w.id}" data-tip="Go to desk" data-tip-sub="${esc(env.deskName(w))}">${esc(env.deskName(w))}</button>` : "";
   const again = w.asked > 1 ? ` · asked ${w.asked} times` : "";
+  // 1.67: a hand-over two days old asks whose it is. It never retires by
+  // itself (1.66), so without the question it stood for weeks, done long
+  // ago or never the reader's. Said in the by-line, where it moves nothing;
+  // the answers are the card's own: Done, or Later's Not mine with a word,
+  // which gives it back to the agent in its brief.
+  const still = STILL_KINDS.includes(w.kind) && w.created_at && Date.now() / 1000 - w.created_at > STILL_S
+    ? ` · <b class="tn-still" data-tip="Still yours?" data-tip-sub="Done if you did it; Later, then Not mine, gives it back to its agent">still yours?</b>` : "";
+  extra = still + extra;
   const tip = `${w.kind === "decide" ? "A decision" : w.kind}${p ? ` · panel ${p.slot}` : ""}`;
   return `<p class="tn-by">${lead}<span data-tip="${esc(tip)}">${esc(where)}</span>${desk} · ${esc(env.rel(w.created_at))}${again}${extra}</p>`;
 }
@@ -292,6 +304,7 @@ const CSS = `
 .tn-q[data-a]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-xs); }
 .tn-by { margin: 2px 0 0; font-size: var(--fs-micro); color: var(--fg-3); }
 .tn-by b { font-weight: inherit; color: var(--fg-2); }
+.tn-by .tn-still { color: var(--warn); }
 .tn-host, .tn-dn { padding: 0; border: 0; background: none; font: inherit; color: var(--fg-2); text-decoration: underline dotted; cursor: pointer; }
 .tn-host:hover, .tn-dn:hover { color: var(--accent); }
 .tn-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }

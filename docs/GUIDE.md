@@ -869,6 +869,11 @@ was on, and a tab with the panels that closed with it. A panel that held a
 Claude session says it can resume. Nothing was deleted; this is where it
 went.
 
+**A hand-over asks whose it is** (1.67). A To do card two days old says
+*still yours?* beside its age: press Done if you did it, or Later and *Not
+mine* with a word, which gives it back to its agent in its next brief. It
+is asked in the card's own line, and nothing is put away for you.
+
 **A panel in the back says what it is doing** (1.67). Its chip in the
 desk's head reads "forum host · asks you · 2 h" in amber, "tabs polish ·
 working 18 min", "reel 12 · finished 11:40" or, for a shell, "running", "a
