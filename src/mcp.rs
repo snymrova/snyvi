@@ -95,8 +95,8 @@ you offered it and that the user decides.";
 
 const OFFER_LINE_DESCRIPTION: &str = "Offer one line to one of the user's friends on snyvi, by the name the desk brief lists: a request, a \
 heads-up, a thing to check, at most 200 characters; anything longer is offer_document. Nothing is sent by \
-this call: the user sees the line with your name on it and presses Send or Not now. It lands on the friend's \
-desk as a suggested note. Only when the user asked or the work plainly needs that friend. Say in your reply \
+this call: the user sees the line with your name on it and presses Send or Not now. It reaches the \
+friend's snyvi as a suggested note: on Home, or on a desk if they gave you one. Only when the user asked or the work plainly needs that friend. Say in your reply \
 that you offered it.";
 
 const NAME_DESCRIPTION: &str = "Name the snyvi panel this session runs in, so the user can tell their panels apart: a few words for what you \
