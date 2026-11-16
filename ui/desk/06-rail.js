@@ -1242,9 +1242,8 @@ async function getNotes(id, again) {
   getFriends();
   if (!again && (notesAt === id || notesGet === id)) return;
   notesGet = id;
-  // The panels' pipelines move with the same event (13-pipeline.js), and
-  // the desk's routines (19-routine.js).
-  pipesGet(id);
+  // The desk's routines move with the same event (19-routine.js), and its
+  // line (31-line.js).
   routinesGet(id);
   lineGet(id);
   let j;

@@ -92,9 +92,10 @@ pub(crate) struct AgentBody {
     /// (`crate::statusline::Limit`): Home's quota.
     #[serde(default)]
     pub(crate) limits: Option<LimitsBody>,
-    /// A turn's end, for the panel's pipeline (`pipeline_run::heard`).
+    /// A turn's end (`turn_end::StopBody`): for a routine's run, and for
+    /// answers pressed in snyvi while the agent worked.
     #[serde(default)]
-    pub(crate) stop: Option<super::pipeline_run::StopBody>,
+    pub(crate) stop: Option<super::turn_end::StopBody>,
 }
 
 #[derive(Deserialize, Default)]
@@ -224,13 +225,9 @@ pub(crate) async fn pane_agent(
             desks_moved(&app);
         }
     }
-    let (session, stopped) = (b.session.as_deref(), b.stopped.as_deref());
+    let stopped = b.stopped.as_deref();
     super::routine_run::stamp(&id);
     super::routine_run::heard(&app, &id, stopped, b.stop.as_ref());
-    if let Some(handoff) = super::pipeline_run::heard(&app, &id, session, stopped, b.stop.as_ref())
-    {
-        return Json(handoff).into_response();
-    }
     if let Some(said) = b.stop.as_ref().and_then(|s| answered_at_stop(&app, &id, s)) {
         return Json(json!({ "handoff": said })).into_response();
     }
@@ -242,7 +239,7 @@ pub(crate) async fn pane_agent(
 /// that asked and went on hears them without the reader typing. Once a
 /// turn: a Stop hook that already kept it going is let stop. A routine's
 /// panel is left to its next run (`routine_run`), as before.
-fn answered_at_stop(app: &App, id: &str, stop: &super::pipeline_run::StopBody) -> Option<String> {
+fn answered_at_stop(app: &App, id: &str, stop: &super::turn_end::StopBody) -> Option<String> {
     if stop.active {
         return None;
     }

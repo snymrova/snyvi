@@ -299,10 +299,11 @@ the board is not opened, the view goes and the folder stays.
    types is one line with no control character, refused at the door
    otherwise (`thread::command`, `thread::steps`); one click types one line,
    and nothing that finishes starts the next. The daemon accepts `in` only for
-   a pane that socket is watching (`desk_session`). A pipeline's
-   stage (1.40) is not input: it is a new process with the step as one argv
-   entry, started by the runner (`server/pipeline_run.rs`) for a pipeline the
-   window made and started. `docs/TERMINAL.md` §9a has the rule as rewritten.
+   a pane that socket is watching (`desk_session`). Start next
+   (1.67, `api_line`) is not input from content: it is a new panel whose
+   command is snyvi's own sentence and a note's number, on the reader's
+   press. Pipelines, which started stages on their own from 1.40, are gone
+   (`docs/TERMINAL.md` §9a).
 4. **The query string is refused as a transport for the capability.** A
    request path lands in logs. The fragment never leaves the browser, but it
    is not unlogged either: it arrives as `snyvi-app` argv, where `ps` can see

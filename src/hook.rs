@@ -654,7 +654,7 @@ fn stopped(paths: &Paths, pane: &str, session: Option<&str>, event: &Event) {
 }
 
 /// What a Stop hook prints to keep the turn going with `said` as what
-/// Claude is told: a pipeline's handoff (`server::pipeline_run`). Feedback
+/// Claude is told: answers pressed in snyvi while it worked (`server::api_agent`). Feedback
 /// rather than a `block`, which Claude Code shows the reader as a "Stop hook
 /// error"; this continues the turn the same way and reads as "Stop hook
 /// feedback" (hooks.md, Stop decision control).

@@ -2092,7 +2092,7 @@ pub(crate) async fn start_pane(
 /// What a panel's process is started with besides its command: the desk's
 /// keys, the snyvi mod's folder, and the Claude account's token -- for the
 /// reader's Start (`start_pane`) and a pipeline's stage alike
-/// (`pipeline_run`), so a stage runs as its panel would.
+/// (until 1.67), so a stage ran as its panel would.
 pub(crate) struct PaneEnv {
     pub(crate) env: Vec<(String, String)>,
     pub(crate) account: i64,

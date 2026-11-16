@@ -385,7 +385,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
         + routes_in("\nfn thread_routes(")
         + routes_in("\nfn widget_routes(")
         + routes_in("\nfn media_routes(")
-        + routes_in("\nfn pipeline_routes(")
+        + routes_in("\nfn routine_routes(")
         + routes_in("\nfn receive_route(")
         + routes_in("\nfn group_routes(");
     assert_eq!(

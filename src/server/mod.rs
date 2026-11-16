@@ -24,7 +24,6 @@ mod api_media;
 mod api_news;
 mod api_page;
 mod api_peer;
-mod api_pipeline;
 mod api_restore;
 mod api_routine;
 mod api_thread;
@@ -36,7 +35,6 @@ mod auth;
 mod events;
 mod lifecycle;
 mod peer_link;
-mod pipeline_run;
 mod press;
 mod restore_run;
 mod routine_gate;
@@ -45,6 +43,7 @@ mod routine_run;
 mod routine_watch;
 #[cfg(test)]
 mod tests;
+mod turn_end;
 mod widget_run;
 mod ws;
 
@@ -63,7 +62,6 @@ use api_media::*;
 use api_news::*;
 use api_page::*;
 use api_peer::*;
-use api_pipeline::*;
 use api_restore::*;
 use api_routine::*;
 use api_thread::*;
@@ -640,17 +638,10 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/api/gallery/pick", post(pick_gallery))
 }
 
-/// Pipelines (`api_pipeline`) and routines (`api_routine`): the window's
-/// alone, on the desk gate.
-fn pipeline_routes() -> Router<Arc<App>> {
+/// Routines (1.50, `api_routine`): the window's alone, on the desk gate.
+/// The pipelines' routes were here with them until 1.67.
+fn routine_routes() -> Router<Arc<App>> {
     Router::new()
-        .route(
-            "/api/desks/{id}/pipelines",
-            get(desk_pipelines).post(new_pipeline),
-        )
-        .route("/api/desks/{id}/pipelines/{row}/edit", post(edit_pipeline))
-        .route("/api/desks/{id}/pipelines/{row}/{act}", post(pipeline_act))
-        // Routines (1.50, `api_routine`): the same gate, the same promise.
         .route(
             "/api/desks/{id}/routines",
             get(desk_routines).post(new_routine),
@@ -847,7 +838,7 @@ fn router(app: Arc<App>) -> Router {
         .merge(thread_routes())
         .merge(widget_routes())
         .merge(media_routes())
-        .merge(pipeline_routes())
+        .merge(routine_routes())
         .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
@@ -907,12 +898,11 @@ async fn asked_to_stop(mut stop_rx: broadcast::Receiver<()>, told: broadcast::Se
 
 /// What runs beside the router for as long as the daemon does: the
 /// watchers, widget files' commands while their widgets are in view, and
-/// pipelines' stages, one after another in their panels.
+/// routines' runs.
 fn spawn_runners(app: &Arc<App>) {
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
     widget_run::spawn(app.clone());
-    pipeline_run::spawn(app.clone());
     routine_run::spawn(app.clone());
     routine_watch::spawn(app.clone());
 }

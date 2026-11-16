@@ -859,7 +859,6 @@ export function actions(el) {
       R,
       { label: "Rename…", key: ctx.keyHint("f2"), moves: 1, run: () => renamePanel(v) },
       ...threadItems(v),
-      ...pipeItems(v),
       { label: "Close panel", key: ctx.keyHint("ctrl+alt+w"), danger: true, run: does("close") },
     ] };
   }

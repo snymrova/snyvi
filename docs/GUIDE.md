@@ -1458,13 +1458,12 @@ mark a claimed note working is refused and told to ask for the next one.
 
 ## Pipelines
 
-Set aside. 1.40 let a panel work through a list of steps, one step looped,
-or a goal a planner wrote, each stage a fresh Claude on a branch of its own.
-The window no longer offers it: a simpler shape for working while you are
-away is being worked out, and the 1.40 one will come back changed or not at
-all. The daemon's side stays (`docs/TERMINAL.md` §9a says what it holds to),
-so nothing already made is lost, and a pipeline you started before 1.43 keeps
-its chip in the panel's head, with Pause and Stop, until it ends.
+Removed in 1.67. From 1.40 a panel could work through a list of steps, one
+step looped, or a goal a planner wrote, each stage a fresh Claude the
+daemon started; the window stopped offering it in 1.43. Its one good idea,
+working a list until it is done, is the line above, where each start is
+your press. The rows a pipeline left stay in the database; nothing reads
+them.
 
 ## The rail
 

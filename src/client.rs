@@ -832,12 +832,11 @@ pub fn agent_state(
     tell_agent(paths, pane, body);
 }
 
-/// A turn's end in a panel: the state, and what a pipeline's runner reads
-/// of it (`server::pipeline_run`) -- the transcript's path, the reply and
+/// A turn's end in a panel: the state, and what the daemon reads of it
+/// (`server::turn_end`) -- the transcript's path, the reply and
 /// whether a Stop hook already kept this turn going. The answer is a reason
-/// to keep going when the panel's pipeline asks for one: its stage is past
-/// the context limit, and is to say where it is (`leave_off`) before a
-/// fresh session takes it on. A daemon from before 1.40 answers nothing,
+/// to keep going when the daemon has one: answers the reader pressed in
+/// snyvi while the agent worked. A daemon from before 1.40 answers nothing,
 /// and a slow one is not waited on past a second and a half.
 pub fn agent_stop(
     paths: &Paths,

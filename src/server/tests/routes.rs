@@ -1006,28 +1006,6 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
-    ("GET", "/api/desks/1/pipelines", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/pipelines",
-        Some("{}"),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/pipelines/1/edit",
-        Some("{}"),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/pipelines/1/start",
-        Some("{}"),
-        Gate::Desk,
-        true,
-    ),
     ("GET", "/api/desks/1/routines", None, Gate::Desk, true),
     (
         "POST",
