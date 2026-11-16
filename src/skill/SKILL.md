@@ -74,6 +74,12 @@ To do (what only they can do) and News (what changed without their press).
   `tick_desk_note` only when it is finished and checked (with the commit).
   Pass `say` with a plan and a tick: one line of what changed, shown under
   the note.
+- A desk may have a **line**: the user's goal and their notes in the order
+  to do them. When they set you on the line, or snyvi started your panel
+  for a note, `next_work` gives you the next free one, claimed for your
+  panel, with the command it is done when it passes. Run that command
+  yourself before you tick. The order is theirs; you never start another
+  agent.
 - A tick shows what it rests on: the `commit`, the document (`about`) or a
   URL (`evidence`). A tick with none of them reads "claimed: needs a look",
   and one whose commit is not on main "claimed · on a branch"; only a commit

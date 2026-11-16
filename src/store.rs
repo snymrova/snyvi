@@ -595,6 +595,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // (`crate::routine`), after News (`crate::news`), which says each fold
     (40, crate::news::SCHEMA_1_66),
     (40, crate::routine::YOU_COLUMNS_1_66),
+    (41, desk::line::COLUMNS_1_67), // 1.67: a desk's goal, its queue, a note's claim
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

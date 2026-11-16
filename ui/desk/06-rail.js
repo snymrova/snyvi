@@ -254,7 +254,8 @@ function rail() {
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>` +
     `<div class="dk-foot">${backRow(d, esc)}</div>`),
     // Notes before Documents, Points after (1.56, B6; src/widget.rs RIGHT); routines under the notes (19-routine.js).
-    notes: () => noteSec(d) + routineSec(d),
+    // The line over them (1.67, 31-line.js): the same notes, in an order.
+    notes: () => lineSec(d) + noteSec(d) + routineSec(d),
     // The documents that wait, and the way to the rest. The count is how
     // many wait; the row's [n] says which panel sent it.
     docs: () => sec("docs", "rail.docs", "Documents", {
@@ -278,7 +279,7 @@ function rail() {
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); findFocus(); noteFocus(); checksFocus(); rtFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); checksFocus(); lineFocus(); rtFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
   pageChips(vs, live);
   onYou(d);
@@ -1245,6 +1246,7 @@ async function getNotes(id, again) {
   // the desk's routines (19-routine.js).
   pipesGet(id);
   routinesGet(id);
+  lineGet(id);
   let j;
   try { j = await ctx.api(`/api/desks/${id}/notes`); }
   catch { notesGet = null; if (id === deskId) { notesOff = id; if (current()) rail(); } return; }

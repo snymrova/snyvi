@@ -520,6 +520,15 @@ pub(crate) async fn pane_mark_note(
             Ok(None) => {}
             Err(e) => return err(e),
         }
+        // 1.67: a note another panel has is that panel's (`desk::line`).
+        if let Ok(Some(_)) = app
+            .store
+            .clocked(|c, _| crate::desk::line::held_by_other(c, placed.desk_id, note, &id))
+        {
+            let error =
+                format!("another panel has note #{note}; next_work gives you one that is free");
+            return (StatusCode::CONFLICT, Json(json!({ "error": error }))).into_response();
+        }
     }
     let mark = crate::desk::Mark {
         stage: stage.into(),

@@ -432,6 +432,23 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
+    // 1.67: the line (`api_line`).
+    ("GET", "/api/desks/1/line", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/desks/1/line",
+        Some(r#"{"goal":"x"}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("POST", "/api/desks/1/line/next", None, Gate::Desk, true),
+    (
+        "POST",
+        "/api/panes/nope/next-work",
+        Some("{}"),
+        Gate::Token,
+        true,
+    ),
     // 1.58: a board and the reader's focus (`api_board`).
     ("GET", "/api/panes/nope/boards", None, Gate::Token, true),
     ("GET", "/api/panes/nope/board/home", None, Gate::Token, true),

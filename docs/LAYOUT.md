@@ -44,6 +44,9 @@ each wearing a label would be noise.
 | `rail.notes.row` | one line: circle, text, ✕, who ticked it (`.dk-by`), its pictures (`.dk-imgs`) | `noteRow()` · `.dk-note` |
 | `rail.notes.field` | the new line's field, at the end of the list, and its waiting pictures (`.dk-pend`) | `.dk-note.new` |
 | `rail.notes.picture` | a picture whole, over the page | `openLightbox()` · `.dk-lb` |
+| `rail.line` | The line (1.67): the desk's goal and its notes in the order to do them, over Notes | `lineSec()` · `31-line.js` |
+| `rail.line.head` | "The line · N to go"; under it the goal (a click rewrites it) and "4 of 9 done" with its bar | `.dk-ln-head` |
+| `rail.line.row` | one queued note: its place or ✓, `#id` and words, then done / the panel that has it / next / queued and its done-when; Start next on the first free one; ↑ ↓ ✕ over its end under the pointer | `lineRow()` · `.dk-ln-row` |
 
 The Documents list is a box of its own height (`min(360px, 45vh)`) and
 scrolls inside the rail, so a long day of sends never pushes Notes out of

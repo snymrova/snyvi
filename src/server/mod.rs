@@ -19,6 +19,7 @@ mod api_docs;
 mod api_friend;
 mod api_gallery;
 mod api_groups;
+mod api_line;
 mod api_media;
 mod api_news;
 mod api_page;
@@ -57,6 +58,7 @@ use api_docs::*;
 use api_friend::*;
 use api_gallery::*;
 use api_groups::*;
+use api_line::*;
 use api_media::*;
 use api_news::*;
 use api_page::*;
@@ -536,6 +538,10 @@ fn note_routes() -> Router<Arc<App>> {
             "/api/panes/{id}/notes/{note}/suggest-check",
             post(pane_suggest_check),
         )
+        // 1.67: the line (`api_line`).
+        .route("/api/desks/{id}/line", get(desk_line).post(set_desk_line))
+        .route("/api/desks/{id}/line/next", post(start_next))
+        .route("/api/panes/{id}/next-work", post(pane_next_work))
         .route(
             "/api/desks/{id}/notes/{note}/image",
             post(add_note_image).layer(axum::extract::DefaultBodyLimit::max(NOTE_IMAGE_BYTES)),

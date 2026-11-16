@@ -19,6 +19,7 @@ mod board;
 mod cards;
 mod checks;
 mod desk;
+mod line;
 mod page;
 mod threads;
 mod widgets;
@@ -183,6 +184,8 @@ const TOOLS: &[(&str, Tool)] = &[
     // 1.61: a launch by its own name, where it was `suggest_desk_note`'s `lines`.
     ("suggest_launch", Session::suggest_launch),
     ("suggest_check", Session::suggest_check),
+    // 1.67: the next note of the desk's line, claimed for this panel.
+    ("next_work", Session::next_work),
     // 1.58: a board in the desk's folder, and where the reader is (`board`).
     ("board_read", Session::board_read),
     ("frame_write", Session::frame_write),
@@ -294,6 +297,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
         tools.extend(widgets::specs());
         tools.extend(cards::specs());
         tools.extend(checks::specs());
+        tools.extend(line::specs());
         tools.extend(board::specs());
         tools.extend(page::specs());
         if friends != Some(false) {

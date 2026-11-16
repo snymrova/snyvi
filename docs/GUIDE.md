@@ -1430,6 +1430,32 @@ panel it runs in. It never starts a turn and never approves or blocks a
 tool. About has the switch, *Claude Code mod*, under *In panels*; a panel started
 before you flip it picks the change up at its next start.
 
+## The line
+
+A desk can have a goal and a queue (1.67). **The line** is the section over
+Notes in the desk's rail: one line saying what the desk is for, and the
+notes you chose, in the order to do them. "4 of 9 done" counts the ticked
+ones, which keep their place.
+
+- **Set a goal** is a click on the goal's line. Enter keeps it.
+- **+ Add a note to the line** puts an open note at the end. ↑ and ↓ over
+  a row's end move it; ✕ takes it off the line and leaves it on your list.
+- **Done when** is a command of yours a note may carry: "done when
+  `node bench/ui.mjs back` passes". snyvi does not run it. The note's agent
+  is told it and runs it before it ticks.
+- **Start next** is on the first note nobody has. One press makes a
+  worktree beside the repository (`../<repo>-<n>`, on a branch `note-<n>`
+  cut from the main line), opens a panel in it, and starts Claude there
+  with snyvi's own sentence and the note's number. The note is that
+  panel's from then on, and its row says which panel has it.
+
+An agent takes the next note with `next_work`: the first one that is open
+and free, claimed for its panel, so two panels never take the same note.
+A claim holds while its panel is open; close the panel and the note is
+free again. An agent cannot reorder the line, write a done-when, or start
+another agent: those are yours, on the page. A second agent that tries to
+mark a claimed note working is refused and told to ask for the next one.
+
 ## Pipelines
 
 Set aside. 1.40 let a panel work through a list of steps, one step looped,
