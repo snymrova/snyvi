@@ -231,6 +231,18 @@ pub(crate) async fn pane_move_thread(
         url: b.url,
     };
     let desk = placed.desk_id;
+    // 1.67: building, review and shipped are read from git and the PR once
+    // they have been seen on the thread; the reader's own move is theirs.
+    if !m.reader {
+        let no = app
+            .store
+            .clocked(|c, _| thread::facts::not_yours(c, desk, &m.pane, &m.stage));
+        match no {
+            Ok(Some(why)) => return refused(StatusCode::CONFLICT, why),
+            Ok(None) => {}
+            Err(e) => return err(e),
+        }
+    }
     let r = app
         .store
         .clocked(|c, now| thread::move_thread(c, desk, None, &m, now));
@@ -1166,6 +1178,8 @@ fn file_looked(c: &rusqlite::Connection, desk: i64, l: &Looked, now: i64) -> any
     } else if t.pr.is_empty() {
         moved |= thread::no_pr(c, desk, l.id)?;
     }
+    // 1.67: where the facts put it, whatever its agent last said.
+    moved |= thread::facts::stage(c, desk, l.id)?;
     Ok(moved)
 }
 

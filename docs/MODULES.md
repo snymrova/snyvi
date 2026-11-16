@@ -90,6 +90,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/due.rs` | 530 | a date on a line (1.47): the tail grammar (`by fri 10`), the local offset read once, the clock that raises one `due` card at the hour, its Done and Later |
 | `src/onyou.rs` | 558 | On you, widened (1.54): every row that is the reader's -- cards, dated lines, a routine's line, plans, lines to keep, left-offs -- ranked into one list with its sentence; when the tray opens itself (`arrive`); Tomorrow and Not this on a left-off; what the brief says was Not this |
 | `src/desk/closed.rs` | 120 | Recently closed (1.67): the panels and tabs a ✕ took from a desk's view, newest first, a tab with the panels that closed with it; read only, for `GET /api/desks/{id}/closed` and the desk's ⋯ |
+| `src/thread/facts.rs` | 60 | A thread's stage read from what happened (1.67): `stage` moves it forward on a first commit (building) or an open PR (review), `not_yours` refuses those and shipped from an agent once git or a PR was seen on it |
 | `src/onyou/prompt.rs` | 62 | Claude's own prompt open in a panel (1.67): one Waiting row per panel that says `needs_you`, "Go to panel", counted as an agent stuck; nothing stored |
 | `src/waiting.rs` | 198 | what waits on the reader (1.47): `needs` on a left-off, Approve on a plan and on a left-off, Home's Waiting on you rows |
 | `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |

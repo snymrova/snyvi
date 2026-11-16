@@ -1109,7 +1109,12 @@ Suggested in the rail's corner, where nothing they do moves the page.
   it lives in, and a stage -- idea, planned, building, review, waiting,
   shipped, or parked with the next step to pick it up by. Claude starts one
   with `start_thread` when it takes the work on and moves it with
-  `move_thread`. A panel holds one thread, the one it last took up, shown as
+  `move_thread`. From 1.67 the stage is read where it can be: the first
+  commit on the thread's branch is building, its open PR is review, the
+  merge is shipped, and once snyvi has seen that branch or PR it refuses
+  those three from an agent, which keeps parked, waiting and told. Work
+  with no branch -- a chapter, a clip -- is still staged by the agent's
+  word, since there is nothing else to read. A panel holds one thread, the one it last took up, shown as
   a small chip on the panel's row with its stage. Its tip has the name, the
   PR, the checks or the merge as they come, the folder, the branch and its
   commits, and *Decided*: the questions you answered on it. A

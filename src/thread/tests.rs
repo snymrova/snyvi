@@ -2086,3 +2086,45 @@ fn a_panels_stop_takes_its_own_answers_once() {
     );
     assert_eq!(turn(&conn, d, theirs.id).unwrap().unwrap().told_at, 0);
 }
+
+#[test]
+fn a_first_commit_is_building_and_an_open_pr_is_review() {
+    let conn = db();
+    let d = crate::desk::create(&conn, "/p", Some("a"), 1).unwrap().id;
+    conn.execute(
+        "INSERT INTO threads (desk_id, name, stage, commits, created_at, moved_at) VALUES (?1, 't', 'idea', 2, 1, 1)",
+        params![d],
+    )
+    .unwrap();
+    let id = conn.last_insert_rowid();
+    let at = |c: &Connection| -> String {
+        c.query_row(
+            "SELECT stage FROM threads WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert!(facts::stage(&conn, d, id).unwrap());
+    assert_eq!(at(&conn), "building");
+    assert!(
+        !facts::stage(&conn, d, id).unwrap(),
+        "the same facts move nothing twice"
+    );
+    conn.execute(
+        "UPDATE threads SET pr = '12', pr_state = 'open' WHERE id = ?1",
+        params![id],
+    )
+    .unwrap();
+    assert!(facts::stage(&conn, d, id).unwrap());
+    assert_eq!(at(&conn), "review");
+    conn.execute(
+        "UPDATE threads SET stage = 'parked' WHERE id = ?1",
+        params![id],
+    )
+    .unwrap();
+    assert!(
+        !facts::stage(&conn, d, id).unwrap(),
+        "a parked thread stays parked"
+    );
+}

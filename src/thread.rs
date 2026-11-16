@@ -958,6 +958,7 @@ pub fn seen(
         named: s.named.clone(),
     };
     pr_facts(&tx, &now_t, &facts, s.mine, pane, now)?;
+    facts::stage(&tx, desk_id, t.id)?;
     let t = get(&tx, desk_id, t.id)?.expect("the row just written");
     tx.commit()?;
     let changed = (
@@ -2488,6 +2489,7 @@ pub fn widget_heard(conn: &Connection, owner: i64, name: &str, live: &[String]) 
 }
 
 mod at_stop;
+pub mod facts;
 mod press;
 pub use at_stop::take_untold_here;
 pub use press::group_turns;
