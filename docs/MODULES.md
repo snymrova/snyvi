@@ -24,6 +24,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/events.rs` | 249 | SSE: the stream, the window/agent mark, `resync`, focus |
 | `src/server/ws.rs` | 291 | the desk socket |
 | `src/server/lifecycle.rs` | 912 | health, about, restart and the planned exit, the update watcher, relaunch, reset |
+| `src/server/press.rs` | 160 | 1.67: the reader's press typed into the panel that asked -- an answer, a card's answers, an Approve's go-ahead -- with `src/pane/press.rs` (the pane's side: at rest at its prompt, or why not) and `src/thread/press.rs` (a card's questions) |
 | `src/server/restore_run.rs` | 485 | after a crash or a stop (1.58): the offers this start found, the queue that brings them back two at a time under memory pressure, the marks' sink |
 | `src/server/api_restore.rs` | 75 | `GET`/`POST /api/restore`: what is on offer, Restore all, a desk's, Choose…, Stop, ✕ (capability) |
 | `src/desk/marks.rs` | 190 | `panes.resume_next`: the marks for the next start, the live mark a crash leaves, how an offer ages and lapses |

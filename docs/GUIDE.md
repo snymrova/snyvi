@@ -1129,12 +1129,13 @@ Suggested in the rail's corner, where nothing they do moves the page.
   conversation and Claude carries on (mid-turn, Claude Code holds it until
   the turn ends). **New panel** runs it in a shell of its own, and **Copy**
   copies it. A command with a newline or an escape in it is refused, so what
-  Run types is exactly what the card shows. Your answer goes
-  with your next message to the panel that asked; while Claude in that
-  panel is at its prompt, **Send now** types your answer in -- only your
-  answer, numbered as Claude asked when it was a card -- and presses Enter
-  for you. Into a panel with no Claude in it, a shell, nothing is typed.
-  snyvi never starts a turn by itself.
+  Run types is exactly what the card shows. Your answer is typed
+  into the panel that asked, wherever you pressed it -- on the desk, on Home,
+  in the corner -- while Claude in that panel is at its prompt: only your
+  answer, numbered as Claude asked when it was a card, and Enter pressed
+  for you. A Claude at work hears it when its turn ends, and **Send now**
+  types it once it is back at its prompt. Into a panel with no Claude in
+  it, a shell, nothing is typed. snyvi starts a turn only on your press.
 
   Some settle by themselves. A key asked for by its name is answered when
   you add a key of that name on the desk; a merge on a thread is answered

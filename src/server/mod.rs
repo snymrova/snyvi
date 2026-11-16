@@ -36,6 +36,7 @@ mod events;
 mod lifecycle;
 mod peer_link;
 mod pipeline_run;
+mod press;
 mod restore_run;
 mod routine_gate;
 mod routine_offer;

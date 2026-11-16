@@ -3993,13 +3993,18 @@ async function panelRows(cdp, base, token) {
     const one = await (await agent("ask", { text: "bench: $(echo never typed)?", options: ["Yes", "No"], by: "bench-agent" })).json().catch(() => ({}));
     const oneId = one.turn?.id;
     const oneUp = !!oneId && await until(`!!document.querySelector('#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]')`, 60);
-    // 1.66: the press is the send -- Yes types the answer, no Send now.
+    // 1.67: the press is the send, and the daemon types it (press.rs) --
+    // the page sends no keys of its own, the turn is marked told, and the
+    // answer says `typed`. Past the 2 s a press waits after the reader's keys.
+    await sleep(800);
     await q.ev(`window.__typed = []; 1`);
     if (oneUp) await q.clickOn(`#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]`);
-    const sentTyped = oneUp && await until(`window.__typed.length >= 2`, 30) ? await q.ev("window.__typed") : [];
-    const said1 = (sentTyped[0] || "").replace("\u001b[200~", "").replace("\u001b[201~", "");
-    rows.push(["Yes types only the reader's answer, into a Claude at its prompt", said1 === "Answered in snyvi: Yes" && sentTyped[1] === "\r",
-      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : `typed ${JSON.stringify(sentTyped)}`]);
+    const toldOf = async () => ((await (await fetch(`${base}/api/desks/${desk}/threads`, { headers: H })).json().catch(() => ({}))).turns || []).find(w => w.id === oneId) || {};
+    let one1 = {};
+    for (let i = 0; oneUp && i < 30 && !one1.told_at; i++) { await sleep(100); one1 = await toldOf(); }
+    const pageTyped = oneUp ? await q.ev("window.__typed") : [];
+    rows.push(["Yes is typed by the daemon, the reader's answer alone, into a Claude at its prompt", !!one1.told_at && one1.answer === "Yes" && pageTyped.length === 0,
+      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : pageTyped.length ? `the page typed ${JSON.stringify(pageTyped)}` : `the turn was not marked told: ${JSON.stringify(one1).slice(0, 120)}`]);
     rmSync(paste, { force: true });
 
     // U1, U2: the corner is the rail's column, over no panel, and above the

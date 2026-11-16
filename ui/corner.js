@@ -657,8 +657,9 @@ const cnOwn = html => html.replace(/data-a="tn-/g, 'data-a="cn-tn-').replace(/<i
 
 /** What only this side knows, for the card: the panel by the slot the
  *  daemon placed it in (`place_turns`), Run there while a Claude session is
- *  in it, its routine. Send now is the desk's: off a desk an answer goes
- *  with the panel's next message. */
+ *  in it, its routine. Nothing is typed from here: the daemon types an
+ *  answer into the panel that asked (1.67, src/server/press.rs), and the
+ *  row says whether it did (`sentFor`). */
 function tnEnv(clamp) {
   const t = L.tn, { esc } = c;
   return {
@@ -868,7 +869,7 @@ const oyFind = key => L.onyou?.rows.find(r => oyKey(r) === key);
 
 /** A row's step or answer: said in the row with its Undo, the daemon told,
  *  the list read again. `undo` posts what puts it back. */
-async function oyDo(key, said, url, body, undo) {
+async function oyDo(key, said, url, body, undo, sent = null) {
   const r = oyFind(key);
   if (!r) return;
   L.pop = "";
@@ -877,6 +878,10 @@ async function oyDo(key, said, url, body, undo) {
   try {
     const j = await (typeof url === "function" ? url() : c.deskApi(url, body));
     if (j && j.ok === false && j.why) { L.said.set(key, { text: `Could not: ${j.why}`, undo: false, item: r }); redraw(); }
+    // 1.67: the daemon typed the press into its panel, or says why not
+    // (`sent`, src/server/press.rs). What is typed is not taken back.
+    else if (sent && j && j.sent === "typed") { said = sent.typed; L.said.set(key, { text: said, undo: false, item: r }); redraw(); }
+    else if (sent && j && j.sent === "later") { said = sent.later(j.why || "its panel is not at its prompt"); L.said.set(key, { text: said, undo: !!undo, back: undo, item: r }); redraw(); }
   } catch (e) { L.said.set(key, { text: `Could not: ${c.sayErr(e).why}`, undo: false, item: r }); redraw(); }
   load();
   setTimeout(() => { if (L.said.get(key)?.text === said) { L.said.delete(key); redraw(); } }, SAID_MS);
@@ -904,7 +909,8 @@ function oyAct(a, b) {
   if (a === "cn-oy-notnow") return oyDo(key, `Not now: ${r.routine}`, `/api/desks/${d}/routines/${r.routine_id}/remove`, {}, [`/api/desks/${d}/routines/${r.routine_id}/restore`, {}]);
   if (a === "cn-oy-done") return oyDo(key, `Done: ${r.text}`, `/api/desks/${d}/notes/${r.note}`, { done: true }, [`/api/desks/${d}/notes/${r.note}`, { done: false }]);
   if (a === "cn-oy-keep") return oyDo(key, `Kept on ${r.desk_name}`, `/api/desks/${d}/notes/${r.note}/keep`, {});
-  if (a === "cn-oy-approve") return oyDo(key, "Approved: if its panel is waiting, press Start on the line", `/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, {}, [`/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, { undo: true }]);
+  if (a === "cn-oy-approve") return oyDo(key, "Approved", `/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, {}, [`/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, { undo: true }],
+    { typed: "Approved · the go-ahead is typed into its panel", later: why => `Approved · ${why}, so its panel hears it at its next prompt` });
   if (a === "cn-oy-go") return oyDo(key, `Go ahead: ${r.routine} resumes inside its Waits`, `/api/desks/${d}/leftoff`, { go: true }, null);
   const v = b.dataset.v;
   if (a === "cn-oy-later") {
@@ -1285,8 +1291,14 @@ function sayFor(w, v) {
   if (w.routine && (v === "Run" || v === "Run anyway")) return `Running in ${w.routine}'s panel: ${w.cmd}`;
   if (w.kind === "due") return v === "Done" ? `Ticked: ${w.text}` : `Moved to ${v.toLowerCase()}: ${w.text}`;
   if (w.kind === "tell") return v === "No one" ? "Told no one: it counts as told" : `${v}: a dated line is on its desk${v === "A post" || v === "Release note" ? " · a panel drafts it when you ask" : ""}`;
-  return `You said “${v}” · it goes with your next message on ${w.desk_name || "its desk"}`;
+  return `You said “${v}”`;
 }
+/** And once the daemon says what became of it (1.67): typed into the panel
+ *  that asked, or why not, and then when it hears it. */
+const sentFor = (w, v) => ({
+  typed: `You said “${v}” · typed into its panel on ${w.desk_name || "its desk"}`,
+  later: why => `You said “${v}” · ${why}, so it hears it when its turn ends or with your next message there`,
+});
 
 function tnAct(a, b) {
   const t = L.tn, id = +b.dataset.w || 0, w = id ? tnAll().get(id) : null;
@@ -1331,17 +1343,18 @@ async function tnAnswer(w, v) {
   // A dated line ticked, a routine started, a tell's line made: done, not
   // taken back from here.
   const undo = !(w.kind === "due" || w.kind === "tell" || (w.routine && /^Run/.test(v)));
-  return tnDo(w, sayFor(w, v), post, undo ? () => c.deskApi(`/api/desks/${w.desk_id}/turns/${w.id}/restore`, {}) : null);
+  return tnDo(w, sayFor(w, v), post, undo ? () => c.deskApi(`/api/desks/${w.desk_id}/turns/${w.id}/restore`, {}) : null, undo ? sentFor(w, v) : null);
 }
 
 /** A card's step said in its row, with its Undo when `back` can put it
  *  back; a turn not on the list (the risen card, before the list is read)
  *  says it at the tray's top. */
-function tnDo(w, said, run, back = null) {
+function tnDo(w, said, run, back = null, sent = null) {
   const r = tnRowOf(w);
-  if (r) return oyDo(oyKey(r), said, run, null, back);
+  if (r) return oyDo(oyKey(r), said, run, null, back, sent);
   sayIn(`t${w.id}`, said);
-  return run().catch(e => sayIn(`t${w.id}`, `Could not: ${c.sayErr(e).why}`)).then(() => load());
+  return run().then(j => { if (sent && j && j.sent === "typed") sayIn(`t${w.id}`, sent.typed); else if (sent && j && j.sent === "later") sayIn(`t${w.id}`, sent.later(j.why || "its panel is not at its prompt")); },
+    e => sayIn(`t${w.id}`, `Could not: ${c.sayErr(e).why}`)).then(() => load());
 }
 
 /** Later's answers (C5) on a card or a card of questions: Tomorrow, Next
@@ -1356,7 +1369,7 @@ function tnLater(key, v, word) {
   const d = ws[0].desk_id;
   const said = (v === "done" ? "Done" : v === "not" ? `Not mine${word ? ` (“${word}”)` : ""}` : `Back ${v}`) + `: ${ws[0].text}`;
   const one = w => v === "done"
-    ? c.deskApi(`/api/desks/${d}/turns/${w.id}/answer`, { answer: w.kind === "decide" ? "answered in the chat" : T.DONE[w.kind] || "Done" })
+    ? c.deskApi(`/api/desks/${d}/turns/${w.id}/answer`, { answer: w.kind === "decide" ? "answered in the chat" : T.DONE[w.kind] || "Done", quiet: true })
     : c.deskApi(`/api/desks/${d}/turns/${w.id}/remove`, v === "not" ? { not: word } : { later: v });
   return tnDo(ws[0], said, () => Promise.all(ws.map(one)), () => Promise.all(ws.map(w => c.deskApi(`/api/desks/${d}/turns/${w.id}/restore`, {}))));
 }

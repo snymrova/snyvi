@@ -195,10 +195,13 @@ async function gateAct(a, b, d) {
   const undo = b.dataset.undo === "1", was = x.ok_at;
   x.ok_at = undo ? 0 : Date.now() / 1000;
   rail();
+  let j = null;
   if (await told(b.dataset, `n${x.id}`, undo ? "Could not take it back" : "Could not approve it", () => { x.ok_at = was; },
-    () => ctx.api(`/api/desks/${d.id}/plans/${encodeURIComponent(b.dataset.doc)}/approve`, { undo }))) {
+    () => ctx.api(`/api/desks/${d.id}/plans/${encodeURIComponent(b.dataset.doc)}/approve`, { undo }).then(r => (j = r)))) {
     await getNotes(d.id, true);
-    if (!undo) goAhead(d, b.dataset.doc);
+    // The daemon typed the go-ahead (1.67); when it could not, the row says
+    // why, and the line's Start types it once its panel is at its prompt.
+    if (!undo && j && j.sent === "later" && x.stage_pane) notSent(x.stage_pane, slotOf(d, x.stage_pane), "It hears the approval at its next prompt, or on Start.", j.why);
   }
   return true;
 }

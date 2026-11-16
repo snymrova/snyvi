@@ -335,7 +335,8 @@ section 4's placement problem.
 content an agent wrote. Desks keep the two apart: *snyvi never makes input
 from content it received.* There is no fan-out and no run-this-block (B is
 still declined), and nothing a document says is ever typed. Bytes reach a
-PTY from a single function, `input()` in `ui/desk.js`, called from a key
+PTY from the daemon's `press` (1.67: the reader's own answer or Approve,
+DESK.md §invariants 3) and from `input()` in `ui/desk.js`, called from a key
 event, a paste event, or the reader's click on a control that shows the one
 line it types (Send now, Run, a step of a run, DESK.md §invariants 3). The
 daemon accepts input only for a pane that socket

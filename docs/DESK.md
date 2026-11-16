@@ -285,7 +285,12 @@ the board is not opened, the view goes and the folder stays.
    in its first frame, because a browser `WebSocket` cannot set headers.
 3. **snyvi never makes input from content it received.** There is no fan-out
    and no run-this-block, and nothing derived from a document is ever typed.
-   Bytes reach a PTY from exactly one place: `input()` in `ui/desk.js`, which
+   Bytes reach a PTY from two places. Since 1.67 the daemon types the
+   reader's own press (`src/server/press.rs`, `pane::Live::press`): the
+   answer they chose on a card, or snyvi's fixed words for an Approve, on a
+   capability route, into a Claude session at rest at its prompt, wherever
+   the press was -- never the agent's question or anything a document or a
+   friend said. The other is `input()` in `ui/desk.js`, which
    is called from a key event, a paste event, or the reader's click on a
    control that shows them, whole, exactly what it will type: Send now and
    Send answers (the reader's own answer), and Run (an agent's `run` command,

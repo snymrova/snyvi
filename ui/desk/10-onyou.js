@@ -199,7 +199,7 @@ function trayHtml(d, f, esc) {
     (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d) +
     (news ? `<p class="oy-qh">News · what changed without your press</p>${news}` : "");
   oy.empty = !all;
-  const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>` +
+  const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer is typed into the panel that asked when its Claude is at its prompt">On you</h3>` +
     (count ? `<span class="sec-n${n.now ? " warn" : ""}">${count}</span>` : "");
   const close = `<button type="button" class="oy-x" data-a="oy-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${ico("x")}</button>`;
   // Nothing to keep open beside the panels, so no pin, unless it is pinned.

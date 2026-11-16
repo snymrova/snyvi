@@ -744,8 +744,8 @@ fn approve_block(doc: &Doc, talk: &Talk) -> String {
     } else {
         (
             "Approve",
-            "The go-ahead for this plan: its panel hears it at its next prompt",
-            format!("Approve, and {panel} hears it at its next prompt, or at once from Start on the line if it waits at its prompt."),
+            "The go-ahead for this plan: typed into its panel when its Claude is at its prompt",
+            format!("Approve, and the go-ahead is typed into {panel} if it waits at its prompt; if it is at work, it hears it at its next prompt."),
         )
     };
     format!(

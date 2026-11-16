@@ -2433,5 +2433,6 @@ fn display_cmd(typed: &str) -> &str {
     }
 }
 
+mod press;
 #[cfg(test)]
 mod tests;

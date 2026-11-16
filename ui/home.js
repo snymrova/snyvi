@@ -1556,7 +1556,7 @@ function waitBox(j) {
       : `<span class="hm-t">${esc(x.text)}</span>`;
     const park = `<button type="button" class="hm-link" data-hm="wpark" data-k="${x.desk}" data-tip="Park it" data-tip-sub="the desk goes on the shelf; nothing on it is closed">Park it</button>`;
     const acts = x.kind === "quiet" ? park : x.kind === "plan"
-      ? `<button type="button" class="hm-link hm-ok" data-hm="wplan" data-k="${x.desk}" data-n="${esc(x.doc)}" data-tip="Approve the plan" data-tip-sub="its panel hears it at its next prompt">Approve ${x.notes.map(n => `#${n}`).join(", ")}</button>`
+      ? `<button type="button" class="hm-link hm-ok" data-hm="wplan" data-k="${x.desk}" data-n="${esc(x.doc)}" data-tip="Approve the plan" data-tip-sub="typed into its panel when its Claude is at its prompt">Approve ${x.notes.map(n => `#${n}`).join(", ")}</button>`
       : `<button type="button" class="hm-link hm-ok" data-hm="wok" data-k="${x.desk}" data-tip="Approve" data-tip-sub="the next step is the agent's now; its panel hears it at its next prompt">Approve</button>` +
         `<button type="button" class="hm-link" data-hm="wlater" data-k="${x.desk}" data-tip="Tomorrow" data-tip-sub="a note on its desk, due tomorrow at 9; the left-off stays">Tomorrow</button>` +
         `<button type="button" class="hm-link" data-hm="wdrop" data-k="${x.desk}" data-tip="Drop it" data-tip-sub="clears the left-off; Undo brings it back">Drop</button>` + park;
@@ -1608,7 +1608,7 @@ async function waitClick(k, id, b) {
   try {
     if (k === "udone") { await api(`/api/desks/${id}/notes/${n}`, { done: true }); sayRow(key, { id, text }, "Ticked"); }
     else if (k === "ulater") { await api(`/api/desks/${id}/notes/${n}`, { due: "tomorrow 9" }); sayRow(key, { id, text }, "Moved to tomorrow, 9:00"); }
-    else if (k === "wplan") { await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, "Approved: if its panel is waiting, press Start on the line"); }
+    else if (k === "wplan") { const j = await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, j && j.sent === "typed" ? "Approved · the go-ahead is typed into its panel" : `Approved · ${(j && j.why) || "its panel is not at its prompt"}, so it hears it at its next prompt`); }
     else if (k === "wok") { await api(`/api/desks/${id}/leftoff`, { approve: true }); sayRow(key, { id, text }, "Approved: its panel hears it next"); }
     else if (k === "onme") await api(`/api/desks/${id}/leftoff`, { mark: n });
     else if (k === "wlater" && x) {

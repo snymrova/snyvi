@@ -1577,11 +1577,16 @@ pub(crate) struct AnswerBody {
     answer: String,
     /// A due card's Later…: when to, in the reader's words (`crate::due`).
     later: Option<String>,
+    /// Nothing is to be typed for this one (1.67, `press`): a command Run
+    /// already typed, or what the reader answered in the chat.
+    quiet: bool,
 }
 
-/// The reader answers a turn on the rail or on Home. It reaches Claude with
-/// the panel's next prompt (`crate::brief::changes`), or at once through the
-/// mod's held question; Send now is the page typing it, the reader's click.
+/// The reader answers a turn on the rail, on Home or in the corner. The
+/// daemon types it into the panel that asked when that Claude is at its
+/// prompt (1.67, `press::answered`), and says so as `sent`; otherwise it
+/// reaches Claude as its turn ends or with the panel's next prompt
+/// (`crate::brief::changes`), or at once through the mod's held question.
 pub(crate) async fn desk_answer_turn(
     State(app): S,
     headers: HeaderMap,
@@ -1616,7 +1621,16 @@ pub(crate) async fn desk_answer_turn(
             threads_moved(&app, id);
             // A routine's Run card starts its command in the routine's panel.
             super::routine_run::answered(&app, &turn).await;
-            Json(json!({ "turn": turn })).into_response()
+            let mut out = json!({ "turn": turn });
+            if let Some(sent) = super::press::answered(&app, &turn, b.quiet) {
+                out["sent"] = sent["sent"].clone();
+                out["why"] = sent["why"].clone();
+                if sent["sent"] == "typed" {
+                    // Told now: the lists that said "to be sent" read again.
+                    threads_moved(&app, id);
+                }
+            }
+            Json(out).into_response()
         }
         Ok(None) => refused(StatusCode::CONFLICT, "it was answered already, or put away"),
         Err(e) => err(e),

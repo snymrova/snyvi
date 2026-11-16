@@ -515,17 +515,22 @@ async function answer(d, w, text, again = { a: "tn-pick", w: String(w.id), v: te
   // unanswered card has no `answered_at`) are taken off again too, or the
   // card stayed answered here and left On you with nothing on the daemon.
   const back = () => { for (const k of Object.keys(w)) if (!(k in was)) delete w[k]; Object.assign(w, was); sendable.delete(w.id); };
+  // `quiet`: nothing is to be typed for this one -- a command Run typed, a
+  // tell's line -- so the daemon, which types now (1.67), leaves it too.
+  const typable = sendable.has(w.id);
+  let j = null;
   if (!await told(again, `w${w.id}`, "Could not answer", back,
-    () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.answer }))) return;
+    () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.answer, quiet: !typable }).then(r => (j = r)))) return;
+  // 1.67, the daemon types it (src/server/press.rs): wherever the press was,
+  // the answer goes into a Claude at its prompt, a card's once its last
+  // question is answered, and `sent` says so. Nothing is typed from here on
+  // a press any more, or it would be typed twice.
+  const group = () => filed.turns.filter(x => w.ask_group ? x.ask_group === w.ask_group : x.id === w.id);
+  if (j && j.sent === "typed") for (const x of group()) sendable.delete(x.id);
   await getFiled(d.id, true);
-  // 1.66, pressing is sending: the answer goes now, typed into a Claude at
-  // its prompt, a card's once its last question is answered. A panel at
-  // work hears it as its turn stops (the daemon's Stop hook carries it), and
-  // the row says which. Send now stays for a panel that was busy.
-  if (!sendable.has(w.id)) return;
-  if (!w.ask_group) return sendNow(d, w);
-  const rest = filed.turns.some(x => x.ask_group === w.ask_group && !x.answered_at);
-  if (!rest) sendGroup(d, w.ask_group);
+  // A panel at work hears it as its turn stops (the daemon's Stop hook
+  // carries it), and the row says why it waits. Send now stays for it.
+  if (j && j.sent === "later" && sendable.has(w.id)) notSent(w.pane, slotOf(d, w.pane), "It hears your answer when its turn ends, or with your next message.", j.why);
 }
 
 /** Send now: the answer typed into the panel that asked, and Enter pressed
@@ -548,9 +553,10 @@ async function sendNow(d, w) {
 }
 
 /** Why nothing was typed, in the row, for a moment. */
-function notSent(pane, n, what) {
+function notSent(pane, n, what, why = "") {
   clearTimeout(rowTimer);
-  rowSaid = { p: pane, text: `Panel ${n || "?"} is not at its prompt, so nothing is typed into it. ${what}` };
+  // `why`: the daemon's own reason (press.rs), "it is at work".
+  rowSaid = { p: pane, text: why ? `Nothing is typed into panel ${n || "?"}: ${why}. ${what}` : `Panel ${n || "?"} is not at its prompt, so nothing is typed into it. ${what}` };
   rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
   rail();
 }
@@ -568,8 +574,7 @@ function goAhead(d, doc) {
   const xs = noteList.filter(x => x.stage_doc === doc && x.stage === "planned" && x.ok_at && !x.done);
   const pane = xs[0]?.stage_pane, v = pane && views.get(pane), n = pane && slotOf(d, pane);
   if (!xs.length || !v) return;
-  // One press, one go-ahead: the rail's Approve and the event its own write
-  // brings back (`approvedHere`) both land here, a moment apart.
+  // One press, one go-ahead: a double click on Start types it once.
   if (Date.now() - (wentAhead.get(doc) || 0) < GO_ONCE_MS) return;
   if (!sendsHere(v)) return notSent(pane, n, "It hears the approval with your next message.");
   wentAhead.set(doc, Date.now());
@@ -579,18 +584,10 @@ function goAhead(d, doc) {
 }
 const wentAhead = new Map(), GO_ONCE_MS = 5000;
 
-/** An Approve pressed anywhere (#242): on the plan's own page, which only
- *  told the daemon, the desk's panel sat idle until the reader typed. The
- *  daemon's `desknotes` event names the plan, and the desk on this page --
- *  its panels still on their sockets while a document is read beside it --
- *  types the go-ahead as the rail's Approve does. Only in a window in view:
- *  a second window on the same desk does not type it twice. */
-export async function approvedHere(id, doc) {
-  if (!ctx || id !== deskId || document.visibilityState !== "visible") return;
-  await getNotes(id, true);
-  const d = current();
-  if (d) goAhead(d, doc);
-}
+/* An Approve pressed anywhere (#242) is typed by the daemon since 1.67
+ * (src/server/press.rs `approved`): on the plan's own page, on Home, in the
+ * corner, with or without this desk on a page. `goAhead` is left for the
+ * approved line's Start, when its panel was at work at the press. */
 
 /** An answer on one line: the reader's Other… is a field, but a pasted line
  *  break would submit half of it. */
