@@ -663,6 +663,8 @@ export function open(c) {
   const d = current();
   if (d && slot) toSlot(d, d.panes.find(x => x.slot === slot));
   draw();
+  // The view the address names, or the address the view (32-ways.js).
+  addrOpened(c.push);
   ctx.docEl.addEventListener("click", click);
   ctx.docEl.addEventListener("contextmenu", tabMenu);
   ctx.docEl.addEventListener("keydown", tabMenu);

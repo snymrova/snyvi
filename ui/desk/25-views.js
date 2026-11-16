@@ -71,7 +71,9 @@ function viewsSlot(d) {
   // A board by the name its board.json gives, once read (V3); its folder's until then.
   let name = (viewList(d).find(([v]) => v === on) || [, ""])[1];
   if (on.startsWith("board:") && boardMod && boardMod.name()) name = `Board · ${boardMod.name()}`;
-  let el = hd.querySelector(".dk-vchip:not(.dk-vboard)");
+  let el = hd.querySelector(".dk-vchip:not(.dk-vboard):not(.dk-vnew)");
+  // On the panels: a board with something new, when there is one (32-ways.js).
+  waysChip(d, hd, on);
   if (on === "panels") { el?.remove(); boardHint(d, hd, on); return; }
   if (!el) {
     el = Object.assign(document.createElement("button"), { type: "button", className: "dk-vchip" });
@@ -98,7 +100,7 @@ function boardHint(d, hd, on) {
   if (!b) { el?.remove(); return; }
   if (!el) {
     el = Object.assign(document.createElement("button"), { type: "button", className: "dk-vchip dk-vboard" });
-    hd.querySelector(".dk-vchip:not(.dk-vboard)")?.after(el);
+    hd.querySelector(".dk-vchip:not(.dk-vboard):not(.dk-vnew)")?.after(el);
   }
   el.dataset.viewOpen = `board:${b}`;
   el.textContent = `Open as board`;
@@ -114,6 +116,7 @@ function folderPath() {
 /** A click in the chip or the dock's controls. True when it was one of theirs. */
 function viewClick(e) {
   if (pageClick(e)) return true;
+  if (waysClick(e)) return true;
   const vo = e.target.closest("[data-view-open]");
   if (vo) { e.preventDefault(); openView(vo.dataset.viewOpen); return true; }
   if (e.target.closest(".dk-vchip")) { e.preventDefault(); openView("panels"); return true; }
@@ -122,6 +125,8 @@ function viewClick(e) {
 
 /** ⌃⌥F: Folder open, or the panels again from it. From the desk's keys. */
 function viewKey(e) {
+  // ⌃⌥D: a board, and back (32-ways.js).
+  if (boardKey(e)) return true;
   const d = current();
   if (!d || e.metaKey || e.shiftKey || !(e.ctrlKey && e.altKey) || e.code !== "KeyF") return false;
   e.preventDefault(); e.stopPropagation();
@@ -226,6 +231,7 @@ function openView(v, seed, by = "", path = "", pane = null) {
     docked = views.has(pane) ? pane : docked && d.panes.some(p => p.id === docked) ? docked : (focused || (gridPanes(d)[0] || {}).id || null);
     tellFocus({ view: "page", path: "", items: [] });
     layout();
+    addrSet("page", true);
     return;
   }
   const board = v.slice(6);
@@ -234,7 +240,9 @@ function openView(v, seed, by = "", path = "", pane = null) {
   viewOn = { desk: d.id, board };
   docked = views.has(pane) ? pane : docked && d.panes.some(p => p.id === docked) ? docked : (focused || (gridPanes(d)[0] || {}).id || null);
   tellFocus({ view: `board:${board}`, path: `design/${board}`, items: [] });
+  waysKeep(LAST_KEY, d.id, board);
   layout();
+  addrSet(v, true);
 }
 
 /** Back to the panels: the board closed, the docked pane back in its slot. */
@@ -248,6 +256,7 @@ function closeView() {
   ctx.docEl.querySelector(".dk-view")?.remove();
   tellFocus({ view: "panels" });
   if (current()) layout();
+  addrSet("panels", true);
   if (v && v.el.isConnected) setTimeout(() => v.body.focus(), 0);
 }
 
@@ -295,7 +304,13 @@ function viewsMount(d) {
       make: name => makeBoard(d.id, name),
       rename: (b, name) => ctx.api(`/api/desks/${d.id}/board/${encodeURIComponent(b)}/name`, { name }).then(j => (ctx.refresh(), j)),
       switch: b => openView(`board:${b}`),
-      ask: askClaude, sayErr: e => ctx.sayErr(e).why });
+      ask: askClaude, sayErr: e => ctx.sayErr(e).why,
+      // 1.67: the reader's hide and show, a section's versions, its
+      // document read over the desk, and the board looked at.
+      hide: (f, hidden) => ctx.api(`/api/desks/${d.id}/board/${encodeURIComponent(want.board)}/frames/${encodeURIComponent(f)}/hide`, { hidden }),
+      versions: f => ctx.api(`/api/desks/${d.id}/board/${encodeURIComponent(want.board)}/frames/${encodeURIComponent(f)}/versions`),
+      read: id => ctx.read(id),
+      seen: b => boardSeen(d.id, b) });
   }, () => { surf.innerHTML = `<p class="dk-none">Could not load the board.</p>`; });
 }
 
@@ -312,9 +327,12 @@ export function viewSaid(n, j) {
   if (!ctx || !j || j.desk !== deskId) return;
   if (n === "page") { pageSaid(j); return; }
   if (n === "view") { viewAsked(j); return; }
+  if (n === "look") { lookAsked(j); return; }
   const d = current();
   if (n === "board" && d && j.board && !boardsOf(d).includes(j.board)) { ctx.refresh(); return; }
   if (n === "board" && boardMod && viewOn && viewOn.board === j.board) boardMod.changed(j);
+  // A board drawn on while the reader is elsewhere on the desk: counted.
+  else if (n === "board") waysMoved();
 }
 
 /* A thread moved on this desk (it rides the `desknotes` event): a board open

@@ -20,15 +20,21 @@
  *       every section shown, placed less (ox, oy); html only when the page
  *       has not sent that hash before. A section not in the list goes.
  *   {snyvi:"board", t:"live", id, data}  numbers for its [data-live] slots
- * What goes out, to the parent: {snyvi:"board", t:"ready"} once, and
+ *   {snyvi:"board", t:"css", css}  the board's shared CSS (1.67, board.css),
+ *       put before every section's own
+ *   {snyvi:"board", t:"shot", id, n}  a picture of one section, asked for
+ * What goes out, to the parent: {snyvi:"board", t:"ready"} once,
  * {snyvi:"board", t:"sizes", sizes:{id: height}} when a section's height
- * moves.
+ * moves, and {snyvi:"board", t:"shot", n, id, png} for a picture asked: a
+ * PNG data URL, or "" when this engine would not draw one.
  */
 
 (() => {
   const shells = new Map(); // id -> {el, root, hash}
   let said = {};
   let pending = 0;
+  /** The board's shared CSS, before each section's own. */
+  let shared = "";
 
   // A section is a page of its own to whoever wrote it: what they gave
   // `body` or `html` is the section's box (the server rewrites the same for
@@ -103,10 +109,49 @@
     st.height = s.h ? `${s.h}px` : "";
     if (typeof s.html === "string" && s.hash !== sh.hash) {
       sh.hash = s.hash;
-      // innerHTML never runs a script, and the nonce refuses any handler.
-      sh.root.innerHTML = `<style>${BASE}</style>` + sectionHtml(s.html);
-      sh.live = "";
+      sh.html = s.html;
+      fill(sh);
     }
+  }
+
+  /** A section's root from its HTML: the base, the board's shared CSS, then
+   *  its own. innerHTML never runs a script, and the nonce refuses any
+   *  handler. */
+  function fill(sh) {
+    sh.root.innerHTML = `<style>${BASE}</style>` + sectionHtml((shared ? `<style>${shared}</style>` : "") + (sh.html || ""));
+    sh.live = "";
+  }
+
+  /** A picture of one section: its root's markup in an SVG foreignObject,
+   *  drawn on a canvas, read back as a PNG. The section is drawn as it is
+   *  here, less what it loads from the network (a picture, a web font):
+   *  an image holds none of that. An engine that will not read such a
+   *  canvas back answers "", and the page says so. */
+  async function shot(id, n) {
+    let png = "";
+    try {
+      const sh = shells.get(id);
+      const w = sh.el.offsetWidth, h = sh.el.offsetHeight;
+      const rs = document.documentElement.style;
+      let vars = "";
+      for (let i = 0; i < rs.length; i++) if (rs[i].startsWith("--")) vars += `${rs[i]}:${rs.getPropertyValue(rs[i])};`;
+      const box = document.createElement("div");
+      box.className = "snyvi-host";
+      box.setAttribute("style", `${vars}width:${w}px;height:${h}px`);
+      box.innerHTML = sh.root.innerHTML.replace(/:host(?![\w-])/g, ".snyvi-host");
+      const xml = new XMLSerializer().serializeToString(box);
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%">${xml}</foreignObject></svg>`;
+      const img = new Image();
+      await new Promise((ok, no) => { img.onload = ok; img.onerror = no; img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg); });
+      // Twice the size where that stays small: text in a picture read by an
+      // agent, or pasted into a document, is read at more than one zoom.
+      const k = Math.min(2, 2400 / Math.max(w, 1), 6000 / Math.max(h, 1));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      png = c.toDataURL("image/png");
+    } catch { png = ""; }
+    tell({ t: "shot", n, id, png });
   }
 
   /** `a.b` in `data`, or undefined. */
@@ -140,6 +185,11 @@
       }
     } else if (m.t === "live") {
       live(m.id, m.data || {});
+    } else if (m.t === "css") {
+      const css = typeof m.css === "string" ? m.css : "";
+      if (css !== shared) { shared = css; for (const sh of shells.values()) fill(sh); }
+    } else if (m.t === "shot") {
+      shot(m.id, m.n);
     }
   });
 

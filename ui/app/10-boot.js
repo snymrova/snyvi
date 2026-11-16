@@ -23,7 +23,7 @@
   else if (state.view === "sidebars") { history.replaceState({ sidebars: true }, "", "/sidebars"); showSidebars(false); }
   else if (state.view === "start") { history.replaceState({ start: true }, "", "/start" + location.hash); showStart(false); }
   else if (state.view === "welcome") { history.replaceState({ welcome: true }, "", "/welcome"); showWelcome(false); }
-  else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname); showDesk(boot.desk, false); }
+  else if (state.view === "desk") { history.replaceState({ desk: boot.desk }, "", location.pathname + (location.hash.startsWith("#view=") ? location.hash : "")); showDesk(boot.desk, false); }
   else if (state.view === "home") { history.replaceState({ home: true }, "", "/"); showHome(false); }
   else if (state.view === "friend") { history.replaceState({ friend: boot.friend }, "", location.pathname); showFriend(boot.friend, false); }
   else { const recent = location.pathname === "/inbox" && location.search === "?recent"; showInbox(false, recent); history.replaceState({ inbox: true }, "", location.pathname === "/" ? "/" : recent ? "/inbox?recent" : "/inbox"); }

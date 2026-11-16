@@ -512,6 +512,28 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    // 1.67: the reader's hide, a section's versions, a window's picture.
+    (
+        "POST",
+        "/api/desks/1/board/home/frames/hero/hide",
+        Some(r#"{"hidden":true}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "GET",
+        "/api/desks/1/board/home/frames/hero/versions",
+        None,
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/board/home/look/1",
+        Some(r#"{"png":""}"#),
+        Gate::Desk,
+        true,
+    ),
     ("GET", "/board-frame", None, Gate::Open, true),
     // 1.59: a desk's page (`api_page`), its file route and the agent's offer.
     ("GET", "/api/desks/1/page", None, Gate::Desk, true),

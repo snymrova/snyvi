@@ -654,7 +654,7 @@
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
     // A board moved, the reader's focus did, a crash's conversations came back (1.58), or a page did (1.59).
-    for (const n of ["board", "focus", "restore", "page", "view"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
+    for (const n of ["board", "focus", "restore", "page", "view", "look"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
     // An agent ticked a line on a desk's list; an Approve names its plan, and the desk types the go-ahead (#242).
     es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); desksSoon(); });
     // A pane started, stopped, or rang for its reader: the dots, at once.

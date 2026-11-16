@@ -127,6 +127,45 @@ That is safe for what goes: only numbers the window already holds, only into
 a frame it made, and the window listens to nothing a frame posts. The CSP,
 the sandbox and no network are as in Shown.
 
+## The reader's hands (1.67)
+
+Until 1.67 the reader could select, pan and zoom. The foot bar now carries
+what can be done with what is picked (`ui/board/07-acts.js`), at the same
+height, so nothing moves:
+
+| Press | What happens |
+|---|---|
+| This one · Change… | The reader's press, typed into the docked Claude in snyvi's sentence, only at its prompt (else copied). The sentence names the board's folder and the section's id, which are slugs, never a name or other text an agent wrote; Change… adds the reader's own words |
+| ‹ v2 of 3 › | An earlier version drawn in the section's place (`GET /api/desks/{id}/board/{board}/frames/{frame}/versions`), until the reader steps back or it is written again |
+| Open as a document | The section's document, read over the desk |
+| Copy picture | A PNG of the section on the clipboard |
+| Hide | `hidden: true`, as the agent's hide (`POST /api/desks/{id}/board/{board}/frames/{frame}/hide`); "2 hidden" in the top bar lists them, each with Show |
+
+The board keeps the zoom and place the reader left it at, in the window's
+storage by desk and board, and has an address (docs/DESK.md, Ways to a
+board).
+
+**A picture of a section.** The daemon has no browser. `frame_look` says a
+`look` event (`{desk, board, frame, n}`); a window on that desk draws the
+section alone in a `/board-frame` of its own, out of sight, and asks the
+runtime for its picture: the section's markup in an SVG `foreignObject`,
+drawn on a canvas, read back as a PNG. The window posts it to
+`POST /api/desks/{id}/board/{board}/look/{n}` (capability), and the waiting
+`frame_look` answers with it as an image. Only a PNG is passed on, to a look
+still waiting, within 4 s; otherwise the agent is told to render the file
+itself, as before. The picture holds nothing loaded from the network (a web
+font, a picture by URL), and an island cannot be drawn this way.
+
+**Shared CSS.** `design/<board>/board.css` is put before every section's own
+`<style>`, in the window, the picture and the export. The agent writes it
+whole with `board_arrange`'s `css` (16 KB at most) and reads it in
+`board_read`. It is not a frame, and an island does not get it.
+
+**What is new.** The desks list carries, for each board, when each shown
+section's file last changed (`marks`). The window counts those newer than
+when the reader last had the board on screen, and says the count on one chip
+in the desk's head. Board versions stay out of the Inbox, as before.
+
 ## The agent
 
 The skill's `board.md` is what the agent is told. In short: read DESIGN.md
@@ -139,7 +178,7 @@ before acting on "this"; never delete.
 | `board_read` | `GET /api/panes/{id}/board/{board}`; no board: `GET /api/panes/{id}/boards` |
 | `frame_write` | `POST /api/panes/{id}/board/{board}/frames/{frame}`; `html: null` → `…/hide` |
 | `board_arrange` | `POST /api/panes/{id}/board/{board}/arrange` |
-| `frame_look` | `POST /api/panes/{id}/board/{board}/look/{frame}` (501 until the window can draw it) |
+| `frame_look` | `POST /api/panes/{id}/board/{board}/look/{frame}`: a picture from a window on the desk (1.67), else 501 with the file and size to render |
 | `board_export` | `GET /api/panes/{id}/board/{board}/export` |
 
 | `read_focus` | `GET /api/panes/{id}/focus` |

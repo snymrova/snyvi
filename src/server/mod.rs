@@ -582,6 +582,22 @@ fn board_routes() -> Router<Arc<App>> {
         // 1.62: a new, empty board, and the one document a board is drawn in.
         .route("/api/desks/{id}/boards", post(desk_board_new))
         .route("/api/desks/{id}/board/{board}/name", post(desk_board_name))
+        // 1.67: the reader's hide and show, a section's versions, and the
+        // window's picture for a `frame_look`.
+        .route(
+            "/api/desks/{id}/board/{board}/frames/{frame}/hide",
+            post(desk_frame_hide),
+        )
+        .route(
+            "/api/desks/{id}/board/{board}/frames/{frame}/versions",
+            get(desk_frame_versions),
+        )
+        .route(
+            "/api/desks/{id}/board/{board}/look/{n}",
+            post(desk_frame_looked).layer(axum::extract::DefaultBodyLimit::max(
+                api_board::MAX_LOOK_BYTES + 16 * 1024,
+            )),
+        )
         .route("/board-frame", get(board_frame))
         // 1.59: a desk's page (`api_page`), the window's; the agent's offer.
         .route("/api/desks/{id}/page", get(desk_page).post(save_desk_page))

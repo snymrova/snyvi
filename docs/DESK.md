@@ -219,6 +219,14 @@ the one on screen ticked, and the head keeps one chip while a view is open
 the left-off line, whose room it takes from; ✕, Esc on a board or the page,
 or ⌃⌥F for Folder go back (`ui/desk/25-views.js`).
 
+**Ways to a board (1.67, `ui/desk/32-ways.js`).** A board or the page open
+over the desk is in the address, `/desk/<id>#view=board:<name>`, so a
+reload, Back and a link land on it. While the panels are up and a board has
+sections drawn since the reader last had it on screen, the head carries one
+chip in the same place, `Board · Pricing · 9 new`; a click opens it, its ✕
+is "not now". ⌃⌥D goes to that board, else the last one open, and back to
+the panels from a board.
+
 Every view **docks one panel** the same way (1.60, views audit a5057fcd18):
 the pane's own element moves into the dock, socket, scrollback and keys
 untouched, and `layout` leaves it out of the grid until Panels puts it back.

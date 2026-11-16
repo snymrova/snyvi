@@ -98,6 +98,10 @@ pub struct BoardHead {
     pub id: String,
     pub name: String,
     pub frames: usize,
+    /// When each shown frame's file last changed, in seconds (1.67): what
+    /// the window counts "new since you looked" from, with no file read.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<u64>,
 }
 
 /// A frame as it is read: its place, and what is in its file now.
@@ -282,6 +286,12 @@ pub fn boards(root: &Path) -> Vec<BoardHead> {
                         b.name.clone()
                     },
                     frames: b.frames.iter().filter(|f| !f.hidden).count(),
+                    marks: b
+                        .frames
+                        .iter()
+                        .filter(|f| !f.hidden)
+                        .filter_map(|f| changed_at(&d, &f.id))
+                        .collect(),
                     id,
                 }
             })
@@ -289,6 +299,37 @@ pub fn boards(root: &Path) -> Vec<BoardHead> {
         .collect();
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out
+}
+
+/// When a frame's file last changed, in seconds since 1970.
+fn changed_at(dir: &Path, id: &str) -> Option<u64> {
+    let at = std::fs::metadata(frame_path(dir, id).ok()?)
+        .ok()?
+        .modified()
+        .ok()?;
+    Some(at.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs())
+}
+
+/// The CSS every section of a board shares (1.67): `board.css` in its
+/// folder, put before each section's own, so a section does not repeat it.
+pub const MAX_CSS_BYTES: usize = 16 * 1024;
+
+pub fn shared_css(dir: &Path) -> String {
+    read_frame(&dir.join("board.css"))
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default()
+}
+
+/// Write a board's shared CSS, whole. Empty takes it back to none.
+pub fn set_css(root: &Path, board: &str, css: &str) -> Result<()> {
+    if css.len() > MAX_CSS_BYTES {
+        bail!(
+            "a board's shared CSS is at most {} KB",
+            MAX_CSS_BYTES / 1024
+        );
+    }
+    let d = dir(root, board, false)?.with_context(|| format!("no board {board:?}"))?;
+    atomic_write(&d.join("board.css"), css.as_bytes())
 }
 
 /// The views a desk's folder has, for the switcher: the folder always, then
@@ -369,6 +410,7 @@ pub fn frames(dir: &Path) -> (Board, Vec<FrameRead>, String) {
         })
         .collect();
     all.update(b.name.as_bytes());
+    all.update(shared_css(dir).as_bytes());
     (b, reads, all.finalize().to_hex()[..16].to_string())
 }
 
@@ -579,11 +621,19 @@ pub fn export(dir: &Path, title: &str) -> String {
          iframe,.s{border:0;background:#fff;color:#000;display:block;box-shadow:0 1px 3px rgba(0,0,0,.15)}\
          .s{font:16px serif;overflow:hidden}</style>",
     );
+    let css = shared_css(dir);
     for f in b.frames.iter().filter(|f| !f.hidden) {
         let Some(bytes) = frame_html(dir, &f.id) else {
             continue;
         };
-        let html = String::from_utf8_lossy(&bytes);
+        let own = String::from_utf8_lossy(&bytes);
+        // The board's shared CSS first, as the window draws it; an island is
+        // a page of its own and gets none.
+        let html = if css.is_empty() || is_island(&own) {
+            own.into_owned()
+        } else {
+            format!("<style>{css}</style>{own}")
+        };
         let label = html_escape::encode_text(if f.name.is_empty() { &f.id } else { &f.name });
         if is_island(&html) {
             let h = if f.h == 0 { ISLAND_H } else { f.h };
