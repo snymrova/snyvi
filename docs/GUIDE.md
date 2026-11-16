@@ -1249,9 +1249,18 @@ Suggested in the rail's corner, where nothing they do moves the page.
   suggest a line with a date (`suggest_desk_note`'s `due`) when the line
   has a natural day, a launch step or a follow-up.
 - **A routine comes back.** **Routines** is a section of its own under
-  Notes, always there: one line when a desk has none, the field, **New
-  routine…**. Type what runs: a slash command, a skill, or your own words
-  (`open PRs, summarise`). Clicking the field lists the commands and skills
+  Notes, always there: one line when a desk has none, the field, **What
+  should happen, and when?** From 1.67 it is one door: say it in your
+  words ("write the release notes after every merge") and press Enter,
+  and snyvi types that wish, in its own sentence, into a Claude at its
+  prompt on this desk. That agent writes the command, tries it once and
+  offers the routine back; only your Start runs it. With no Claude at its
+  prompt your words make a draft, as before. A slash command or a skill
+  typed with its `/` still makes its draft directly. A started routine's
+  row now leads with its last run: the hour and what the run said in its
+  last line, "looked, nothing to do" for a quiet run, and in amber
+  "stopped at Claude's limit 07:02, nothing was made · runs again 02:00".
+  A click on that line opens its runs. Clicking the field lists the commands and skills
   Claude Code would run here, over the desk, the project's first and then
   yours, each with its first line; typing `/` and a few letters narrows it,
   by name and then by what each says it does; a name in two places is the
@@ -1264,7 +1273,8 @@ Suggested in the rail's corner, where nothing they do moves the page.
   - **What it does**: the file and where it lives, and its scripts' folder.
   - **When**: its times, up to six hours, each line a cadence and its hours
     (`every day 09:30 13:00`, `every weekday 9`, `every mon 09:00`, `every
-    1st`, a press away), the words that hour adds to the prompt (`case`),
+    1st`, a press away; from 1.67 `every 6 hours` or `every 8 hours from 7`,
+    which is that day's hours 4, 6, 8 or 12 apart), the words that hour adds to the prompt (`case`),
     and an **Only if** tick. Each line says when it first runs. A draft may
     have no when yet: **Try once now** works without one.
   - **Only if**: a command asked before each time ticked Only if (on by

@@ -80,7 +80,19 @@ function routineSec(d) {
 /* Short enough for the rail's width. It was `/command · every day 9`,
  * which read as a syntax to copy (audit 566d17f746, R3): the list that
  * opens on focus now shows the `/` and the when. */
-const RT_HOLD = "New routine…";
+const RT_HOLD = "What should happen, and when?";
+
+/* One door (1.67, plan f586a9fe09). The field took a /command or words that
+ * became the routine's prompt as typed, and the reader then filled a sheet
+ * of nine parts. Most of what they typed was a wish -- "write the release
+ * notes after every merge" -- and a wish is an agent's to turn into a
+ * command, try once and offer back. So words that are not a /command go to
+ * a Claude at its prompt on this desk: the reader's own words in snyvi's
+ * sentence, typed on their Enter, as Ask Claude on a view types them
+ * (25-views.js). The agent offers the routine (`offer_routine`); only the
+ * reader's Start runs it. With no Claude at its prompt the words make a
+ * draft as they always did, so the field never refuses. */
+const rtAsker = d => [views.get(focused), ...gridPanes(d).map(p => views.get(p.id))].find(v => v && sendsHere(v) && !rtPane(v.id));
 
 /** The field at the list's foot: quiet until clicked, then live, in the
  *  same room, so nothing under it moves as it opens and shuts. One field,
@@ -89,8 +101,8 @@ const RT_HOLD = "New routine…";
  *  sheet now asks for in its own part, with its preview (U2, U3). */
 function rtFieldHtml(esc) {
   const lead = `<span class="dk-lead"><span class="dk-tick dk-ring ghost" aria-hidden="true">${RT_HANDS}</span></span>`;
-  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="what runs: a /command, a skill or your own words; its sheet asks when" spellcheck="false"></div>`;
-  return `<div class="dk-note new rt-new">${lead}<input class="rt-in" placeholder="/command or your words" aria-label="What runs: a /command, a skill, or your own words" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="rt-comp" aria-expanded="false">` +
+  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="say what should happen and when, and an agent on this desk writes it, tries it once and offers it; or a /command of your own" spellcheck="false"></div>`;
+  return `<div class="dk-note new rt-new">${lead}<input class="rt-in" placeholder="What should happen, and when? Or a /command" aria-label="What should happen and when, in your words, or a /command" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="rt-comp" aria-expanded="false">` +
     (rtField.err ? `<span class="field-err" role="alert">${esc(rtField.err)}</span>` : "") + `</div>`;
 }
 
@@ -169,6 +181,15 @@ function rtCompDraw() {
 async function rtAdd(d) {
   const text = rtLine();
   if (!text) return;
+  const asker = text.startsWith("/") ? null : rtAsker(d);
+  if (asker) {
+    const line = oneLine(`Make a routine for this desk from what I want: "${text.replace(/"/g, "'")}". Write its command, try it once here, and offer it with offer_routine. Do not start it: only my Start runs it.`);
+    input(asker, bracket(asker, line));
+    setTimeout(() => input(asker, "\r"), 120);
+    rtField = null; rail();
+    ctx.toast(`Asked panel ${asker.pane.slot}`, "It writes the routine, tries it once and offers it here. Only your Start runs it.");
+    return;
+  }
   let j;
   try { j = await ctx.api(`/api/desks/${d.id}/routines`, { text }); }
   catch (e) { if (rtField) { rtField.err = ctx.sayErr(e).why; rail(); } return; }
@@ -305,11 +326,21 @@ function rtMetaTone(r) {
   // A clock's catch-up says how late it ran: only a clock start is late,
   // and an hour that never ran leaves the last run's word (#198). A quiet
   // run is its gate's no: said by its hour, as the grey line it is.
+  // 1.67, a result per run: the last run leads, by its hour, with what it
+  // said in its last line. "Found nothing" and "did nothing" no longer
+  // read the same, and a stop at Claude's limit is amber and says when it
+  // tries again. The line opens its runs (`rt-history`).
   const quiet = r.last_state === "quiet" && r.last_at;
-  const last = quiet ? ` · quiet ${rtHour(r.last_at)}` : r.last_at ? ` · ran ${rtAgo(now - r.last_at)}${r.late_s ? ` · ${rtLong(r.late_s)} late` : ""}` : "";
-  const st = r.last_state && !["done", "running", "quiet"].includes(r.last_state) ? ` · ${r.last_state}` : "";
+  const at = r.last_at ? (now - r.last_at < 72000 ? rtHour(r.last_at) : rtAgo(now - r.last_at)) : "";
+  const late = r.late_s ? ` · ${rtLong(r.late_s)} late` : "";
   const next = r.due_at ? ` · next ${rtNext(r.due_at)}` : "";
-  return [`${rtWhen(r)}${next}${last}${st}${wait}`, mine ? "accent" : /^gate failed/.test(r.last_state) ? "warn" : ""];
+  const limit = /^ended: .*(limit|quota|overloaded|billing)/i.test(r.last_state);
+  if (limit) return [`stopped at Claude's limit ${at}, nothing was made${r.due_at ? ` · runs again ${rtNext(r.due_at)}` : ""}${wait}`, mine ? "accent" : "warn"];
+  const st = r.last_state && !["done", "running", "quiet"].includes(r.last_state) ? r.last_state : "";
+  const said = quiet ? "looked, nothing to do · a quiet run" : st || r.last_line || (r.last_at ? "ran, and said nothing" : "");
+  const last = at ? `${at} · ${said}${late}` : "";
+  const head = last || rtWhen(r);
+  return [`${head}${next}${last && rtWhen(r) ? ` · ${rtWhen(r)}` : ""}${wait}`, mine ? "accent" : /^(gate failed|ended)/.test(r.last_state) ? "warn" : ""];
 }
 
 /** What a row is called in a tip: `/newsroom`, or the words themselves. */
@@ -327,7 +358,7 @@ function rtRow(r, esc) {
     `<button type="button" class="nm" data-a="rt-sheet" data-r="${r.id}" data-tip="${esc(rtSaid(r))}" data-tip-sub="${esc(meta)} · click for its sheet"><span class="nm-t" data-tip-cut>${esc(r.name)}</span></button>` +
     tools +
     // What waits on the reader opens On you, where it is (U5).
-    `<span class="dk-meta">${tone === "accent" ? `<button type="button" class="rt-meta accent" data-a="rt-onyou" data-r="${r.id}" data-tip="On you" data-tip-sub="its questions and commands, on this desk">${esc(meta)}</button>` : `<span class="rt-meta${tone ? ` ${tone}` : ""}">${esc(meta)}</span>`}${allow}</span>` +
+    `<span class="dk-meta">${tone === "accent" ? `<button type="button" class="rt-meta accent" data-a="rt-onyou" data-r="${r.id}" data-tip="On you" data-tip-sub="its questions and commands, on this desk">${esc(meta)}</button>` : r.last_at && !offer && r.state !== "draft" ? `<button type="button" class="rt-meta${tone ? ` ${tone}` : ""}" data-a="rt-history" data-r="${r.id}" data-tip="Open result" data-tip-sub="${esc(meta)} · its runs, newest first">${esc(meta)}</button>` : `<span class="rt-meta${tone ? ` ${tone}` : ""}">${esc(meta)}</span>`}${allow}</span>` +
     (rtMenu === r.id ? rtPop(r, esc) : "") + `</li>` + errLine(`r${r.id}`, esc);
 }
 

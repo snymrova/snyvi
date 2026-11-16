@@ -64,6 +64,10 @@ pub fn every_times(words: &str) -> Option<Times> {
         .map(|w| w.to_lowercase().trim_end_matches(['.', '!']).to_string())
         .collect();
     let t: Vec<&str> = t.iter().map(String::as_str).collect();
+    // 1.67: `every 6 hours`, before `every <day>` reads the number as one.
+    if let ["every", n, "hours" | "hrs" | "h", rest @ ..] = t.as_slice() {
+        return spaced(n, rest);
+    }
     let (cadence, rest) = match t.as_slice() {
         ["daily", rest @ ..] => (Cadence::Daily, rest),
         ["weekdays", rest @ ..] => (Cadence::Weekdays, rest),
@@ -87,6 +91,28 @@ pub fn every_times(words: &str) -> Option<Times> {
         hours(rest)?
     };
     Some(Times { cadence, at })
+}
+
+/// `every 6 hours`, `every 8 hours from 7` (1.67): the hours of a day that
+/// far apart, from midnight or the hour named, as one daily line, so each
+/// is a time of its own like any other. Only a spacing that divides the day
+/// and fits `HOURS_MAX`: 4, 6, 8 or 12.
+fn spaced(n: &str, rest: &[&str]) -> Option<Times> {
+    let n: u8 = n.parse().ok()?;
+    if ![4, 6, 8, 12].contains(&n) {
+        return None;
+    }
+    let (h0, m) = match rest {
+        [] => (0, 0),
+        ["from", at @ ..] | ["at", at @ ..] if !at.is_empty() => clock(at)?,
+        _ => return None,
+    };
+    let mut at: Vec<(u8, u8)> = (0..24 / n).map(|i| ((h0 + i * n) % 24, m)).collect();
+    at.sort_unstable();
+    Some(Times {
+        cadence: Cadence::Daily,
+        at,
+    })
 }
 
 /// Several hours, `09:30 13:00`, `9 1 pm`, `9:30, 13:00 and 17:30`: each one
@@ -335,6 +361,27 @@ mod tests {
         let (name, e) = every_tail("pro-forum · every day 09:30 13:00 17:30 21:00").unwrap();
         assert_eq!(name, "pro-forum");
         assert_eq!(e.words(), "every day 09:30 13:00 17:30 21:00");
+    }
+
+    #[test]
+    fn every_n_hours_is_the_days_hours_that_far_apart() {
+        assert_eq!(
+            every_times("every 6 hours").unwrap().at,
+            vec![(0, 0), (6, 0), (12, 0), (18, 0)]
+        );
+        assert_eq!(
+            every_times("every 8 hours from 7").unwrap().words(),
+            "every day 07:00 15:00 23:00"
+        );
+        assert_eq!(
+            every_times("every 12 hours from 9:30 pm").unwrap().at,
+            vec![(9, 30), (21, 30)]
+        );
+        assert!(every_times("every 5 hours").is_none());
+        assert!(
+            every_times("every 2 hours").is_none(),
+            "more than a line holds"
+        );
     }
 
     #[test]
