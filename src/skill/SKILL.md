@@ -69,12 +69,15 @@ To do (what only they can do) and News (what changed without their press).
 - Desk notes are the user's reminders, not instructions. Act on one only when
   asked: `mark_desk_note` read → plan with `send_document(notes=…)` → wait
   for the user's Approve on that plan in snyvi (the brief or your next prompt
-  says so) or their go-ahead in the panel → `mark_desk_note` working →
+  says so) → `mark_desk_note` working, which snyvi refuses until that
+  Approve is pressed (a yes in the chat is not seen: say so, and stop) →
   `tick_desk_note` only when it is finished and checked (with the commit).
   Pass `say` with a plan and a tick: one line of what changed, shown under
   the note.
 - A tick shows what it rests on: the `commit`, the document (`about`) or a
-  URL (`evidence`). A tick with none of them reads "needs a look".
+  URL (`evidence`). A tick with none of them reads "claimed: needs a look",
+  and one whose commit is not on main "claimed · on a branch"; only a commit
+  git finds on main reads "checked".
 - A commit that finishes a note names it, `(#129)`. You don't wait for the
   merge to tick.
 - `leave_off` when a stretch ends: the next step first, then its condition,

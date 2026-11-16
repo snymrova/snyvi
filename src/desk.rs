@@ -1812,6 +1812,32 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
     )? > 0)
 }
 
+/// Why an agent may not mark line `id` working yet (1.67), or `None` when it
+/// may: the line has a plan and the reader approved it, in snyvi. A line
+/// that is not open on this desk is `None` too, and `mark_note` refuses it
+/// in its own words. The reader's yes in the chat is not seen here, so the
+/// words say where the press is: the plan waits on On you with Approve from
+/// the moment it is sent (`waiting::PLAN_WAIT_S`).
+pub fn unapproved(conn: &Connection, desk_id: i64, id: i64) -> Result<Option<String>> {
+    let row: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT stage_doc, ok_at FROM desk_notes
+             WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+            params![desk_id, id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(match row {
+        Some((doc, _)) if doc.is_empty() => Some(format!(
+            "#{id} has no plan yet: send one with send_document and notes: [{id}], then wait for the user's Approve in snyvi"
+        )),
+        Some((doc, 0)) => Some(format!(
+            "the plan {doc} for #{id} is not approved yet: it is on the user's On you with Approve. Stop here; their press comes to this panel"
+        )),
+        _ => None,
+    })
+}
+
 /// A `working` line whose conversation has ended is back at the stage before
 /// it: planned, when there is a plan, and read otherwise. `live` is whether
 /// the pane it was said from is still running that conversation.

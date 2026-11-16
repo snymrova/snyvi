@@ -698,7 +698,11 @@ function noteRow(x, esc) {
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
-  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : "", bare ? "ticked without evidence: needs a look" : ""].filter(Boolean);
+  // 1.67: an agent's tick says what it rests on in one word. "checked" is a
+  // commit git found on main; "claimed" is the agent's word alone, on a
+  // branch or with nothing to show. The reader's own tick says neither.
+  const onMain = x.done && x.done_by && x.landed_commit && !x.on_branch;
+  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : "", onMain ? "checked: on main" : "", bare ? "claimed, ticked without evidence: needs a look" : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<span class="dk-lead"><button type="button" class="dk-tick${bare ? " bare" : ""}" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
     // A click on the text opens the line's gate (1.56, audit B2): its
@@ -902,13 +906,14 @@ function gatePop(x, esc) {
 }
 
 /** A ticked line's marks that are not history (1.53.1): an agent's tick
- *  whose commit is not on main yet says "on a branch" (`desk::on_branch`),
+ *  whose commit is not on main yet says "claimed · on a branch"
+ *  (`desk::on_branch`; "claimed" from 1.67, the agent's word and not yet git's),
  *  and for a week a tick that was not the reader's offers not yet..., the
  *  same field the check of a landed line opens, which takes the tick back
  *  and reopens it (`desk::check_note`). The reader's own tick has neither:
  *  its circle unticks it. */
 function doneMark(x, esc) {
-  const branch = x.on_branch ? `<span class="dk-stage branch" role="img" data-tip="On a branch: ${esc(x.done_commit.slice(0, 7))}" data-tip-sub="it says so until the commit is on main" aria-label="On a branch"><span class="w">on a branch</span></span>` : "";
+  const branch = x.on_branch ? `<span class="dk-stage branch" role="img" data-tip="On a branch: ${esc(x.done_commit.slice(0, 7))}" data-tip-sub="it says so until the commit is on main" aria-label="Claimed: on a branch"><span class="w">claimed · on a branch</span></span>` : "";
   const again = x.recheck && !atCheck(x) ? `<button type="button" class="dk-stage dk-chk" data-a="note-broken" data-n="${x.id}" data-tip="Not yet" data-tip-sub="say what is still wrong; the tick comes off, and the next agent's brief leads with it" aria-label="Still broken: ${esc(x.text)}">not yet…</button>` : "";
   return branch + again;
 }

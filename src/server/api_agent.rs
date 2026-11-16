@@ -507,6 +507,20 @@ pub(crate) async fn pane_mark_note(
     if stage == "planned" && doc.is_empty() {
         return say("planned needs about: the id of the plan you sent with send_document");
     }
+    // 1.67: Approve is a gate. Until now `working` was the agent's word,
+    // and a line read "working" on a plan nobody had said yes to.
+    if stage == "working" {
+        match app
+            .store
+            .clocked(|c, _| crate::desk::unapproved(c, placed.desk_id, note))
+        {
+            Ok(Some(why)) => {
+                return (StatusCode::CONFLICT, Json(json!({ "error": why }))).into_response()
+            }
+            Ok(None) => {}
+            Err(e) => return err(e),
+        }
+    }
     let mark = crate::desk::Mark {
         stage: stage.into(),
         by: b.by,

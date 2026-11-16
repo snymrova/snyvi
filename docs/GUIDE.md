@@ -1355,8 +1355,11 @@ Suggested in the rail's corner, where nothing they do moves the page.
   stars, downloads and visitors, hourly, with your own `gh`, on the same
   card any agent's widget comes on.
 - **A tick shows what it rests on.** A line an agent ticked with no commit,
-  no document and no link reads as a hollow ✓, *ticked without evidence:
-  needs a look*. Nothing counts them; the check is yours when you want it.
+  no document and no link reads as a hollow ✓, *claimed, ticked without
+  evidence: needs a look*. One whose commit is not on main yet reads
+  *claimed · on a branch*, and one whose commit git found on main reads
+  *checked: on main* (the two words are 1.67's). Nothing counts them; the
+  check is yours when you want it.
 - **A promise.** A dated open line's menu has **Promise to Trapti…**: the
   line goes to them with its date and lands on their Home as yours to keep,
   *post the release note · by Fri 10:00*. The rail marks it **→ Trapti**.
@@ -1370,8 +1373,11 @@ Suggested in the rail's corner, where nothing they do moves the page.
   `send_document` with `notes` makes, the lines then read **planned** --
   has **Approve** in its head, beside where it came from. Press it and those
   lines read **planned ✓**, and the panel that planned them is told at its
-  next prompt that you approved: go ahead. Claude waits for that, or for
-  your go-ahead in the panel, before it marks a planned line working.
+  next prompt that you approved: go ahead (1.67: snyvi types it into that
+  panel when its Claude is at rest). Approve is a gate from 1.67: until
+  you press it, snyvi refuses an agent's "working" on those lines, and a
+  line with no plan cannot be marked working at all. A yes in the chat is
+  not a press; the agent says so and waits.
   **Approved ✓**, pressed again, takes it back. A new plan for the same
   lines needs a new Approve.
 - **Suggested** is a panel or a desk Claude thinks the work wants, with the
