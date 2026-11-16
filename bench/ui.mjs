@@ -2980,13 +2980,13 @@ async function homeRows(cdp, base, token, arrive, tmp) {
   try {
     // Home and the Inbox, each at its own address.
     await p.goto(`${base}/#cap=${cap}`);
-    const home = await until(`!!document.querySelector(".hm .hm-pick [data-hm-open]") && [...document.querySelectorAll(".hm a[data-desk]")].some(a => a.textContent.includes("home-bench"))`);
+    const home = await until(`!!document.querySelector(".hm .hm-floor") && [...document.querySelectorAll(".hm a[data-desk]")].some(a => a.textContent.includes("home-bench"))`);
     const quiet = await p.ev(`document.querySelector(".hm .hm-status")?.textContent || ""`);
-    rows.push(["the mark opens Home, with Pick up and a one-line status", home && /Nothing needs you/.test(quiet),
-      !home ? "no Home, no Pick up, or the desk is not on it" : `the status says "${quiet.replace(/\s+/g, " ").trim().slice(0, 60)}"`]);
+    rows.push(["the mark opens Home, with the floor and a one-line status", home && /Nothing needs you/.test(quiet),
+      !home ? "no Home, no floor, or the desk is not on it" : `the status says "${quiet.replace(/\s+/g, " ").trim().slice(0, 60)}"`]);
     // The page is a grid, not the reading measure.
-    const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
-    rows.push(["Home takes the width, with the side column beside Pick up and the desks", wide.beside, `${wide.hm}px wide; ${wide.beside ? "Pick up, the desks and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
+    const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-floor")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
+    rows.push(["Home takes the width, with the side column beside the floor", wide.beside, `${wide.hm}px wide; ${wide.beside ? "the floor and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
     // A2 of the audit of 1.46.2: at 1000 px, sidebar open, Home's container
     // is under 760 px and the grid is one real column. It was three tracks,
     // with the note bar drawn over the Claude box.
@@ -3026,7 +3026,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     await p.clickOn(".hm [data-hm=barundo]");
     const undone = await until(`document.querySelector("input[data-hm=bar]").value === "Write the bar's own row"`);
     const offDesk = !(await notesOn(d)).includes("Write the bar's own row");
-    rows.push(["the note bar: a, a line, Enter puts it on Pick up's desk; Undo takes it back", inBar && added && onDesk && undone && offDesk,
+    rows.push(["the note bar: a, a line, Enter puts it on the desk touched last; Undo takes it back", inBar && added && onDesk && undone && offDesk,
       !inBar ? "a did not put the hand in the bar, on home-bench" : !added ? `the bar says "${await p.ev(`document.querySelector(".hm-nb-say")?.textContent || ""`)}"` : !onDesk ? "the line is not on the desk" : !undone || !offDesk ? "Undo left the line on the desk, or did not give the words back" : "added, said in the bar's row, and taken back into the bar"]);
 
     // `#` and the start of a name, then Tab: that desk on the chip, the
@@ -3035,7 +3035,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     other = two.desk ? two.desk.id : two.id;
     // A query of its own: the same address with only a new fragment is not a load.
     await p.goto(`${base}/?two=1#cap=${cap}`);
-    await until(`!!document.querySelector(".hm input[data-hm=bar]") && !!document.querySelector(".hm-dk-add")`);
+    await until(`!!document.querySelector(".hm input[data-hm=bar]") && !!document.querySelector(".hm-floor")`);
     await p.clickOn(".hm input[data-hm=bar]");
     await p.ev(`(() => { const b = document.querySelector("input[data-hm=bar]"); b.value = ""; b.dispatchEvent(new InputEvent("input", { bubbles: true })); return 1; })()`);
     await p.type("Ship it #bench-t");
@@ -3048,13 +3048,6 @@ async function homeRows(cdp, base, token, arrive, tmp) {
       hashList !== "bench-two" ? `#bench-t hashList "${hashList}"` : hashed.chip !== "bench-two" ? `the chip says ${hashed.chip}` : hashed.text !== "Ship it " ? `the line is "${hashed.text}"` : !plain ? "#77 opened the list or lost its text" : "bench-two on the chip, \"Ship it #77\" in the line"]);
     await p.press("Escape");
 
-    // A card's +, at the foot of a scrolled page: its desk on the chip, the
-    // hand in the bar, and neither the page nor the card moves.
-    const plusAt = await p.ev(`(() => { const m = document.querySelector("#main"); m.style.scrollBehavior = "auto"; m.scrollTo({ top: m.scrollHeight }); const b = [...document.querySelectorAll(".hm-dk-add")].pop(); b.dataset.bench = "1"; return { y: m.scrollTop, h: b.closest(".hm-dk").getBoundingClientRect().height, name: b.getAttribute("aria-label").replace("A new note on ", "") }; })()`);
-    await p.clickOn(`.hm-dk-add[data-bench="1"]`);
-    const plussed = await p.ev(`(() => { const m = document.querySelector("#main"), b = [...document.querySelectorAll(".hm-dk-add")].find(x => x.getAttribute("aria-label") === ${JSON.stringify("A new note on ")} + ${JSON.stringify(plusAt.name)}); m.style.scrollBehavior = ""; return { y: m.scrollTop, h: b?.closest(".hm-dk").getBoundingClientRect().height, chip: document.querySelector(".hm [data-hm=to]").textContent, inBar: document.activeElement?.dataset?.hm === "bar", top: Math.round(document.querySelector(".hm-nb").getBoundingClientRect().top) }; })()`);
-    rows.push(["a card's + puts its desk on the bar, in view, and nothing moves", plussed.chip === plusAt.name && plussed.inBar && Math.abs(plussed.y - plusAt.y) < 1 && Math.abs(plussed.h - plusAt.h) < 1 && plussed.top >= 0,
-      plussed.chip !== plusAt.name ? `the chip says ${plussed.chip}, not ${plusAt.name}` : !plussed.inBar ? "the hand is not in the bar" : Math.abs(plussed.y - plusAt.y) >= 1 ? `the page moved ${plusAt.y} → ${plussed.y}` : Math.abs(plussed.h - plusAt.h) >= 1 ? `the card grew ${plusAt.h} → ${plussed.h} px` : `${plusAt.name} on the chip, the bar held ${plussed.top} px from the top`]);
     await post(`/api/desks/${other}/delete`); other = 0;
 
     await p.goto(`${base}/inbox#cap=${cap}`);
@@ -3175,7 +3168,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // the pointer, the hand in the bar, left alone), no read of /api/home
     // and none of /api/peers, which only a friends event asks for.
     await p.goto(`${base}/#cap=${cap}`);
-    await until(`!!document.querySelector(".hm .hm-pick")`);
+    await until(`!!document.querySelector(".hm .hm-floor")`);
     await sleep(600);
     await p.ev(`(() => { const d = document.querySelector("#doc"); window.__hm = { draws: 0, peers: 0, home: 0 }; new MutationObserver(() => window.__hm.draws++).observe(d, { childList: true }); const f = window.fetch; window.fetch = (u, ...r) => { const s = String(u); if (/\\/api\\/peers(\\?|$)/.test(s)) window.__hm.peers++; if (/\\/api\\/home(\\?|$)/.test(s)) window.__hm.home++; return f(u, ...r); }; return 1; })()`);
     for (let i = 0; i < 20; i++) {

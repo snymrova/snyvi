@@ -2466,6 +2466,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
 pub mod checks;
 pub mod marks;
 pub use marks::*;
+pub mod closed;
 pub mod groups;
 
 #[cfg(test)]

@@ -199,14 +199,11 @@ function rail() {
   // A row just removed keeps its place through a read that no longer has it.
   const gone = docGone && docGone.at === d.id ? docGone.x : null;
   const dl = gone && !dl0.includes(gone) ? [...dl0.slice(0, docGone.i), gone, ...dl0.slice(docGone.i)] : dl0;
-  // The latest six, and always the one on the page: a document being read
-  // is never the one the rail hides. The count names what is not shown.
-  // A search shows every title that has what was typed, and nothing folds.
-  const q = docsFind.trim().toLowerCase(), found = q ? dl.filter(x => x.title.toLowerCase().includes(q)) : null;
-  const shown = found || (docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading));
-  const rest = found ? 0 : dl.length - shown.length, folds = !found && docsAll && dl.length > DOCS_SHOWN;
+  // 1.67 (#236): the rail no longer lists the desk's documents; the Inbox
+  // does, on this desk's chip. What stays here is what waits to be read,
+  // and always the one on the page: its row is the way back to the panels.
+  const shown = dl.filter(x => x === gone || x.id === reading || x.unread).filter((x, i) => i < DOCS_WAITING || x.id === reading || x === gone);
   const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
-  const offs = docsAt === d.id ? docOff.filter(x => !gone || x.id !== gone.id) : [];
   const stopped = vs.filter(x => !x.status.running).length;
   // A new desk whose panels have never started (held): the panel's card is
   // its one thing to do, so the rail says no more than what goes where --
@@ -258,27 +255,16 @@ function rail() {
     `<div class="dk-foot">${backRow(d, esc)}</div>`),
     // Notes before Documents, Points after (1.56, B6; src/widget.rs RIGHT); routines under the notes (19-routine.js).
     notes: () => noteSec(d) + routineSec(d),
-    // The documents. The count is how many, in the accent while some wait
-    // to be read; the row's [n] says which panel sent it.
+    // The documents that wait, and the way to the rest. The count is how
+    // many wait; the row's [n] says which panel sent it.
     docs: () => sec("docs", "rail.docs", "Documents", {
-      tip: "Documents", sub: "What the panels on this desk have sent, newest first",
-      count: live.length || "", tone: waiting ? "accent" : "", countTip: waiting ? `${waiting} waiting to be read` : "",
-    }, 
-    // A document's row: the one on the page is marked, the way a pane's row
-    // is while the desk is the page. One line of title, then who sent it and
-    // when: the panel by the name it was started with, which holds still, and
-    // not its title, which ticks. The row on the page gets its second line.
-    // The rest, named rather than listed: one row at the end of the box that
-    // opens them here, met where the scroll runs out rather than under it.
-    (dl.length > DOCS_FIND || docsFind ? `<input class="dk-find" type="search" spellcheck="false" autocomplete="off" placeholder="Find a document" aria-label="Find a document on this desk by its title" value="${esc(docsFind)}">` : "") +
-    (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
-      (found && !found.length ? `<li><p class="dk-empty">No title has “${esc(docsFind.trim())}”</p></li>` : "") +
-      (rest || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" aria-expanded="${folds}">${folds ? "Show fewer" : `${rest} more`}</button></li>` : "") + `</ul>`
-      : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d, fresh, asked)) +
-    // What the reader removed from this list, named, and there to open or put back.
-    (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
-      (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
-        `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "")),
+      tip: "Documents", sub: "What this desk's panels sent that waits to be read; the rest is in the Inbox",
+      count: waiting || "", tone: waiting ? "accent" : "", countTip: waiting ? `${waiting} waiting to be read` : "",
+    },
+    (shown.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") + `</ul>`
+      : docsOff === d.id ? noReach("docs") : live.length ? "" : waitingFirst(d, fresh, asked)) +
+    (live.length ? `<p class="dk-offs-line">${waiting > shown.filter(x => x.unread && x !== gone).length ? `${waiting - shown.filter(x => x.unread && x !== gone).length} more waiting · ` : ""}` +
+      `<button type="button" class="dk-link" data-a="docs-inbox" data-tip="This desk's documents" data-tip-sub="every one it sent, in the Inbox on this desk's chip">All ${live.length} in the Inbox</button></p>` : "")),
     points: () => pointSec(vs),
     widgets: () => widgetSec(d),
   };
@@ -323,7 +309,7 @@ function pageChips(vs, dl) {
     a.href = `/d/${x.id}`;
     a.dataset.read = x.id;
     a.dataset.tip = x.title;
-    a.dataset.tipSub = "it stays under Documents";
+    a.dataset.tipSub = "it stays in the Inbox";
     a.textContent = say;
   }
 }

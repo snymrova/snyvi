@@ -279,6 +279,8 @@
   });
   addEventListener("snyvi:hover-focus", paintHover);
   addEventListener("storage", e => { if (e.key === HOVER) paintHover(); });
+  // The focus zone changed (#241): the desks list and the Inbox follow.
+  addEventListener("snyvi-focus", () => { renderDesks(); if (state.view === "inbox") showInbox(false); });
   paintHover();
 
   /** The terminal's text size, after Aa on a desk: the panels' text is the

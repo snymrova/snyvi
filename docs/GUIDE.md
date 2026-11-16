@@ -827,13 +827,13 @@ row or Rename… in its menu names it; the ⋯ at the end of the desk's head
 is the desk's own menu. A panel running Claude shows its model and how full
 its context window is, amber from 85%. Under it, the foot of the rail links
 the repository the desk's folder lives in (`owner/repo ↗`, read from its
-`origin` remote, never fetched), and Home's Pick up has the same link.
+`origin` remote, never fetched).
 
 **Desks keep your order.** Drag a desk's row in the sidebar to put it
 where you want it, or use Move to top, Move up and Move down in its menu,
-or alt ↑ / ↓ on the row. The sidebar, Home's cards, Home's # list and ⌘K
+or alt ↑ / ↓ on the row. The sidebar, Home's # list and ⌘K
 all show that order; a new desk goes at the bottom, and a reopened one goes
-back where it was. Only Pick up follows the desk you touched last.
+back where it was. Home's floor lists desks by the one touched last.
 
 **Or let the sidebar sort them.** The arrows beside the Desks head's +
 sort the sidebar's list: Your order, Last opened, or A–Z. The sort is
@@ -861,6 +861,19 @@ the first letter move through it, and Esc closes it and puts you back. In
 the window, right-clicking anywhere else shows nothing rather than the web
 view's Back and Reload; a text field and a selection in a document keep
 their usual menu for Copy and Paste.
+
+**Recently closed** (1.67), in the desk's ⋯, lists the panels and tabs
+closed on this desk, newest first, after the six-second Undo in the rail is
+over. *Reopen* brings a panel back stopped, in a free slot on the side it
+was on, and a tab with the panels that closed with it. A panel that held a
+Claude session says it can resume. Nothing was deleted; this is where it
+went.
+
+**A panel in the back says what it is doing** (1.67). Its chip in the
+desk's head reads "forum host · asks you · 2 h" in amber, "tabs polish ·
+working 18 min", "reel 12 · finished 11:40" or, for a shell, "running", "a
+command failed" or how it ended. Until 1.67 an agent that asked read as "a
+command failed", the words for a dead dev server.
 
 In a panel, hold **Ctrl** over a link a program printed and it is
 underlined; **Ctrl-click** opens it in your browser. A plain click never
@@ -1470,11 +1483,9 @@ with Undo in the row); and a plan sent for notes that no one approved, a
 day on, with **Approve**; and a desk quiet for ten days with lines still
 open. A left-off row and a quiet desk have **Park it** too, with Undo in
 the row. A Claude says a left-off is yours with
-`leave_off`'s `needs: you`; snyvi never reads it into the words. For one
-said before 1.47, **On me** beside Pick up's *Left off* marks it yours by
-hand.
+`leave_off`'s `needs: you`; snyvi never reads it into the words.
 
-**Your week** opens above Pick up on Sunday at 20:00 and stays until
+**Your week** opens above the floor on Sunday at 20:00 and stays until
 Tuesday 06:00, so a window shut on Sunday evening sees it on Monday: what
 shipped this week and whether it was told (with where), three numbers from
 what snyvi already keeps -- lines ticked with nothing asked of you, the
@@ -1488,7 +1499,7 @@ writes them; **Not this week** puts the box away until next Sunday;
 
 **The note bar** is at the top of the left column, and stays there as the
 page scrolls: one field for a line on any desk's list. The chip at its left
-says which desk, and starts on Pick up's; click it for the list of desks, or
+says which desk, and starts on the one touched last; click it for the list of desks, or
 type `#` and the start of a desk's name in the note and press Tab. A `#`
 that names no desk -- "#77" -- stays in the note as written. Enter adds the
 line and leaves the bar empty for the next, as the desk's own field does. A
@@ -1497,12 +1508,24 @@ says where the line went, "Added to snyvi · Undo", for a few seconds; Undo
 takes it off again and puts the words back in the bar. `a` puts you in the
 bar, with the letter keys on.
 
-**Pick up** is one desk, large: the one you touched last, or the one you
-pin there with *Pin here* (*Unpin* lets it follow the desk touched last). It says when you last touched it, where the
-work was left -- or, when no one said, the last thing that happened on it,
-marked *Last* -- the open notes (with their dates), what git says in its folder (the branch,
-what is changed, what is not pushed, the last commit), and each panel in
-words, and its moving threads. Enter opens it.
+**The floor** (1.67) is every panel on every desk, by what it is doing.
+Its head counts them, "14 agents on 9 desks · 3 need you". First is **On
+you**, the same three tabs as the corner and a desk: answer a question or
+approve a plan there and snyvi types it into the panel that asked. A shell
+that rang is a row under it, with *Go to panel*. Then **Working**, each
+agent with its panel's title, its thread's PR and how long it has been at
+it; **Finished**, newest first, with *Look*; and **Idle**, one line of the
+panels that are doing nothing. Five rows a group, the rest a click away. A
+row opens its desk on that panel. Pick up and the desk cards, which showed
+one desk large and the rest by their notes, are gone: the notes are on the
+desk, and the note bar above still adds to any of them.
+
+**Focus** (1.67), at the floor's right, picks the desks you are on today.
+With a focus set, the sidebar, the Inbox, On you and the floor show those
+desks only; the sidebar says "Focus: 3 of 19 · change". An agent stuck on
+another desk is still counted, in one line under On you with *Show all
+desks*, so a focus hides nothing that waits. None picked is every desk.
+It is kept in this window.
 
 **Your days** is what happened, day by day and desk by desk: notes ticked
 (with the commit and the link the agent gave), documents sent, commits in
@@ -1512,13 +1535,10 @@ lines; the rest are a click away. *Send this week as a doc*, on its
 heading, files the last seven days as a document in each desk's own
 project.
 
-**Other desks** is every other desk, a card each, as many across as the
-window fits: its age, where it was left, its first open notes (tick one
-where it stands), its moving threads, and a **+** that puts the desk on the
-note bar's chip. A desk quiet for ten days offers *Park it?*: it asks for
-the next step, takes the desk out of Pick up, and keeps it on a Parked
-shelf under the cards with that step until you *Unpark* it. Nothing on a
-parked desk is closed.
+**Parked**, under the floor, is the shelf: a desk you parked, with its
+next step, until you *Unpark* it. A desk quiet for ten days with lines
+still open is a row on On you with *Park it*. Nothing on a parked desk is
+closed.
 
 The date is beside the title.
 
@@ -1554,8 +1574,17 @@ a friend…*; when an update is ready, its card is under the foot.
 Git is read only in a desk's own folder, never in your home directory,
 read-only and with a two-second limit, and nothing leaves the machine.
 Home is one read of the daemon, and it follows what changes while it is
-open. Other desks, Claude and Friends can be hidden with *Hide* on their
-heading; "2 sections hidden · Show" at the foot brings them back. The Inbox is at `/inbox`, and `i` still opens it. An empty
+open. Claude and Friends can be hidden with *Hide* on their
+heading; "2 sections hidden · Show" at the foot brings them back. The Inbox is at `/inbox`, and `i` still opens it.
+
+**The Inbox has filters** (1.67). Under its head is a chip per desk that
+sent something, with how many wait; a chip shows that desk's documents
+alone, from further back than the newest sixty, and a second click on it
+goes back to all. *Find by title* narrows the rows as you type. With a
+focus set on Home, the Inbox leaves out the other desks' documents and
+says how many, with *Show*. A desk's rail no longer lists every document
+it sent: it keeps the ones that wait, and *All N in the Inbox* opens the
+Inbox on that desk's chip. An empty
 library still opens on Welcome.
 
 A document opens where you left it, however you open it -- the tree, the

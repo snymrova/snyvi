@@ -329,6 +329,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    ("GET", "/api/desks/1/closed", None, Gate::Desk, true),
     (
         "POST",
         "/api/panes/nope/group",

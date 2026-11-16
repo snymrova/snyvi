@@ -476,6 +476,7 @@ fn group_routes() -> Router<Arc<App>> {
         .route("/api/desks/{id}/groups/{grp}/show", post(show_group))
         .route("/api/desks/{id}/groups/{grp}/close", post(close_group))
         .route("/api/desks/{id}/groups/{grp}/restore", post(restore_group))
+        .route("/api/desks/{id}/closed", get(closed_list))
         .route("/api/panes/{id}/group", post(regroup_pane))
 }
 

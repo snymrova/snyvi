@@ -63,10 +63,9 @@ reach.
 |---|---|---|
 | `home.head` | "Home" and the date | `.hm-head` · `draw()` in `home.js` |
 | `home.status` | the one line: what needs you, what is waiting, Claude, the window | `status()` |
-| `home.pick` | Pick up: the desk to go back to, where it was left, its open notes, git, panels, Open desk | `pick()` |
-| `home.desks` | Desks: every other desk, where it was left, its first open notes, `+ New note` | `desksList()` |
-| `home.desks.desk` | one desk in it | `.hm-dk` |
-| `home.notes` | a desk's open notes on Home, each tickable where it stands (in `home.pick` and `home.desks.desk`) | `notesOf()` · `.hm-next` |
+| `home.floor` | The floor (1.67): every panel on every desk by state, Focus in its head, On you first | `floor()` · `.hm-floor` |
+| `home.wait` | On you, inside the floor: the corner's own tabs and rows | `onyouBox()` |
+| `home.parked` | Parked: the shelf, each desk with its next step and Unpark | `parkedShelf()` |
 | `home.week` | This week, folded: the log by day and desk, and Send this week as a doc | `week()` · `yourDays()` |
 | `home.projects` | Projects: eight weeks a desk, Park it?, the shelf | `projects()` |
 | `home.claude` | Claude: what is left of the windows, what the panels are doing | `claude()` |

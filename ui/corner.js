@@ -288,7 +288,7 @@ export function init(ctx) {
      *  list as read, and a desk's share of it (#202): `here`, its own rows
      *  the desk does not count from its own list (a dated line, a routine's
      *  line, a plan, a left-off), and `others`, every other desk's. */
-    onyouHtml, onyou: () => L.onyou, shelf: shelfNow, tabs: oyTabs,
+    onyouHtml, onyou: () => L.onyou, shelf: shelfNow, tabs: oyTabs, counts,
     /** A desk's own count and its To do (1.67). */
     deskLeft: desk => agentsOf(oyPart(desk, "desk", L.onyou?.rows)),
     deskTodo: desk => oyPart(desk, "here", L.onyou?.rows).filter(r => r.shelf === "todo").length,
@@ -723,6 +723,21 @@ function oyPart(desk, part, rows = oyRows()) {
   return (rows || []).filter(r => part === "desk" ? r.desk === desk : part === "here" ? r.desk === desk && r.kind !== "card" && r.kind !== "suggested" : r.desk !== desk);
 }
 
+/** The focus zone (#241, ui/home.js): the desks the reader picked for
+ *  today, or none for all. On you shows their rows only -- and says, in one
+ *  line, how many agents wait outside it, so a focus hides nothing that is
+ *  stuck. A friend's line or an offer is no desk's and always shows. */
+function focusIds() {
+  try { const v = JSON.parse(localStorage.getItem("snyvi.focus") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+const inFocus = (r, f = focusIds()) => !f.length || !r.desk || f.includes(r.desk);
+/** What waits in the focus, and outside it, counted by agent. */
+function counts() {
+  const rows = L.onyou?.rows || [], f = focusIds();
+  return { left: agentsOf(rows.filter(r => inFocus(r, f))), out: agentsOf(rows.filter(r => !inFocus(r, f))), focus: f.length };
+}
+addEventListener("snyvi-focus", () => redraw());
+
 /** The one count (1.67): the agents stuck on the reader among `rows`, as
  *  the daemon counts them (`onyou::agents`) -- a panel that asked four
  *  questions is one, and so is a routine or a plan. A desk says its own. */
@@ -746,8 +761,12 @@ function oyTabs(n, dot = "") {
 function onyouHtml(all = false, desk = 0, part = "", only = "") {
   const o = L.onyou, { esc } = c;
   if (!o || !c.capability) return "";
-  const every = (desk ? oyPart(desk, part) : oyRows()).filter(r => !only || r.shelf === only);
+  // A desk's own rows are its own whatever the focus; every other list is
+  // the focus's.
+  const foc = part === "here" ? [] : focusIds(), base = desk ? oyPart(desk, part) : oyRows();
+  const every = base.filter(r => inFocus(r, foc) && (!only || r.shelf === only));
   if (part === "here") return every.length ? oyGroups(every, false) : "";
+  const out = foc.length ? agentsOf(base.filter(r => !inFocus(r, foc))) : 0;
   // 1.66: three shelves. Waiting is agents stuck on the reader, counted by
   // agent; To do what only the reader can do, never aged; News what
   // changed, not counted. The quiet ones, whose panel was prompted since,
@@ -755,7 +774,7 @@ function onyouHtml(all = false, desk = 0, part = "", only = "") {
   const on = k => every.filter(r => r.shelf === k);
   const waiting = on("waiting"), rows = { waiting: waiting.filter(r => !r.quiet), todo: on("todo"), news: on("news") };
   const quiet = waiting.filter(r => r.quiet);
-  const news = (o.news || []).filter(i => !desk || i.desk_id === desk);
+  const news = (o.news || []).filter(i => (!desk || i.desk_id === desk) && (!foc.length || !i.desk_id || foc.includes(i.desk_id)));
   const grey = (o.ran_quiet ? `<p class="oy-grey">${o.ran_quiet} routine${o.ran_quiet === 1 ? "" : "s"} ran today with nothing for you.</p>` : "") +
     (o.older ? `<p class="oy-grey">${o.older} thread${o.older === 1 ? "" : "s"} on ${o.older_desks} desk${o.older_desks === 1 ? "" : "s"} still for two weeks: Sunday's week has them.</p>` : "");
   const quietHtml = quiet.length ? `<p class="oy-qh">Quiet · its panel was prompted since</p>` + oyGroups(quiet, all) : "";
@@ -767,12 +786,14 @@ function onyouHtml(all = false, desk = 0, part = "", only = "") {
   // sections of its own, so the same rows read as three different lists.
   // Tabs everywhere; Home's head says the count and the clauses, so only
   // the tray says the sentence.
-  const n = { waiting: agentsOf(desk ? every : o.rows), todo: desk ? rows.todo.length : o.todo, news: 0 };
+  const n = { waiting: agentsOf(desk || foc.length ? every : o.rows), todo: desk || foc.length ? rows.todo.length : o.todo, news: 0 };
+  const outside = out ? `<p class="oy-grey oy-out">${out} outside your focus ${out === 1 ? "is" : "are"} waiting on you · <button type="button" class="cn-link" data-a="cn-focus-all" data-tip="All desks" data-tip-sub="the focus is put away; Home's Focus picks it again">Show all desks</button></p>` : "";
   const cur = shelfNow();
   if (cur === "news") newsSeen(news);
   const dot = o.news_unseen > 0 && cur !== "news" ? `<span class="oy-dot" aria-label="new"></span>` : "";
-  const sent = desk || all ? "" : `<p class="oy-sent">${esc(o.sentence)}</p>`;
-  return oyTabs(n, dot) + (cur === "waiting" ? sent : "") + body(cur) + (cur === "waiting" && !desk ? grey : "");
+  // The sentence is of every desk: under a focus the tabs' counts say it.
+  const sent = desk || all || foc.length ? "" : `<p class="oy-sent">${esc(o.sentence)}</p>`;
+  return oyTabs(n, dot) + (cur === "waiting" ? sent : "") + body(cur) + (cur === "waiting" ? outside : "") + (cur === "waiting" && !desk ? grey : "");
 }
 
 /** News (1.66, `crate::news`): what changed that the reader did not press,
@@ -1186,6 +1207,11 @@ function cardHtml(desk) {
 function act(a, b) {
   if (!a?.startsWith("cn-")) return false;
   if (a.startsWith("cn-oy-")) { oyAct(a, b); return true; }
+  if (a === "cn-focus-all") {
+    try { localStorage.removeItem("snyvi.focus"); } catch {}
+    dispatchEvent(new Event("snyvi-focus"));
+    return true;
+  }
   if (a === "cn-shelf") {
     L.shelf = b.dataset.k;
     try { localStorage.setItem(SHELF_KEY, L.shelf); } catch { /* a per-viewer convenience */ }

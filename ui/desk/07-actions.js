@@ -38,7 +38,7 @@ async function act(b, byKey) {
     else if (a === "reveal") ctx.reveal({ desk: d.id });
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
-    else if (a === "more") { docsAll = !docsAll; rail(); }
+    else if (a === "docs-inbox") docsInbox(d);
     else if (a === "notes-more" || a === "notes-done" || a === "notes-checks") { a === "notes-more" ? notesAll = !notesAll : a === "notes-done" ? notesDone = !notesDone : agedOpen = !agedOpen; rail(); }
     // Off this desk's list, and back: the row keeps its place with an Undo,
     // as a note's does, and the daemon is told after the rail has changed.

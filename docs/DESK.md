@@ -64,8 +64,8 @@ the word there.
   reads as a desk without tabs. A panel moved to another tab takes its
   documents.
 - What makes a panel -- the rail's + New panel, the desk ⋯'s New panel,
-  `⌃⌥N` -- makes it in the tab on screen. A link to a panel by its slot (Home's
-  Pick up, a document's "From desk [n]") carries its tab too.
+  `⌃⌥N` -- makes it in the tab on screen. A link to a panel by its slot (a row
+  of Home's floor, a document's "From desk [n]") carries its tab too.
 - A panel's brief names its tab: *You are in panel 2 of 3 in the tab "insta"
   of the snyvi desk "ohmydog" (~/Studio)*; on a desk with no tabs the
   sentence is the one it always was.
@@ -451,7 +451,9 @@ document's meta reads **From snyvi [1] ▸**. It is a link to the desk with
 that pane focused, and it still names the desk after the desk is closed.
 
 The attribution runs the other way too. The desk's rail has a **Documents**
-list under its panes: everything sent from a pane on this desk, newest
+list under its panes: what a pane on this desk sent that waits to be read
+(1.67, #236; until then every document, which the Inbox now lists on the
+desk's chip, one click from the rail's *All N in the Inbox*), newest
 first, each row with the unread mark, the title, the slot it came from and
 its age, from `GET /api/desks/{id}/docs`, behind the same gate as every
 other desk route. A click opens the document as the page, and the rail
