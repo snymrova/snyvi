@@ -42,6 +42,7 @@ pub(crate) async fn home(
     // On you's box is the same ranked list as the corner's tray (1.54,
     // `crate::onyou`); `due` and `wait` stay one release for a page that
     // has not reloaded since.
+    let prompts = app.panes.prompting();
     let (turns, threads, due, wait, onyou) = if gated {
         app.store
             .clocked(|c, now| {
@@ -51,7 +52,7 @@ pub(crate) async fn home(
                     crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN)?,
                     crate::due::due_by(c, crate::due::end_of_day(now))?,
                     crate::waiting::rows(c, now)?,
-                    crate::onyou::gather(c, now)?,
+                    crate::onyou::gather_with(c, now, &prompts)?,
                 ))
             })
             .map(|(t, th, du, w, o)| {

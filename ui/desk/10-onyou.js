@@ -15,9 +15,8 @@
  * this page rises as a small card, with a soft chime; untouched for a few
  * seconds, or once the reader clicks elsewhere, it settles into the foot's
  * On you button, an icon and "2" at the right end of the rail's foot, which
- * opens the tray: every fresh turn, newest first, the older ones under them,
- * dimmed, with their age, and Suggested (1.43: an unanswered ask is on the
- * reader whatever its age, so "N older" was a fold and a pill too many).
+ * opens the tray: On you's three tabs, as Home and the corner have them,
+ * with this desk's rows (1.67, `trayHtml`).
  * Claude's own dialog never rises
  * (09-thread.js `shown`), and a turn that has gone quiet -- its panel
  * closed, half an hour old, or its panel prompted since -- never rises or
@@ -103,20 +102,21 @@ function oyNode() {
   return oyEl;
 }
 
-/** What the notch counts: this desk's fresh waiting turns, its suggestions,
- *  its dated line, routine's line, plan and left-off (the corner's ranked
- *  list, `here`), and an agent's offers and a friend's lines (#196), which
- *  are a friend's, not a desk's, and so every desk's: all in amber; and the
- *  older turns, which are not. `others` is what is on the reader on the
- *  other desks: the tray shows it, the tip says it, the number never has it
- *  (#202). 1.54 counted the whole list here, and every desk said 18 or 19
- *  "on this desk" with none of it the desk's. */
+/** The one count (1.67, plan f586a9fe09): the agents on this desk that are
+ *  stuck on the reader, as Home and the corner count them (corner.js
+ *  `agentsOf`, the daemon's `onyou::agents`). A desk counted items -- its
+ *  fresh cards, suggestions, dated lines, offers -- with the older ones
+ *  beside them, so the same evening read "7 on you, 4 older" here and "2
+ *  waiting" on Home. `others` is the agents waiting on the other desks,
+ *  said beside the number and never in it (#202); `todo` is whether the
+ *  tray holds anything else, so its door is there with no agent waiting.
+ *  Before the list is read, the desk's own open questions, by panel. */
 function oyCounts(d, f) {
-  const waiting = f.turns.filter(w => shown(w) && !w.answered_at);
-  const now = waiting.filter(w => fresh(d, w)).length;
-  const K = ctx.corner?.();
-  const mine = K ? K.here(d.id) + K.offerCount() : 0;
-  return { now: now + f.suggestions.length + mine, old: waiting.length - now, others: K ? K.others(d.id) : 0 };
+  const K = ctx.corner?.(), o = K?.onyou?.();
+  const todo = f.turns.filter(w => shown(w) && !w.answered_at && shelfOf(w) !== "waiting").length + f.suggestions.length + (K ? K.deskTodo(d.id) + K.offerCount() : 0);
+  if (o) { const now = K.deskLeft(d.id); return { now, old: 0, todo, others: Math.max(0, o.left - now) }; }
+  const now = new Set(f.turns.filter(w => shown(w) && !w.answered_at && shelfOf(w) === "waiting" && !(w.quiet_at > 0)).map(w => w.pane || `t${w.id}`)).size;
+  return { now, old: 0, todo, others: 0 };
 }
 
 /** On you in the rail's foot (1.44): the icon, and the count while anything
@@ -128,17 +128,17 @@ function oyFoot(d) {
   // What waits on the other desks, said beside the hand (C6): only a tip
   // said it. The button grows into the foot's free room, so nothing moves.
   const away = n.others ? `<span class="oy-else">· ${n.others} elsewhere</span>` : "";
-  const label = !count ? "Nothing on you right now" : `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
+  const label = !count ? "No agent is waiting on you here" : `${count} agent${count === 1 ? "" : "s"} waiting on you here`;
   // What On you is, always, then how it stands: with nothing on the reader
   // the tip said only that, and a first hover never learned what it was for.
-  const sub = `What only you can do on this desk · ${n.now ? "new" : count ? "older asks waiting" : "nothing right now"}${oyOthers(n)}${ctx.esc(ctx.corner?.()?.chimed(" · ") || "")}`;
+  const sub = `Agents waiting on you on this desk, and what only you can do · ${count ? `${count} waiting` : n.todo ? "none waiting, a thing to do" : "nothing right now"}${oyOthers(n)}${ctx.esc(ctx.corner?.()?.chimed(" · ") || "")}`;
   return `<button type="button" class="oy-foot${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}${n.others ? `, ${n.others} on other desks` : ""}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span>${away}</button>`;
 }
 
 /** The tip's word on the other desks, so a desk at nought does not read as
  *  nothing anywhere: the one place the rail names them (1.56), and it
  *  points at Home, which holds them. */
-const oyOthers = n => n.others ? ` · ${n.others} on other desks, on Home` : "";
+const oyOthers = n => n.others ? ` · ${n.others} waiting on other desks, on Home` : "";
 
 /** On you's mark, the hand, drawn by the corner (ui/corner.js `hand`),
  *  which the window loads with the desk. */
@@ -166,45 +166,50 @@ function riseHtml(d, f, esc) {
   return `<div class="oy-card${first ? " rise" : ""}"><ul class="dk-turn-list" data-part="desk.turns">${body}</ul>${more}</div>`;
 }
 
-/** The tray, over the notch: under its head (On you, the pin, and its ✕),
- *  what is fresh, newest first, then the older ones, dimmed, each with its
- *  age, and Suggested. Older is not a fold of its own: an unanswered ask is
- *  on the reader however old it is, and the fold was one more thing to open
- *  before it could be answered. Each question is its title line and two
- *  lines of the rest here (`qClamp`), a click from the whole. */
+/** The tray, over the notch (1.67, plan f586a9fe09): On you's three tabs,
+ *  the same as Home's box and the corner's tray, holding this desk's rows
+ *  only. Waiting is the agents stuck on the reader here -- their questions,
+ *  a plan to approve, a routine's line, Claude's own prompt open in a
+ *  panel -- newest first, the quiet ones last; To do what only the reader
+ *  can do; News what changed without their press.
+ *
+ *  It had a layout of its own: fresh cards, then Older, dimmed and folded
+ *  at half an hour, then the rest of the desk's list, Quiet, Removed,
+ *  offers, Suggested and News down one column, under a count of items. The
+ *  cards are still this desk's own (`turnCard`), since Run and Add key
+ *  need its live panels; the rows that are not cards are the corner's. */
 function trayHtml(d, f, esc) {
   // The shelf of decisions has the tray's place while it is open (29-decisions.js).
   if (dec.open) return decHtml(d, esc);
+  const K = ctx.corner?.(), cur = K?.shelf?.() || "waiting";
   const gone = filedGone && (filedGone.k === "w" || filedGone.k === "g") ? goneRow(filedGone.k, filedGone.id, filedGone.text, esc) : "";
+  const list = (rows, part) => rows ? `<ul class="dk-turn-list" data-part="${part}">${rows}</ul>` : "";
+  const here = k => K?.onyouHtml?.(false, d.id, "here", k) || "";
   qClamp = true;
-  const rows = gone + turnRows(d, f, esc, "fresh"), old = turnRows(d, f, esc, "older"), hushed = turnRows(d, f, esc, "quiet");
-  qClamp = false;
-  const said = rows ? `<ul class="dk-turn-list" data-part="desk.turns">${rows}</ul>` : "";
-  const older = old ? `<ul class="cn-list cn-old oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, or asked over half an hour ago. A question waits in Decisions after a day, anything else goes by itself after three, and can come back">${old}</ul>` : "";
+  const cards = list((cur === "waiting" ? gone : "") + turnRows(d, f, esc, "open", cur), "desk.turns");
   // Gone quiet (C3): its panel was prompted since, so it may be done there.
-  const quiet = hushed ? `<p class="oy-qh">Quiet · its panel was prompted since</p><ul class="dk-turn-list" data-part="desk.quiet">${hushed}</ul>` : "";
-  const K = ctx.corner?.(), offers = K ? K.offersHtml() : "", lines = K?.linesHtml?.() || "";
-  // What an agent removed in the last day (#174), under a head of its own
-  // and dimmed (1.66): it sat in the list at a live row's weight, so a
-  // card closed by its merge read as one more thing to do. Bring back stays.
-  const away = awayRows(f, esc);
-  // This desk's own rest of On you (1.54): its dated line, routine's line,
-  // plan and left-off. The other desks' are not here (1.56): the rail is
-  // the desk's, always; what is on the reader across desks is Home's
-  // column and the Inbox pill's. 1.54 listed them under their own head.
-  const here = K?.onyouHtml?.(false, d.id, "here") || "";
-  const news = K?.deskNews?.(d.id) || "";
-  const n = oyCounts(d, f), count = n.now + n.old;
-  const all = said + older + here + quiet + (away ? `<p class="oy-qh">Removed by agents · today</p><ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "") +
-    (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + lines + sugRows(f, d) +
-    (news ? `<p class="oy-qh">News · what changed without your press</p>${news}` : "");
-  oy.empty = !all;
-  const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer is typed into the panel that asked when its Claude is at its prompt">On you</h3>` +
-    (count ? `<span class="sec-n${n.now ? " warn" : ""}">${count}</span>` : "");
+  const hushed = cur === "news" ? "" : turnRows(d, f, esc, "quiet", cur);
+  qClamp = false;
+  const quiet = hushed ? `<p class="oy-qh">Quiet · its panel was prompted since</p>${list(hushed, "desk.quiet")}` : "";
+  let body = cards + here(cur) + quiet;
+  if (cur === "todo") {
+    // An agent's offers and a friend's lines (#196) are every desk's.
+    const offers = K ? K.offersHtml() : "";
+    body += (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + (K?.linesHtml?.() || "") + sugRows(f, d);
+  }
+  if (cur === "news") {
+    // What an agent removed in the last day (#174), dimmed, with Bring back.
+    const away = awayRows(f, esc);
+    body += (K?.deskNews?.(d.id) || "") + (away ? `<p class="oy-qh">Removed by agents · today</p><ul class="cn-list oy-away" aria-label="Removed by agents">${away}</ul>` : "");
+  }
+  const none = { waiting: "No agent is waiting on you here.", todo: "Nothing only you can do here.", news: "Nothing changed here this week." };
+  const n = oyCounts(d, f);
+  oy.empty = false;
+  const tabs = K?.tabs ? K.tabs({ waiting: n.now, todo: K.deskTodo(d.id) + f.turns.filter(w => shown(w) && !w.answered_at && shelfOf(w) === "todo").length + f.suggestions.length, news: 0 }) : "";
+  const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="Agents waiting on you on this desk, and what only you can do. Your answer is typed into the panel that asked when its Claude is at its prompt">On you</h3>`;
   const close = `<button type="button" class="oy-x" data-a="oy-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${ico("x")}</button>`;
-  // Nothing to keep open beside the panels, so no pin, unless it is pinned.
-  const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${all || oy.pin ? pinBtn() : ""}${close}</div>`;
-  return `<div class="oy-tray${oy.quiet ? " ring-quiet" : ""}" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing on you right now.</p>`}${decLine(d, esc)}</div></div>`;
+  const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${pinBtn()}${close}</div>`;
+  return `<div class="oy-tray${oy.quiet ? " ring-quiet" : ""}" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${tabs}${body || `<p class="oy-none">${none[cur]}</p>`}${decLine(d, esc)}</div></div>`;
 }
 
 /** Where the corner sits: in the rail's column, at its width, its foot just
@@ -259,9 +264,9 @@ function onYou(d) {
   // it is the pill in the window's corner, as before, and not there at all
   // while nothing is on the reader.
   const count = n.now + n.old;
-  const label = `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
-  const pill = !tray && count && !oy.inRail
-    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="${n.now ? "What only you can do on this desk" : "Older asks, still waiting on you"}${oyOthers(n)}${esc(K?.chimed(" · ") || "")}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count}</span></button>` : "";
+  const label = count ? `${count} agent${count === 1 ? "" : "s"} waiting on you here` : "On you";
+  const pill = !tray && (count || n.todo) && !oy.inRail
+    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="Agents waiting on you on this desk, and what only you can do${oyOthers(n)}${esc(K?.chimed(" · ") || "")}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span></button>` : "";
   // A redraw replaces every button: the one the keyboard was on gets the
   // focus back, by what it does and to which row, or a press on a card
   // button dropped the hand to the page's body (W24).
@@ -470,10 +475,6 @@ const ONYOU_CSS = `
 .oy-pin:hover { background: var(--rule-2); color: var(--fg); }
 .oy-pin.on { color: var(--accent); }
 .oy-pin.on svg { fill: currentColor; }
-/* Older asks, under the fresh ones: dimmed, their age in their own line. */
-.oy-tray .oy-old > li { opacity: .72; }
-.oy-tray .oy-old > li:hover, .oy-tray .oy-old > li:focus-within { opacity: 1; }
-.oy-tray .dk-turn-list + .oy-old > li:first-child { border-top: 1px solid var(--rule); }
 /* An older ask and a card an agent removed are the corner's log rows (corner.js
    .cn-row): the title, then where and when, quiet (09-thread.js olderLine,
    awayRows). Removed says who and why under its title, and may take two

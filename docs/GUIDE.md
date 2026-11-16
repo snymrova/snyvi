@@ -1149,12 +1149,17 @@ Suggested in the rail's corner, where nothing they do moves the page.
   **+N more**. Left alone, it settles after a few seconds into the **On
   you** pill, which opens the tray: newest first, then Suggested.
   **Ctrl+Alt+Y** opens and closes it from anywhere on the desk; Esc or a
-  click elsewhere closes it. A turn goes quiet once the panel that asked
-  has closed, after half an hour, or once you have written to that panel
-  since: it no longer rises or rings, counts nowhere -- not the pill, not
-  Home, not the desk brief, not the six an agent may have waiting -- and
-  the tray shows it under the fresh ones, dimmed. After three days it is put away by
-  itself, as ✕ would. With the rail folded or hidden, nothing rises over a
+  click elsewhere closes it. The tray is the same three tabs as Home's box
+  and the corner's tray -- **Waiting**, **To do**, **News** -- with this
+  desk's rows, and its number is the agents waiting on you here, the one
+  count snyvi has. A question waits until you answer it, a plan from the
+  minute it was sent, and neither folds or dims with age. Claude's own
+  permission prompt, open in a panel, is a Waiting row too, with **Go to
+  panel**: it is answered only there. A turn goes quiet once you have
+  written to the panel that asked since: it no longer rings or counts, and
+  the tray shows it last, as one line. Each row's clock opens the same
+  **Later**: Tomorrow, Next week, or Not mine with a word for the agent.
+  With the rail folded or hidden, nothing rises over a
   panel: the pill lights in the window's corner. Claude's own question
   dialog is on screen in its panel already, so it neither rises nor waits
   in the corner; Home lists it.

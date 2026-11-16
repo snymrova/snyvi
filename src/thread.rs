@@ -171,9 +171,6 @@ pub const OLDER_S: i64 = 30 * 60;
 /// itself; it no longer is (`retire`). Kept for the tests that say so.
 #[cfg(test)]
 pub const RETIRE_S: i64 = 3 * 86400;
-/// A question goes after one day (1.65): the desk's Decisions shelf holds it
-/// from then (`crate::ledger`), so On you need not.
-pub const ASK_RETIRE_S: i64 = 86400;
 
 /// Where a thread is. Every move is allowed -- the reader and the agent both
 /// know better than a state machine -- and only `shipped` stamps a date.
@@ -1365,17 +1362,15 @@ pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()>
 /// away: recoverable by id (`restore_turn`), never deleted. Run where turns
 /// are read, so no timer is needed. How many went.
 ///
-/// 1.66: a question after a day (the desk's Decisions keep it) and snyvi's
-/// own "Who should know?" after a day; a chore never. A DNS record or a GA4
-/// id is the reader's until they say Done or Can't: of 101 errands, 72 were
-/// cleared by an agent or aged out at three days, most of them not done.
+/// 1.67: only snyvi's own "Who should know?", after a day. A question went
+/// after a day too, and its agent was told nothing: it waits until answered
+/// now, as a chore has since 1.66.
 pub fn retire(conn: &Connection, now: i64) -> Result<usize> {
     Ok(conn.execute(
         "UPDATE turns SET removed_at = ?1, removed_by = 'aged' WHERE answered_at = 0 AND removed_at = 0
-         AND ((kind = 'decide' AND created_at < ?3 AND until < ?3)
-              OR (kind = 'tell' AND created_at < ?2 AND until < ?2
-              AND NOT EXISTS (SELECT 1 FROM panes p WHERE p.id = turns.pane)))",
-        params![now, now - TELL_RETIRE_S, now - ASK_RETIRE_S],
+         AND kind = 'tell' AND created_at < ?2 AND until < ?2
+         AND NOT EXISTS (SELECT 1 FROM panes p WHERE p.id = turns.pane)",
+        params![now, now - TELL_RETIRE_S],
     )?)
 }
 
@@ -1440,7 +1435,8 @@ pub fn group_said(conn: &Connection, group: i64) -> Result<Vec<Turn>> {
 }
 
 /// What is waiting on the reader across every open desk, oldest first, each
-/// marked fresh or stale: Home's On you.
+/// marked fresh or stale: Home's On you. Past thirty it is the newest thirty
+/// (1.67): the cut was oldest-first, so the newest question fell off.
 pub fn waiting(conn: &Connection, now: i64) -> Result<Vec<Turn>> {
     let cols = TURN_COLS
         .split(',')
@@ -1449,11 +1445,12 @@ pub fn waiting(conn: &Connection, now: i64) -> Result<Vec<Turn>> {
         .join(", ");
     let mut st = conn.prepare(&format!(
         "SELECT {cols} FROM turns t JOIN desks d ON d.id = t.desk_id
-         WHERE t.removed_at = 0 AND t.answered_at = 0 AND t.until <= ?1 AND d.closed_at = 0 ORDER BY t.id LIMIT 30"
+         WHERE t.removed_at = 0 AND t.answered_at = 0 AND t.until <= ?1 AND d.closed_at = 0 ORDER BY t.id DESC LIMIT 30"
     ))?;
     let mut v: Vec<Turn> = st
         .query_map(params![now], row_to_turn)?
         .collect::<rusqlite::Result<_>>()?;
+    v.reverse();
     mark_stale(conn, &mut v, now)?;
     Ok(v)
 }
@@ -2492,8 +2489,8 @@ pub fn widget_heard(conn: &Connection, owner: i64, name: &str, live: &[String]) 
 
 mod at_stop;
 mod press;
-pub use press::group_turns;
 pub use at_stop::take_untold_here;
+pub use press::group_turns;
 pub mod pr_turns;
 #[cfg(test)]
 mod tests;

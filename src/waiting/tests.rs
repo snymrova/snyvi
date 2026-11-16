@@ -135,8 +135,9 @@ fn a_plan_is_approved_for_every_line_it_was_sent_for() {
     let p = plan_for(&conn, "7a1c2b3d4e").unwrap().unwrap();
     assert_eq!((p.desk, p.notes.clone(), p.ok_at), (d, vec![a, b], 0));
 
-    assert!(rows(&conn, 50 + PLAN_WAIT_S - 1).unwrap().is_empty());
-    let w = rows(&conn, 50 + PLAN_WAIT_S).unwrap();
+    // 1.67: from the minute it was sent, not a day on.
+    assert!(rows(&conn, 49).unwrap().is_empty());
+    let w = rows(&conn, 50).unwrap();
     assert_eq!(
         (w[0].kind, w[0].text.as_str(), w[0].notes.clone()),
         ("plan", "Plan 1.47", vec![a, b])

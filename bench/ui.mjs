@@ -2733,17 +2733,19 @@ async function deskRows(cdp, base, token) {
     // builtin keeps it running, since this bench's PATH has no /usr/bin.
     const started202 = await post(`/api/panes/${third}/start`, { cmd: "while :; do read -r x; done" }).catch(e => ({ error: String(e) }));
     await sleep(500);
-    const r202 = await fetch(`${base}/api/panes/${third}/handover`, { method: "POST", headers: TK, body: JSON.stringify({ kind: "do", text: "bench: a card on still-b", by: "bench-agent" }) });
+    // 1.67: the one count is agents waiting, so what is said of the other
+    // desks is a question asked there, not a chore.
+    const r202 = await fetch(`${base}/api/panes/${third}/ask`, { method: "POST", headers: TK, body: JSON.stringify({ text: "bench: a card on still-b", options: ["Yes", "No"], by: "bench-agent" }) });
     const asked202 = await r202.text().then(t => { try { return JSON.parse(t); } catch { return { status: r202.status, body: t }; } });
     const t202 = asked202.turn && asked202.turn.id;
-    const tipped = !!t202 && await until(`/\\d+ on other desks/.test(document.querySelector("#meta .oy-foot")?.dataset.tipSub || "")`, 40);
+    const tipped = !!t202 && await until(`/\\d+ waiting on other desks/.test(document.querySelector("#meta .oy-foot")?.dataset.tipSub || "")`, 40);
     const nAfter = await p.ev(handN);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     if (tipped) await p.clickOn("#meta .oy-foot");
     const trayOpen = tipped && await until(`!!document.querySelector("#onyou .oy-tray")`, 30);
     const listed202 = trayOpen && await p.ev(`!/bench: a card on still-b/.test(document.querySelector("#onyou .oy-tray").textContent)`);
     rows.push(["a desk's hand counts that desk, and its tray holds that desk's own", tipped && nAfter === nBefore && listed202,
-      !t202 ? `the hand-over answered ${JSON.stringify(asked202).slice(0, 120)}, its panel's start ${JSON.stringify(started202).slice(0, 120)}` : !tipped ? "the hand's tip never said what is on other desks" : nAfter !== nBefore ? `still-a's hand went from "${nBefore}" to "${nAfter}" for still-b's card` :
+      !t202 ? `the ask answered ${JSON.stringify(asked202).slice(0, 120)}, its panel's start ${JSON.stringify(started202).slice(0, 120)}` : !tipped ? "the hand's tip never said what is on other desks" : nAfter !== nBefore ? `still-a's hand went from "${nBefore}" to "${nAfter}" for still-b's card` :
         !trayOpen ? "the hand opened no tray" : !listed202 ? "still-b's card is in still-a's tray" : `still-a's hand stayed at "${nBefore}", and still-b's card is not in its tray`]);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     if (t202) await post(`/api/desks/${db}/turns/${t202}/remove`, {}).catch(() => {});
@@ -4124,21 +4126,19 @@ async function panelRows(cdp, base, token) {
       pinHeld && pinKept && pinOff,
       !trayUp ? "no tray with a pin" : !pinOn ? "the pin did not press" : !pinHeld ? "the tray closed under the pin" : !pinKept ? "the pin was not remembered" : !pinOff ? "the ✕ left it open, or pinned" : "held open, remembered, then closed and unpinned"]);
 
-    // #118: with nothing fresh, the pill says they are all older, and its
-    // tray opens onto them -- not onto one more "N older" to press in an
-    // empty box. 1.43: the pill is the rail's notch, its count in quiet ink
-    // (not `on`) and "all older" in its label; 1.44: the foot's button, and
-    // an older ask is one line in the tray (09-thread.js olderLine), not a
-    // turn's card. An hour on the page's clock makes every waiting turn an
-    // older one.
+    // 1.67 (was #118): age folds and dims nothing. An hour on the page's
+    // clock, a question is still lit in the hand, still counted, and whole
+    // in the tray: at half an hour it used to be one dimmed line under
+    // "Older", out of the count.
     await q.ev(`window.__now = Date.now; Date.now = () => window.__now.call(Date) + 3600e3; 1`);
-    const later = await agent("handover", { kind: "try", text: "bench: try the older tray", by: "bench-agent" });
+    const later = await agent("ask", { text: "bench: an hour old?", options: ["Yes", "No"], by: "bench-agent" });
     const laterTurn = (await later.json().catch(() => ({}))).turn?.id;
-    const olderPill = await until(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return !!b && !b.classList.contains('on') && /, all older$/.test(b.getAttribute('aria-label') || ""); })()`, 60);
-    if (olderPill) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
-    const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-older') && t.querySelectorAll('.dk-turn, .oy-old .cn-row').length >= 2; })()`, 30);
-    rows.push(["with nothing fresh the pill says older, and its tray opens onto them", olderOpen,
-      !olderPill ? `the pill read "${await q.ev(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray held only a fold to press" : "the pill said all older, and its tray opened onto them"]);
+    const olderPill = await until(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return !!b && b.classList.contains('on') && +b.querySelector('.n')?.textContent >= 1; })()`, 60);
+    if (olderPill && !(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    if (olderPill) await q.clickOn(`#onyou .oy-tab[data-k="waiting"]`).catch(() => {});
+    const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-old') && [...t.querySelectorAll('.dk-turn')].some(li => /an hour old/.test(li.textContent) && !!li.querySelector('[data-v="Yes"]')); })()`, 30);
+    rows.push(["an hour on, a question is still counted and whole in the tray", olderOpen,
+      !olderPill ? `the hand read "${await q.ev(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray folded it, or left it out" : "lit, counted, and answerable where it is"]);
     await q.ev(`Date.now = window.__now; document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
     for (const id of [keyTurn, laterTurn]) if (id) await agent(`turns/${id}`, { drop: true });
 

@@ -232,18 +232,25 @@ function trayOf(d, f, w) {
   return open.every(x => x.quiet_at > 0) ? "quiet" : "older";
 }
 
+/** The shelf a card is on, as the daemon has it (`onyou::shelf_of`): a
+ *  question is an agent waiting, a merge's tick is News, the rest To do. */
+const shelfOf = w => w.kind === "decide" ? "waiting" : w.kind === "tell" ? "news" : "todo";
+
 /** The tray's cards of one list, newest first, so the one that just rang
  *  is at the top (U6); by when each was asked, so an answer keeps its card's
- *  place. An older one is one line until opened. */
-function turnRows(d, f, esc, which) {
+ *  place. `open` is every card not gone quiet, whole, whatever its age
+ *  (1.67: half an hour old it was one dimmed line under "Older"); a quiet
+ *  one is one line until opened. `shelf` keeps the cards of one tab. */
+function turnRows(d, f, esc, which, shelf = "") {
   const drawn = new Set(), env = T && tEnv(d, esc);
   return f.turns.filter(w => shown(w) && (!w.answered_at || sendable.has(w.id) || changing.has(w.id) || w.ask_group))
     .sort((a, b) => b.id - a.id)
     .map(w => {
       const k = w.ask_group || w.id;
-      if (drawn.has(k) || trayOf(d, f, w) !== which) return "";
+      const tray = trayOf(d, f, w);
+      if (drawn.has(k) || (which === "open" ? tray !== "fresh" && tray !== "older" : tray !== which) || (shelf && shelfOf(w) !== shelf)) return "";
       drawn.add(k);
-      if (which === "older" && qClamp && !oldOpen.has(k) && T) {
+      if (which === "quiet" && qClamp && !oldOpen.has(k) && T) {
         const n = w.ask_group ? groupOf(f, k).filter(x => !x.answered_at).length : 1;
         return T.olderLine(env, w, n);
       }
@@ -251,7 +258,7 @@ function turnRows(d, f, esc, which) {
     }).join("");
 }
 
-/** The older asks opened from their line in the tray, by turn or card id;
+/** The quiet asks opened from their line in the tray, by turn or card id;
  *  forgotten when the tray closes. */
 const oldOpen = new Set();
 

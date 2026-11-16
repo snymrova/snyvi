@@ -30,6 +30,24 @@ impl Panes {
     }
 }
 
+impl Panes {
+    /// The running panels whose agent has a prompt of its own open
+    /// (`needs_you`), and since when: On you's "Go to panel" rows (1.67).
+    pub fn prompting(&self) -> Vec<(String, i64)> {
+        let live: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
+        let mut out: Vec<(String, i64)> = live
+            .iter()
+            .filter_map(|l| {
+                let s = &l.inner.lock().unwrap().status;
+                (s.running && s.agent == "needs_you")
+                    .then(|| (l.id.clone(), s.agent_since.unwrap_or_default()))
+            })
+            .collect();
+        out.sort();
+        out
+    }
+}
+
 impl Live {
     /// The reader's own press, typed by the daemon (1.67, plan f586a9fe09): an
     /// answer they chose on a card, or snyvi's fixed words for an Approve,

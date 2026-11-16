@@ -656,7 +656,10 @@
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
       const j = parse(ev); if (!j) return;
-      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent };
+      // Claude's own prompt opened or closed in a panel: On you has a row
+      // for it (1.67, src/onyou/prompt.rs), so the list is read again.
+      const you = s => s === "needs_you";
+      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) { if (you(p.status?.agent) !== you(j.agent)) cornerMod?.moved("panes"); p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent }; }
       renderDesks();
     });
     for (const ev of ["peeroffers", "peernotes", "peerdone", "peerreply"]) es.addEventListener(ev, onPeer);
