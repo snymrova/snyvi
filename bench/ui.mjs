@@ -263,7 +263,11 @@ async function main() {
       if (name === before) inRange = false;
       if (!inRange || (only && !only.test(name))) return;
       const t = Date.now();
-      const r = await rows();
+      // A section that throws is one failed row under its own name, and the
+      // run goes on (1.67): one `page: TypeError` used to end the whole run
+      // with no row printed and no word of which section it was in.
+      let r;
+      try { r = await rows(); } catch (e) { r = [["the section ran to its end", false, `it threw: ${(e && e.message) || e}`]]; }
       sections.push([`${name}  (${((Date.now() - t) / 1000).toFixed(1)} s)`, r]);
     };
     await section("the rail, 1280 px wide", () => railRows(p, url, md, send));
