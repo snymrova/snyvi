@@ -6,12 +6,11 @@ use super::{said, Session};
 use crate::client;
 use serde_json::{json, Value};
 
-const NEXT: &str = "Take the next piece of work from this desk's line: the user's goal and their ordered queue of notes. Call it \
-when the user tells you to work the line, or when snyvi started this panel for a note. It answers one note, \
-now claimed for this panel so no other agent takes it, with the command it is done when it passes, if the \
-user gave one. Calling it again answers the same note until you tick it. Then work it as any note: mark it \
-read, send the plan, wait for Approve, mark it working, run its done-when command yourself, tick it with the \
-commit. It never reorders the queue and never starts another agent.";
+const NEXT: &str = "Take the next note from this desk's line: the user's goal and their ordered queue. Call it \
+when the user says to work the line, or when snyvi started this panel for a note. It answers one note, claimed \
+for this panel, with its done-when command if the user gave one; again, the same note until you tick it. Work \
+it as any note: read, plan, wait for Approve, working, run its done-when yourself, tick with the commit. It \
+never reorders the queue or starts an agent.";
 
 pub(super) fn specs() -> Vec<Value> {
     vec![json!({

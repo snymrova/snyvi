@@ -177,7 +177,9 @@ pub struct OnYou {
     pub older_desks: usize,
 }
 
-/// Everything that is the reader's now, ranked, with its counts.
+/// Everything that is the reader's now, ranked, with its counts. The
+/// daemon passes its prompts (`gather_with`); the tests have none.
+#[cfg(test)]
 pub fn gather(conn: &Connection, now: i64) -> Result<OnYou> {
     gather_with(conn, now, &[])
 }

@@ -20,11 +20,10 @@ from read_desk_notes), and the folder it lives in. Call it when you take the wor
 updates that thread instead of making a second. It becomes this panel's thread, and the one before it \
 rests: move it to shipped first if it is done.";
 
-const MOVE: &str = "Move this panel's thread: a stage (idea, planned, building, review, waiting, shipped, \
-parked), and with parked the next step to pick it up by. Add a PR number or more note ids. Once snyvi has \
-seen the thread's branch or PR it reads building, review and shipped from the commits and the merge, and \
-refuses them from you: park it, or say told with url once the user posts it and says where. You never \
-post, you draft.";
+const MOVE: &str = "Move this panel's thread to a stage (idea, planned, building, review, waiting, shipped, \
+parked); with parked, the next step. Add a PR number or note ids. Once snyvi has seen the branch or PR it reads \
+building, review and shipped from git and refuses them from you: park it, or say told with url once the user \
+posts it. You never post.";
 
 const ASK: &str = "Ask the user to decide what you are stuck on: a question, two to four short options, the one \
 you recommend; up to four as questions. It goes to their Waiting; their press comes into this panel as your \
