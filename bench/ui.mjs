@@ -4941,7 +4941,9 @@ async function senderRows(cdp, base, token) {
   const P = id => `.pn[data-id="${id}"]`;
   const onRow = `document.querySelector("#toc .dk-pane.on .dk-focus")?.dataset.focus`;
   const focusOn = async id => { await q.clickOn(`${P(id)} .pn-body`); return until(`${onRow} === "${id}"`); };
-  const read = async id => { await until(`!!document.querySelector('#toc a[data-read="${id}"]')`); await q.ev(`document.querySelector('#toc a[data-read="${id}"]').click(); 1`); return until(`!document.querySelector("#chrome .over").hidden && document.querySelector("#toc .dk-doc.on a")?.dataset.read === "${id}"`); };
+  // Since 1.67 the rail lists only what waits to be read (#236), so a page
+  // read once is put back on the queue before it is opened from there again.
+  const read = async id => { await post("/api/queue/unread", { ids: [id] }, TK); await until(`!!document.querySelector('#toc a[data-read="${id}"]')`); await q.ev(`document.querySelector('#toc a[data-read="${id}"]').click(); 1`); return until(`!document.querySelector("#chrome .over").hidden && document.querySelector("#toc .dk-doc.on a")?.dataset.read === "${id}"`); };
   const ex = `document.querySelector("#chrome .over-x")`;
   const docTop = `Math.round(document.querySelector("#doc").getBoundingClientRect().top * 10) / 10`;
   try {
