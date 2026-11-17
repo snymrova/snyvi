@@ -1788,7 +1788,7 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
     } else {
         String::new()
     };
-    let working = mark.stage == "working";
+    let held = matches!(mark.stage.as_str(), "working" | "planned"); // its Approve is typed there
     Ok(conn.execute(
         // A new plan is a new Approve's to give (`crate::waiting`).
         "UPDATE desk_notes SET stage = ?3, stage_by = ?4, stage_doc = CASE WHEN ?5 != '' THEN ?5 ELSE stage_doc END,
@@ -1805,8 +1805,8 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
             by,
             doc,
             now,
-            if working { mark.pane.as_str() } else { "" },
-            if working { mark.session.as_str() } else { "" },
+            if held { mark.pane.as_str() } else { "" },
+            if held { mark.session.as_str() } else { "" },
             reply_of(&mark.say)
         ],
     )? > 0)

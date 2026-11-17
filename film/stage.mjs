@@ -306,6 +306,12 @@ for (const desk of desks) {
     if (!stage) continue;
     const at = `/api/panes/${panes[desk.name][pane]}/notes/${note.id}`;
     if (stage === "done") await api(`${at}/tick`, { by: "claude-code", commit: head(desk.name), about: plan.id });
+    else if (stage === "working") {
+      // 1.67: working rests on a plan the reader approved, as an agent's does.
+      await api(`${at}/mark`, { stage: "planned", by: "claude-code", about: plan.id });
+      await api(`/api/desks/${desk.id}/plans/${plan.id}/approve`, {}, asPage);
+      await api(`${at}/mark`, { stage, by: "claude-code" });
+    }
     else await api(`${at}/mark`, { stage, by: "claude-code", about: stage === "planned" ? plan.id : "" });
     await sleep(300);
   }

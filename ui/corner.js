@@ -289,6 +289,8 @@ export function init(ctx) {
      *  the desk does not count from its own list (a dated line, a routine's
      *  line, a plan, a left-off), and `others`, every other desk's. */
     onyouHtml, onyou: () => L.onyou, shelf: shelfNow, tabs: oyTabs, counts,
+    // A row answered here and still saying so, with its Undo (Home keeps its box).
+    said: () => [...L.said].some(([, v]) => v.item),
     /** A desk's own count and its To do (1.67). */
     deskLeft: desk => agentsOf(oyPart(desk, "desk", L.onyou?.rows)),
     deskTodo: desk => oyPart(desk, "here", L.onyou?.rows).filter(r => r.shelf === "todo").length,
@@ -859,7 +861,9 @@ function oyRow(r, all = false) {
     `<span class="cn-acts"><button type="button" class="cn-opt rec" data-a="cn-desk" data-k="${r.desk}" data-v="${r.slot || 0}" data-tip="Go to panel" data-tip-sub="Claude's own prompt is on its screen">Go to panel</button></span></span></li>`;
   const who = r.kind === "routine" ? esc(r.routine) : esc(r.by && r.kind !== "due" ? r.by : OY_BY[r.kind]);
   const when = r.kind === "due" ? oyWhen(r) : r.kind === "routine" ? `ran ${c.relShort(r.at)}` : c.relShort(r.at);
-  const thing = r.doc ? `<button type="button" class="cn-link cn-doc" data-a="cn-oy-open" data-k="${esc(r.doc)}" data-tip="Open" data-tip-sub="${esc(r.doc_title)}">${esc(r.doc_title || "its document")}</button>`
+  // A plan's row says its title already: the link under it says what it is.
+  const named = r.doc_title && r.doc_title !== r.text ? r.doc_title : r.kind === "plan" ? "Read the plan" : "its document";
+  const thing = r.doc ? `<button type="button" class="cn-link cn-doc" data-a="cn-oy-open" data-k="${esc(r.doc)}" data-tip="Open" data-tip-sub="${esc(r.doc_title)}">${esc(named)}</button>`
     : r.no_doc ? `<span class="cn-nodoc">no document</span>` : "";
   const [step, a] = OY_STEP[r.kind] || [];
   // A plan's Approve names the notes it approves (1.56, audit B2).
@@ -955,7 +959,7 @@ function oyAct(a, b) {
   if (a === "cn-oy-done") return oyDo(key, `Done: ${r.text}`, `/api/desks/${d}/notes/${r.note}`, { done: true }, [`/api/desks/${d}/notes/${r.note}`, { done: false }]);
   if (a === "cn-oy-keep") return oyDo(key, `Kept on ${r.desk_name}`, `/api/desks/${d}/notes/${r.note}/keep`, {});
   if (a === "cn-oy-approve") return oyDo(key, "Approved", `/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, {}, [`/api/desks/${d}/plans/${encodeURIComponent(r.doc)}/approve`, { undo: true }],
-    { typed: "Approved · the go-ahead is typed into its panel", later: why => `Approved · ${why}, so its panel hears it at its next prompt` });
+    { typed: "Approved · the go-ahead is typed into its panel", later: why => `Approved · ${why}, so nothing was typed: the next Claude on the line sees it approved` });
   if (a === "cn-oy-go") return oyDo(key, `Go ahead: ${r.routine} resumes inside its Waits`, `/api/desks/${d}/leftoff`, { go: true }, null);
   const v = b.dataset.v;
   if (a === "cn-oy-later") {

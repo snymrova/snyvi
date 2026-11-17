@@ -1426,7 +1426,7 @@ function onyouBox(j) {
   const quietRows = quiet.map(d => `<li><span class="hm-ab"><span class="hm-t">Quiet since ${new Date(d.touched * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${plural(d.open, "line")} open</span><span class="hm-acts">` +
     (arrSaid.get(`q${d.id}:`) ? saidRow(arrSaid.get(`q${d.id}:`)) : `<a class="hm-t hm-wt-d" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><button type="button" class="hm-link" data-hm="wpark" data-k="${d.id}" data-tip="Park it" data-tip-sub="the desk goes on the shelf; nothing on it is closed">Park it</button>`) + `</span></span></li>`).join("");
   const rows = cornerMod.onyouHtml(true);
-  if (!o.left && !o.todo && !(o.news || []).length && !quietRows && !o.ran_quiet && !o.older) return "";
+  if (!o.left && !o.todo && !(o.news || []).length && !quietRows && !o.ran_quiet && !o.older && !cornerMod.said?.()) return "";
   // 1.66: the tray no longer opens by itself, so the box has no ⋯ for it.
   const more = "";
   // The count once, and the sentence's clauses beside it, not again under it (C2).
@@ -1457,7 +1457,7 @@ async function waitClick(k, id, b) {
   try {
     if (k === "udone") { await api(`/api/desks/${id}/notes/${n}`, { done: true }); sayRow(key, { id, text }, "Ticked"); }
     else if (k === "ulater") { await api(`/api/desks/${id}/notes/${n}`, { due: "tomorrow 9" }); sayRow(key, { id, text }, "Moved to tomorrow, 9:00"); }
-    else if (k === "wplan") { const j = await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, j && j.sent === "typed" ? "Approved · the go-ahead is typed into its panel" : `Approved · ${(j && j.why) || "its panel is not at its prompt"}, so it hears it at its next prompt`); }
+    else if (k === "wplan") { const j = await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, j && j.sent === "typed" ? "Approved · the go-ahead is typed into its panel" : `Approved · ${(j && j.why) || "its panel is not at its prompt"}, so nothing was typed: the next Claude on the line sees it approved`); }
     else if (k === "wok") { await api(`/api/desks/${id}/leftoff`, { approve: true }); sayRow(key, { id, text }, "Approved: its panel hears it next"); }
     else if (k === "onme") await api(`/api/desks/${id}/leftoff`, { mark: n });
     else if (k === "wlater" && x) {

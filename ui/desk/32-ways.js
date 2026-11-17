@@ -123,7 +123,8 @@ let addrQuiet = false;
 function addrSet(v, push) {
   const d = current();
   if (addrQuiet || !d || reading != null || location.pathname !== `/desk/${d.id}`) return;
-  const hash = v === "panels" ? "" : `#view=${encodeURIComponent(v)}`;
+  // The name alone is encoded: the address reads `board:pricing`, as typed.
+  const hash = v === "panels" ? "" : `#view=${v.startsWith("board:") ? "board:" + encodeURIComponent(v.slice(6)) : encodeURIComponent(v)}`;
   if (location.hash === hash) return;
   const url = `/desk/${d.id}${hash}`;
   if (push) history.pushState({ desk: d.id }, "", url);

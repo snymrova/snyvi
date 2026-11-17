@@ -122,7 +122,10 @@ async function hideSet(ids, hidden) {
     barUndo = ids.length === 1 ? ids[0] : "";
     say(ids.length > 1 ? `${ids.length} sections hidden. They are kept, under "hidden" above.` : `Hidden. It is kept, under "hidden" above.`);
   }
-  load();
+  // The view was where the picked section is; a hide leaves it looking at
+  // nothing and a show puts one where it may not be. Fit what is shown.
+  await load();
+  if (at === o && shown().length) fit();
 }
 
 /** The hidden sections' chip in the top bar, and its list when open. */

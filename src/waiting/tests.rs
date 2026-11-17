@@ -127,10 +127,14 @@ fn a_plan_is_approved_for_every_line_it_was_sent_for() {
             stage: "planned".into(),
             by: "claude-code".into(),
             doc: "7a1c2b3d4e".into(),
+            pane: "p1".into(),
             ..Mark::default()
         };
         assert!(desk::mark_note(&conn, d, id, &m, 50).unwrap());
     }
+    // The panel that planned is kept: its Approve is typed there (1.67).
+    let ns = desk::notes(&conn, d).unwrap();
+    assert!(ns.iter().all(|n| n.stage_pane == "p1"));
     assert_eq!(plan_for(&conn, "nope").unwrap(), None);
     let p = plan_for(&conn, "7a1c2b3d4e").unwrap().unwrap();
     assert_eq!((p.desk, p.notes.clone(), p.ok_at), (d, vec![a, b], 0));
