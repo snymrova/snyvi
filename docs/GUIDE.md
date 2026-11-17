@@ -464,9 +464,14 @@ is how `snyvi mcp` knows which desk it is in; and it writes snyvi's
 hooks to `~/.codex/hooks.json`, the same events as Claude Code's, so the
 panel shows what Codex is doing and Codex is handed the desk brief and
 the desk's changes at each prompt. Codex runs no hook it has not been
-shown: open `/hooks` in Codex once and trust them. Plans and auto-send
-stay Claude Code's; Codex has neither an ExitPlanMode nor a file path in
-its edit hook.
+shown: open `/hooks` in Codex once and trust them. Since 1.67 a press
+reaches a Codex panel as it does a Claude one: an Approve, or an answer
+you give on Home or in the corner, is typed at its prompt when it is at
+rest there, and an answer pressed while it works goes back as its turn
+stops. Its panel offers the conversation back with `codex resume`. snyvi
+tells the two apart by the conversation's id: Codex's are UUIDs of version
+7, Claude Code's of version 4. Plans and auto-send stay Claude Code's;
+Codex has neither an ExitPlanMode nor a file path in its edit hook.
 
 The viewer says the same thing, on *Agents* (`/connect`): one row per agent, read by the daemon from the
 agent's own file, saying whether it is set up, not set up, or

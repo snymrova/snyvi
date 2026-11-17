@@ -1495,8 +1495,8 @@ pub fn set_cwd(conn: &Connection, id: &str, cwd: &str) -> Result<bool> {
     )? > 0)
 }
 
-/// A Claude Code session id: a UUID, lowercase hex and four dashes. Nothing
-/// else is stored or put on a command line.
+/// An agent's session id, Claude Code's or Codex's (`agents::session_agent`): a
+/// UUID, lowercase hex and four dashes. Nothing else is stored or run.
 pub fn valid_session(s: &str) -> bool {
     s.len() == 36
         && s.bytes().enumerate().all(|(i, b)| match i {
@@ -2472,7 +2472,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
     let session: String = r.get(at + 5)?;
     let resume = Some(session.as_str())
         .filter(|s| valid_session(s))
-        .and_then(|s| crate::agents::resume_cmd(crate::agents::KEEPS_SESSIONS, s))
+        .and_then(|s| crate::agents::resume_cmd(crate::agents::session_agent(s), s))
         .unwrap_or_default();
     Ok(Pane {
         id: r.get(at)?,

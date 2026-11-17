@@ -412,16 +412,14 @@ fn keep_skill(event: &str) {
 /// (`ours`) is theirs, from `--name` or `/rename`. One of ours is replaced,
 /// since a conversation resumed in another panel lives there now.
 ///
-/// And only for a Claude Code session, which is the one with a 36-character
-/// id: Codex takes the same hook and the same context, but refuses an output
-/// field it does not know, and `sessionTitle` is one.
+/// And only for a Claude Code session (`claude_session`): Codex takes the
+/// same hook and the same context, but refuses an output field it does not
+/// know, and `sessionTitle` is one -- a refused output is the whole output,
+/// the brief with it (its `session-start.command.output` schema).
 fn session_start_output(event: &Event, context: &str, title: &str, desk: &str) -> Option<String> {
     let titled = matches!(event.source.get(), Some("startup" | "resume" | "fork"))
         && !title.is_empty()
-        && event
-            .session_id
-            .get()
-            .is_some_and(crate::desk::valid_session)
+        && event.session_id.get().is_some_and(claude_session)
         && event
             .session_title
             .get()
@@ -449,10 +447,7 @@ fn prompt_output(event: &Event, context: &str, title: &str, desk: &str) -> Optio
     let titled = !title.is_empty()
         && now != title
         && (now.is_empty() || titled_by_us(now, desk))
-        && event
-            .session_id
-            .get()
-            .is_some_and(crate::desk::valid_session);
+        && event.session_id.get().is_some_and(claude_session);
     let said = !context.trim().is_empty();
     if !said && !titled {
         return None;
@@ -487,10 +482,7 @@ fn prompt_output(event: &Event, context: &str, title: &str, desk: &str) -> Optio
 /// the chat in one session. Both words in one message when both apply.
 fn stop_output(event: &Event) -> Option<String> {
     if event.stop_hook_active.as_ref().and_then(Value::as_bool) == Some(true)
-        || !event
-            .session_id
-            .get()
-            .is_some_and(crate::desk::valid_session)
+        || !event.session_id.get().is_some_and(claude_session)
     {
         return None;
     }
@@ -635,6 +627,18 @@ fn sent_this_turn(path: &str) -> bool {
 /// carries what a pipeline's runner reads, and its answer -- the panel's
 /// stage is to hand over -- keeps the turn going for that; otherwise the
 /// nudge about a `! command`, when the reply had one.
+/// A Claude Code session's id (`agents::session_agent`): what the output
+/// fields only Claude Code takes are for. Codex's ids are UUIDs too, so the
+/// shape alone no longer says it (1.67).
+fn claude_session(s: &str) -> bool {
+    crate::desk::valid_session(s) && crate::agents::session_agent(s) == "claude"
+}
+
+/// And a Codex session's: the one whose Stop takes another form.
+fn codex_session(s: &str) -> bool {
+    crate::desk::valid_session(s) && crate::agents::session_agent(s) == "codex"
+}
+
 fn stopped(paths: &Paths, pane: &str, session: Option<&str>, event: &Event) {
     let active = event.stop_hook_active.as_ref().and_then(Value::as_bool) == Some(true);
     let handoff = client::agent_stop(
@@ -646,7 +650,7 @@ fn stopped(paths: &Paths, pane: &str, session: Option<&str>, event: &Event) {
         active,
     );
     if let Some(out) = handoff
-        .map(|said| stop_feedback(&said))
+        .map(|said| stop_feedback(&said, !session.is_some_and(codex_session)))
         .or_else(|| stop_output(event))
     {
         println!("{out}");
@@ -654,11 +658,16 @@ fn stopped(paths: &Paths, pane: &str, session: Option<&str>, event: &Event) {
 }
 
 /// What a Stop hook prints to keep the turn going with `said` as what
-/// Claude is told: answers pressed in snyvi while it worked (`server::api_agent`). Feedback
+/// the agent is told: answers pressed in snyvi while it worked (`server::api_agent`). Feedback
 /// rather than a `block`, which Claude Code shows the reader as a "Stop hook
 /// error"; this continues the turn the same way and reads as "Stop hook
-/// feedback" (hooks.md, Stop decision control).
-fn stop_feedback(said: &str) -> String {
+/// feedback" (hooks.md, Stop decision control). Codex has no such field on
+/// a Stop and refuses one it does not know: its way is the `block`, whose
+/// `reason` it takes as the turn's next prompt (1.67).
+fn stop_feedback(said: &str, claude: bool) -> String {
+    if !claude {
+        return json!({ "decision": "block", "reason": said }).to_string();
+    }
     json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": said } })
         .to_string()
 }
@@ -1786,9 +1795,28 @@ mod tests {
         assert!(stop_output(&stop(reply, json!(true))).is_none());
         assert!(stop_output(&stop("All done.", json!(false))).is_none());
         assert!(stop_output(&stop(reply, json!("odd"))).is_some());
-        let codex = event(json!({ "hook_event_name": "Stop", "session_id": "codex-1",
-            "last_assistant_message": reply }));
+        let codex = event(
+            json!({ "hook_event_name": "Stop", "session_id": "019a3c4e-5b6d-7e8f-9a0b-1c2d3e4f5a6b",
+            "last_assistant_message": reply }),
+        );
         assert!(stop_output(&codex).is_none());
+        // An answer pressed while it worked: Claude Code takes it as
+        // feedback, Codex as a block whose reason is its next prompt -- the
+        // only Stop fields its schema has.
+        let fed: Value =
+            serde_json::from_str(&stop_feedback("Answered in snyvi: yes", true)).unwrap();
+        assert_eq!(
+            fed["hookSpecificOutput"]["additionalContext"],
+            "Answered in snyvi: yes"
+        );
+        let fed: Value =
+            serde_json::from_str(&stop_feedback("Answered in snyvi: yes", false)).unwrap();
+        assert_eq!(
+            fed,
+            json!({ "decision": "block", "reason": "Answered in snyvi: yes" })
+        );
+        assert!(codex_session("019a3c4e-5b6d-7e8f-9a0b-1c2d3e4f5a6b"));
+        assert!(!codex_session("0a1b2c3d-4e5f-4061-8728-394a5b6c7d8e"));
     }
 
     /// A reply that is a document -- Mermaid, or sections with a table or at a
@@ -2010,7 +2038,7 @@ fn main() {}
         // Codex: the brief, and no title, which its output schema would refuse.
         let codex = event(
             json!({ "hook_event_name": "SessionStart", "source": "startup",
-            "session_id": "thr_0196a7", "model": "gpt-5-codex" }),
+            "session_id": "019a3c4e-5b6d-7e8f-9a0b-1c2d3e4f5a6b", "model": "gpt-5-codex" }),
         );
         let o = session_start_output(&codex, "the brief", "ledger · panel 2", "ledger").unwrap();
         let o = serde_json::from_str::<Value>(&o).unwrap()["hookSpecificOutput"].clone();
@@ -2092,7 +2120,11 @@ fn main() {}
             None,
             "already"
         );
-        assert_eq!(title(None, "thr_0196a7"), None, "Codex");
+        assert_eq!(
+            title(None, "019a3c4e-5b6d-7e8f-9a0b-1c2d3e4f5a6b"),
+            None,
+            "Codex"
+        );
     }
 
     /// ExitPlanMode's plan and its file are read from the input a

@@ -12,7 +12,8 @@
 //! document's text, or anything a friend sent: what goes into a terminal is
 //! input, and snyvi makes no input from what it received. It is typed only on
 //! a capability route, the window's, so a token still starts nothing; and
-//! only into a Claude session at rest at its prompt (`pane::Live::press`).
+//! only into an agent's session (Claude Code's or Codex's) at rest at its
+//! prompt (`pane::Live::press`).
 //! When that is not so, nothing is typed and the answer goes as it always
 //! did, at the turn's end (the Stop hook) or with the panel's next prompt.
 
@@ -27,9 +28,11 @@ fn said(r: Result<(), &'static str>) -> serde_json::Value {
     }
 }
 
-/// A Claude Code session's id, as the page's Send now asked for one: a
-/// panel whose agent left no such id may be a shell, where a line typed is a
-/// command run.
+/// An agent's session id, as the page's Send now asked for one: a panel
+/// whose agent left no such id may be a shell, where a line typed is a
+/// command run. Claude Code's or Codex's (1.67, `agents::session_agent`):
+/// both hooks name their conversation, both prompts take a bracketed paste
+/// and an Enter, so an approved Codex no longer waits for the reader to type.
 fn session_ok(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 36
@@ -40,7 +43,7 @@ fn session_ok(s: &str) -> bool {
 }
 
 /// Type `lines` into `pane` of `desk`, if it is a panel a press may go to:
-/// on this desk, holding a Claude session, and not a routine's panel, whose
+/// on this desk, holding an agent's session, and not a routine's panel, whose
 /// answers start its next run instead (`routine_run`).
 fn press(app: &App, desk: i64, pane: &str, lines: &[String]) -> Result<(), &'static str> {
     if pane.is_empty() {
@@ -54,7 +57,7 @@ fn press(app: &App, desk: i64, pane: &str, lines: &[String]) -> Result<(), &'sta
             return Ok(Err("its panel is gone"));
         }
         if !session_ok(&p.pane.agent_session) {
-            return Ok(Err("no Claude is in its panel"));
+            return Ok(Err("no agent session is in its panel"));
         }
         if crate::routine::of_pane(c, pane)?.is_some() {
             return Ok(Err("a routine hears it at its next run"));
@@ -151,6 +154,8 @@ mod tests {
         assert!(session_ok("00b483b7-1c61-4366-8ed7-1d95fbef6a17"));
         assert!(!session_ok(""));
         assert!(!session_ok("codex-1"));
+        // A Codex thread id is a session too (1.67): version 7.
+        assert!(session_ok("019a3c4e-5b6d-7e8f-9a0b-1c2d3e4f5a6b"));
         assert!(!session_ok("00B483B7-1C61-4366-8ED7-1D95FBEF6A17"));
         assert!(!session_ok("00b483b7-1c61-4366-8ed7-1d95fbef6a1"));
         assert!(!session_ok("00b483b7x1c61-4366-8ed7-1d95fbef6a17"));

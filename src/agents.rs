@@ -76,11 +76,20 @@ pub struct Agent {
     pub resume: Option<&'static str>,
 }
 
-/// The agent whose conversation a desk's panel keeps. Only Claude Code's
-/// hook tells a pane which conversation runs in it
-/// (`server::api_agent::pane_agent`), so a pane's `agent_session` is always
-/// one of Claude Code's.
-pub const KEEPS_SESSIONS: &str = "claude";
+/// Whose conversation `session` is, of the agents whose hook tells a pane
+/// which conversation runs in it (`server::api_agent::pane_agent`): Claude
+/// Code's or Codex's (1.67). Both hand the hook a UUID. Claude Code's are
+/// random, version 4 (its hooks docs: `00893aaf-19fa-41d2-...`); Codex's are
+/// always version 7, which its own `ThreadId` says some uses rely on. So the
+/// version digit tells them apart, with no word from the hook a snyvi from
+/// before this one would not have stored: a 7 is Codex's, anything else
+/// Claude Code's, as every session was taken to be until 1.67.
+pub fn session_agent(session: &str) -> &'static str {
+    match session.as_bytes().get(14) {
+        Some(b'7') => "codex",
+        _ => "claude",
+    }
+}
 
 /// The command that goes back to conversation `session` of agent `id`, or
 /// None when that agent cannot be taken back to one.
@@ -118,7 +127,7 @@ pub fn all() -> Vec<Agent> {
                 .as_ref()
                 .map(|c| Where::File(c.join("AGENTS.md"))),
             client: &["codex"],
-            resume: None,
+            resume: Some("codex resume"),
         },
         Agent {
             id: "cursor",
@@ -1052,19 +1061,23 @@ mod tests {
     }
 
     /// The panel types what this says, and the daemon runs it: one place for
-    /// the command, and only for the agent whose conversations a pane keeps.
+    /// the command, the one of the agent whose conversation the pane kept.
     #[test]
     fn a_kept_conversation_resumes_with_its_agents_own_command() {
-        let id = "0b7c2d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e";
+        let claude = "0b7c2d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e";
+        // A Codex thread id, as `ThreadId::new` makes them: version 7.
+        let codex = "019a3c4e-5b6d-7e8f-9a0b-1c2d3e4f5a6b";
+        assert_eq!(session_agent(claude), "claude");
+        assert_eq!(session_agent(codex), "codex");
         assert_eq!(
-            resume_cmd(KEEPS_SESSIONS, id).as_deref(),
+            resume_cmd(session_agent(claude), claude).as_deref(),
             Some("claude --resume 0b7c2d0e-1f2a-4b3c-9d4e-5f6a7b8c9d0e")
         );
-        assert_eq!(resume_cmd("codex", id), None, "no conversation it told us");
-        assert_eq!(resume_cmd("nobody", id), None);
-        assert!(all()
-            .iter()
-            .any(|a| a.id == KEEPS_SESSIONS && a.resume.is_some()));
+        assert_eq!(
+            resume_cmd(session_agent(codex), codex).as_deref(),
+            Some("codex resume 019a3c4e-5b6d-7e8f-9a0b-1c2d3e4f5a6b")
+        );
+        assert_eq!(resume_cmd("nobody", claude), None);
     }
 
     #[test]

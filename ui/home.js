@@ -1457,7 +1457,7 @@ async function waitClick(k, id, b) {
   try {
     if (k === "udone") { await api(`/api/desks/${id}/notes/${n}`, { done: true }); sayRow(key, { id, text }, "Ticked"); }
     else if (k === "ulater") { await api(`/api/desks/${id}/notes/${n}`, { due: "tomorrow 9" }); sayRow(key, { id, text }, "Moved to tomorrow, 9:00"); }
-    else if (k === "wplan") { const j = await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, j && j.sent === "typed" ? "Approved · the go-ahead is typed into its panel" : `Approved · ${(j && j.why) || "its panel is not at its prompt"}, so nothing was typed: the next Claude on the line sees it approved`); }
+    else if (k === "wplan") { const j = await api(`/api/desks/${id}/plans/${encodeURIComponent(n)}/approve`, {}); sayRow(key, { id, text }, j && j.sent === "typed" ? "Approved · the go-ahead is typed into its panel" : `Approved · ${(j && j.why) || "its panel is not at its prompt"}, so nothing was typed: the next agent on the line sees it approved`); }
     else if (k === "wok") { await api(`/api/desks/${id}/leftoff`, { approve: true }); sayRow(key, { id, text }, "Approved: its panel hears it next"); }
     else if (k === "onme") await api(`/api/desks/${id}/leftoff`, { mark: n });
     else if (k === "wlater" && x) {
