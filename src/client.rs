@@ -1345,11 +1345,18 @@ pub fn has_friends() -> Option<bool> {
 
 /// Offer a document to a friend, from this pane: `offer_document`. The
 /// daemon writes the question for the reader and sends nothing.
-pub fn offer_document(paths: &Paths, pane: &str, to: &str, id: &str, by: &str) -> Result<Value> {
+pub fn offer_document(
+    paths: &Paths,
+    pane: &str,
+    to: &str,
+    id: &str,
+    review: bool,
+    by: &str,
+) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/offer"),
-        serde_json::json!({ "to": to, "doc": id, "by": by }),
+        serde_json::json!({ "to": to, "doc": id, "by": by, "review": review }),
     )?;
     match resp.status().as_u16() {
         201 => Ok(resp.body_mut().read_json()?),

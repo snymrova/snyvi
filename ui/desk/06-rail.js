@@ -1301,9 +1301,11 @@ async function promise(d, x, f) {
 /** Send to…: the line as it stands, to that friend, a line for their list
  *  -- not a promise; from the desk where it was written, not only from
  *  Home's Note… (audit 6f451571c6, F20). Said in a toast, as Copy is. */
-async function sendLine(x, f) {
+async function sendLine(d, x, f) {
   let r;
-  try { r = await ctx.api(`/api/peers/${f.id}/note`, { text: x.text }); }
+  // The desk goes with it (1.67): its folder lands the line on the friend's
+  // desk for the same repository.
+  try { r = await ctx.api(`/api/peers/${f.id}/note`, { text: x.text, desk: d.id }); }
   catch (e) { ctx.toast(`Could not send it to ${f.name}`, e); return; }
   ctx.toast(r?.sent ? `Sent to ${f.name}` : `Waiting for ${f.name}; it goes when they can be reached`, x.text);
 }

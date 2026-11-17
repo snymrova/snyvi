@@ -484,6 +484,9 @@ pub(crate) struct Talk {
     /// The reader's own document: where it went, each friend's newest send
     /// and what became of it (1.49, F2), said in Send to…'s place.
     pub(crate) sent: Vec<SentTo>,
+    /// A friend's document they asked the reader to review, not answered
+    /// yet (1.67): the head says so, with Approve and Changes….
+    pub(crate) review: bool,
 }
 
 /// One friend a document went to, and how far it got.
@@ -543,12 +546,14 @@ pub(crate) fn talk(app: &App, doc: &Doc) -> Talk {
             })
             .collect()
     };
+    let review = reply_to.is_some() && app.store.peer_review_asked(&doc.id);
     Talk {
         replies,
         reply_to,
         from: friend.map(|p| p.name),
         plan: None,
         sent,
+        review,
     }
 }
 
@@ -666,16 +671,7 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
             e(&row)
         ));
     }
-    // One line back to them, in a box the page opens (`ui/peer.js`).
-    if let Some(to) = &talk.reply_to {
-        acts.push_str(&format!(
-            "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"reply\" data-send=\"{}\" data-send-title=\"{}\" data-to=\"{}\">Reply to {}…</button>",
-            q(&doc.id),
-            q(&doc.title),
-            q(to),
-            e(to)
-        ));
-    }
+    acts.push_str(&answer_acts(doc, talk));
     if friends >= 2 {
         acts.push_str(&send_button(doc, &Talk::default(), ""));
     }
@@ -683,6 +679,40 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         "<div class=\"doc-acts\" style=\"display:flex;flex-wrap:wrap;gap:2px 18px;margin:6px 0 0;font-size:var(--fs-ui);color:var(--fg-3)\">{acts}</div>"
     );
     head(doc, body, &sub, &acts, talk)
+}
+
+/// One line back to the friend, in a box the page opens (`ui/peer.js`).
+/// Asked to review (1.67): Approve says it in one press, and Changes… is the
+/// same reply box; either answers the ask, under both copies' heads.
+fn answer_acts(doc: &Doc, talk: &Talk) -> String {
+    let (e, q) = (
+        html_escape::encode_text,
+        html_escape::encode_double_quoted_attribute,
+    );
+    let mut acts = String::new();
+    if let Some(to) = &talk.reply_to {
+        if talk.review {
+            acts.push_str(&format!(
+                "<span class=\"doc-review\" style=\"color:var(--warn)\">{} asks you to review this</span><button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"approve\" data-send=\"{}\" data-send-title=\"{}\" data-to=\"{}\">Approve</button>",
+                e(to),
+                q(&doc.id),
+                q(&doc.title),
+                q(to)
+            ));
+        }
+        acts.push_str(&format!(
+            "<button type=\"button\" class=\"doc-send uc-link\" data-w=\"send\" data-act=\"reply\" data-send=\"{}\" data-send-title=\"{}\" data-to=\"{}\">{}</button>",
+            q(&doc.id),
+            q(&doc.title),
+            q(to),
+            if talk.review {
+                "Changes…".to_string()
+            } else {
+                format!("Reply to {}…", e(to))
+            }
+        ));
+    }
+    acts
 }
 
 /// Send to…, in a head. Once the reader's own document went somewhere it

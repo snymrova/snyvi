@@ -908,7 +908,7 @@ export function actions(el) {
       // An undated open line of the reader's own can go to a friend as a line
       // (F20). A dated one goes as a promise, above: its text has the date
       // cut out, and a plain send would lose it.
-      ...(!x.done && !x.sent_by && !x.due_at ? (friendsList || []).map(f => ({ label: `Send to ${f.name}`, run: () => sendLine(x, f) })) : []),
+      ...(!x.done && !x.sent_by && !x.due_at ? (friendsList || []).map(f => ({ label: `Send to ${f.name}`, run: () => sendLine(d, x, f) })) : []),
       // The line's first link, by its host, and the words themselves: the
       // text is a button that rewrites, so neither can be had from it.
       ...webLinks(x.text).slice(0, 1).map(l => ({ label: `Open ${l.host}`, run: () => openLink(l.url) })),

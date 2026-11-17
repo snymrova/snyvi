@@ -176,11 +176,14 @@ const OLD_1_47: &str =
      ALTER TABLE threads DROP COLUMN told_how; ALTER TABLE threads DROP COLUMN ask_told_at;
      DROP TABLE home_state; ALTER TABLE desks DROP COLUMN rule_asked_at;";
 
-/// 1.67's step, taken back (step 41, `desk::line::COLUMNS_1_67`): a desk's
-/// goal, and a note's place in the queue, its done-when, claim and worktree.
+/// 1.67's steps, taken back (step 41, `desk::line::COLUMNS_1_67`): a desk's
+/// goal, and a note's place in the queue, its done-when, claim and worktree;
+/// (step 42, `peer::COLUMNS_1_67`) a line's folder and a review asked.
 const OLD_1_67: &str = "ALTER TABLE desks DROP COLUMN goal; ALTER TABLE desk_notes DROP COLUMN ord;
   ALTER TABLE desk_notes DROP COLUMN done_when; ALTER TABLE desk_notes DROP COLUMN claim_pane;
-  ALTER TABLE desk_notes DROP COLUMN claim_at; ALTER TABLE desk_notes DROP COLUMN tree;";
+  ALTER TABLE desk_notes DROP COLUMN claim_at; ALTER TABLE desk_notes DROP COLUMN tree;
+  ALTER TABLE peer_outbox DROP COLUMN root; ALTER TABLE docs DROP COLUMN peer_review;
+  ALTER TABLE peer_offers DROP COLUMN review;";
 
 /// 1.66's step, taken back (step 40, `news::SCHEMA_1_66` and
 /// `routine::YOU_COLUMNS_1_66`): News, a turn's seen stamp, a routine's two

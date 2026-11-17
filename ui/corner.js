@@ -994,7 +994,8 @@ function offerRow(o) {
   const what = o.text ? `a line, “${esc(o.text)}”` : `<b>${esc(o.title || "a document")}</b>`;
   return `<li class="cn-row cn-ask${s ? " mine" : ""}"><span class="cn-ico">${c.who(o.to)}</span><span class="cn-b">` +
     `<span class="cn-by"><b>${esc(o.by || "An agent")}</b> · ${c.relShort(o.offered_at)}</span>` +
-    `<span class="cn-t">Send ${what} to ${esc(o.to)}?</span>` +
+    // 1.67: an offer that asks for a review says so; the Send asks it.
+    `<span class="cn-t">${o.review ? `Ask ${esc(o.to)} to review ${what}?` : `Send ${what} to ${esc(o.to)}?`}</span>` +
     `<span class="cn-acts">${s ? `<span class="cn-said" role="status">${esc(s.text)}</span>${s.undo ? `<button type="button" class="cn-undo" data-a="cn-offer-undo" data-k="${o.id}">Undo</button>` : ""}`
       : `<button type="button" class="cn-opt rec" data-a="cn-send" data-k="${o.id}">Send</button><button type="button" class="cn-opt" data-a="cn-notsend" data-k="${o.id}">Not now</button>`}</span></span></li>`;
 }

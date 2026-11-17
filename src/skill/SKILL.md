@@ -118,7 +118,14 @@ To do (what only they can do) and News (what changed without their press).
 - The user's *Not this* on a row reaches you in the brief with their word:
   do not hand that thing to them again.
 - A friend on the list can be offered a document (`offer_document`) or a line
-  (`offer_line`); the user decides whether it goes.
+  (`offer_line`); the user decides whether it goes. A plan or a draft the
+  work needs a second pair of eyes on goes with `review: true`: the friend
+  gets Approve and Changes…, and their answer comes back under the
+  document's head. A line goes with this desk's repository and lands on the
+  friend's desk for it.
+- When a thread ships that a friend reviewed or asked for, offer them one
+  line saying so, with the PR and the commit: `offer_line` "Shipped Tabs in
+  a desk · PR 122 · 9b7ade8". Once per ship, never unasked otherwise.
 
 ## Release
 

@@ -96,7 +96,7 @@ you offered it and that the user decides.";
 const OFFER_LINE_DESCRIPTION: &str = "Offer one line to one of the user's friends on snyvi, by the name the desk brief lists: a request, a \
 heads-up, a thing to check, at most 200 characters; anything longer is offer_document. Nothing is sent by \
 this call: the user sees the line with your name on it and presses Send or Not now. It reaches the \
-friend's snyvi as a suggested note: on Home, or on a desk if they gave you one. Only when the user asked or the work plainly needs that friend. Say in your reply \
+friend as a suggested note, on their desk for this repository if they have one, else Home. Only when the user asked or the work plainly needs that friend. Say in your reply \
 that you offered it.";
 
 const NAME_DESCRIPTION: &str = "Name the snyvi panel this session runs in, so the user can tell their panels apart: a few words for what you \
@@ -783,9 +783,10 @@ impl Session {
     fn offer_document(&self, args: &Value) -> Value {
         let to = arg(args, "to");
         let id = arg(args, "id");
+        let review = args.get("review").and_then(Value::as_bool).unwrap_or(false);
         match self.pane.as_deref() {
             None => said("This session is not running in a snyvi desk, so there is no one to offer to.", true),
-            Some(p) => match client::offer_document(&self.paths, p, &to, &id, self.by()) {
+            Some(p) => match client::offer_document(&self.paths, p, &to, &id, review, self.by()) {
                 Ok(v) => said(
                     format!(
                         "Offered \"{}\" to {}; the user decides whether it goes. Say so in your reply.",
@@ -1191,7 +1192,8 @@ fn offer_spec() -> Value {
             "type": "object",
             "properties": {
                 "to": { "type": "string", "description": "The friend's name, as the desk brief lists it." },
-                "id": { "type": "string", "description": "The document's id, as send_document answered it." }
+                "id": { "type": "string", "description": "The document's id, as send_document answered it." },
+                "review": { "type": "boolean", "description": "Ask the friend to review it: they get Approve and Changes." }
             },
             "required": ["to", "id"],
             "additionalProperties": false
