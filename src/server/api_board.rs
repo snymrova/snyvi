@@ -670,7 +670,7 @@ pub(crate) async fn pane_open_view(
     };
     Json(json!({
         "opened": true,
-        "line": format!("Opened {view}{at} on the user's desk; they go back with its chip or Esc. read_focus says where they are."),
+        "line": format!("Opened {view}{at} on the user's desk; they go back with its chip or Esc. read_desk's focus says where they are."),
     }))
     .into_response()
 }

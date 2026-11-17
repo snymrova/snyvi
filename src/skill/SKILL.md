@@ -18,12 +18,12 @@ instructions say *when*; this says *how*, in the order the work goes.
 2. Before you start: the plan, as a document (`send_document`). Wait for yes.
 3. Taking a task: `name_panel`, then `start_thread`.
 4. A desk note is the user's. Act on it only when set on it.
-5. Finished and checked: `tick_desk_note` with the commit and one line of
+5. Finished and checked: `mark_desk_note` done, with the commit and one line of
    what changed.
 6. Blocked on something only they can do: `hand_over`. A decision: `ask`.
    Unsure where the work is, or what was decided already: `read_desk`.
 7. Never ask them to type a command; never post, publish or send for them.
-8. Shipped: `suggest_launch`, then `offer_post`, once.
+8. Shipped: `suggest` launch, then `offer` post, once.
 9. Stopping: `leave_off`, the next step first.
 10. Widgets, routines, boards: only when asked. Each has its file here.
 
@@ -49,11 +49,11 @@ waits for the user.
 | to read it | `send_document` | `snyvi send FILE -p FOLDER` |
 | to decide | `ask` | – |
 | a step only they can do | `hand_over` | – |
-| a line not to forget, here | `suggest_desk_note` | `snyvi note suggest "…"` |
-| work for another desk | `suggest_desk_note` with `desk` | `snyvi note suggest --desk NAME "…"` |
+| a line not to forget, here | `suggest` note | `snyvi note suggest "…"` |
+| work for another desk | `suggest` note with `desk` | `snyvi note suggest --desk NAME "…"` |
 | a figure kept in view | `set_widget` | `snyvi widget set NAME "…"` |
 | a picture kept | `add_to_gallery` | `snyvi gallery add FILE` |
-| something on a schedule | `offer_routine` | `snyvi routine wake NAME "line"` |
+| something on a schedule | `offer` routine | `snyvi routine wake NAME "line"` |
 
 `read_desk` lists the other desks by name. A document sent with `-p` is
 filed under that folder's project, not this desk.
@@ -71,7 +71,7 @@ To do (what only they can do) and News (what changed without their press).
   for the user's Approve on that plan in snyvi (the brief or your next prompt
   says so) → `mark_desk_note` working, which snyvi refuses until that
   Approve is pressed (a yes in the chat is not seen: say so, and stop) →
-  `tick_desk_note` only when it is finished and checked (with the commit).
+  `mark_desk_note` done only when it is finished and checked (with the commit).
   Pass `say` with a plan and a tick: one line of what changed, shown under
   the note.
 - A desk may have a **line**: the user's goal and their notes in the order
@@ -117,14 +117,14 @@ To do (what only they can do) and News (what changed without their press).
   changed, goes with `replaces: <its id>`.
 - The user's *Not this* on a row reaches you in the brief with their word:
   do not hand that thing to them again.
-- A friend on the list can be offered a document (`offer_document`) or a line
-  (`offer_line`); the user decides whether it goes. A plan or a draft the
+- A friend on the list can be offered a document or a line (`offer`, `what`
+  document or line); the user decides whether it goes. A plan or a draft the
   work needs a second pair of eyes on goes with `review: true`: the friend
   gets Approve and Changes…, and their answer comes back under the
   document's head. A line goes with this desk's repository and lands on the
   friend's desk for it.
 - When a thread ships that a friend reviewed or asked for, offer them one
-  line saying so, with the PR and the commit: `offer_line` "Shipped Tabs in
+  line saying so, with the PR and the commit: `offer` line "Shipped Tabs in
   a desk · PR 122 · 9b7ade8". Once per ship, never unasked otherwise.
 
 ## Release
@@ -141,12 +141,12 @@ When the user wants people to hear of what they built -- "help me get
 users", "I shipped, now what?", "write my Show HN" -- the desk holds it in
 three pieces, and you never post any of them:
 
-1. **The launch**: `suggest_launch`, the steps as dated lines counted from
+1. **The launch**: `suggest` launch, the steps as dated lines counted from
    the day it goes out ([launch.md](launch.md)). The user keeps them.
 2. **The drafts**: when they set you on a post's line, the post as a
    document, by that channel's rules. Read [grow.md](grow.md) before the
    first draft: the hour, the title's length, the disclosure.
-3. **The page**: `offer_post`, once, when it truly shipped (below).
+3. **The page**: `offer` post, once, when it truly shipped (below).
 
 The user posts, and the post's line is theirs to tick. When they say where
 it went, `move_thread` with `told` and that `url`.
@@ -155,7 +155,7 @@ A desk can have a **page**: the builder's landing page, which they put on
 the wall for everyone or send to friends only. It is theirs: you never
 publish, and nothing leaves on your word. When something on the desk truly
 shipped -- a chapter accepted, a release, a clip worth showing -- offer it
-once with `offer_post`: a title as a headline, a few lines in the maker's
+once with `offer` post: a title as a headline, a few lines in the maker's
 own words (not a changelog, not a pitch), one picture or clip at most, never
 five, and `about` naming what it is about (a document id, a path, gallery
 ids, the thread's name). Not after a step, not for a plan, not twice: a
@@ -192,7 +192,7 @@ open, the URL when it is not. A plan for desk notes passes their ids as
 a page, a screen, a card -- in a desk panel, draw it on a board: `board_read`
 first, then one `frame_write` per section (HTML and CSS, no script, as tall
 as its content), variants side by side, and look at each before saying done.
-"This one" is what they selected (`board_read` or `read_focus`). How, at
+"This one" is what they selected (`board_read`, or `read_desk`'s `focus`). How, at
 length: [board.md](board.md); read it before the first frame.
 
 **Opening a view.** `open_view` opens a view of this desk on the user's
@@ -217,14 +217,14 @@ do something (your reply), or news (a document).
 
 - **A widget** is a small box on the desk's rail: a count (8 characters) and
   one short line, for a figure that changes by itself and that the user would
-  otherwise go and check. `read_widgets` first: update your own box rather
+  otherwise go and check. `read_desk` with `widgets` first: update your own box rather
   than make a second, pick a free name, leave alone what they said not now
   to or removed. While you work here, `set_widget`; to keep going after you
   are gone, a widget file and `propose_widget`.
 - **A card** is the panel's passing word while it has focus, a link or one
-  line of text: `show_card`, and `clear_card` to take it off.
+  line of text: `show_card`, and `show_card` with `clear` to take it off.
 - **A link** is a place the desk keeps one click away on any day:
-  `pin_link`.
+  `show_card` with `kind: "pin"`.
 
 All three at length, and the gallery: [widgets.md](widgets.md); read it
 before writing a widget file.
@@ -234,7 +234,7 @@ before writing a widget file.
 When the user wants something to happen on its own, it is a **routine**:
 one of the project's commands that snyvi runs at the hours given or when
 its watch sees something, never cron, `/loop` or `/schedule`. You write the
-command, try it once here and `offer_routine` it; the same command updates
+command, try it once here and `offer` it as a routine; the same command updates
 the one there is. Only the user's Start runs it. **Read
 [routine.md](routine.md) first: it is the recipe.** When the brief says
 this panel is a routine, you are that run.

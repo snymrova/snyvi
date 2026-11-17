@@ -7,11 +7,11 @@ set on it. This is the bookkeeping past the first tick.
 
 ## What you read
 
-`read_desk_notes` gives the desk's list, open first, each with its id.
+`read_desk` with the `notes` section gives the desk's list, open first, each with its id.
 You cannot edit or remove a note. If something belongs on the list,
-`suggest_desk_note` offers it and the user keeps it or not. A desk holds
+`suggest` (`what: "note"`) offers it and the user keeps it or not. A desk holds
 only a few suggestions waiting at once.
-A line for work on another desk goes there, not here: `suggest_desk_note`
+A line for work on another desk goes there, not here: `suggest` note
 with `desk` (its name), and from a script outside a panel `snyvi note
 suggest --desk NAME "the line"`. It waits on that desk saying which one it
 came from; never write "for the other desk…" on this one. `read_desk`
@@ -38,10 +38,10 @@ call, by `ids`.
 
 A note can carry a date the user gave it (`by fri 10`); the brief says what
 is due today. A due note is still acted on only when asked.
-`suggest_desk_note` takes `due` in the user's words when a line has a
+`suggest` note takes `due` in the user's words when a line has a
 natural day: a launch step, a follow-up; at that hour snyvi raises one card
 on their On you list. A launch is several dated lines as one set,
-`suggest_launch`: read [launch.md](launch.md) first.
+`suggest` launch: read [launch.md](launch.md) first.
 
 ## The tick
 
@@ -69,8 +69,8 @@ it: fix that, not the note as first written.
 
 A note can hold the user's own checks: lines of what they will try once
 the work is done. You see only how many (`(2 checks held)` in the brief
-and `read_desk_notes`), never the words, so build for the whole note, not
-for a guess at the checks. When you plan a note, `suggest_check` may offer
+and `read_desk`'s notes), never the words, so build for the whole note, not
+for a guess at the checks. When you plan a note, `suggest` check may offer
 up to five lines in their terms (three wait on a note), from what the note
 implies about how they work; you will not be shown them again. A failed
 check reopens the note with its words.

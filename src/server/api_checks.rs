@@ -175,7 +175,7 @@ pub(crate) async fn pane_suggest_check(
     if texts.iter().all(|t| t.trim().is_empty()) {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "suggest_check needs at least one line of text" })),
+            Json(json!({ "error": "suggest check needs at least one line of text" })),
         )
             .into_response();
     }
@@ -186,7 +186,7 @@ pub(crate) async fn pane_suggest_check(
     match r {
         Ok(s) if s.no_note => (
             StatusCode::CONFLICT,
-            Json(json!({ "error": format!("there is no note #{note} on this desk; read_desk_notes lists them") })),
+            Json(json!({ "error": format!("there is no note #{note} on this desk; read_desk's notes section lists them") })),
         )
             .into_response(),
         Ok(s) => {

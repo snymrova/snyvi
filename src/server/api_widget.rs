@@ -280,7 +280,7 @@ pub(crate) fn ask_for_box(
         return refused(
             StatusCode::CONFLICT,
             format!(
-                "this desk has {} widgets, which is all it can have: read_widgets, and update one of yours",
+                "this desk has {} widgets, which is all it can have: read_desk's widgets, and update one of yours",
                 widget::DESK_MAX
             ),
         );
@@ -1311,7 +1311,7 @@ fn propose_refusal(app: &App, desk: i64, b: &ProposeBody) -> Option<Box<Response
         return Some(Box::new(refused(
             StatusCode::CONFLICT,
             format!(
-                "this desk shows {} widgets already: read_widgets, and update one of yours",
+                "this desk shows {} widgets already: read_desk's widgets, and update one of yours",
                 widget::DESK_MAX
             ),
         )));

@@ -496,7 +496,7 @@ pub(crate) async fn pane_mark_note(
     let (stage, doc) = (b.stage.trim(), b.about.trim());
     let say = |why: &str| (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response();
     if !crate::desk::STAGES.contains(&stage) {
-        return say("stage must be read, planned or working; done is tick_desk_note");
+        return say("stage must be read, planned or working here; done is the tick (mark_desk_note with stage done)");
     }
     if !doc.is_empty() && !crate::desk::doc_ok(doc) {
         return say("about must be a document id from send_document: 10 hex digits");
@@ -1469,7 +1469,7 @@ pub(crate) async fn pane_suggest_note(
         }
         Ok(crate::desk::Suggested::Empty) => (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "suggest_desk_note needs a line of text" })),
+            Json(json!({ "error": "suggest note needs a line of text" })),
         )
             .into_response(),
         Ok(crate::desk::Suggested::Full) => (

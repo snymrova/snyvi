@@ -102,7 +102,7 @@ flowchart LR
 
 The reader's hands are select, pan and zoom. The documents take no pointer,
 so a click on a section's box selects it. Selecting is the reader's focus:
-the agent reads it in the brief and through `board_read` or `read_focus`.
+the agent reads it in the brief and through `board_read` or `read_desk`'s `focus`.
 
 Board versions stay in the store but are not in the Inbox list or the
 desk's Documents (V5): the board is where they are read.
@@ -145,13 +145,13 @@ The board keeps the zoom and place the reader left it at, in the window's
 storage by desk and board, and has an address (docs/DESK.md, Ways to a
 board).
 
-**A picture of a section.** The daemon has no browser. `frame_look` says a
+**A picture of a section.** The daemon has no browser. `board_read` with `look` says a
 `look` event (`{desk, board, frame, n}`); a window on that desk draws the
 section alone in a `/board-frame` of its own, out of sight, and asks the
 runtime for its picture: the section's markup in an SVG `foreignObject`,
 drawn on a canvas, read back as a PNG. The window posts it to
 `POST /api/desks/{id}/board/{board}/look/{n}` (capability), and the waiting
-`frame_look` answers with it as an image. Only a PNG is passed on, to a look
+`look` answers with it as an image. Only a PNG is passed on, to a look
 still waiting, within 4 s; otherwise the agent is told to render the file
 itself, as before. The picture holds nothing loaded from the network (a web
 font, a picture by URL), and an island cannot be drawn this way.
@@ -178,10 +178,10 @@ before acting on "this"; never delete.
 | `board_read` | `GET /api/panes/{id}/board/{board}`; no board: `GET /api/panes/{id}/boards` |
 | `frame_write` | `POST /api/panes/{id}/board/{board}/frames/{frame}`; `html: null` → `…/hide` |
 | `board_arrange` | `POST /api/panes/{id}/board/{board}/arrange` |
-| `frame_look` | `POST /api/panes/{id}/board/{board}/look/{frame}`: a picture from a window on the desk (1.67), else 501 with the file and size to render |
-| `board_export` | `GET /api/panes/{id}/board/{board}/export` |
+| `board_read` `look` | `POST /api/panes/{id}/board/{board}/look/{frame}`: a picture from a window on the desk (1.67), else 501 with the file and size to render |
+| `board_arrange` `export` | `GET /api/panes/{id}/board/{board}/export` |
 
-| `read_focus` | `GET /api/panes/{id}/focus` |
+| `read_desk` `focus` | `GET /api/panes/{id}/focus` |
 
 The page reads the same board on the capability,
 `GET /api/desks/{id}/board/{board}`, and sets the focus with

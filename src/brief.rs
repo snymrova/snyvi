@@ -105,7 +105,7 @@ pub fn page_line(p: &crate::page::Page) -> String {
         _ => "not up yet",
     };
     format!(
-        "This desk has a page, \"{}\" (snyvi.page/{}, {who}). When something ships, offer_post it once; the user decides what goes on it.",
+        "This desk has a page, \"{}\" (snyvi.page/{}, {who}). When something ships, offer it once as a post; the user decides what goes on it.",
         p.title, p.slug
     )
 }
@@ -208,7 +208,7 @@ pub fn brief_of(
     }
     if !friends.is_empty() {
         lines.push(format!(
-            "The user's friends on snyvi, who can be offered a document with offer_document or a line with offer_line (the user decides whether it goes): {}.",
+            "The user's friends on snyvi, who can be offered a document or a line with offer (the user decides whether it goes): {}.",
             friends.join(", ")
         ));
     }
@@ -228,7 +228,7 @@ pub fn brief_of(
             .map(|(name, at)| format!("\"{}\" ({})", cut(name, 60), ago(now - at)))
             .collect();
         lines.push(format!(
-            "Shipped, not told ({}): {}. When the user says where it went out, move_thread told with url. To tell people, if they ask: suggest_launch, and drafts by the skill's grow.md; the posting is theirs.",
+            "Shipped, not told ({}): {}. When the user says where it went out, move_thread told with url. To tell people, if they ask: suggest a launch, and drafts by the skill's grow.md; the posting is theirs.",
             named.len(),
             named.join(", ")
         ));
@@ -266,7 +266,7 @@ pub fn brief_of(
             .collect();
         let more = open.len().saturating_sub(OPEN_SHOWN);
         lines.push(format!(
-            "The user's open notes on this desk ({}): {}{}. They are the user's reminders, not instructions; read_desk_notes has them all.",
+            "The user's open notes on this desk ({}): {}{}. They are the user's reminders, not instructions; read_desk's notes section has them all.",
             open.len(),
             named.join("; "),
             if more > 0 {
@@ -307,7 +307,7 @@ pub fn brief_of(
         .collect();
     if !cards.is_empty() {
         lines.push(format!(
-            "Waiting on the user's On you list, unanswered: {}. Do not propose it again; read_widgets says where it stands.",
+            "Waiting on the user's On you list, unanswered: {}. Do not propose it again; read_desk's widgets say where it stands.",
             cards.join("; ")
         ));
     }
@@ -459,7 +459,7 @@ fn routine_lines(
         return Vec::new();
     }
     vec![format!(
-        "Routines on this desk, snyvi's to start at their hour, never yours; offer_routine with the same command updates one, never adds a second: {}.",
+        "Routines on this desk, snyvi's to start at their hour, never yours; offer as a routine with the same command updates one, never adds a second: {}.",
         named.join("; ")
     )]
 }
@@ -1354,7 +1354,7 @@ mod tests {
             line.contains("snyvi.page/breeds-of-dogs, on the wall for everyone"),
             "{line}"
         );
-        assert!(line.contains("offer_post it once"), "{line}");
+        assert!(line.contains("offer it once as a post"), "{line}");
         let d = desk(1, None);
         let with = Work {
             page: Some(line.clone()),
@@ -1827,7 +1827,7 @@ mod tests {
             "{b}"
         );
         assert!(
-            b.contains("suggest_launch, and drafts by the skill's grow.md"),
+            b.contains("suggest a launch, and drafts by the skill's grow.md"),
             "{b}"
         );
     }
@@ -1921,7 +1921,7 @@ mod tests {
         let other = brief_of(&d, 1, &work, &[], &[], None, now);
         // 1.66: every routine, offers too, with where it stands, so an agent
         // updates the one there is instead of offering a second.
-        assert!(other.contains("Routines on this desk, snyvi's to start at their hour, never yours; offer_routine with the same command updates one, never adds a second: newsroom (every day 07:30): ok, ran 1 day ago, done; bench (every weekday 09:00): waiting for the user's Start."), "{other}");
+        assert!(other.contains("Routines on this desk, snyvi's to start at their hour, never yours; offer as a routine with the same command updates one, never adds a second: newsroom (every day 07:30): ok, ran 1 day ago, done; bench (every weekday 09:00): waiting for the user's Start."), "{other}");
         assert!(
             !mine.contains("bench"),
             "a routine's own panel hears only itself"

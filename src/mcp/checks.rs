@@ -17,7 +17,7 @@ pub(super) fn specs() -> Vec<Value> {
     vec![json!({
         "name": "suggest_check", "title": "Suggest checks for a note", "description": SUGGEST,
         "inputSchema": { "type": "object", "properties": {
-            "note": { "type": "integer", "description": "The note's id, from read_desk_notes." },
+            "note": { "type": "integer", "description": "The note's id, from read_desk's notes." },
             "texts": { "type": "array", "maxItems": 5, "items": { "type": "string" },
                 "description": "One to five checks, each one line under 160 characters." }
         }, "required": ["note", "texts"], "additionalProperties": false },
@@ -35,7 +35,7 @@ impl Session {
         };
         let Some(note) = args.get("note").and_then(Value::as_i64) else {
             return said(
-                "suggest_check needs `note`, the note's id from read_desk_notes.",
+                "suggest check needs `note`, the note's id from read_desk's notes.",
                 true,
             );
         };

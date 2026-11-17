@@ -15,7 +15,7 @@ what each party sees.
 flowchart LR
   subgraph S["Sunny's snyvi"]
     H[Home · Pair with a friend] -->|a spoken code| P[(peers: Trapti, keys pinned)]
-    A[an agent: offer_document] --> Q[the question: Send?]
+    A[an agent: offer document] --> Q[the question: Send?]
     M[document menu · Send to…] --> Q
     Q -->|Send| E[seal + sign]
   end
@@ -293,14 +293,14 @@ got:
 
 ## What an agent gets
 
-One tool, `offer_document(to, id)`, listed only to a reader with a friend
+One way, `offer` with `what: document` (`to`, `id`), listed only to a reader with a friend
 (`tools/list` asks the daemon, and lists it when the daemon does not say).
 The desk brief names the friends. The
 daemon writes an offer and the reader sees the question where they are,
 with the agent's name on it: Send, or Not now. An offer not answered when
 the panel's program ends is answered No. Nothing leaves on an agent's word;
 the friend's agent gets the same tool and nothing more. From 1.23 its
-sibling `offer_line(to, text)` offers a line the same way: the reader sees
+sibling `what: line` (`to`, `text`) offers a line the same way: the reader sees
 the line, and Send puts it in the outbox as a line from the reader.
 
 ## What goes out

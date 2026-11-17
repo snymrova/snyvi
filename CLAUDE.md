@@ -45,7 +45,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 
 1. **Document**: hook / MCP / CLI → `POST /api/send` (token) → `receive::receive` → `render` → `store` → broadcast → SSE `/api/events` → `app.js` redraws.
 2. **Panel**: `app.js`/`desk.js` → `WS /api/desk` (capability) → `pane` PTY → `screen` frames → canvas paint. Input goes PTY-ward only from the reader: their keys from the page, and their own press on a card (an answer, an Approve), which the daemon types in snyvi's fixed words (`server/press.rs`).
-3. **Agent in a panel**: `SNYVI_SESSION` in the pane env → MCP `read/tick/mark/suggest_desk_note`, `leave_off`, `name_panel`, `offer_document` → `client.rs` → `/api/panes/{id}/*` (token) → `desk` → SSE.
+3. **Agent in a panel**: `SNYVI_SESSION` in the pane env → MCP `read_desk`, `mark_desk_note`, `suggest`, `leave_off`, `name_panel`, `offer` → `client.rs` → `/api/panes/{id}/*` (token) → `desk` → SSE.
 4. **A friend** (`docs/PEER.md`): Send to… → `api_peer` seals + signs → `relay.snyvi.com` mailbox → pushed down the other daemon's link (`peer_link`) → `peer::open` against the pinned key → `receive::receive` (origin `peer`, project "From <name>") → the same `doc` event.
 5. **A routine** (`docs/TERMINAL.md` §9b): the Routines field's line → `api_routine` (capability) → a draft row → Try once now / Start it → the clock (`lifecycle::ring_due` → `routine_run::ring`) → `claude --permission-mode auto --settings <waits> -- /<line>` in a panel in the back → its cards → the reader's answers → the next session's argv.
 

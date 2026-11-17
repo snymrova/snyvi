@@ -248,7 +248,7 @@ fn room_for(app: &Arc<App>, desk: i64, pane: &str, name: &str) -> Result<bool, B
         return Err(Box::new(refused(
             StatusCode::CONFLICT,
             format!(
-                "this desk has {} widgets, which is all it can have: read_widgets, and update one of yours",
+                "this desk has {} widgets, which is all it can have: read_desk's widgets, and update one of yours",
                 widget::DESK_MAX
             ),
         )));

@@ -49,8 +49,9 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/api_page.rs` | 520 | the Page view's routes on the capability, `offer_post`'s on the token, `/pages/{file}`, door (a) on a shipped thread |
 | `src/server/api_wall.rs` | 640 | the press (Everyone, Friends only), take down, the outbox's flush and its minute tick, the wall's daily line arriving, a friend's page arriving, Home's `/api/wall` |
 | `src/server/api_board.rs` | 440 | a board over HTTP (1.58): the agent's `board_*`/`frame_*`/`read_focus` on the token, the page's read and focus on the capability; frames are documents, so no frame HTML is served here |
-| `src/mcp/page.rs` | 60 | `offer_post`: a card in the desk's corner, never a publish |
-| `src/mcp/board.rs` | 300 | the six board tools and how they say a board |
+| `src/mcp/page.rs` | 60 | `offer` post: a card in the desk's corner, never a publish |
+| `src/mcp/merged.rs` | 435 | the merged tools (1.67): `read_desk`'s sections, `mark_desk_note` done, `suggest`, `offer`, `show_card` clear and pin, `board_read` look, `board_arrange` export; the old names answer, unlisted |
+| `src/mcp/board.rs` | 300 | the board tools and how they say a board |
 | `src/claude_mod.rs` | 144 | the snyvi mod (`mod/`) built in, written to the data folder, named in a panel's `CLAUDE_CODE_PLUGIN_DIRS` |
 | `src/mcp/threads.rs` | 247 | the eight #90 MCP tools: start_thread, move_thread, ask, hand_over, settle_asks, remove_card, suggest_panel, suggest_desk |
 | `src/project.rs` | 168 | cwd → project (git root) |

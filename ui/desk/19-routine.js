@@ -183,7 +183,7 @@ async function rtAdd(d) {
   if (!text) return;
   const asker = text.startsWith("/") ? null : rtAsker(d);
   if (asker) {
-    const line = oneLine(`Make a routine for this desk from what I want: "${text.replace(/"/g, "'")}". Write its command, try it once here, and offer it with offer_routine. Do not start it: only my Start runs it.`);
+    const line = oneLine(`Make a routine for this desk from what I want: "${text.replace(/"/g, "'")}". Write its command, try it once here, and offer it as a routine (snyvi's offer tool, what: routine). Do not start it: only my Start runs it.`);
     input(asker, bracket(asker, line));
     setTimeout(() => input(asker, "\r"), 120);
     rtField = null; rail();

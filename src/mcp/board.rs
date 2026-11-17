@@ -9,21 +9,21 @@ use serde_json::{json, Value};
 
 const READ: &str = "Read a board on this snyvi desk: its sections (id, size, place, version), what the user has \
 selected on it, and the design's tokens and DESIGN.md's first paragraph. Read it before the first section, and \
-before acting on \"this\" or \"these\": the selection is what they mean. Leave `board` out to list the desk's \
-boards (the user can make empty ones, by name). A board is design/<board>/ in the desk's folder; frame_write \
-makes one. Pass `since` (the last read's hash) to learn only whether it changed.";
+before acting on \"this\" or \"these\": the selection is what they mean. No `board` lists the desk's boards. \
+A board is design/<board>/ in the desk's folder; frame_write makes one. `since` (the last hash) says only \
+whether it changed; `look` (a frame's id) shows that frame as the window draws it.";
 
 const WRITE: &str = "Draw one section on a board in this snyvi desk, whole: a self-contained HTML fragment (CSS inline in a \
 <style>, no network, no script), 300 to 6,000 bytes, at a width in CSS pixels. A new board's name makes the \
 board. Show options as several sections side by side (hero-a, hero-b), not as prose. `html: null` hides one; \
 its versions stay. Read the skill's board.md before the first section, and look at what you drew \
-(frame_look) before saying done.";
+(board_read with `look`) before saying done.";
 
 const ARRANGE: &str =
     "Move, reorder or name frames on a board in this snyvi desk, or name the board, or make a frame \
 live with `source` (`threads`: what shipped and what was told, posted into the frame by snyvi). Only \
 frames already on it; an unknown id is refused. `css` is the board's shared CSS, whole: put what every \
-section repeats there once (classes, type, colours), and each section's own <style> only adds to it.";
+section repeats there once (classes, type, colours), and each section's own <style> only adds to it. `export` writes design/<board>.html.";
 
 const LOOK: &str = "See a frame on a board in this snyvi desk as the window draws it: a picture, from a snyvi \
 window open on this desk. Look before saying a frame is done. With no window on the desk, or for a frame that \
@@ -333,7 +333,7 @@ impl Session {
         match client::pane_board(&self.paths, &p, &path, Some(body)) {
             Ok((201, v)) => said(
                 format!(
-                    "Drew {frame} on {board} ({}){}. Look at it with frame_look before saying it is done.",
+                    "Drew {frame} on {board} ({}){}. Look at it with board_read's `look` before saying it is done.",
                     v["path"].as_str().unwrap_or(""),
                     if v["same_version"] == json!(true) { ", the same version as your last write" } else { ", a new version" }
                 ),

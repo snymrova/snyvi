@@ -16,7 +16,7 @@ use crate::client;
 use serde_json::{json, Value};
 
 const START: &str = "File a piece of work on this snyvi desk as a thread: a name, the desk notes it answers (ids \
-from read_desk_notes), and the folder it lives in. Call it when you take the work on. The same name again \
+from read_desk's notes), and the folder it lives in. Call it when you take the work on. The same name again \
 updates that thread instead of making a second. It becomes this panel's thread, and the one before it \
 rests: move it to shipped first if it is done.";
 
@@ -57,7 +57,7 @@ are told which desk it is.";
 
 pub(super) fn specs() -> Vec<Value> {
     let ann = |idem: bool| json!({ "readOnlyHint": false, "destructiveHint": false, "idempotentHint": idem, "openWorldHint": false });
-    let notes = json!({ "type": "array", "items": { "type": "integer" }, "description": "Desk note ids, from read_desk_notes." });
+    let notes = json!({ "type": "array", "items": { "type": "integer" }, "description": "Desk note ids, from read_desk's notes." });
     vec![
         json!({
             "name": "start_thread", "title": "Start a thread", "description": START,

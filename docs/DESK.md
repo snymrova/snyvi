@@ -156,7 +156,7 @@ nobody follows a dev server's log, so the back holds four more
   130, a ctrl-C. The mark is a status: it lights a dot and is never typed
   anywhere. A shell snyvi does not dress only has its own end heard, and the
   drawer says so.
-- **Agents only suggest it.** `suggest_panel` takes `back: true`; the card
+- **Agents only suggest it.** `suggest` panel takes `back: true`; the card
   says Open in the back, and opening it is the reader's click.
 
 **Slots, not splits.** There are two columns and four slots. An odd pane out
@@ -257,7 +257,7 @@ only, only while a page shows that desk, and the page waits for the reader to
 stop typing. The open view sets the reader's
 **focus** (`src/focus.rs`, `POST /api/desks/{id}/focus`): one per desk, in
 memory, which the brief says as its second line for half an hour and
-`read_focus` reads, so "this one" names a file or the frames selected. It is a
+`read_desk`'s `focus` reads, so "this one" names a file or the frames selected. It is a
 name, never input. The board itself is `docs/BOARD.md`. The studio this
 replaces failed for want of the dock, the tools and the focus; if a month in
 the board is not opened, the view goes and the folder stays.
@@ -326,7 +326,7 @@ the board is not opened, the view goes and the folder stays.
    then that the pane is running, and only then touches the store, to find
    the pane's desk and read that desk's list. A pane id seen in an old
    screen or a log reads nothing once its shell is gone. An agent has one
-   write, since 1.6: `tick_desk_note` marks an open line done
+   write, since 1.6: `mark_desk_note` done (`tick_desk_note` through 1.66) marks an open line done
    (`POST /api/panes/{id}/notes/{note}/tick`), through the same checks, and
    records the agent's name beside it (`desk_notes.done_by`), and, since
    1.7.1, the commit it names (`done_commit`, 7 to 40 hex digits) and a
@@ -351,8 +351,8 @@ the board is not opened, the view goes and the folder stays.
    They are held *from the agent by construction*: `DeskNote` has no field
    for them, only `checks_held`, the count `checks::count_into` fills; the
    lines are read by `checks::for_desk`, which only the page's `desk_notes`
-   handler calls. `read_desk_notes` and the brief say "(2 checks held)" and
-   nothing more. The agent's one write is `suggest_check`
+   handler calls. `read_desk`'s notes and the brief say "(2 checks held)" and
+   nothing more. The agent's one write is `suggest` check
    (`POST /api/panes/{id}/notes/{note}/suggest-check` `{texts, by}`, the token
    and a running pane): at most five a call and three waiting on a note,
    answered with how many landed and were refused, never the list. The
@@ -631,7 +631,7 @@ the hook's: `POST /api/panes/{id}/agent` takes `model` and `ctx: {pct, size,
 input}` from `snyvi statusline` for a running pane, and the pane's status
 carries them as `model`, `ctx_pct`, `ctx_size`, `ctx_in`. The `name_panel`
 MCP tool writes the same name through `POST /api/panes/{id}/name`, behind the
-token and a running pane. The `pin_link` MCP tool pins a link in the rail's
+token and a running pane. `show_card` with `kind: "pin"` (`pin_link` through 1.66) pins a link in the rail's
 foot through `POST /api/panes/{id}/links` `{label, url}` (the token and a
 running pane; http or https, 32 characters of label, six shown, the same url
 relabels it, one the reader hid stays hidden), and the reader's ✕ and Undo are

@@ -1192,18 +1192,18 @@ mod skill_tests {
         // C3: the description stays short enough for Claude Code's listing.
         assert!(main.lines().nth(2).unwrap().chars().count() < 500);
         // After it ships: the launch, the drafts by grow.md, and never posting.
-        assert!(main.contains("suggest_launch") && main.contains("[grow.md](grow.md)"));
+        assert!(main.contains("`suggest` launch") && main.contains("[grow.md](grow.md)"));
         let grow = SKILL.iter().find(|(n, _)| *n == "grow.md").unwrap().1;
         for rule in [
             "You never post",
             "12:00-17:00 UTC",
             "80 characters",
-            "offer_post",
+            "`offer` post",
             "evidence",
         ] {
             assert!(grow.contains(rule), "{rule}");
         }
-        assert!(crate::launch::TEMPLATE.contains("suggest_launch"));
+        assert!(crate::launch::TEMPLATE.contains("what: \"launch\""));
         // 1.64: ordered by the loop, with what to read first, and a note's
         // bookkeeping in a file of its own that the main one points at.
         let at = |h: &str| main.find(h).unwrap_or_else(|| panic!("no {h}"));
@@ -1223,7 +1223,7 @@ mod skill_tests {
         // the user's post. The OMD host read "nothing you do" and stopped.
         for way in [
             "## How snyvi helps the user",
-            "suggest_desk_note",
+            "`suggest` note",
             "snyvi note suggest --desk NAME",
             "snyvi send FILE -p FOLDER",
             "snyvi widget set NAME",
@@ -1242,12 +1242,12 @@ mod skill_tests {
         }
         // Every tool the skill names is one the server has.
         for tool in [
-            "read_widgets",
+            "read_desk",
             "set_widget",
             "propose_widget",
             "show_card",
-            "clear_card",
-            "pin_link",
+            "`clear`",
+            "kind: \"pin\"",
             "hand_over",
             "leave_off",
         ] {

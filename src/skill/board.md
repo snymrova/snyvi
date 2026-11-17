@@ -12,15 +12,16 @@ They select sections, pan and zoom; they never edit. You draw, snyvi shows.
 (The tool is still called `frame_write`: a frame and a section are the same
 thing.)
 
-The tools are `board_read`, `frame_write`, `board_arrange`, `frame_look` and
-`board_export`, plus `read_focus` for what the reader is on in any view.
+The tools are `board_read` (with `look`, a frame seen as drawn), `frame_write`
+and `board_arrange` (with `export`), plus `read_desk` with the `focus` section
+for what the reader is on in any view.
 
 ## Before the first frame
 
 1. `board_read`. Without `board` it lists the desk's boards; with one board
    it reads that one. It returns the sections with their size, place and
    version, the reader's selection, and the design's tokens and first
-   paragraph. Draw on the board the reader has open (`read_focus`), or the
+   paragraph. Draw on the board the reader has open (`read_desk`, section `focus`), or the
    one they named; ask before starting a new one.
 2. Read `design/DESIGN.md` and `design/tokens.css` whole, if they exist.
    They are the look. If they do not exist and the work needs a look, write
@@ -62,7 +63,7 @@ the one they want, and `board_read` then names it in the selection.
 
 ## Look before you say done
 
-`frame_look` shows you the section as the window draws it: a picture, made
+`board_read` with `look` shows you the section as the window draws it: a picture, made
 by a snyvi window open on this desk. Read it, fix what is wrong, then say
 done, and say which version. The picture holds no web font and no picture
 loaded from the network; the rest is as the reader sees it.
@@ -76,7 +77,7 @@ Playwright MCP if you have it, or
 ## "This one"
 
 When the reader says "this", "these" or "the left one", read the selection
-first: `board_read` carries it, and `read_focus` does from any view (the
+first: `board_read` carries it, and `read_desk`'s `focus` section does from any view (the
 Folder view's file and lines too). Act on what is selected, and name it back:
 "Rewrote cards (v3)."
 
@@ -111,5 +112,5 @@ hid it. To hand one over to be read as a document, `send_document` its file.
 
 ## When it is done
 
-`board_export` makes one HTML page of every shown section in order, a file
+`board_arrange` with `export` makes one HTML page of every shown section in order, a file
 to keep or pass on. PNG, SVG and PDF come later.

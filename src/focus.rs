@@ -90,7 +90,7 @@ impl Focus {
         }
         if self.view == "page" {
             // 1.59: the desk's page, which the reader alone publishes.
-            return "The reader is at this desk's page (the Page view); what goes on it is theirs to press, offer_post only offers.".to_string();
+            return "The reader is at this desk's page (the Page view); what goes on it is theirs to press, offer only offers.".to_string();
         }
         let lines = match self.items.first() {
             Some(l) if l.contains('-') => format!(", lines {}", l.replace('-', "–")),

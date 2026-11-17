@@ -397,7 +397,7 @@ desk 8's on (1.36).
   installs has the rest -- this contract, the stdin, three worked scripts --
   and Claude reads it when a widget is asked for. `/snyvi:widget <what>` is
   the same ask as a slash command, in a desk's panel.
-- **Where it stands**: `read_widgets` reads the desk's widgets -- what each
+- **Where it stands**: `read_desk` with `widgets` reads the desk's widgets -- what each
   shows, in the Markdown it was sent or printed in; each box waiting,
   allowed, not now or removed; each widget file allowed, changed since, off
   or stopped, with its error (or why it can't be read); the cards still

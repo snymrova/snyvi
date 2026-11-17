@@ -491,16 +491,21 @@ URL, and its description tells Claude what snyvi can show and when to pick
 each -- Markdown with Mermaid for a plan, one self-contained HTML file for a
 mockup or a chart, an image or a recording, a PDF. `send_aside` is the small
 one, and [Asides](#asides) below says what it is for. Offered only to a
-Claude running in a desk's panel: `read_desk_notes` reads that desk's
-notes, `mark_desk_note` says how far a line has got, `tick_desk_note` ticks
-one done (with the commit, the document and a link to where the work can be
-seen) -- both take several lines at once, and `send_document` marks the
+Claude running in a desk's panel: `read_desk` reads the desk (its notes,
+threads, panels, checkouts, decisions, what you have open, its widgets, by
+section), `mark_desk_note` says how far a line has got and, with `done`,
+ticks it (with the commit, the document and a link to where the work can be
+seen) -- it takes several lines at once, and `send_document` marks the
 lines a plan is for as planned, so a batch of notes is a few calls and not a
-few per note -- `suggest_desk_note` offers a line you
-can keep or not, `leave_off` says in a sentence where the work stands,
-`name_panel` names the panel it runs in, and six more file the work itself
+few per note -- `suggest` offers what you decide on (a line you can keep or
+not, a launch, checks, a panel, a desk), `offer` what only your press sends
+(a document or a line to a friend, a post for the page, a routine),
+`leave_off` says in a sentence where the work stands, `name_panel` names the
+panel it runs in, and four more file the work itself
 ([Threads and On you](#threads-and-on-you) below): `start_thread` and
-`move_thread`, `ask` and `hand_over`, `suggest_panel` and `suggest_desk`.
+`move_thread`, `ask` and `hand_over`. Through 1.66 each of those ways was a
+tool of its own, 38 in all; 1.67 lists 23, and the old names still answer a
+session started before the update.
 The tool descriptions tell Claude
 when to use each; a line in your global `CLAUDE.md` helps it remember:
 
@@ -1246,7 +1251,7 @@ Suggested in the rail's corner, where nothing they do moves the page.
   line rings once per date; a daemon that was off at the hour rings when it
   starts. The next panel to take a prompt on the desk hears that it came
   due and what you did; nothing is typed into a panel. A Claude can
-  suggest a line with a date (`suggest_desk_note`'s `due`) when the line
+  suggest a line with a date (`suggest` note's `due`) when the line
   has a natural day, a launch step or a follow-up.
 - **A routine comes back.** **Routines** is a section of its own under
   Notes, always there: one line when a desk has none, the field, **What
@@ -1348,13 +1353,13 @@ Suggested in the rail's corner, where nothing they do moves the page.
   view**; a draft's has **Try once now** and **Start it**. The sheet's foot
   does the same, and its **Save** lights once something changed. A Claude
   can write a command, its gate and watch scripts and offer it as a routine
-  (`offer_routine`, from the skill's `routine.md`; every panel is told to
+  (`offer` routine, from the skill's `routine.md`; every panel is told to
   use it instead of cron, `/loop` or `/schedule`); **Accept…** opens the
   same sheet, and it runs on its own only after your Start. A Claude's
-  `read_desk_notes` ends with the desk's routines, so it can say what runs
+  `read_desk`'s notes end with the desk's routines, so it can say what runs
   here on its own.
 - **A launch is a list.** When you say *launch*, Claude suggests its steps
-  as one set of dated lines (`suggest_launch`, from the skill's `launch.md`;
+  as one set of dated lines (`suggest` launch, from the skill's `launch.md`;
   each post it drafts follows the channel's rules in `grow.md`, and the
   posting stays yours): pictures and copy a week out, the site, the post, Show HN,
   and what happened a week after. **Keep all** on the set's first row keeps
@@ -1806,8 +1811,9 @@ desk and written only by you; an agent's asides never land on it.
 
 An agent can *read* that list, and tick a line done, and nothing else of
 snyvi's. A Claude running in one of a desk's panels is offered
-`read_desk_notes`, which returns that desk's notes, open and done, each
-with its number, and `tick_desk_note`, which marks one open line done when
+`read_desk` with its notes section, which returns that desk's notes, open
+and done, each with its number, and `mark_desk_note` done, which marks one
+open line done when
 the work it names is finished. A line an agent ticked carries the agent's
 name at its end, and, when the agent passed them, the commit the work went
 into (click it to copy the hash) and a ↗ that opens the document it sent

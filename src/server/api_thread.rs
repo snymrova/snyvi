@@ -614,9 +614,9 @@ async fn pane_suggest(
         Ok(Suggested::Empty) => refused(
             StatusCode::BAD_REQUEST,
             if kind == "desk" {
-                "suggest_desk needs a folder and why"
+                "suggest desk needs a folder and why"
             } else {
-                "suggest_panel needs a command and why"
+                "suggest panel needs a command and why"
             },
         ),
         Ok(Suggested::HasDesk(d)) => {

@@ -905,7 +905,7 @@ pub(crate) async fn pane_offer(
     if to.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "offer_document needs the friend's name" })),
+            Json(json!({ "error": "offer document needs the friend's name" })),
         )
             .into_response();
     }

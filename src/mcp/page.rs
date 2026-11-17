@@ -128,7 +128,7 @@ impl Session {
         };
         let (title, text, about) = (arg(args, "title"), arg(args, "text"), arg(args, "about"));
         if title.trim().is_empty() || about.trim().is_empty() {
-            return said("offer_post needs a title and what it is about.", true);
+            return said("offer post needs a title and what it is about.", true);
         }
         match client::offer_post(&self.paths, p, &title, &text, &about, self.by()) {
             Ok(said_) => said(format!("{said_}. Say so in your reply."), false),
