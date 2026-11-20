@@ -1240,7 +1240,9 @@ mod skill_tests {
                 assert!(!text.contains(stale), "{name}: {stale}");
             }
         }
-        // Every tool the skill names is one the server has.
+        // The map still says these by name. That every listed tool is
+        // taught and no retired one is, is `mcp::tests::
+        // the_skill_and_the_tools_name_each_other` (1.67.1).
         for tool in [
             "read_desk",
             "set_widget",

@@ -1236,3 +1236,40 @@ fn widget_check(
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// 1.67.1: every command line the skill shows an agent is one this
+    /// binary has. A code span that opens with `snyvi ` is read word by word
+    /// for as long as the words are subcommands; the first must be one, and a
+    /// lower-case word after a group (`snyvi widget chek`) must be too.
+    #[test]
+    fn every_command_the_skill_shows_exists() {
+        let cli = Cli::command();
+        let mut seen = 0;
+        for (file, text) in crate::setup::skill_files() {
+            for span in text.split('`').skip(1).step_by(2) {
+                let Some(rest) = span.strip_prefix("snyvi ") else {
+                    continue;
+                };
+                let mut at = &cli;
+                for (i, word) in rest.split_whitespace().enumerate() {
+                    let plain = word.chars().all(|c| c.is_ascii_lowercase() || c == '-');
+                    match at.find_subcommand(word) {
+                        Some(next) => at = next,
+                        None if i == 0 => panic!("{file}: `{span}`: no command `{word}`"),
+                        None if plain && at.has_subcommands() && !word.starts_with('-') => {
+                            panic!("{file}: `{span}`: no `{word}` under `{}`", at.get_name())
+                        }
+                        None => break,
+                    }
+                }
+                seen += 1;
+            }
+        }
+        assert!(seen >= 5, "the skill showed only {seen} commands");
+    }
+}
