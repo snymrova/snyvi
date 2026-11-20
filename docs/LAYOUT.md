@@ -44,6 +44,9 @@ each wearing a label would be noise.
 | `rail.notes.row` | one line: circle, text, ✕, who ticked it (`.dk-by`), its pictures (`.dk-imgs`) | `noteRow()` · `.dk-note` |
 | `rail.notes.field` | the new line's field, at the end of the list, and its waiting pictures (`.dk-pend`) | `.dk-note.new` |
 | `rail.notes.picture` | a picture whole, over the page | `openLightbox()` · `.dk-lb` |
+| `rail.line` | The line (1.67): the desk's goal and its notes in the order to do them, over Notes | `lineSec()` · `31-line.js` |
+| `rail.line.head` | "The line · N to go"; under it the goal (a click rewrites it) and "4 of 9 done" with its bar | `.dk-ln-head` |
+| `rail.line.row` | one queued note: its place or ✓, `#id` and words, then done / the panel that has it / next / queued and its done-when; Start next on the first free one; ↑ ↓ ✕ over its end under the pointer | `lineRow()` · `.dk-ln-row` |
 
 The Documents list is a box of its own height (`min(360px, 45vh)`) and
 scrolls inside the rail, so a long day of sends never pushes Notes out of
@@ -63,10 +66,9 @@ reach.
 |---|---|---|
 | `home.head` | "Home" and the date | `.hm-head` · `draw()` in `home.js` |
 | `home.status` | the one line: what needs you, what is waiting, Claude, the window | `status()` |
-| `home.pick` | Pick up: the desk to go back to, where it was left, its open notes, git, panels, Open desk | `pick()` |
-| `home.desks` | Desks: every other desk, where it was left, its first open notes, `+ New note` | `desksList()` |
-| `home.desks.desk` | one desk in it | `.hm-dk` |
-| `home.notes` | a desk's open notes on Home, each tickable where it stands (in `home.pick` and `home.desks.desk`) | `notesOf()` · `.hm-next` |
+| `home.floor` | The floor (1.67): every panel on every desk by state, Focus in its head, On you first | `floor()` · `.hm-floor` |
+| `home.wait` | On you, inside the floor: the corner's own tabs and rows | `onyouBox()` |
+| `home.parked` | Parked: the shelf, each desk with its next step and Unpark | `parkedShelf()` |
 | `home.week` | This week, folded: the log by day and desk, and Send this week as a doc | `week()` · `yourDays()` |
 | `home.projects` | Projects: eight weeks a desk, Park it?, the shelf | `projects()` |
 | `home.claude` | Claude: what is left of the windows, what the panels are doing | `claude()` |

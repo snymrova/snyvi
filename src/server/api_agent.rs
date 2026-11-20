@@ -92,9 +92,10 @@ pub(crate) struct AgentBody {
     /// (`crate::statusline::Limit`): Home's quota.
     #[serde(default)]
     pub(crate) limits: Option<LimitsBody>,
-    /// A turn's end, for the panel's pipeline (`pipeline_run::heard`).
+    /// A turn's end (`turn_end::StopBody`): for a routine's run, and for
+    /// answers pressed in snyvi while the agent worked.
     #[serde(default)]
-    pub(crate) stop: Option<super::pipeline_run::StopBody>,
+    pub(crate) stop: Option<super::turn_end::StopBody>,
 }
 
 #[derive(Deserialize, Default)]
@@ -224,13 +225,9 @@ pub(crate) async fn pane_agent(
             desks_moved(&app);
         }
     }
-    let (session, stopped) = (b.session.as_deref(), b.stopped.as_deref());
+    let stopped = b.stopped.as_deref();
     super::routine_run::stamp(&id);
     super::routine_run::heard(&app, &id, stopped, b.stop.as_ref());
-    if let Some(handoff) = super::pipeline_run::heard(&app, &id, session, stopped, b.stop.as_ref())
-    {
-        return Json(handoff).into_response();
-    }
     if let Some(said) = b.stop.as_ref().and_then(|s| answered_at_stop(&app, &id, s)) {
         return Json(json!({ "handoff": said })).into_response();
     }
@@ -242,7 +239,7 @@ pub(crate) async fn pane_agent(
 /// that asked and went on hears them without the reader typing. Once a
 /// turn: a Stop hook that already kept it going is let stop. A routine's
 /// panel is left to its next run (`routine_run`), as before.
-fn answered_at_stop(app: &App, id: &str, stop: &super::pipeline_run::StopBody) -> Option<String> {
+fn answered_at_stop(app: &App, id: &str, stop: &super::turn_end::StopBody) -> Option<String> {
     if stop.active {
         return None;
     }
@@ -499,13 +496,36 @@ pub(crate) async fn pane_mark_note(
     let (stage, doc) = (b.stage.trim(), b.about.trim());
     let say = |why: &str| (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response();
     if !crate::desk::STAGES.contains(&stage) {
-        return say("stage must be read, planned or working; done is tick_desk_note");
+        return say("stage must be read, planned or working here; done is the tick (mark_desk_note with stage done)");
     }
     if !doc.is_empty() && !crate::desk::doc_ok(doc) {
         return say("about must be a document id from send_document: 10 hex digits");
     }
     if stage == "planned" && doc.is_empty() {
         return say("planned needs about: the id of the plan you sent with send_document");
+    }
+    // 1.67: Approve is a gate. Until now `working` was the agent's word,
+    // and a line read "working" on a plan nobody had said yes to.
+    if stage == "working" {
+        match app
+            .store
+            .clocked(|c, _| crate::desk::unapproved(c, placed.desk_id, note))
+        {
+            Ok(Some(why)) => {
+                return (StatusCode::CONFLICT, Json(json!({ "error": why }))).into_response()
+            }
+            Ok(None) => {}
+            Err(e) => return err(e),
+        }
+        // 1.67: a note another panel has is that panel's (`desk::line`).
+        if let Ok(Some(_)) = app
+            .store
+            .clocked(|c, _| crate::desk::line::held_by_other(c, placed.desk_id, note, &id))
+        {
+            let error =
+                format!("another panel has note #{note}; next_work gives you one that is free");
+            return (StatusCode::CONFLICT, Json(json!({ "error": error }))).into_response();
+        }
     }
     let mark = crate::desk::Mark {
         stage: stage.into(),
@@ -1449,7 +1469,7 @@ pub(crate) async fn pane_suggest_note(
         }
         Ok(crate::desk::Suggested::Empty) => (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "suggest_desk_note needs a line of text" })),
+            Json(json!({ "error": "suggest note needs a line of text" })),
         )
             .into_response(),
         Ok(crate::desk::Suggested::Full) => (

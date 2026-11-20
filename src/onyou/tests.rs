@@ -192,19 +192,55 @@ fn the_count_is_agents_not_questions() {
     assert_eq!(oy.sentence, "Three agents are waiting on you, on c, b, a.");
 }
 
-/// A chore never ages off (1.66): a do card a month old is still To do,
-/// while a question a day old is retired.
+/// Nothing ages off: a do card a month old is still To do (1.66), and a
+/// question two days old is still Waiting, its agent still counted (1.67).
 #[test]
-fn a_chore_never_ages_and_a_question_does() {
+fn neither_a_chore_nor_a_question_ages() {
     let (c, _d) = db();
     let a = desk(&c, "a");
     card(&c, a, "Renew the domain", NOW - 30 * DAY);
     ask(&c, a, "Tabs or spaces?", NOW - 2 * DAY, "p");
     crate::thread::retire(&c, NOW).unwrap();
     let oy = gather(&c, NOW).unwrap();
-    assert_eq!(kinds(&oy), ["card"]);
-    assert_eq!(oy.rows[0].shelf, "todo");
-    assert_eq!(oy.left, 0);
+    assert_eq!(kinds(&oy), ["card", "card"]);
+    assert_eq!((oy.rows[0].shelf, oy.rows[1].shelf), ("waiting", "todo"));
+    assert_eq!(oy.left, 1);
+}
+
+/// A permission prompt is an agent stuck on the reader (1.67): one row,
+/// "Go to panel", counted; and not a second agent beside its own question.
+#[test]
+fn a_prompt_open_in_a_panel_is_waiting() {
+    let (c, _d) = db();
+    let a = desk(&c, "a");
+    c.execute(
+        "INSERT INTO panes(id, desk_id, slot, cwd, created_at, name) VALUES('p9', ?1, 2, '/w/a', 0, 'kit builder')",
+        params![a],
+    )
+    .unwrap();
+    let open = vec![("p9".to_string(), NOW - 60), ("gone".to_string(), NOW)];
+    let oy = gather_with(&c, NOW, &open).unwrap();
+    assert_eq!(kinds(&oy), ["prompt"]);
+    let r = &oy.rows[0];
+    assert_eq!(
+        (r.shelf, r.pane.as_str(), r.panel.as_str()),
+        ("waiting", "p9", "kit builder")
+    );
+    assert_eq!(
+        oy.sentence,
+        "One agent is waiting on you: a prompt open in kit builder on a."
+    );
+    ask(&c, a, "Tabs or spaces?", NOW - 30, "p9");
+    let oy = gather_with(&c, NOW, &open).unwrap();
+    assert_eq!(oy.left, 1, "one panel, one agent");
+    assert_eq!(
+        oy.rows
+            .iter()
+            .filter(|r| r.kind == "prompt")
+            .map(|r| r.slot)
+            .collect::<Vec<_>>(),
+        [2]
+    );
 }
 
 /// Tomorrow keeps a card off the list until then; Not this keeps it off for

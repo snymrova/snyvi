@@ -1495,8 +1495,8 @@ pub fn set_cwd(conn: &Connection, id: &str, cwd: &str) -> Result<bool> {
     )? > 0)
 }
 
-/// A Claude Code session id: a UUID, lowercase hex and four dashes. Nothing
-/// else is stored or put on a command line.
+/// An agent's session id, Claude Code's or Codex's (`agents::session_agent`): a
+/// UUID, lowercase hex and four dashes. Nothing else is stored or run.
 pub fn valid_session(s: &str) -> bool {
     s.len() == 36
         && s.bytes().enumerate().all(|(i, b)| match i {
@@ -1788,7 +1788,7 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
     } else {
         String::new()
     };
-    let working = mark.stage == "working";
+    let held = matches!(mark.stage.as_str(), "working" | "planned"); // its Approve is typed there
     Ok(conn.execute(
         // A new plan is a new Approve's to give (`crate::waiting`).
         "UPDATE desk_notes SET stage = ?3, stage_by = ?4, stage_doc = CASE WHEN ?5 != '' THEN ?5 ELSE stage_doc END,
@@ -1805,11 +1805,37 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
             by,
             doc,
             now,
-            if working { mark.pane.as_str() } else { "" },
-            if working { mark.session.as_str() } else { "" },
+            if held { mark.pane.as_str() } else { "" },
+            if held { mark.session.as_str() } else { "" },
             reply_of(&mark.say)
         ],
     )? > 0)
+}
+
+/// Why an agent may not mark line `id` working yet (1.67), or `None` when it
+/// may: the line has a plan and the reader approved it, in snyvi. A line
+/// that is not open on this desk is `None` too, and `mark_note` refuses it
+/// in its own words. The reader's yes in the chat is not seen here, so the
+/// words say where the press is: the plan waits on On you with Approve from
+/// the moment it is sent (`waiting::PLAN_WAIT_S`).
+pub fn unapproved(conn: &Connection, desk_id: i64, id: i64) -> Result<Option<String>> {
+    let row: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT stage_doc, ok_at FROM desk_notes
+             WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+            params![desk_id, id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(match row {
+        Some((doc, _)) if doc.is_empty() => Some(format!(
+            "#{id} has no plan yet: send one with send_document and notes: [{id}], then wait for the user's Approve in snyvi"
+        )),
+        Some((doc, 0)) => Some(format!(
+            "the plan {doc} for #{id} is not approved yet: it is on the user's On you with Approve. Stop here; their press comes to this panel"
+        )),
+        _ => None,
+    })
 }
 
 /// A `working` line whose conversation has ended is back at the stage before
@@ -2446,7 +2472,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
     let session: String = r.get(at + 5)?;
     let resume = Some(session.as_str())
         .filter(|s| valid_session(s))
-        .and_then(|s| crate::agents::resume_cmd(crate::agents::KEEPS_SESSIONS, s))
+        .and_then(|s| crate::agents::resume_cmd(crate::agents::session_agent(s), s))
         .unwrap_or_default();
     Ok(Pane {
         id: r.get(at)?,
@@ -2464,8 +2490,10 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
 }
 
 pub mod checks;
+pub mod line;
 pub mod marks;
 pub use marks::*;
+pub mod closed;
 pub mod groups;
 
 #[cfg(test)]

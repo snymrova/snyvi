@@ -12,15 +12,16 @@ They select sections, pan and zoom; they never edit. You draw, snyvi shows.
 (The tool is still called `frame_write`: a frame and a section are the same
 thing.)
 
-The tools are `board_read`, `frame_write`, `board_arrange`, `frame_look` and
-`board_export`, plus `read_focus` for what the reader is on in any view.
+The tools are `board_read` (with `look`, a frame seen as drawn), `frame_write`
+and `board_arrange` (with `export`), plus `read_desk` with the `focus` section
+for what the reader is on in any view.
 
 ## Before the first frame
 
 1. `board_read`. Without `board` it lists the desk's boards; with one board
    it reads that one. It returns the sections with their size, place and
    version, the reader's selection, and the design's tokens and first
-   paragraph. Draw on the board the reader has open (`read_focus`), or the
+   paragraph. Draw on the board the reader has open (`read_desk`, section `focus`), or the
    one they named; ask before starting a new one.
 2. Read `design/DESIGN.md` and `design/tokens.css` whole, if they exist.
    They are the look. If they do not exist and the work needs a look, write
@@ -43,8 +44,12 @@ The tools are `board_read`, `frame_write`, `board_arrange`, `frame_look` and
   unless you give a height, at the cost of a document per island. Use one
   only for what CSS cannot show; for numbers snyvi holds, see *A live
   section* below, which needs no script.
-- Small: 300 to 3,000 bytes. A page is several sections (header, hero,
+- Small: 300 to 6,000 bytes. A page is several sections (header, hero,
   cards, footer), not one long one.
+- What every section repeats (type, colours, the classes of a card or a
+  button) goes once in the board's shared CSS: `board_arrange` with `css`,
+  whole. It is put before each section's own `<style>`, so a section only
+  adds what is its own. `board_read` shows it. An island does not get it.
 - A change rewrites one frame whole. Not the board, and never a frame you
   were not asked about.
 - A write within 20 s of the last one to the same frame is the same version:
@@ -58,20 +63,30 @@ the one they want, and `board_read` then names it in the selection.
 
 ## Look before you say done
 
-`frame_look` will show you the section as the window draws it. Until it
-does (it answers with what to do instead), render the file yourself at the
-section's width, with the Playwright MCP if you have it, or
+`board_read` with `look` shows you the section as the window draws it: a picture, made
+by a snyvi window open on this desk. Read it, fix what is wrong, then say
+done, and say which version. The picture holds no web font and no picture
+loaded from the network; the rest is as the reader sees it.
+
+With no window on the desk, or for an island, it answers with the file and
+size instead. Then render it yourself at the section's width, with the
+Playwright MCP if you have it, or
 
     chromium --headless --screenshot=/tmp/f.png --window-size=1200,800 file://…/design/home/hero.html
-
-and read the picture. Fix what is wrong, then say done, and say which version.
 
 ## "This one"
 
 When the reader says "this", "these" or "the left one", read the selection
-first: `board_read` carries it, and `read_focus` does from any view (the
+first: `board_read` carries it, and `read_desk`'s `focus` section does from any view (the
 Folder view's file and lines too). Act on what is selected, and name it back:
 "Rewrote cards (v3)."
+
+The reader can also press **This one** or **Change…** on a section. That
+arrives as their own message in your panel, naming the board's folder and
+the section's id ("On the snyvi board design/home/, I pick the section
+hero-b. Go with this one."). It is their decision: act on it as on any
+answer, and `board_read` first when it asks for a change. A pick may name
+an earlier version ("at its version 2 of 3"): go back to that one.
 
 ## A live section
 
@@ -97,5 +112,5 @@ hid it. To hand one over to be read as a document, `send_document` its file.
 
 ## When it is done
 
-`board_export` makes one HTML page of every shown section in order, a file
+`board_arrange` with `export` makes one HTML page of every shown section in order, a file
 to keep or pass on. PNG, SVG and PDF come later.

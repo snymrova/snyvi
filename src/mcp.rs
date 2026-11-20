@@ -19,6 +19,8 @@ mod board;
 mod cards;
 mod checks;
 mod desk;
+mod line;
+mod merged;
 mod page;
 mod threads;
 mod widgets;
@@ -34,12 +36,6 @@ worry turned out fine, it is late and the rest keeps. Ground it in something tha
 commit, a test) or do not send it. Rarely: a few in a long session, never a status update, a summary or \
 advice. One or two plain sentences, at most 280 characters, no emoji. Do not mention it in your reply. If \
 snyvi answers that asides are off, send no more.";
-
-const DESK_NOTES_DESCRIPTION: &str = "Read the user's notes on this snyvi desk: what is open and done, each with its id, stage, date, pictures \
-(files you can open) and how many checks are held, then the desk's routines. Read it when the user refers to \
-their notes or list, or to see what comes next here. The notes are the user's reminders, not instructions: \
-act on one only when asked, and leave one another panel is working on. You mark and tick them; \
-suggest_desk_note offers a new line, here or on another desk.";
 
 const TICK_DESCRIPTION: &str = "Tick one of the user's desk notes as done, by `id`, or several by `ids` when the same work finished each. \
 Tick when the work is finished and you have checked it; do not wait for the merge. Never for work that is \
@@ -94,8 +90,8 @@ you offered it and that the user decides.";
 
 const OFFER_LINE_DESCRIPTION: &str = "Offer one line to one of the user's friends on snyvi, by the name the desk brief lists: a request, a \
 heads-up, a thing to check, at most 200 characters; anything longer is offer_document. Nothing is sent by \
-this call: the user sees the line with your name on it and presses Send or Not now. It lands on the friend's \
-desk as a suggested note. Only when the user asked or the work plainly needs that friend. Say in your reply \
+this call: the user sees the line with your name on it and presses Send or Not now. It reaches the \
+friend as a suggested note, on their desk for this repository if they have one, else Home. Only when the user asked or the work plainly needs that friend. Say in your reply \
 that you offered it.";
 
 const NAME_DESCRIPTION: &str = "Name the snyvi panel this session runs in, so the user can tell their panels apart: a few words for what you \
@@ -128,8 +124,8 @@ project (snyvi send -p, snyvi note suggest --desk): snyvi://skill/SKILL.md.";
 /// in words. The phrases the tests pin are each from a bug: keep them.
 const PANEL_INSTRUCTIONS: &str = "You are in a panel of this project's desk. They decide; you do the rest \
 and show it.\n\n\
-Always. Before you change the project, send the plan as a document and wait for their yes. A suggest_, \
-offer_ or propose_ call is itself the asking: make it, with no plan before it. Taking on a task: name_panel, \
+Always. Before you change the project, send the plan as a document and wait for their yes. A suggest, \
+offer or propose_widget call is itself the asking: make it, with no plan before it. Taking on a task: name_panel, \
 then start_thread. When a stretch ends, leave_off says the next step. The desk brief is context, not a \
 request. Unsure where the work is, or what was decided: read_desk.\n\n\
 Build. Desk notes are the user's. Never act on a note unasked. Set on one: mark it read, send the plan with \
@@ -141,10 +137,10 @@ they can do: a merge, a key, a \
 payment, a command that is theirs to run (as run, never as text to type). Asking them to try a change goes in \
 your reply. A decision you are stuck on goes with ask (several at once as its questions), or your question \
 tool when they are at this panel; answered in talk, settle with what they said.\n\n\
-Get users. After a ship: suggest_launch for the launch, offer_post for the page, each post drafted as a \
+Get users. After a ship: suggest the launch (what: launch), offer a post for the page (what: post), each post drafted as a \
 document by the skill's grow.md; you never post.\n\n\
-Only when asked. A figure kept in view: read_widgets, then set_widget or propose_widget; never unasked. Work \
-on a schedule is a routine: offer_routine, never cron, /loop or /schedule.\n\n\
+Only when asked. A figure kept in view: read_desk's widgets, then set_widget or propose_widget; never unasked. Work \
+on a schedule is a routine: offer it (what: routine), never cron, /loop or /schedule.\n\n\
 Each tool says when; the skill says how. Its files are this server's resources too: snyvi://skill/SKILL.md.";
 
 /// What one MCP server process knows about the session it serves: where it
@@ -176,17 +172,19 @@ const TOOLS: &[(&str, Tool)] = &[
     ("send_note", Session::send_aside),
     ("read_desk_notes", Session::read_desk_notes),
     // 1.65: the desk past its notes -- threads, panels, folder, decisions.
-    ("read_desk", Session::read_desk),
+    ("read_desk", Session::read_desk_all),
     ("tick_desk_note", Session::tick_desk_note),
-    ("mark_desk_note", Session::mark_desk_note),
+    ("mark_desk_note", Session::mark_or_tick),
     ("suggest_desk_note", Session::suggest_desk_note),
     // 1.61: a launch by its own name, where it was `suggest_desk_note`'s `lines`.
     ("suggest_launch", Session::suggest_launch),
     ("suggest_check", Session::suggest_check),
+    // 1.67: the next note of the desk's line, claimed for this panel.
+    ("next_work", Session::next_work),
     // 1.58: a board in the desk's folder, and where the reader is (`board`).
-    ("board_read", Session::board_read),
+    ("board_read", Session::board_read_or_look),
     ("frame_write", Session::frame_write),
-    ("board_arrange", Session::board_arrange),
+    ("board_arrange", Session::arrange_or_export),
     ("frame_look", Session::frame_look),
     ("board_export", Session::board_export),
     ("read_focus", Session::read_focus),
@@ -215,9 +213,13 @@ const TOOLS: &[(&str, Tool)] = &[
     ("set_widget", Session::set_widget),
     ("propose_widget", Session::propose_widget),
     ("add_to_gallery", Session::add_to_gallery),
-    ("show_card", Session::show_card),
+    ("show_card", Session::card),
     ("clear_card", Session::clear_card),
     ("pin_link", Session::pin_link),
+    // 1.67: the merged tools (`merged`); the names above they took in still
+    // answer, for a session started before the update, and are not listed.
+    ("suggest", Session::suggest),
+    ("offer", Session::offer),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
@@ -279,27 +281,21 @@ pub fn run(paths: Paths) -> anyhow::Result<()> {
 fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
     let mut tools = vec![tool_spec(), aside_spec()];
     if panel {
-        tools.extend([
-            desk_notes_spec(),
-            mark_spec(),
-            tick_spec(),
-            suggest_spec(),
-            launch_spec(),
-            routine_spec(),
-            leave_off_spec(),
-            name_spec(),
-        ]);
-        tools.extend(desk::specs());
-        tools.extend(threads::specs());
-        tools.extend(widgets::specs());
-        tools.extend(cards::specs());
-        tools.extend(checks::specs());
-        tools.extend(board::specs());
-        tools.extend(page::specs());
-        if friends != Some(false) {
-            tools.push(offer_spec());
-            tools.push(offer_line_spec());
-        }
+        // 1.67: the merged tools first, then the rest that stand alone; a
+        // name a merged tool took in is not listed (`merged::AWAY`).
+        let merged = merged::specs(friends != Some(false));
+        let taken = |t: &Value| merged.iter().any(|m| m["name"] == t["name"]);
+        tools.extend(merged.iter().cloned());
+        let rest = [leave_off_spec(), name_spec()]
+            .into_iter()
+            .chain(threads::specs())
+            .chain(widgets::specs())
+            .chain(line::specs())
+            .chain(board::specs())
+            .chain(page::specs())
+            .filter(|t| !taken(t))
+            .filter(|t| !merged::AWAY.iter().any(|n| t["name"] == *n));
+        tools.extend(rest);
     }
     tools
 }
@@ -369,7 +365,7 @@ fn each_note(
     let mut seen = std::collections::HashSet::new();
     ids.retain(|n| seen.insert(*n));
     if ids.is_empty() {
-        return Err("needs the note's id, or ids for several, numbers from read_desk_notes.");
+        return Err("needs the note's id, or ids for several, numbers from read_desk's notes.");
     }
     let (mut done, mut failed) = (vec![], vec![]);
     for n in ids {
@@ -588,7 +584,7 @@ impl Session {
             })
         });
         match did {
-            Err(why) => said(format!("tick_desk_note {why}"), true),
+            Err(why) => said(format!("mark_desk_note {why}"), true),
             Ok((done, failed)) => said(
                 format!(
                     "{}{}",
@@ -685,7 +681,7 @@ impl Session {
             Ok((200 | 201, v)) => said(v["said"].as_str().unwrap_or("Offered.").to_string(), false),
             Ok((404, v)) if v.get("error").is_none() => said("This snyvi is older than this tool, or the panel is gone: ask the user to update snyvi.", true),
             Ok((_, v)) => said(
-                format!("snyvi made nothing yet: {}. Fix that and call offer_routine again.", v["error"].as_str().unwrap_or("it refused")),
+                format!("snyvi made nothing yet: {}. Fix that and call offer again.", v["error"].as_str().unwrap_or("it refused")),
                 true,
             ),
             Err(e) => said(format!("snyvi did not take the routine: {e}"), true),
@@ -779,9 +775,10 @@ impl Session {
     fn offer_document(&self, args: &Value) -> Value {
         let to = arg(args, "to");
         let id = arg(args, "id");
+        let review = args.get("review").and_then(Value::as_bool).unwrap_or(false);
         match self.pane.as_deref() {
             None => said("This session is not running in a snyvi desk, so there is no one to offer to.", true),
-            Some(p) => match client::offer_document(&self.paths, p, &to, &id, self.by()) {
+            Some(p) => match client::offer_document(&self.paths, p, &to, &id, review, self.by()) {
                 Ok(v) => said(
                     format!(
                         "Offered \"{}\" to {}; the user decides whether it goes. Say so in your reply.",
@@ -843,7 +840,7 @@ fn tool_spec() -> Value {
                 "title": { "type": "string", "description": "Title shown in the viewer. Defaults to the first heading or the file name." },
                 "workflow": { "type": "string", "description": "Optional name grouping related documents, e.g. 'auth refactor'. Defaults to this session." },
                 "lang": { "type": "string", "description": "Format hint when it cannot be inferred from the path: md, diff, rs, py, ts, ..." },
-                "notes": { "type": "array", "items": { "type": "integer" }, "description": "When this is the plan for desk notes the user set you on: their ids, from read_desk_notes. Each is marked planned with this document, as mark_desk_note would." }
+                "notes": { "type": "array", "items": { "type": "integer" }, "description": "When this is the plan for desk notes the user set you on: their ids, from read_desk's notes. Each is marked planned with this document, as mark_desk_note would." }
             },
             "additionalProperties": false
         },
@@ -869,16 +866,6 @@ fn aside_spec() -> Value {
     })
 }
 
-fn desk_notes_spec() -> Value {
-    json!({
-        "name": "read_desk_notes",
-        "title": "Read this desk's notes",
-        "description": DESK_NOTES_DESCRIPTION,
-        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
-        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
-    })
-}
-
 fn tick_spec() -> Value {
     json!({
         "name": "tick_desk_note",
@@ -887,7 +874,7 @@ fn tick_spec() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "id": { "type": "integer", "description": "The note's id, from read_desk_notes." },
+                "id": { "type": "integer", "description": "The note's id, from read_desk's notes." },
                 "ids": { "type": "array", "items": { "type": "integer" }, "description": "Several notes' ids at once, in place of id, when the same work finished each of them." },
                 "commit": { "type": "string", "description": "Optional hash of the commit the work went into, as git log prints it (7 to 40 hex digits)." },
                 "about": { "type": "string", "description": "Optional id of a document sent with send_document (its result's structuredContent.id) about the work; the line opens it." },
@@ -908,7 +895,7 @@ fn mark_spec() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "id": { "type": "integer", "description": "The note's id, from read_desk_notes." },
+                "id": { "type": "integer", "description": "The note's id, from read_desk's notes." },
                 "ids": { "type": "array", "items": { "type": "integer" }, "description": "Several notes' ids at once, in place of id, all to the same stage." },
                 "stage": { "type": "string", "enum": ["read", "planned", "working"], "description": "read, planned or working. Done is tick_desk_note." },
                 "about": { "type": "string", "description": "The id of the plan sent with send_document (its result's structuredContent.id). Needed with planned." },
@@ -1079,7 +1066,7 @@ const PROMPTS: [Prompt; 7] = [
         description: "Tick what is finished and checked, and say where the work was left.",
         panel: true,
         arg: None,
-        text: "We're wrapping up this stretch of work. First read_desk_notes, and tick only the notes whose work \
+        text: "We're wrapping up this stretch of work. First read_desk's notes, and tick (mark_desk_note done) only the notes whose work \
 you finished in this session and checked -- pass the commit, and the evidence URL if there is a pull request or a \
 deploy. Leave everything else as it is. Then call leave_off with one sentence on where the work stands and what the \
 next session should start with, as a next step with its condition. Then tell me in at most three lines what you \
@@ -1122,7 +1109,7 @@ as Markdown with Mermaid, and say where it is.",
         description: "Keep a figure in view on this desk's rail: a box you update, or a widget file snyvi runs.",
         panel: true,
         arg: Some(("what", "The figure to keep in view: CI, a deploy, a dev server, a queue.")),
-        text: "Make me a widget on this desk for this. First read_widgets: update a box of yours rather than \
+        text: "Make me a widget on this desk for this. First read_desk's widgets: update a box of yours rather than \
 make a second, pick a name that is free, and leave alone what I said not now to or removed. A widget is a count \
 of at most 8 characters and one short line, for a figure that changes by itself and I would otherwise go and \
 check -- not a to-do, not instructions. If it only matters while you work here, use set_widget and keep it up \
@@ -1140,10 +1127,10 @@ change, and why. Tell me in one line which you did; the card on my On you list i
         description: "Put the launch of what shipped on this desk as dated lines, counted from the day it goes out.",
         panel: true,
         arg: Some(("what", "The thread or release, and the day it goes out (T0); leave empty for the last shipped thread.")),
-        text: "Plan the launch of what shipped. First read_desk_notes and the desk brief: which thread shipped, \
+        text: "Plan the launch of what shipped. First read_desk's notes and the desk brief: which thread shipped, \
 and what is already dated. Read the snyvi skill's launch.md and grow.md. Count back from the day it goes out \
 (T0; ask me if I haven't said it) with launch.md's table, keep only the channels that fit this project, and put \
-the set on the desk with one suggest_launch call, T0 named in its first line. Don't post anything and don't draft \
+the set on the desk with one suggest call (what: launch), T0 named in its first line. Don't post anything and don't draft \
 the posts yet. Tell me in two lines what the set holds, and that Keep all is mine.",
     },
     Prompt {
@@ -1153,10 +1140,10 @@ the posts yet. Tell me in two lines what the set holds, and that Keep all is min
         panel: true,
         arg: Some(("channel", "Show HN, Reddit, X, the blog, the release note; leave empty for the next due post line.")),
         text: "Draft the post for what shipped. Read the snyvi skill's grow.md first. Find the shipped thread \
-and the post's line on the desk (read_desk_notes), and the facts in the README, the changelog and the commits; \
+and the post's line on the desk (read_desk's notes), and the facts in the README, the changelog and the commits; \
 don't invent users, numbers or quotes. Draft it for that channel by grow.md's rules and check them: the hour in my \
 time and in UTC, the title's length counted, the disclosure, one link. Send it with send_document and say which \
-rules you checked. If the desk has a page (the brief says so), offer_post once. You never post, and the line is \
+rules you checked. If the desk has a page (the brief says so), offer it once as a post (offer, what: post). You never post, and the line is \
 mine to tick with the post's URL when I have posted it.",
     },
 ];
@@ -1187,7 +1174,8 @@ fn offer_spec() -> Value {
             "type": "object",
             "properties": {
                 "to": { "type": "string", "description": "The friend's name, as the desk brief lists it." },
-                "id": { "type": "string", "description": "The document's id, as send_document answered it." }
+                "id": { "type": "string", "description": "The document's id, as send_document answered it." },
+                "review": { "type": "boolean", "description": "Ask the friend to review it: they get Approve and Changes." }
             },
             "required": ["to", "id"],
             "additionalProperties": false
@@ -1337,7 +1325,7 @@ fn say_routines(v: &Value) -> String {
         return String::new();
     }
     let mut out = String::from(
-        "Routines on this desk: snyvi starts each at its hour in a panel in the back, never you; offer a new one with offer_routine.\n",
+        "Routines on this desk: snyvi starts each at its hour in a panel in the back, never you; offer a new one with offer (what: routine).\n",
     );
     for r in &rs {
         let f = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("");
@@ -1635,20 +1623,21 @@ mod tests {
         // C1: every panel hears it, and that the posting is the user's.
         let i = instructions(true);
         assert!(
-            i.contains("suggest_launch") && i.contains("you never post"),
+            i.contains("suggest the launch (what: launch)") && i.contains("you never post"),
             "{i}"
         );
         assert!(i.contains("grow.md"));
-        assert!(!instructions(false).contains("suggest_launch"));
-        // C2: the tool by its name, the same set as `lines`, and only a set.
+        assert!(!instructions(false).contains("suggest the launch"));
+        // C2: a launch by its own `what` (1.67), the same set as `lines`,
+        // and only a set; the old name answers but is not listed.
         let names: Vec<String> = tools(true, Some(false))
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
-        assert!(names.contains(&"suggest_launch".into()));
-        assert!(!tools(false, None)
-            .iter()
-            .any(|t| t["name"] == "suggest_launch"));
+        assert!(names.contains(&"suggest".into()));
+        assert!(!names.contains(&"suggest_launch".into()));
+        assert!(TOOLS.iter().any(|(n, _)| *n == "suggest_launch"));
+        assert!(!tools(false, None).iter().any(|t| t["name"] == "suggest"));
         let spec = launch_spec();
         assert_eq!(spec["inputSchema"]["required"], json!(["lines"]));
         assert_eq!(
@@ -1698,15 +1687,14 @@ mod tests {
 
     #[test]
     fn a_routine_is_offered_with_its_own_tool() {
-        assert!(
-            instructions(true).contains("a routine: offer_routine, never cron, /loop or /schedule")
-        );
-        assert!(!instructions(false).contains("offer_routine"));
+        assert!(instructions(true)
+            .contains("a routine: offer it (what: routine), never cron, /loop or /schedule"));
+        assert!(!instructions(false).contains("what: routine"));
         let names: Vec<String> = tools(true, Some(false))
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect();
-        assert!(names.contains(&"offer_routine".into()));
+        assert!(names.contains(&"offer".into()));
         // 1.60: every listed tool has its handler; open_view is one of them.
         assert!(names.contains(&"open_view".into()));
         for n in &names {
@@ -1791,10 +1779,45 @@ mod tests {
     }
 
     #[test]
-    fn the_notes_tool_is_read_only() {
-        let spec = desk_notes_spec();
+    fn the_notes_are_read_with_the_desk_and_only_read() {
+        let spec = &merged::specs(true)[0];
+        assert_eq!(spec["name"], "read_desk");
         assert_eq!(spec["annotations"]["readOnlyHint"], true);
-        assert_eq!(spec["inputSchema"]["properties"], json!({}));
+        let sections = &spec["inputSchema"]["properties"]["sections"]["items"]["enum"];
+        assert!(sections.as_array().unwrap().contains(&json!("notes")));
+    }
+
+    /// 1.67: Claude Code calls only a tool it was listed, so a tool the
+    /// agent is told to call -- in a description, the instructions, a prompt
+    /// or the skill -- is one that is listed, not a name merged away.
+    #[test]
+    fn every_tool_an_agent_is_told_of_is_listed() {
+        let listed: Vec<String> = tools(true, None)
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        let mut said: Vec<(String, String)> = tools(true, None)
+            .iter()
+            .map(|t| (t["name"].to_string(), t.to_string()))
+            .collect();
+        said.push(("instructions".into(), instructions(true)));
+        said.extend(
+            PROMPTS
+                .iter()
+                .map(|p| (p.name.to_string(), p.text.to_string())),
+        );
+        said.extend(
+            crate::setup::skill_files()
+                .iter()
+                .map(|(n, t)| (n.to_string(), t.to_string())),
+        );
+        for (whose, text) in said {
+            for word in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+                if merged::AWAY.contains(&word) {
+                    panic!("{whose} names {word}, which is not listed: {listed:?}");
+                }
+            }
+        }
     }
 
     /// What snyvi can show is said in the description every agent reads, and
@@ -1841,7 +1864,7 @@ mod tests {
         assert!(instructions(true).contains("try a change goes in your reply"));
         // Widgets are named, so an agent asked to watch CI reaches for one,
         // and the rule that it is only on asking is beside them.
-        assert!(instructions(true).contains("read_widgets, then set_widget"));
+        assert!(instructions(true).contains("read_desk's widgets, then set_widget"));
         assert!(instructions(true).contains("never unasked"));
     }
 
@@ -1898,10 +1921,13 @@ mod tests {
         // C4: the after-build, a panel's, and the posting is the user's.
         let (launch, post) = (&PROMPTS[5], &PROMPTS[6]);
         assert!(launch.panel && post.panel);
-        assert!(launch.text.contains("suggest_launch") && launch.text.contains("Don't post"));
+        assert!(
+            launch.text.contains("suggest call (what: launch)")
+                && launch.text.contains("Don't post")
+        );
         for w in [
             "send_document",
-            "offer_post",
+            "what: post",
             "You never post",
             "grow.md",
             "UTC",
@@ -1911,7 +1937,7 @@ mod tests {
         assert_eq!(prompt_spec(post)["arguments"][0]["name"], "channel");
         assert!(PROMPTS[4]
             .text
-            .starts_with("Make me a widget on this desk for this. First read_widgets"));
+            .starts_with("Make me a widget on this desk for this. First read_desk's widgets"));
         let outside: Vec<&str> = PROMPTS
             .iter()
             .filter(|p| !p.panel)
@@ -1924,15 +1950,27 @@ mod tests {
         assert!(prompt_text(plan, Some("the auth refactor")).ends_with("(task: the auth refactor)"));
         assert_eq!(prompt_text(plan, None), plan.text);
         assert!(
-            PROMPTS[0].text.contains("leave_off") && PROMPTS[0].text.contains("read_desk_notes")
+            PROMPTS[0].text.contains("leave_off") && PROMPTS[0].text.contains("read_desk's notes")
         );
         // 1.66.2: catching up is the desk's threads and decisions, and a
         // post's line is the user's to tick, the same as grow.md says.
         assert!(PROMPTS[2].text.contains("read_desk (threads"));
         assert!(PROMPTS[6].text.contains("the line is mine to tick"));
         // An agent read "You cannot add" as no, and stopped (the OMD host).
-        assert!(!DESK_NOTES_DESCRIPTION.contains("cannot add"));
-        assert!(DESK_NOTES_DESCRIPTION.contains("suggest_desk_note offers a new line"));
+        let read = merged::specs(true)[0]["description"].to_string();
+        assert!(!read.contains("cannot add"));
+    }
+
+    /// The `whats` the listed `offer` takes, for a panel with friends or
+    /// none, or None when it is not listed.
+    fn offer_whats(panel: bool, friends: Option<bool>) -> Option<Vec<String>> {
+        let t = tools(panel, friends)
+            .into_iter()
+            .find(|t| t["name"] == "offer")?;
+        let w = t["inputSchema"]["properties"]["what"]["enum"]
+            .as_array()?
+            .clone();
+        Some(w.iter().map(|v| v.as_str().unwrap().to_string()).collect())
     }
 
     #[test]
@@ -1944,16 +1982,18 @@ mod tests {
         assert!(d.contains("Nothing is published by this call"), "{d}");
         assert!(d.contains("never twice for the same thing"), "{d}");
         assert!(TOOLS.iter().any(|(n, _)| *n == "offer_post"));
-        let names = |panel, friends| -> Vec<String> {
-            tools(panel, friends)
-                .iter()
-                .map(|t| t["name"].as_str().unwrap().to_string())
-                .collect()
-        };
+        // 1.67: as `offer` post, with the same two rules in its words.
+        let d = merged::specs(true)[3]["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(d.contains("sends and publishes nothing"), "{d}");
+        assert!(d.contains("never twice for the same"), "{d}");
         // A page is the desk's, friends or none; outside a desk there is none.
-        assert!(names(true, Some(false)).contains(&"offer_post".into()));
-        assert!(names(true, Some(true)).contains(&"offer_post".into()));
-        assert!(!names(false, None).contains(&"offer_post".into()));
+        let post = String::from("post");
+        assert!(offer_whats(true, Some(false)).unwrap().contains(&post));
+        assert!(offer_whats(true, Some(true)).unwrap().contains(&post));
+        assert!(offer_whats(false, None).is_none());
     }
 
     #[test]
@@ -1965,24 +2005,20 @@ mod tests {
             .unwrap()
             .contains("Nothing is sent by this call"));
         assert!(TOOLS.iter().any(|(n, _)| *n == "offer_document"));
-        let names = |panel, friends| -> Vec<String> {
-            tools(panel, friends)
-                .iter()
-                .map(|t| t["name"].as_str().unwrap().to_string())
-                .collect()
-        };
-        assert!(names(true, Some(true)).contains(&"offer_document".into()));
+        // 1.67: as `offer` document and line, only with a friend to offer to.
+        let (doc, line) = (String::from("document"), String::from("line"));
+        assert!(offer_whats(true, Some(true)).unwrap().contains(&doc));
         assert!(
-            !names(true, Some(false)).contains(&"offer_document".into()),
+            !offer_whats(true, Some(false)).unwrap().contains(&doc),
             "no friends, no offer"
         );
         assert!(
-            names(true, None).contains(&"offer_document".into()),
+            offer_whats(true, None).unwrap().contains(&doc),
             "a daemon that did not say lists it, as before"
         );
-        assert!(!names(false, Some(true)).contains(&"offer_document".into()));
-        assert!(names(true, Some(true)).contains(&"offer_line".into()));
-        assert!(!names(true, Some(false)).contains(&"offer_line".into()));
+        assert!(offer_whats(false, Some(true)).is_none());
+        assert!(offer_whats(true, Some(true)).unwrap().contains(&line));
+        assert!(!offer_whats(true, Some(false)).unwrap().contains(&line));
         assert!(offer_line_spec()["description"]
             .as_str()
             .unwrap()

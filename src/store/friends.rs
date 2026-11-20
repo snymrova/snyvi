@@ -58,10 +58,34 @@ impl Store {
         peer::touch(&self.conn.lock().unwrap(), id, from, now())
     }
 
-    /// Queue a document for a friend (`peer::queue`): the frame's id, one per
-    /// document and friend, so a resend replaces at the relay.
-    pub fn peer_queue(&self, p: &peer::Peer, doc_id: &str) -> Result<String> {
-        peer::queue(&self.conn.lock().unwrap(), p, doc_id, now())
+    /// Queue a document for a friend (`peer::queue_doc`): the frame's id, one
+    /// per document and friend, so a resend replaces at the relay; `review`
+    /// asks them to review it (1.67).
+    pub fn peer_queue_doc(&self, p: &peer::Peer, doc_id: &str, review: bool) -> Result<String> {
+        peer::queue_doc(&self.conn.lock().unwrap(), p, doc_id, review, now())
+    }
+
+    /// A document that arrived with a review asked of the reader: 1 asked,
+    /// 2 answered (`docs.peer_review`). Answering one not asked is a no.
+    pub fn set_peer_review(&self, doc_id: &str, state: i64) -> Result<bool> {
+        let n = self.conn.lock().unwrap().execute(
+            "UPDATE docs SET peer_review = ?2 WHERE id = ?1 AND (?2 = 1 OR peer_review = 1)",
+            rusqlite::params![doc_id, state],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Whether a review is asked of the reader on this document, unanswered.
+    pub fn peer_review_asked(&self, doc_id: &str) -> bool {
+        self.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT peer_review = 1 FROM docs WHERE id = ?1",
+                rusqlite::params![doc_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(false)
     }
 
     /// What has not gone yet and is due at `now` (`peer::unsent`).
@@ -69,9 +93,10 @@ impl Store {
         peer::unsent(&self.conn.lock().unwrap(), now)
     }
 
-    /// Queue a line for a friend (`peer::queue_note`): the frame's id.
-    pub fn peer_queue_note(&self, p: &peer::Peer, text: &str) -> Result<String> {
-        peer::queue_note(&self.conn.lock().unwrap(), p, text, now())
+    /// Queue a line for a friend: the frame's id. With the folder of the
+    /// desk it was written on, or none (`peer::queue_line`).
+    pub fn peer_queue_line(&self, p: &peer::Peer, text: &str, root: &str) -> Result<String> {
+        peer::queue_line(&self.conn.lock().unwrap(), p, text, root, now())
     }
 
     pub fn peer_sent(&self, id: &str) -> Result<()> {
@@ -144,6 +169,10 @@ impl Store {
 
     pub fn peer_offer_get(&self, id: i64) -> Result<Option<peer::Offer>> {
         peer::offer_get(&self.conn.lock().unwrap(), id)
+    }
+
+    pub fn peer_offer_review(&self, id: i64) -> Result<()> {
+        peer::offer_review(&self.conn.lock().unwrap(), id)
     }
 
     pub fn answer_peer_offer(&self, id: i64, sent: bool) -> Result<bool> {

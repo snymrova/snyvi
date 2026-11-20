@@ -41,6 +41,12 @@
 //!
 //! The tray's cap and its order of cards first are gone with it, and so is
 //! the tray opening itself on arrival: the count is the one signal.
+//!
+//! 1.67 (plan f586a9fe09): "nothing is waiting" could be false. A plan was
+//! not Waiting for its first day, a question left after a day with its agent
+//! told nothing, and Claude's own permission prompt was never counted. Each
+//! is Waiting now, from its first minute until it is answered
+//! (`waiting::PLAN_WAIT_S`, `thread::retire`, `prompt`).
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -70,7 +76,8 @@ pub const OLDER_S: i64 = 14 * 86_400;
 /// One row of the list. `kind` is `card` (a turn, which rides inside so
 /// the corner's `turnRow` keeps drawing it), `due` (a dated line), `routine`
 /// (a routine's last line for the reader), `plan`, `suggested` (a line
-/// waiting on Accept) or `left` (a session's left-off).
+/// waiting on Accept), `left` (a session's left-off) or `prompt` (1.67:
+/// Claude's own prompt open in a panel).
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Row {
     pub kind: &'static str,
@@ -130,6 +137,14 @@ pub struct Row {
     pub when: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub may: Vec<String>,
+    /// 1.67, a prompt open in a panel (`prompt`): the panel by id and by the
+    /// name the rail gives it, for Go to panel.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub pane: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub panel: String,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub slot: i64,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -162,14 +177,23 @@ pub struct OnYou {
     pub older_desks: usize,
 }
 
-/// Everything that is the reader's now, ranked, with its counts.
+/// Everything that is the reader's now, ranked, with its counts. The
+/// daemon passes its prompts (`gather_with`); the tests have none.
+#[cfg(test)]
 pub fn gather(conn: &Connection, now: i64) -> Result<OnYou> {
+    gather_with(conn, now, &[])
+}
+
+/// `gather`, with the panels whose Claude has a prompt of its own open and
+/// since when (`pane::Panes::prompting`): only the running daemon knows.
+pub fn gather_with(conn: &Connection, now: i64, prompts: &[(String, i64)]) -> Result<OnYou> {
     let desks: HashMap<i64, String> = conn
         .prepare_cached("SELECT id, name FROM desks WHERE closed_at = 0")?
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
     let mut rows: Vec<Row> = Vec::new();
     card_rows(conn, now, &desks, &mut rows)?;
+    prompt::rows(conn, &desks, prompts, &mut rows)?;
     due_rows(conn, now, &desks, &mut rows)?;
     routine_rows(conn, now, &desks, &mut rows)?;
     routine_waiting(conn, &desks, &mut rows)?;
@@ -224,6 +248,7 @@ pub fn agents(rows: &[Row]) -> usize {
         .map(|r| match (&r.turn, r.routine_id) {
             (Some(t), _) if !t.pane.is_empty() => format!("p{}", t.pane),
             (Some(t), _) => format!("t{}", t.id),
+            (None, _) if !r.pane.is_empty() => format!("p{}", r.pane),
             (None, id) if id != 0 => format!("r{id}"),
             _ => format!("{}{}{}", r.kind, r.desk, r.doc),
         })
@@ -682,6 +707,7 @@ pub fn clauses(oy: &OnYou, _now: i64) -> String {
                 r.routine
             ),
             "plan" => format!("a plan to approve on {}", r.desk_name),
+            "prompt" => format!("a prompt open in {} on {}", r.panel, r.desk_name),
             "routine_start" => format!("start {} on {}", r.routine, r.desk_name),
             "routine_allow" => format!("allow {}'s change on {}", r.routine, r.desk_name),
             "routine_stuck" => format!("{} can't run, on {}", r.routine, r.desk_name),
@@ -776,6 +802,8 @@ pub fn nots(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<(String, St
     }
     Ok(out)
 }
+
+mod prompt;
 
 #[cfg(test)]
 mod tests;

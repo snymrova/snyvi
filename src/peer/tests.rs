@@ -52,6 +52,7 @@ fn a_frame_opens_for_its_recipient_and_for_nobody_else() {
         name: "Sunny".into(),
         id: "abc123".into(),
         at: Folder::default(),
+        review: false,
     };
     let frame = seal(
         &sunny,
@@ -230,6 +231,7 @@ fn friends_are_pinned_listed_renamed_muted_removed_and_restored() {
         conn.execute_batch(c).unwrap();
     }
     conn.execute_batch(COLUMNS_1_49).unwrap();
+    conn.execute_batch(COLUMNS_1_67).unwrap();
     let (sunny, trapti) = two();
     let t = pin(&conn, &as_peer(&trapti, "Trapti"), 100).unwrap();
     assert_eq!(t.name, "Trapti");
@@ -294,7 +296,7 @@ fn friends_are_pinned_listed_renamed_muted_removed_and_restored() {
     assert!(!settle_note(&conn, n, "eat", 503).unwrap());
 
     // Offers: open until answered, dropped with their pane.
-    conn.execute("INSERT INTO docs VALUES('doc1', 'Plan')", [])
+    conn.execute("INSERT INTO docs(id, title) VALUES('doc1', 'Plan')", [])
         .unwrap();
     let o = offer(&conn, t2.id, "doc1", "", "pane-a", "Claude", 600).unwrap();
     let open = offers_open(&conn).unwrap();
@@ -438,6 +440,7 @@ fn a_frame_says_its_folder_and_older_and_newer_frames_still_open() {
             branch: Some("main".into()),
             v: CONTENT_V,
         },
+        review: true,
     };
     let (got, body) = unpack(&pack(&doc, b"x")).unwrap();
     assert_eq!(got, doc);
@@ -568,6 +571,7 @@ fn receipts_and_dones_land_only_on_what_went_to_that_friend() {
         conn.execute_batch(c).unwrap();
     }
     conn.execute_batch(COLUMNS_1_49).unwrap();
+    conn.execute_batch(COLUMNS_1_67).unwrap();
     conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
         .unwrap();
     let (sunny, trapti) = two();
@@ -703,6 +707,7 @@ fn outbox() -> (Connection, Peer) {
         conn.execute_batch(c).unwrap();
     }
     conn.execute_batch(COLUMNS_1_49).unwrap();
+    conn.execute_batch(COLUMNS_1_67).unwrap();
     conn.execute("INSERT INTO docs(id, title) VALUES('d1', 'Plan')", [])
         .unwrap();
     let (_, trapti) = two();
@@ -862,4 +867,21 @@ fn a_rows_from_is_the_rows_and_the_rest_is_their_name() {
     assert_eq!(name_from_project("Fromage"), "Fromage");
     assert_eq!(name_from_project("From From"), "From", "only one");
     assert_eq!(from_name("Trapti"), "From Trapti");
+}
+
+/// 1.67: a line keeps the folder of the desk it was written on, and a
+/// document can go with an ask to review it, which a plain resend takes back.
+#[test]
+fn a_line_keeps_its_folder_and_a_document_its_review() {
+    let (conn, t) = outbox();
+    let line = queue_line(&conn, &t, "water the beans", "/home/s/garden", 10).unwrap();
+    let bare = queue_note(&conn, &t, "and the peas", 11).unwrap();
+    let doc = queue_doc(&conn, &t, "d1", true, 12).unwrap();
+    let due = unsent(&conn, 20).unwrap();
+    let of = |id: &str| due.iter().find(|u| u.id == id).unwrap().clone();
+    assert_eq!(of(&line).root, "/home/s/garden");
+    assert_eq!(of(&bare).root, "");
+    assert_eq!(of(&doc).extra, REVIEW);
+    assert_eq!(queue(&conn, &t, "d1", 13).unwrap(), doc, "the same row");
+    assert_eq!(unsent_one(&conn, &doc).unwrap().unwrap().extra, "");
 }

@@ -172,6 +172,7 @@ async fn board_read(
             "hash": hash,
             "frames": frames,
             "tokens": board::tokens(std::path::Path::new(&root)),
+            "css": board::shared_css(&dir),
             "focus": held.focus.get(desk),
             "live": live,
         })
@@ -306,6 +307,9 @@ pub(crate) struct ArrangeBody {
     pub(crate) frames: Vec<board::Place>,
     #[serde(default)]
     pub(crate) name: Option<String>,
+    /// The board's shared CSS, whole (1.67, `board.css`).
+    #[serde(default)]
+    pub(crate) css: Option<String>,
 }
 
 /// `board_arrange`: places, order, names; the board's name.
@@ -319,6 +323,11 @@ pub(crate) async fn pane_board_arrange(
         Ok(p) => p,
         Err(no) => return *no,
     };
+    if let Some(css) = &b.css {
+        if let Err(e) = board::set_css(std::path::Path::new(&placed.root), &name, css) {
+            return refused(e);
+        }
+    }
     match board::arrange(
         std::path::Path::new(&placed.root),
         &name,
@@ -333,9 +342,25 @@ pub(crate) async fn pane_board_arrange(
     }
 }
 
-/// `frame_look`: the window's own picture of a frame comes later. Until then the
-/// tool exists and says what to do instead, so the skill does not change
-/// when it arrives.
+/// How long `frame_look` waits for a window's picture: under the 5 s the
+/// agent's own call to the daemon is given (`client.rs`).
+const LOOK_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
+/// The largest picture a window may post back, as base64.
+pub(crate) const MAX_LOOK_BYTES: usize = 6 * 1024 * 1024;
+
+type Looks = std::sync::Mutex<std::collections::HashMap<u64, tokio::sync::oneshot::Sender<String>>>;
+static LOOKS: std::sync::OnceLock<Looks> = std::sync::OnceLock::new();
+static LOOK_N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn looks() -> &'static Looks {
+    LOOKS.get_or_init(Default::default)
+}
+
+/// `frame_look` (1.67): a window showing this desk draws the frame and posts
+/// its picture back (`desk_frame_looked`); the agent gets it as an image.
+/// The daemon has no browser of its own, so with no window on the desk, or
+/// one that could not draw it, the answer is still the file and size to
+/// render, as it was from 1.58.
 pub(crate) async fn pane_frame_look(
     State(app): S,
     headers: HeaderMap,
@@ -353,18 +378,131 @@ pub(crate) async fn pane_frame_look(
     let Some(f) = b.frames.iter().find(|f| f.id == frame) else {
         return no_board(&name);
     };
+    let n = LOOK_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    looks().lock().unwrap().insert(n, tx);
+    emit(
+        &app,
+        "look",
+        json!({ "desk": placed.desk_id, "board": name, "frame": frame, "n": n }),
+    );
+    let got = tokio::time::timeout(LOOK_WAIT, rx).await;
+    looks().lock().unwrap().remove(&n);
+    match got {
+        Ok(Ok(png)) if !png.is_empty() => {
+            return Json(json!({ "frame": frame, "w": f.w, "png": png })).into_response();
+        }
+        _ => {}
+    }
     let file = dir.join(format!("{}.html", f.id));
     (
         StatusCode::NOT_IMPLEMENTED,
         Json(json!({
             "error": format!(
-                "snyvi cannot show you the frame yet. Render {} at {} wide with your own browser (Playwright, or chromium --headless --screenshot --window-size={},{}) and read the picture.",
+                "No snyvi window drew the frame: none is on this desk now, or the frame runs a script. Render {} at {} wide with your own browser (Playwright, or chromium --headless --screenshot --window-size={},{}) and read the picture.",
                 file.display(), f.w, f.w, f.h
             ),
             "file": file, "w": f.w, "h": f.h,
         })),
     )
         .into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct LookedBody {
+    /// The picture, a PNG as base64; empty when the window could not draw it.
+    #[serde(default)]
+    pub(crate) png: String,
+}
+
+/// A window's picture of a frame, for the `frame_look` that asked (`n`). Only
+/// a PNG is passed on, and only to a look still waiting.
+pub(crate) async fn desk_frame_looked(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, _board, n)): Path<(i64, String, u64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<LookedBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if !matches!(app.store.desk(id), Ok(Some(_))) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    // "iVBORw0KGgo" is a PNG's eight-byte signature in base64.
+    let png = if b.png.starts_with("iVBORw0KGgo") && b.png.len() <= MAX_LOOK_BYTES {
+        b.png
+    } else {
+        String::new()
+    };
+    match looks().lock().unwrap().remove(&n) {
+        Some(tx) => {
+            let _ = tx.send(png);
+            StatusCode::NO_CONTENT.into_response()
+        }
+        None => StatusCode::GONE.into_response(),
+    }
+}
+
+/// The reader hides a section, or shows it again (1.67): the same flag the
+/// agent's hide sets, the file and every version kept.
+pub(crate) async fn desk_frame_hide(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, name, frame)): Path<(i64, String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<HideBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match board::hide(std::path::Path::new(&desk.root), &name, &frame, b.hidden) {
+        Ok(true) => {
+            board_moved(&app, id, &name);
+            Json(json!({ "frame": frame, "hidden": b.hidden, "kept": true })).into_response()
+        }
+        Ok(false) => no_board(&name),
+        Err(e) => refused(e),
+    }
+}
+
+/// A section's versions, oldest first (1.67): each a document the window
+/// can draw in the section's place, so "v2 of 3" opens.
+pub(crate) async fn desk_frame_versions(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, name, frame)): Path<(i64, String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let dir = match board_dir(&desk.root, &name) {
+        Ok(d) => d,
+        Err(no) => return *no,
+    };
+    let Some(path) = board::frame_file(&dir, &frame) else {
+        return no_board(&name);
+    };
+    let project = crate::receive::desk_project(&desk.root).0;
+    let sp = path.to_string_lossy().into_owned();
+    let mut all = match app.store.latest_for_path(&project, &sp) {
+        Ok(Some(d)) => app.store.history(d.project_id, &sp).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    all.reverse();
+    let versions: Vec<serde_json::Value> = all
+        .iter()
+        .map(|d| json!({ "doc": d.id, "at": d.received_at }))
+        .collect();
+    Json(json!({ "frame": frame, "versions": versions })).into_response()
 }
 
 /// `board_export`: one HTML page of every shown frame, in order, written
@@ -532,7 +670,7 @@ pub(crate) async fn pane_open_view(
     };
     Json(json!({
         "opened": true,
-        "line": format!("Opened {view}{at} on the user's desk; they go back with its chip or Esc. read_focus says where they are."),
+        "line": format!("Opened {view}{at} on the user's desk; they go back with its chip or Esc. read_desk's focus says where they are."),
     }))
     .into_response()
 }

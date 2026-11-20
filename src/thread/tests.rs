@@ -1327,13 +1327,12 @@ fn only_fresh_turns_hold_a_place() {
             Asked::Turn(_)
         ));
     }
-    // Days on, the questions are put away by themselves, after one (1.65),
-    // and can come back; a chore never ages (1.66): it is the reader's To
-    // do until Done.
+    // Days on, nothing is put away by itself: a chore never ages (1.66),
+    // and a question waits until it is answered (1.67).
     let gone = retire(&conn, 10_003 + RETIRE_S).unwrap();
-    assert_eq!(gone, TURNS_PER_DESK as usize, "the six questions, no chore");
+    assert_eq!(gone, 0, "no question, no chore");
     let left = turns(&conn, d, 0, 10_003 + RETIRE_S).unwrap();
-    assert!(!left.is_empty() && left.iter().all(|t| t.kind != "decide"));
+    assert!(left.iter().any(|t| t.kind == "decide"));
 }
 
 /// A question the reader answered in the conversation (B1): the panel's next
@@ -1695,7 +1694,13 @@ fn a_card_put_away_says_who_put_it_away() {
     };
     let first = id(ask(&mut conn, d, &run, 23).unwrap());
     id(ask(&mut conn, d, &run, 24).unwrap());
-    let old = id(ask(&mut conn, d, &card("decide", "Look?", ""), 25).unwrap());
+    // Age puts away only snyvi's own card, on no panel (1.67).
+    conn.execute(
+        "INSERT INTO turns(desk_id, by, kind, via, text, created_at) VALUES(?1, 'snyvi', 'tell', 'ask', 'Who should know?', 25)",
+        params![d],
+    )
+    .unwrap();
+    let old = conn.last_insert_rowid();
     retire(&conn, 25 + RETIRE_S + 1).unwrap();
     let got: Vec<String> = [x, agent, dialog, first, old]
         .iter()
@@ -1971,11 +1976,11 @@ fn a_tell_on_no_panel_retires_after_a_day() {
     assert_eq!(retire(&conn, TELL_RETIRE_S + 1).unwrap(), 1);
 }
 
-/// 1.65: a question waits a day on On you, an errand three; and what the
-/// reader said in the panel is kept as the answer, on a question put away
+/// 1.67: a question does not age off On you; and what the reader said in
+/// the panel is kept as the answer, on a question an older snyvi put away
 /// by age too (`crate::ledger` reads both).
 #[test]
-fn a_question_retires_after_a_day_and_keeps_what_was_said() {
+fn a_question_never_retires_and_keeps_what_was_said() {
     let mut conn = db();
     let (d, _) = desk(&mut conn);
     let q = |text: &str| Ask {
@@ -2003,14 +2008,16 @@ fn a_question_retires_after_a_day_and_keeps_what_was_said() {
         10,
     )
     .unwrap());
-    assert_eq!(retire(&conn, 10 + ASK_RETIRE_S + 1).unwrap(), 1);
-    assert_eq!(removed_by(&conn, old), "aged");
-    assert_eq!(
-        removed_by(&conn, errand),
-        "",
-        "an errand has its three days"
-    );
-    let at = 10 + ASK_RETIRE_S + 2;
+    assert_eq!(retire(&conn, 10 + 86_400 + 1).unwrap(), 0);
+    assert_eq!(removed_by(&conn, old), "");
+    assert_eq!(removed_by(&conn, errand), "");
+    // One that 1.65 or 1.66 aged out is still answered by what was said.
+    conn.execute(
+        "UPDATE turns SET removed_at = 86_411, removed_by = 'aged' WHERE id = ?1",
+        params![old],
+    )
+    .unwrap();
+    let at = 10 + 86_400 + 2;
     let new = id(ask(&mut conn, d, &q("Which name?"), at).unwrap());
     let unsaid = id(ask(&mut conn, d, &q("Dark too?"), at).unwrap());
     let heard = vec![
@@ -2078,4 +2085,46 @@ fn a_panels_stop_takes_its_own_answers_once() {
         "once"
     );
     assert_eq!(turn(&conn, d, theirs.id).unwrap().unwrap().told_at, 0);
+}
+
+#[test]
+fn a_first_commit_is_building_and_an_open_pr_is_review() {
+    let conn = db();
+    let d = crate::desk::create(&conn, "/p", Some("a"), 1).unwrap().id;
+    conn.execute(
+        "INSERT INTO threads (desk_id, name, stage, commits, created_at, moved_at) VALUES (?1, 't', 'idea', 2, 1, 1)",
+        params![d],
+    )
+    .unwrap();
+    let id = conn.last_insert_rowid();
+    let at = |c: &Connection| -> String {
+        c.query_row(
+            "SELECT stage FROM threads WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert!(facts::stage(&conn, d, id).unwrap());
+    assert_eq!(at(&conn), "building");
+    assert!(
+        !facts::stage(&conn, d, id).unwrap(),
+        "the same facts move nothing twice"
+    );
+    conn.execute(
+        "UPDATE threads SET pr = '12', pr_state = 'open' WHERE id = ?1",
+        params![id],
+    )
+    .unwrap();
+    assert!(facts::stage(&conn, d, id).unwrap());
+    assert_eq!(at(&conn), "review");
+    conn.execute(
+        "UPDATE threads SET stage = 'parked' WHERE id = ?1",
+        params![id],
+    )
+    .unwrap();
+    assert!(
+        !facts::stage(&conn, d, id).unwrap(),
+        "a parked thread stays parked"
+    );
 }

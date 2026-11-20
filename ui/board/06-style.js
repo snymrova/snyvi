@@ -4,7 +4,7 @@ function style() {
   if (document.getElementById("bd-css")) return;
   const s = document.createElement("style");
   s.id = "bd-css";
-  s.textContent = BOARD_CSS;
+  s.textContent = BOARD_CSS + ACTS_CSS;
   document.head.append(s);
 }
 

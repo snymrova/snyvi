@@ -31,13 +31,13 @@ fetches the internet. Hide the section and it is never asked.
 | What leaves the machine | a document you pressed Send on, sealed to a friend | that, and a page you pressed Publish on: to the wall in the clear and signed, or to friends sealed |
 | Who sees your work | the friends you send it to | anyone you put your page in front of, and every snyvi Home once its check is in your repository |
 | What comes back | a friend's reply, a tick | that, and the hearts on your page, once a day, with names |
-| What an agent can do | send you documents, offer one to a friend | that, and offer a moment for your page with `offer_post`: a card, never a publish |
+| What an agent can do | send you documents, offer one to a friend | that, and offer a moment for your page with `offer` post: a card, never a publish |
 
 ## How it flows
 
 ```mermaid
 flowchart LR
-  A[A thread ships, or an agent's offer_post, or Page in the desk's head] --> C[One card: Have a look, Not now]
+  A[A thread ships, or an agent's offer post, or Page in the desk's head] --> C[One card: Have a look, Not now]
   C -->|Have a look| V[The Page view: the page as it will look, fields edited in place]
   V -->|Publish, Everyone| O[page_outbox: files, page, moments, check]
   O -->|signed by the daemon's key| W[wall.snyvi.com]
@@ -68,7 +68,7 @@ sequenceDiagram
 
 1. **A press is the only way out.** The page, a moment, a file leave on the
    reader's Publish in the Page view, through the window's capability. A
-   token never publishes: an agent's `offer_post` makes a card and nothing
+   token never publishes: an agent's `offer` post makes a card and nothing
    else.
 2. **What the wall holds is what you signed.** The page's own fields and
    files, and this daemon's public keys. No desk id, no folder, no draft,
@@ -151,9 +151,9 @@ snyvi.page, and its owner can take it down for good.
 | | |
 |---|---|
 | `src/page.rs`, `src/page/{draft,accent,files}.rs` | the page, its moments, its cards; the draft from the desk; the accent from the logo; files copied in |
-| `src/server/api_page.rs` | the Page view's routes, `offer_post`'s, `/pages/{file}`, door (a) |
+| `src/server/api_page.rs` | the Page view's routes, `offer` post's, `/pages/{file}`, door (a) |
 | `src/wall.rs`, `src/server/api_wall.rs` | signing, the outbox, the press, the daily line, Home's `/api/wall` |
-| `src/mcp/page.rs` | `offer_post` |
+| `src/mcp/page.rs` | `offer` post |
 | `ui/desk/27-page.js`, `ui/page.js` | Page in the desk's ⋯, the card, the view |
 | `ui/wall.js` | Home's section |
 | `wall/` | the service; `wall/src/card.ts` the drawn preview |

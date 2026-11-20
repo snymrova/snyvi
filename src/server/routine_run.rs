@@ -693,7 +693,7 @@ fn settings_file(
     let dir = data_dir.join("routines").join(r.id.to_string());
     std::fs::create_dir_all(&dir)?;
     let f = dir.join("settings.json");
-    let deny: Vec<&str> = super::pipeline_run::DENY.to_vec();
+    let deny: Vec<&str> = super::turn_end::DENY.to_vec();
     let slim = home.filter(|_| r.slim);
     std::fs::write(&f, routine::settings(&deny, &r.waits, slim).to_string())?;
     Ok(f)
@@ -793,7 +793,7 @@ pub(crate) fn heard(
     app: &App,
     pane: &str,
     stopped: Option<&str>,
-    stop: Option<&super::pipeline_run::StopBody>,
+    stop: Option<&super::turn_end::StopBody>,
 ) {
     let failed = stopped.filter(|w| !w.is_empty());
     if stop.is_none() && failed.is_none() {

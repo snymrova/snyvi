@@ -201,6 +201,29 @@ pub(crate) async fn restore_group(
     }
 }
 
+/// Recently closed (1.67, `desk::closed`): the panels and tabs a ✕ took
+/// from this desk's view, newest first, for the desk's ⋯ to reopen.
+pub(crate) async fn closed_list(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app
+        .store
+        .clocked(|c, _| crate::desk::closed::recent(c, id, CLOSED_SHOWN))
+    {
+        Ok(rows) => Json(json!({ "closed": rows })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// How many rows Recently closed lists.
+const CLOSED_SHOWN: usize = 12;
+
 /// A panel to another tab of its desk: a drag onto the tab's name, or the
 /// tab's menu. Running or not, its process is untouched; only its place.
 pub(crate) async fn regroup_pane(

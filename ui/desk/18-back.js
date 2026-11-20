@@ -31,26 +31,43 @@ function lastLine(v) {
   return "";
 }
 
-/** What a panel in the back is doing, in a word or two, for its chip. */
-function backSays(v) {
-  const s = v.status;
-  // The desks list carries no exit code; the panel's own status does.
-  const ended = s.exit != null ? `exited ${s.exit}` : "ended";
-  if (s.blocked) return s.running ? "a command failed" : ended;
-  if (s.running) return "running";
-  return s.exit != null ? ended : "stopped";
+/** How long, short: "6 min", "2 h", "3 d". */
+function backAge(at) {
+  const m = Math.max(0, Math.round((Date.now() / 1000 - at) / 60));
+  return m < 60 ? `${m} min` : m < 1440 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`;
 }
 
-/** The head's chips, after the grid's tabs: one a panel in the back, amber
- *  when it died, which is when it needs the reader. */
+/** What a panel in the back is doing, for its chip, and the chip's class
+ *  (1.67, plan f586a9fe09). An agent's own word comes first: one that asked
+ *  rang its bell, and until 1.67 the chip read that as "a command failed",
+ *  the words for a dead dev server, on an agent that only had a question.
+ *  Asks you, working and finished say since when; a shell says running, or
+ *  how it ended. */
+function backState(v) {
+  const s = v.status, at = s.agent_since;
+  if (s.agent === "needs_you") return ["asks you" + (at ? ` · ${backAge(at)}` : ""), " blk"];
+  if (s.agent === "working") return ["working" + (at ? ` ${backAge(at)}` : ""), " run"];
+  if (s.agent === "done") return ["finished" + (at ? ` ${new Date(at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""), " fin"];
+  // The desks list carries no exit code; the panel's own status does.
+  const ended = s.exit != null ? `exited ${s.exit}` : "ended";
+  if (s.blocked) return [s.running ? "a command failed" : ended, " blk"];
+  if (s.running) return ["running", " run"];
+  return [s.exit != null ? ended : "stopped", ""];
+}
+const backSays = v => backState(v)[0];
+
+/** The head's chips, after the grid's tabs: one a panel in the back, each
+ *  with what it is doing; amber when it asks or died, which is when it
+ *  needs the reader. The words tick with the minute: `backHead` writes the
+ *  chips again only when they differ, at a panel's status. */
 function backChips(d) {
   const vs = backViews(d), { esc } = ctx;
   if (!vs.length) return "";
   return `<span class="dk-back" data-part="desk.back" role="group" aria-label="In the back">` + vs.map(v => {
-    const s = v.status, cls = s.blocked ? " blk" : s.running ? " run" : "";
+    const [says, cls] = backState(v);
     return `<button type="button" class="dk-chip${cls}${drawerOn === v.id ? " on" : ""}" data-drawer="${v.id}" aria-expanded="${drawerOn === v.id}" ` +
-      `data-tip="${esc(short(v))} · ${esc(backSays(v))}" data-tip-sub="${esc(lastLine(v) || "in the back")}" data-key="ctrl+alt+b">` +
-      `<i class="dot" aria-hidden="true"></i>${esc(short(v))}${s.blocked ? "!" : ""}</button>`;
+      `data-tip="${esc(short(v))} · ${esc(says)}" data-tip-sub="${esc(lastLine(v) || "in the back")}" data-key="ctrl+alt+b">` +
+      `<i class="dot" aria-hidden="true"></i><span class="dk-chip-n">${esc(short(v))}</span><span class="dk-chip-s">· ${esc(says)}</span></button>`;
   }).join("") + `</span>`;
 }
 
@@ -222,9 +239,13 @@ const BACK_CSS = `
  * Chips after the grid's tabs, in the head that is already there; the dot is
  * the rail's: green running, amber when it died and needs the reader. */
 .dk-back { display: flex; gap: 4px; margin-left: 6px; }
-.dk-tabs .dk-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 16ch; padding: 2px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); font-family: var(--mono); font-size: 11px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-tabs .dk-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 34ch; padding: 2px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); font-family: var(--mono); font-size: 11px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-chip .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--fg-3); }
 .dk-chip.run .dot { background: var(--ok); }
+.dk-chip.fin .dot { background: var(--rule-2); }
+.dk-chip-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dk-chip-s { flex: none; font-family: var(--sans); color: var(--fg-3); }
+.dk-chip.blk .dk-chip-s { color: inherit; }
 .dk-tabs .dk-chip.blk { color: var(--warn); border-color: var(--warn); font-weight: 600; }
 .dk-chip.blk .dot { background: var(--warn); }
 .dk-tabs .dk-chip.on { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }

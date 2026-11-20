@@ -19,11 +19,11 @@ mod api_docs;
 mod api_friend;
 mod api_gallery;
 mod api_groups;
+mod api_line;
 mod api_media;
 mod api_news;
 mod api_page;
 mod api_peer;
-mod api_pipeline;
 mod api_restore;
 mod api_routine;
 mod api_thread;
@@ -35,7 +35,7 @@ mod auth;
 mod events;
 mod lifecycle;
 mod peer_link;
-mod pipeline_run;
+mod press;
 mod restore_run;
 mod routine_gate;
 mod routine_offer;
@@ -43,6 +43,7 @@ mod routine_run;
 mod routine_watch;
 #[cfg(test)]
 mod tests;
+mod turn_end;
 mod widget_run;
 mod ws;
 
@@ -56,11 +57,11 @@ use api_docs::*;
 use api_friend::*;
 use api_gallery::*;
 use api_groups::*;
+use api_line::*;
 use api_media::*;
 use api_news::*;
 use api_page::*;
 use api_peer::*;
-use api_pipeline::*;
 use api_restore::*;
 use api_routine::*;
 use api_thread::*;
@@ -475,6 +476,7 @@ fn group_routes() -> Router<Arc<App>> {
         .route("/api/desks/{id}/groups/{grp}/show", post(show_group))
         .route("/api/desks/{id}/groups/{grp}/close", post(close_group))
         .route("/api/desks/{id}/groups/{grp}/restore", post(restore_group))
+        .route("/api/desks/{id}/closed", get(closed_list))
         .route("/api/panes/{id}/group", post(regroup_pane))
 }
 
@@ -534,6 +536,10 @@ fn note_routes() -> Router<Arc<App>> {
             "/api/panes/{id}/notes/{note}/suggest-check",
             post(pane_suggest_check),
         )
+        // 1.67: the line (`api_line`).
+        .route("/api/desks/{id}/line", get(desk_line).post(set_desk_line))
+        .route("/api/desks/{id}/line/next", post(start_next))
+        .route("/api/panes/{id}/next-work", post(pane_next_work))
         .route(
             "/api/desks/{id}/notes/{note}/image",
             post(add_note_image).layer(axum::extract::DefaultBodyLimit::max(NOTE_IMAGE_BYTES)),
@@ -576,6 +582,22 @@ fn board_routes() -> Router<Arc<App>> {
         // 1.62: a new, empty board, and the one document a board is drawn in.
         .route("/api/desks/{id}/boards", post(desk_board_new))
         .route("/api/desks/{id}/board/{board}/name", post(desk_board_name))
+        // 1.67: the reader's hide and show, a section's versions, and the
+        // window's picture for a `frame_look`.
+        .route(
+            "/api/desks/{id}/board/{board}/frames/{frame}/hide",
+            post(desk_frame_hide),
+        )
+        .route(
+            "/api/desks/{id}/board/{board}/frames/{frame}/versions",
+            get(desk_frame_versions),
+        )
+        .route(
+            "/api/desks/{id}/board/{board}/look/{n}",
+            post(desk_frame_looked).layer(axum::extract::DefaultBodyLimit::max(
+                api_board::MAX_LOOK_BYTES + 16 * 1024,
+            )),
+        )
         .route("/board-frame", get(board_frame))
         // 1.59: a desk's page (`api_page`), the window's; the agent's offer.
         .route("/api/desks/{id}/page", get(desk_page).post(save_desk_page))
@@ -632,17 +654,10 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/api/gallery/pick", post(pick_gallery))
 }
 
-/// Pipelines (`api_pipeline`) and routines (`api_routine`): the window's
-/// alone, on the desk gate.
-fn pipeline_routes() -> Router<Arc<App>> {
+/// Routines (1.50, `api_routine`): the window's alone, on the desk gate.
+/// The pipelines' routes were here with them until 1.67.
+fn routine_routes() -> Router<Arc<App>> {
     Router::new()
-        .route(
-            "/api/desks/{id}/pipelines",
-            get(desk_pipelines).post(new_pipeline),
-        )
-        .route("/api/desks/{id}/pipelines/{row}/edit", post(edit_pipeline))
-        .route("/api/desks/{id}/pipelines/{row}/{act}", post(pipeline_act))
-        // Routines (1.50, `api_routine`): the same gate, the same promise.
         .route(
             "/api/desks/{id}/routines",
             get(desk_routines).post(new_routine),
@@ -839,7 +854,7 @@ fn router(app: Arc<App>) -> Router {
         .merge(thread_routes())
         .merge(widget_routes())
         .merge(media_routes())
-        .merge(pipeline_routes())
+        .merge(routine_routes())
         .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
@@ -899,12 +914,11 @@ async fn asked_to_stop(mut stop_rx: broadcast::Receiver<()>, told: broadcast::Se
 
 /// What runs beside the router for as long as the daemon does: the
 /// watchers, widget files' commands while their widgets are in view, and
-/// pipelines' stages, one after another in their panels.
+/// routines' runs.
 fn spawn_runners(app: &Arc<App>) {
     crate::watch::spawn_browse_watcher(app.clone());
     crate::watch::spawn_ui_watcher(app.clone());
     widget_run::spawn(app.clone());
-    pipeline_run::spawn(app.clone());
     routine_run::spawn(app.clone());
     routine_watch::spawn(app.clone());
 }

@@ -9,7 +9,8 @@
 //! A plan is a document that is some open note's `stage_doc`: what
 //! `send_document(notes=)` and `mark_desk_note planned` make. Its head grows
 //! Approve, and the reader's press marks those notes `ok_at`, which the
-//! brief and the next prompt carry. A day without it is a row too.
+//! brief and the next prompt carry. Unapproved, it is a row from its first
+//! minute (1.67).
 //!
 //! Neither starts anything. Approve is a line Claude reads at its next
 //! prompt, never one typed into a panel.
@@ -36,8 +37,10 @@ pub const NEEDS: [&str; 3] = ["you", "claude", "time"];
 /// all, since its run was for this morning.
 pub const LEFT_WAIT_S: i64 = 86_400;
 
-/// How long a plan waits for Approve before it is a row on Home: a day.
-pub const PLAN_WAIT_S: i64 = 86_400;
+/// How long a plan waits for Approve before it is a row on On you: not at
+/// all (1.67). It was a day, in which the agent that sent it sat stuck and
+/// "nothing is waiting" was said over it.
+pub const PLAN_WAIT_S: i64 = 0;
 
 /// `needs` as stored: one of `NEEDS`, or empty for unsaid.
 pub fn needs_of(n: &str) -> String {

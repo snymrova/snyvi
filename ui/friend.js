@@ -100,7 +100,7 @@ function draw() {
   c.docEl.innerHTML = `<div class="fr"><div class="fr-head"><h1 tabindex="-1">${c.who(f.name)} ${esc(f.name)}</h1></div><p class="fr-sub">${sub}</p>` +
     (items.length ? `<ul class="fr-list">${items.map(row).join("")}</ul>` : `<p class="fr-sub">Nothing has passed between you yet. A line or a document, below, starts it.</p>`) +
     (more ? `<p class="fr-more"><button type="button" data-fr="more">More…</button></p>` : "") +
-    `<div class="fr-foot"><div class="row"><input id="fr-line" maxlength="400" placeholder="A line for ${esc(f.name)}…" autocomplete="off" aria-label="A line for ${esc(f.name)}"><button type="button" data-fr="line">Send</button></div>` +
+    `<div class="fr-foot"><div class="row"><input id="fr-line" maxlength="200" placeholder="A line for ${esc(f.name)}…" autocomplete="off" aria-label="A line for ${esc(f.name)}"><button type="button" data-fr="line">Send</button></div>` +
     `<div class="row"><input id="fr-find" placeholder="Send a document: its name…" autocomplete="off" aria-label="Find a document to send"></div><ul class="fr-pick"></ul><div class="fr-said" aria-live="polite"></div></div></div>`;
   wire();
 }

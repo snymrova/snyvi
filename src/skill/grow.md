@@ -37,7 +37,7 @@ Pick the two or three that fit the project; never all of them at once.
 | X, Bluesky | the day it ships | One post replying to the ship (the release, the merged PR, the demo), with one picture or a short clip. Not a thread of pitches. |
 | The blog | within a week | The story: what was hard, what you learned, the numbers. It is what the other posts link to. |
 | Listings | any week | Alternatives and "best X" lists, awesome-lists, directories for the ecosystem. A comparison page ("<name> vs <what people use instead>") is what search engines and LLMs cite most. |
-| The page | when it truly shipped | `offer_post` once, if the desk has a page (the brief says). |
+| The page | when it truly shipped | `offer` post once, if the desk has a page (the brief says). |
 
 ## Each draft: check before you send it
 
@@ -58,7 +58,7 @@ Say which of these you checked, in the draft's foot:
 - The numbers a week on (stars, downloads, replies) go on the T+7 line's
   tick as its `say`, with where they came from as its `evidence`.
 - Watching whether the project is named by ChatGPT, Claude or Perplexity is
-  a routine (`offer_routine`, with the asking put in `waits`), never a thing
+  a routine (`offer` routine, with the asking put in `waits`), never a thing
   you check on your own.
 
 ## Three things not to do
@@ -67,5 +67,5 @@ Say which of these you checked, in the draft's foot:
    the line for the user.
 2. **Never more than one picture** a post, and never five posts in a day.
    No vote rings, no asking friends to upvote: a flagged account is gone.
-3. **Never a second `offer_post`** for the same thing: it only updates the
+3. **Never a second `offer` post** for the same thing: it only updates the
    card.

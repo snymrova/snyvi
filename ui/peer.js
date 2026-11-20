@@ -231,6 +231,9 @@ export async function send(ctx, docId, title = "") {
   open(`Send <span class="pr-title">${esc(title || "this document")}</span> to…`,
     (list.length
       ? `<ul>${list.map(f => `<li><span class="pr-nm">${esc(f.name)}</span><span class="pr-t">${f.away ? "away now; it waits for them" : f.last_to ? `last sent ${esc(ctx.rel(f.last_to))}` : "nothing sent yet"}</span><button type="button" class="pr-go" data-peer="${f.id}">Send</button></li>`).join("")}</ul>` +
+        // 1.67: the ask goes with the document; their head offers Approve
+        // and Changes…, and the answer comes back under this one's head.
+        `<label class="pr-quiet" style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="pr-review"> Ask them to review it</label>` +
         `<p class="pr-quiet" style="margin-top:10px">Sealed to their key. It lands under <b>From</b> and your name in their sidebar, or on the desk they keep your things on. The relay holds it seven days at most, read or not.</p>`
       : `<p>No friends yet. <b>Pair with a friend…</b> at the foot of Home makes one.</p>`) +
     `<div class="pr-said" aria-live="polite"></div><div class="pr-foot"><button type="button" data-pr="close">Close</button></div>`);
@@ -238,7 +241,8 @@ export async function send(ctx, docId, title = "") {
     for (const x of box.querySelectorAll("button[data-peer]")) x.disabled = true;
     say("Sealing and sending…");
     try {
-      const r = await post(`/api/docs/${encodeURIComponent(docId)}/send`, { peer: +b.dataset.peer, again });
+      const review = !!box.querySelector("#pr-review")?.checked;
+      const r = await post(`/api/docs/${encodeURIComponent(docId)}/send`, { peer: +b.dataset.peer, again, review });
       // This very version is with them already: nothing new would arrive.
       if (r.already) {
         say(`${r.to} already has this version: it arrived ${ctx.rel(r.already)}.`);
@@ -355,7 +359,23 @@ export function head(ctx, b) {
   if (b.dataset.act === "save") return save(ctx, id, b);
   if (b.dataset.act === "unfile") return unfile(ctx, id, b);
   if (b.dataset.act === "reply") return reply(ctx, id, b.dataset.to || "them", title, +b.dataset.peer || 0);
+  if (b.dataset.act === "approve") return approve(ctx, id, b);
   return send(ctx, id, title);
+}
+
+/** Approve on a document a friend asked the reader to review (1.67): the
+ *  word goes back as a reply, under both copies' heads, and the ask is
+ *  answered. Said where the button was; the head is drawn again after. */
+async function approve(ctx, id, b) {
+  b.disabled = true;
+  try {
+    const r = await post(`/api/docs/${encodeURIComponent(id)}/reply`, { text: "Approved ✓" });
+    if (b.isConnected) { const s = Object.assign(document.createElement("span"), { textContent: r.sent ? `Approved; ${r.to} has it` : `Approved; it goes to ${r.to} when they can be reached` }); s.setAttribute("role", "status"); b.replaceWith(s); }
+    setTimeout(() => ctx.refreshDoc?.(id), 1200);
+  } catch (e) {
+    b.disabled = false;
+    ctx.toast("Could not send the approval", { sub: ctx.sayErr(e).why });
+  }
 }
 
 /** One line back to the friend who sent a document -- or, under the

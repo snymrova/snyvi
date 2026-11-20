@@ -134,6 +134,9 @@
     let blocked = 0;
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
+    // The focus (`snyvi.focus`, Home's Focus): its desks, and the one on screen.
+    let fz = []; try { fz = (JSON.parse(localStorage.getItem("snyvi.focus")) || []).filter(id => list.some(d => d.id === id)); } catch {}
+    const shown = fz.length ? list.filter(d => fz.includes(d.id) || on && state.deskId === d.id) : list;
     badge('[data-pop="desks"]', blocked, " blk");
     if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
@@ -146,12 +149,14 @@
         // The word, said while there is one desk to say it of. It stayed
         // over ten while a first-run card waited on Home, and read as
         // clutter at the top of the list.
-        : list.length === 1 ? `<li class="s-empty">A desk is one project: its folder, its agents, and what they write.</li>` : "");
+        : list.length === 1 ? `<li class="s-empty">A desk is one project: its folder, its agents, and what they write.</li>`
+        // The focus zone (#241, home.js): the list is the desks picked for today, and says so.
+        : fz.length ? `<li class="s-empty">Focus: ${shown.length} of ${list.length} · <a href="/" data-nav="home">change</a></li>` : "");
     // The head's + is the one way to a new desk from the list: a "+ New desk"
     // row under a lone desk came and went with the second, and moved the
     // sidebar as it did (audit 67d008cb6f). Welcome's Got another one? and
     // Welcome's Got another project? asks for one now (about.js).
-    const rows = list.map(d => {
+    const rows = shown.map(d => {
       const m = mark3(d.panes), n = d.panes.length, full = fullest(d);
       const say = m === "!" ? needYou(d.panes.filter(p => p.status && p.status.blocked).length) : m === "●" ? "An agent is working" : m === "◦" ? "Running" : "Idle";
       // The row's end says only what is unusual: a panel that needs you, a
@@ -563,8 +568,7 @@
     const es = new EventSource(`/api/events?page=${encodeURIComponent(state.page || "")}` + (inWindow ? `&window=${encodeURIComponent(windowMark)}` : ""));
     stream = es;
     es.onopen = async () => {
-      // A first connection is not a return.
-      if (root.dataset.link !== "off") return;
+      if (root.dataset.link !== "off") return;   // a first connection is not a return
       linked(true); sayFocus(true);
       // The daemon on the port now may be a newer build than the one that
       // served this page: its bundle is the one to run, so start over on it.
@@ -650,13 +654,14 @@
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
     // A board moved, the reader's focus did, a crash's conversations came back (1.58), or a page did (1.59).
-    for (const n of ["board", "focus", "restore", "page", "view"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
+    for (const n of ["board", "focus", "restore", "page", "view", "look"]) es.addEventListener(n, ev => { const j = parse(ev); if (j) n === "restore" ? desk?.restoreSaid?.(j) : desk?.viewSaid?.(n, j); });
     // An agent ticked a line on a desk's list; an Approve names its plan, and the desk types the go-ahead (#242).
-    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); if (j?.approved) desk?.approvedHere?.(j.desk, j.approved); cornerMod?.moved("desknotes"); desksSoon(); });
+    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); desksSoon(); });
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
-      const j = parse(ev); if (!j) return;
-      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent };
+      // Claude's own prompt opened or closed in a panel: On you has a row for it (1.67, src/onyou/prompt.rs), so the list is read again.
+      const j = parse(ev), you = s => s === "needs_you"; if (!j) return;
+      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) { if (you(p.status?.agent) !== you(j.agent)) cornerMod?.moved("panes"); p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent }; }
       renderDesks();
     });
     for (const ev of ["peeroffers", "peernotes", "peerdone", "peerreply"]) es.addEventListener(ev, onPeer);

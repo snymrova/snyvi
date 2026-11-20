@@ -19,7 +19,6 @@ function paintList() {
   const chips = shown().map(f =>
     `<button type="button" class="bd-chip${picked.includes(f.id) ? " bd-on" : ""}" data-bd-pick="${esc(f.id)}" aria-pressed="${picked.includes(f.id)}" ` +
     `data-tip="${esc(f.name || f.id)}" data-tip-sub="${esc(sizeSaid(f))}${f.versions > 1 ? ` · v${f.versions}` : ""} · shift adds it">${esc(f.name || f.id)}</button>`).join("");
-  const hidden = board.frames.length - shown().length;
   const t = board.tokens || {}, vars = (t.vars || []).slice(0, 24);
   const has = vars.length || t.design;
   const look = has ? `<button type="button" class="bd-look-b" data-bd-look aria-haspopup="true" aria-expanded="${lookOpen}" aria-label="The look: tokens and DESIGN.md" data-tip="The look" data-tip-sub="DESIGN.md and the tokens">` +
@@ -31,7 +30,7 @@ function paintList() {
   const title = `<button type="button" class="bd-title" data-bd-boards aria-haspopup="true" aria-expanded="${!!boardsOpen}" data-tip="This desk's boards" data-tip-sub="switch, make one, rename this">${esc(board.name || board.id)}<i aria-hidden="true">▾</i></button>`;
   const html = title + boardsBox(esc) +
     (chips || `<span class="bd-quiet">no sections yet</span>`) +
-    (hidden ? `<span class="bd-quiet">${hidden} hidden</span>` : "") + look + box;
+    hiddenChip(esc) + look + box;
   if (list.$html !== html) { list.innerHTML = html; list.$html = html; }
 }
 
@@ -84,8 +83,9 @@ async function boardsSubmit(e) {
 
 /** A chip picks its frame, as a click on the board does, and fits it. */
 function listClick(e) {
-  if (e.target.closest("[data-bd-look]")) { lookOpen = !lookOpen; boardsOpen = false; paintList(); return; }
-  if (e.target.closest("[data-bd-boards]")) { boardsOpen = boardsOpen ? false : true; lookOpen = false; paintList(); return; }
+  if (hiddenClick(e)) return;
+  if (e.target.closest("[data-bd-look]")) { lookOpen = !lookOpen; boardsOpen = false; hiddenOpen = false; paintList(); return; }
+  if (e.target.closest("[data-bd-boards]")) { boardsOpen = boardsOpen ? false : true; lookOpen = false; hiddenOpen = false; paintList(); return; }
   const sw = e.target.closest("[data-bd-switch]");
   if (sw) { boardsOpen = false; if (sw.dataset.bdSwitch !== board.id) o.switch(sw.dataset.bdSwitch); else paintList(); return; }
   if (e.target.closest("[data-bd-new], [data-bd-rename]")) {

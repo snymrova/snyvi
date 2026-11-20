@@ -42,6 +42,7 @@ pub(crate) async fn home(
     // On you's box is the same ranked list as the corner's tray (1.54,
     // `crate::onyou`); `due` and `wait` stay one release for a page that
     // has not reloaded since.
+    let prompts = app.panes.prompting();
     let (turns, threads, due, wait, onyou) = if gated {
         app.store
             .clocked(|c, now| {
@@ -51,7 +52,7 @@ pub(crate) async fn home(
                     crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN)?,
                     crate::due::due_by(c, crate::due::end_of_day(now))?,
                     crate::waiting::rows(c, now)?,
-                    crate::onyou::gather(c, now)?,
+                    crate::onyou::gather_with(c, now, &prompts)?,
                 ))
             })
             .map(|(t, th, du, w, o)| {
@@ -1312,8 +1313,10 @@ pub(crate) struct ApproveBody {
 }
 
 /// Approve on a plan's head (`crate::waiting::approve_plan`): every open
-/// line on the desk whose plan the document is. Its panel hears it at its
-/// next prompt, or the desk page types the go-ahead on the reader's Start (#223).
+/// line on the desk whose plan the document is. The daemon types the
+/// go-ahead into the panel that planned it when that Claude is at its prompt
+/// (1.67, `press::approved`), wherever the press was; otherwise its panel
+/// hears it at its next prompt, or on the reader's Start on the line (#223).
 pub(crate) async fn approve_plan(
     State(app): S,
     headers: HeaderMap,
@@ -1334,15 +1337,16 @@ pub(crate) async fn approve_plan(
     {
         Ok(notes) if notes.is_empty() => StatusCode::NOT_FOUND.into_response(),
         Ok(notes) => {
-            // The list moved; and an Approve says which plan, so the desk
-            // page holding its panel types the go-ahead wherever the press
-            // was -- the plan's own page too, not only the desk's rail (#242).
-            if b.undo {
-                notes_moved(&app, id);
-            } else {
-                emit(&app, "desknotes", json!({ "desk": id, "approved": doc }));
-            }
-            Json(json!({ "ok": true, "notes": notes })).into_response()
+            // The list moved; and the go-ahead is typed here, wherever the
+            // press was -- the plan's own page, Home, the corner (#242, 1.67).
+            // `sent` says whether it was, for the row the press was on.
+            notes_moved(&app, id);
+            let sent = (!b.undo)
+                .then(|| super::press::approved(&app, id, &doc))
+                .flatten()
+                .unwrap_or_else(|| json!({}));
+            Json(json!({ "ok": true, "notes": notes, "sent": sent["sent"], "why": sent["why"] }))
+                .into_response()
         }
         Err(e) => err(e),
     }
@@ -2088,7 +2092,7 @@ pub(crate) async fn start_pane(
 /// What a panel's process is started with besides its command: the desk's
 /// keys, the snyvi mod's folder, and the Claude account's token -- for the
 /// reader's Start (`start_pane`) and a pipeline's stage alike
-/// (`pipeline_run`), so a stage runs as its panel would.
+/// (until 1.67), so a stage ran as its panel would.
 pub(crate) struct PaneEnv {
     pub(crate) env: Vec<(String, String)>,
     pub(crate) account: i64,

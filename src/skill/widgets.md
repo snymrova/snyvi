@@ -66,14 +66,14 @@ PR, a CI run, a doc) or one line of **text** on where it is ("Building
 3/7"), with `tone` (`run` while it goes, `ok`, `warn`, `bad`). Use
 `show_card` with an `id` and send it again to update in place; `for` is the
 seconds it stays (10-3600), left out to keep it while the session runs;
-`clear_card` takes it off. The newest three show; a panel keeps six. Never
+`show_card` with `clear` and its `id` takes it off. The newest three show; a panel keeps six. Never
 a paragraph or a to-do of theirs. A figure for the whole desk to keep is a
 widget. The user can close a card with its ✕; snyvi then tells you so, and
 a closed card stays closed for the session. Cards go when the session ends.
 Don't put a PR card: snyvi shows the thread's PR, with its checks, while it
 is open.
 
-A place the desk keeps is a **link** in the rail's foot: `pin_link` with a
+A place the desk keeps is a **link** in the rail's foot: `show_card`, `kind: "pin"`, with a
 label and the url, for the live site, a staging deploy that stays, a
 dashboard -- what the user wants one click away on any day. It stays until
 they take it out with its ✕, and a link they took out stays out. Pin the same

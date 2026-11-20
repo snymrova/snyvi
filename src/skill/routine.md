@@ -10,7 +10,7 @@ user presses one button. Five steps.
 ## 1. Look before you make one
 
 The brief lists this desk's routines by command and where each stands. The
-same command is the same routine: `offer_routine` with it **updates** that
+same command is the same routine: `offer` (`what: "routine"`) with it **updates** that
 one, never adds a second. Change what the user asked of it there.
 
 ## 2. Write the command
@@ -58,11 +58,12 @@ and see that it does what was asked and stops where it should.
 
 ## 5. Offer it
 
-`offer_routine` with:
+`offer`, `what: "routine"`, with:
 
 - `command`: `pro-forum`.
 - `when`, one line: `every day 09:30 13:00; mon 09:30 case; on watch`.
-  Words after an hour join that hour's prompt. A time ending `always` skips
+  `every 6 hours` (4, 6, 8 or 12, `from 7` to shift it) is that many
+  hours a day. Words after an hour join that hour's prompt. A time ending `always` skips
   the gate. `on watch fast` answers in seconds.
 - `asked`: what the user asked, in their words. `tried`: one line of what
   your try did. The user reads both beside Start.

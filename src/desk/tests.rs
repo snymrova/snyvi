@@ -276,9 +276,10 @@ fn a_stage_is_read_planned_or_working_and_only_on_an_open_line() {
     ended.stage_doc.clear();
     settle_stage(&mut ended, false);
     assert_eq!(ended.stage, "read");
-    // And back a step, by the agent itself.
+    // And back a step, by the agent itself. A planned line keeps the panel
+    // that planned it (1.67), so the reader's Approve is typed there.
     assert!(mark_note(&conn, mine, n.id, &mark("planned", "58155ba5fc"), 5).unwrap());
-    assert_eq!(get(&conn).stage_pane, "");
+    assert_eq!(get(&conn).stage_pane, "p1");
 
     // A done line is done: no stage over it. A suggestion is not the
     // reader's list yet.

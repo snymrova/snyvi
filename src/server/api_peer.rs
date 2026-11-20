@@ -551,6 +551,10 @@ pub(crate) struct TextBody {
     /// answers, whose reply it is under.
     #[serde(default)]
     pub(crate) peer: i64,
+    /// The desk the line was written on (1.67): its folder goes with the
+    /// line, so it lands on the friend's desk for the same repository.
+    #[serde(default)]
+    pub(crate) desk: i64,
 }
 
 /// `POST /api/peers/{id}/note`: a line for a friend's notes. Queued, as a
@@ -587,7 +591,12 @@ pub(crate) async fn peer_note(
         app.store
             .clocked(|c, now| crate::promise::queue(c, &p, b.note, &text, b.due_at, now))
     } else {
-        app.store.peer_queue_note(&p, &text)
+        let root = (b.desk > 0)
+            .then(|| app.store.desk(b.desk).ok().flatten())
+            .flatten()
+            .map(|d| d.root)
+            .unwrap_or_default();
+        app.store.peer_queue_line(&p, &text, &root)
     };
     let frame = match queued {
         Ok(f) => f,
@@ -702,6 +711,9 @@ pub(crate) struct SendBody {
     /// means it to go anyway.
     #[serde(default)]
     pub(crate) again: bool,
+    /// Ask them to review it (1.67, `peer::queue_doc`).
+    #[serde(default)]
+    pub(crate) review: bool,
 }
 
 /// `POST /api/docs/{id}/send`: this document to that friend. Queued, so a
@@ -747,7 +759,7 @@ pub(crate) async fn doc_send(
             return Json(json!({ "sent": false, "already": at, "to": p.name })).into_response();
         }
     }
-    let frame = match app.store.peer_queue(&p, &id) {
+    let frame = match app.store.peer_queue_doc(&p, &id, b.review) {
         Ok(f) => f,
         Err(e) => return err(e),
     };
@@ -834,10 +846,19 @@ pub(crate) async fn offer_answer(
     let Ok(Some(p)) = app.store.peer(o.peer_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // An agent's line goes with the folder of the desk its panel is on, and
+    // an agent's ask for a review (`offer_document`'s `review`) goes as one.
+    let root = app
+        .store
+        .pane(&o.pane)
+        .ok()
+        .flatten()
+        .map(|placed| placed.root)
+        .unwrap_or_default();
     let frame = match if o.doc_id.is_empty() {
-        app.store.peer_queue_note(&p, &o.text)
+        app.store.peer_queue_line(&p, &o.text, &root)
     } else {
-        app.store.peer_queue(&p, &o.doc_id)
+        app.store.peer_queue_doc(&p, &o.doc_id, o.review)
     } {
         Ok(f) => f,
         Err(e) => return err(e),
@@ -861,6 +882,10 @@ pub(crate) struct OfferBody {
     pub(crate) text: String,
     #[serde(default)]
     pub(crate) by: String,
+    /// `offer_document`'s `review` (1.67): the Send asks the friend to
+    /// review it.
+    #[serde(default)]
+    pub(crate) review: bool,
 }
 
 /// `POST /api/panes/{id}/offer`: `offer_document`. An agent in a panel asks
@@ -880,7 +905,7 @@ pub(crate) async fn pane_offer(
     if to.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "offer_document needs the friend's name" })),
+            Json(json!({ "error": "offer document needs the friend's name" })),
         )
             .into_response();
     }
@@ -916,10 +941,13 @@ pub(crate) async fn pane_offer(
     };
     match app.store.peer_offer(p.id, &doc.id, "", &id, &b.by) {
         Ok(offer_id) => {
+            if b.review {
+                let _ = app.store.peer_offer_review(offer_id);
+            }
             emit(
                 &app,
                 "peeroffers",
-                json!({ "offer": offer_id, "to": p.name, "title": doc.title, "by": b.by, "desk": placed.desk_name }),
+                json!({ "offer": offer_id, "to": p.name, "title": doc.title, "by": b.by, "desk": placed.desk_name, "review": b.review }),
             );
             notify_offer(&app, &b.by, &p.name, &doc.title, placed.desk_id);
             (
@@ -1130,10 +1158,7 @@ fn send_one(
         let content = Content::Note {
             text: row.text.clone(),
             name: name.to_string(),
-            at: peer::Folder {
-                v: peer::CONTENT_V,
-                ..Default::default()
-            },
+            at: folder_of_root(app, &row.root),
             due_at,
             promise,
         };
@@ -1177,6 +1202,7 @@ fn send_one(
         name: name.to_string(),
         id: doc.id.clone(),
         at: folder_of(app, &doc),
+        review: row.extra == peer::REVIEW,
     };
     let frame = peer::seal(me, &p, &content, &bytes)?;
     leave(app, me, &p, frame_id, &frame)
@@ -1250,24 +1276,54 @@ pub(crate) fn folder_of(app: &App, doc: &crate::store::Doc) -> peer::Folder {
     else {
         return at;
     };
-    let print = match app.store.print_of(&root) {
-        Ok(Some((p, when))) if crate::store::now() - when < PRINT_KEPT => Some(p),
-        _ => {
-            let p = crate::git::print(std::path::Path::new(&root));
-            let _ = app.store.set_print(&root, p.as_ref());
-            p
-        }
-    };
-    let Some(print) = print.filter(|p| p.repo.is_some() || p.remote.is_some()) else {
+    if !print_into(app, &root, &mut at) {
         return at;
-    };
-    at.repo = print.repo;
-    at.remote = print.remote;
+    }
     at.branch = doc
         .branch
         .clone()
         .or_else(|| crate::project::head_of(std::path::Path::new(&root)));
     (at.path, at.key) = place_in(&root, doc.source_path.as_deref());
+    at
+}
+
+/// The repository's fingerprint for the folder `root`, into `at`: read
+/// once a `PRINT_KEPT`, through `git::print`. False for a folder in no
+/// repository, which the frame then says nothing about.
+fn print_into(app: &App, root: &str, at: &mut peer::Folder) -> bool {
+    let print = match app.store.print_of(root) {
+        Ok(Some((p, when))) if crate::store::now() - when < PRINT_KEPT => Some(p),
+        _ => {
+            let p = crate::git::print(std::path::Path::new(root));
+            let _ = app.store.set_print(root, p.as_ref());
+            p
+        }
+    };
+    let Some(print) = print.filter(|p| p.repo.is_some() || p.remote.is_some()) else {
+        return false;
+    };
+    at.repo = print.repo;
+    at.remote = print.remote;
+    true
+}
+
+/// What a line's frame says about the desk it was written on (1.67): the
+/// repository of the desk's folder and its branch, never a path, so the
+/// friend's snyvi puts it on their desk for the same repository
+/// (`file_into`). An empty `root`, or a folder in no repository, says only
+/// the version, as every line before 1.67.
+pub(crate) fn folder_of_root(app: &App, root: &str) -> peer::Folder {
+    let mut at = peer::Folder {
+        v: peer::CONTENT_V,
+        ..Default::default()
+    };
+    if root.is_empty() {
+        return at;
+    }
+    let proj = receive::desk_project(root).0;
+    if print_into(app, &proj, &mut at) {
+        at.branch = crate::project::head_of(std::path::Path::new(&proj));
+    }
     at
 }
 
@@ -1604,6 +1660,7 @@ fn arrived(
             file,
             at,
             id: sender_id,
+            review,
             ..
         } => {
             // The reader's own folder for the repository it is about, when
@@ -1639,6 +1696,11 @@ fn arrived(
             let _ = app
                 .store
                 .set_peer_frame(&received.doc.id, frame, &sender_id);
+            // Asked to review (1.67): the head offers Approve and Changes
+            // until the reader answers, and the answer is a reply under it.
+            if review {
+                let _ = app.store.set_peer_review(&received.doc.id, 1);
+            }
             said(app);
             if p.muted {
                 let _ = app.store.mark_read(&received.doc.id);
@@ -1655,9 +1717,14 @@ fn arrived(
             }
             if !p.muted && !received.existing {
                 eprintln!("snyvi: {} sent \"{}\"", p.name, received.doc.title);
+                let what = if review {
+                    "asks you to review"
+                } else {
+                    "sent you a document"
+                };
                 notify_friend(
                     app,
-                    &format!("{} sent you a document", p.name),
+                    &format!("{} {what}", p.name),
                     &received.doc.title,
                     &format!("/d/{}", received.doc.id),
                 );
@@ -1676,8 +1743,13 @@ fn arrived(
             text,
             due_at,
             promise,
+            at,
             ..
         } => {
+            // A line about a repository the reader has a desk for lands on
+            // that desk (1.67), as a document about it does; else on the
+            // desk they gave this friend, else on Home.
+            let desk = file_into(app, &at).and_then(|(_, d)| d).or(desk);
             // A promise is the sender's to keep: a row on Home with its date,
             // not a line on the reader's list (`crate::promise`). A line keeps
             // the sender's words as they wrote them; the date in them, if
@@ -2101,10 +2173,13 @@ pub(crate) async fn doc_reply(
     // The reader's own words stay under their copy's head too, so it reads
     // as one thread both ways (F10).
     let _ = app.store.peer_add_reply(p.id, &id, &text, true);
+    // A review they asked for is answered by the first reply under it, the
+    // Approve as much as words (1.67).
+    let reviewed = !own && app.store.set_peer_review(&id, 2).unwrap_or(false);
     emit(
         &app,
         "peerreply",
-        json!({ "doc": id, "mine": true, "quiet": true }),
+        json!({ "doc": id, "mine": true, "quiet": true, "reviewed": reviewed }),
     );
     let app2 = app.clone();
     let sent = tokio::task::spawn_blocking(move || flush_outbox(&app2, Some(&frame)))

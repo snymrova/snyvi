@@ -25,6 +25,73 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "floor"
+since = "1.67.0"
+title = "Home is the floor: every agent, by what it is doing"
+line = "Home lists every panel on every desk by what it is doing: what waits on you first, then working, finished and idle. Answer from there, or open a desk on that panel. Pick the desks for today and the sidebar, the Inbox and On you show only those."
+show = "home .hm-floor"
+
+[[feature]]
+id = "press-reaches"
+since = "1.67.0"
+title = "Your answer reaches the agent, wherever you press it"
+line = "An answer or an Approve you press on Home, in the corner or on a plan's page is typed into the panel that asked, when its agent waits at its prompt. Each row says whether it went now or goes when the agent stops."
+
+[[feature]]
+id = "the-line"
+since = "1.67.0"
+title = "A desk's line: a goal and the order to do its notes"
+line = "Give a desk a goal in one line and put its notes in the order you want them. Start next opens a panel on the next note in a checkout of its own, and two agents never take the same note."
+show = "desk .dk-line"
+
+[[feature]]
+id = "approve-gate"
+since = "1.67.0"
+title = "Nothing is worked on before you approve the plan"
+line = "An agent cannot mark a note working until you press Approve on its plan. A tick says checked when its commit is on main, and claimed while it is only on a branch or has nothing to show."
+
+[[feature]]
+id = "friend-review"
+since = "1.67.0"
+title = "Ask a friend to review"
+line = "Send to… can ask them to review it: they get Approve and Changes…, and their answer comes back under the document's head. A line to a friend lands on their desk for the same project."
+
+[[feature]]
+id = "board-ways"
+since = "1.67.0"
+title = "A board you can come back to"
+line = "A board open on a desk has its own address, so a reload or Back lands on it. A chip says when sections were drawn since you looked, and a picked section has This one, Change…, its versions and Hide in the bar below it."
+small = "yes"
+
+[[feature]]
+id = "routine-door"
+since = "1.67.0"
+title = "Say what a routine should do, and when"
+line = "The routines field takes what should happen in your words: the agent at its prompt writes the routine, tries it and offers it to you. A routine's row leads with its last run, and it can run every 4, 6, 8 or 12 hours."
+small = "yes"
+
+[[feature]]
+id = "still-yours"
+since = "1.67.0"
+title = "An old To do asks if it is still yours"
+line = "Something handed to you two days ago asks, in its own line, whether it is still yours: Done, or Not mine, which gives it back to its agent."
+small = "yes"
+
+[[feature]]
+id = "closed-panels"
+since = "1.67.0"
+title = "Recently closed panels"
+line = "The desk's ⋯ lists the panels and tabs you closed here, newest first, with Reopen."
+small = "yes"
+
+[[feature]]
+id = "codex-presses"
+since = "1.67.0"
+title = "Codex hears your press too"
+line = "An Approve or an answer reaches a Codex panel the way it reaches Claude, Codex keeps the desk brief, and its panel offers the conversation back with codex resume."
+small = "yes"
+
+[[feature]]
 id = "agents-know-how"
 since = "1.66.2"
 title = "Agents know every way snyvi helps you"

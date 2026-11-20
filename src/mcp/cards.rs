@@ -78,7 +78,7 @@ impl Session {
             ),
             Ok(_) => said(
                 match args.get("id").and_then(Value::as_str) {
-                    Some(id) => format!("The card {id} is above the rail's foot while this panel has focus. Send the same id to update it; clear_card takes it off."),
+                    Some(id) => format!("The card {id} is above the rail's foot while this panel has focus. Send the same id to update it; show_card with `clear` takes it off."),
                     None => "The card is above the rail's foot while this panel has focus.".to_string(),
                 },
                 false,

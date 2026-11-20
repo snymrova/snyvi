@@ -199,14 +199,11 @@ function rail() {
   // A row just removed keeps its place through a read that no longer has it.
   const gone = docGone && docGone.at === d.id ? docGone.x : null;
   const dl = gone && !dl0.includes(gone) ? [...dl0.slice(0, docGone.i), gone, ...dl0.slice(docGone.i)] : dl0;
-  // The latest six, and always the one on the page: a document being read
-  // is never the one the rail hides. The count names what is not shown.
-  // A search shows every title that has what was typed, and nothing folds.
-  const q = docsFind.trim().toLowerCase(), found = q ? dl.filter(x => x.title.toLowerCase().includes(q)) : null;
-  const shown = found || (docsAll ? dl : dl.filter((x, i) => i < DOCS_SHOWN || x.id === reading));
-  const rest = found ? 0 : dl.length - shown.length, folds = !found && docsAll && dl.length > DOCS_SHOWN;
+  // 1.67 (#236): the rail no longer lists the desk's documents; the Inbox
+  // does, on this desk's chip. What stays here is what waits to be read,
+  // and always the one on the page: its row is the way back to the panels.
+  const shown = dl.filter(x => x === gone || x.id === reading || x.unread).filter((x, i) => i < DOCS_WAITING || x.id === reading || x === gone);
   const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
-  const offs = docsAt === d.id ? docOff.filter(x => !gone || x.id !== gone.id) : [];
   const stopped = vs.filter(x => !x.status.running).length;
   // A new desk whose panels have never started (held): the panel's card is
   // its one thing to do, so the rail says no more than what goes where --
@@ -257,28 +254,18 @@ function rail() {
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>` +
     `<div class="dk-foot">${backRow(d, esc)}</div>`),
     // Notes before Documents, Points after (1.56, B6; src/widget.rs RIGHT); routines under the notes (19-routine.js).
-    notes: () => noteSec(d) + routineSec(d),
-    // The documents. The count is how many, in the accent while some wait
-    // to be read; the row's [n] says which panel sent it.
+    // The line over them (1.67, 31-line.js): the same notes, in an order.
+    notes: () => lineSec(d) + noteSec(d) + routineSec(d),
+    // The documents that wait, and the way to the rest. The count is how
+    // many wait; the row's [n] says which panel sent it.
     docs: () => sec("docs", "rail.docs", "Documents", {
-      tip: "Documents", sub: "What the panels on this desk have sent, newest first",
-      count: live.length || "", tone: waiting ? "accent" : "", countTip: waiting ? `${waiting} waiting to be read` : "",
-    }, 
-    // A document's row: the one on the page is marked, the way a pane's row
-    // is while the desk is the page. One line of title, then who sent it and
-    // when: the panel by the name it was started with, which holds still, and
-    // not its title, which ticks. The row on the page gets its second line.
-    // The rest, named rather than listed: one row at the end of the box that
-    // opens them here, met where the scroll runs out rather than under it.
-    (dl.length > DOCS_FIND || docsFind ? `<input class="dk-find" type="search" spellcheck="false" autocomplete="off" placeholder="Find a document" aria-label="Find a document on this desk by its title" value="${esc(docsFind)}">` : "") +
-    (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
-      (found && !found.length ? `<li><p class="dk-empty">No title has “${esc(docsFind.trim())}”</p></li>` : "") +
-      (rest || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" aria-expanded="${folds}">${folds ? "Show fewer" : `${rest} more`}</button></li>` : "") + `</ul>`
-      : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d, fresh, asked)) +
-    // What the reader removed from this list, named, and there to open or put back.
-    (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
-      (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
-        `<button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}" aria-label="Put ${esc(x.title)} back on this desk's list">Undo</button></li>` + errLine(`d${x.id}`, esc)).join("") + `</ul>` : "") : "")),
+      tip: "Documents", sub: "What this desk's panels sent that waits to be read; the rest is in the Inbox",
+      count: waiting || "", tone: waiting ? "accent" : "", countTip: waiting ? `${waiting} waiting to be read` : "",
+    },
+    (shown.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") + `</ul>`
+      : docsOff === d.id ? noReach("docs") : live.length ? "" : waitingFirst(d, fresh, asked)) +
+    (live.length ? `<p class="dk-offs-line">${waiting > shown.filter(x => x.unread && x !== gone).length ? `${waiting - shown.filter(x => x.unread && x !== gone).length} more waiting · ` : ""}` +
+      `<button type="button" class="dk-link" data-a="docs-inbox" data-tip="This desk's documents" data-tip-sub="every one it sent, in the Inbox on this desk's chip">All ${live.length} in the Inbox</button></p>` : "")),
     points: () => pointSec(vs),
     widgets: () => widgetSec(d),
   };
@@ -292,7 +279,7 @@ function rail() {
   // with: a panel's name is its title, which an agent changes about once a
   // second, and a rail that counted it would find itself changed at every
   // tick of the clock.
-  if (drew) { vs.forEach(named); findFocus(); noteFocus(); checksFocus(); rtFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
+  if (drew) { vs.forEach(named); findFocus(); noteFocus(); checksFocus(); lineFocus(); rtFocus(); threadFocus(); backFocus(backHad); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
   pageChips(vs, live);
   onYou(d);
@@ -323,7 +310,7 @@ function pageChips(vs, dl) {
     a.href = `/d/${x.id}`;
     a.dataset.read = x.id;
     a.dataset.tip = x.title;
-    a.dataset.tipSub = "it stays under Documents";
+    a.dataset.tipSub = "it stays in the Inbox";
     a.textContent = say;
   }
 }
@@ -712,7 +699,11 @@ function noteRow(x, esc) {
   // An agent's tick with nothing to show for it -- no commit, document or
   // URL -- is a hollow ✓, "needs a look" (1.48): no count, no nag.
   const bare = x.done && x.done_by && x.done_by !== "merged" && !x.done_commit && !x.done_doc && !x.done_evidence;
-  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : "", bare ? "ticked without evidence: needs a look" : ""].filter(Boolean);
+  // 1.67: an agent's tick says what it rests on in one word. "checked" is a
+  // commit git found on main; "claimed" is the agent's word alone, on a
+  // branch or with nothing to show. The reader's own tick says neither.
+  const onMain = x.done && x.done_by && x.landed_commit && !x.on_branch;
+  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : "", onMain ? "checked: on main" : "", bare ? "claimed, ticked without evidence: needs a look" : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<span class="dk-lead"><button type="button" class="dk-tick${bare ? " bare" : ""}" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
     // A click on the text opens the line's gate (1.56, audit B2): its
@@ -916,13 +907,14 @@ function gatePop(x, esc) {
 }
 
 /** A ticked line's marks that are not history (1.53.1): an agent's tick
- *  whose commit is not on main yet says "on a branch" (`desk::on_branch`),
+ *  whose commit is not on main yet says "claimed · on a branch"
+ *  (`desk::on_branch`; "claimed" from 1.67, the agent's word and not yet git's),
  *  and for a week a tick that was not the reader's offers not yet..., the
  *  same field the check of a landed line opens, which takes the tick back
  *  and reopens it (`desk::check_note`). The reader's own tick has neither:
  *  its circle unticks it. */
 function doneMark(x, esc) {
-  const branch = x.on_branch ? `<span class="dk-stage branch" role="img" data-tip="On a branch: ${esc(x.done_commit.slice(0, 7))}" data-tip-sub="it says so until the commit is on main" aria-label="On a branch"><span class="w">on a branch</span></span>` : "";
+  const branch = x.on_branch ? `<span class="dk-stage branch" role="img" data-tip="On a branch: ${esc(x.done_commit.slice(0, 7))}" data-tip-sub="it says so until the commit is on main" aria-label="Claimed: on a branch"><span class="w">claimed · on a branch</span></span>` : "";
   const again = x.recheck && !atCheck(x) ? `<button type="button" class="dk-stage dk-chk" data-a="note-broken" data-n="${x.id}" data-tip="Not yet" data-tip-sub="say what is still wrong; the tick comes off, and the next agent's brief leads with it" aria-label="Still broken: ${esc(x.text)}">not yet…</button>` : "";
   return branch + again;
 }
@@ -1250,10 +1242,10 @@ async function getNotes(id, again) {
   getFriends();
   if (!again && (notesAt === id || notesGet === id)) return;
   notesGet = id;
-  // The panels' pipelines move with the same event (13-pipeline.js), and
-  // the desk's routines (19-routine.js).
-  pipesGet(id);
+  // The desk's routines move with the same event (19-routine.js), and its
+  // line (31-line.js).
   routinesGet(id);
+  lineGet(id);
   let j;
   try { j = await ctx.api(`/api/desks/${id}/notes`); }
   catch { notesGet = null; if (id === deskId) { notesOff = id; if (current()) rail(); } return; }
@@ -1309,9 +1301,11 @@ async function promise(d, x, f) {
 /** Send to…: the line as it stands, to that friend, a line for their list
  *  -- not a promise; from the desk where it was written, not only from
  *  Home's Note… (audit 6f451571c6, F20). Said in a toast, as Copy is. */
-async function sendLine(x, f) {
+async function sendLine(d, x, f) {
   let r;
-  try { r = await ctx.api(`/api/peers/${f.id}/note`, { text: x.text }); }
+  // The desk goes with it (1.67): its folder lands the line on the friend's
+  // desk for the same repository.
+  try { r = await ctx.api(`/api/peers/${f.id}/note`, { text: x.text, desk: d.id }); }
   catch (e) { ctx.toast(`Could not send it to ${f.name}`, e); return; }
   ctx.toast(r?.sent ? `Sent to ${f.name}` : `Waiting for ${f.name}; it goes when they can be reached`, x.text);
 }

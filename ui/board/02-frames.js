@@ -20,6 +20,8 @@ const htmlOf = new Map();
 /** The live numbers last posted, by section id. */
 const liveSaid = new Map();
 let docBox = { ox: 0, oy: 0 };
+/** The board's shared CSS as the document last had it; null before any. */
+let cssSent = null;
 
 const sections = () => shown().filter(f => !f.island && f.doc);
 
@@ -52,7 +54,7 @@ function paintFrame(el, f) {
   el.classList.toggle("bd-sec", !f.island && !!f.doc);
   el.querySelector(".bd-name").textContent = f.name || f.id;
   el.querySelector(".bd-size").textContent = sizeSaid(f);
-  el.querySelector(".bd-ver").textContent = f.versions > 1 ? `v${f.versions}` : "";
+  el.querySelector(".bd-ver").textContent = f.vAt ? `v${f.vAt} of ${f.versions}` : f.versions > 1 ? `v${f.versions}` : "";
   const sheet = el.querySelector(".bd-sheet");
   sheet.style.height = `${heightOf(f)}px`;
   if (!f.doc) {
@@ -131,6 +133,7 @@ function ensureDoc() {
   doc.tabIndex = -1;
   doc.src = "/board-frame";
   docReady = false;
+  cssSent = null;
   sent.clear();
   liveSaid.clear();
   world.prepend(doc);
@@ -138,7 +141,7 @@ function ensureDoc() {
 
 function dropDoc() {
   doc?.remove();
-  doc = null; docReady = false;
+  doc = null; docReady = false; cssSent = null;
   sent.clear(); liveSaid.clear();
 }
 
@@ -167,6 +170,10 @@ async function syncDoc() {
   for (const h of [...htmlOf.keys()]) if (!keep.has(h)) htmlOf.delete(h);
   placeDoc(ss);
   if (!docReady) return;
+  // The shared CSS before the sections it is for (1.67, board.css). A
+  // section is drawn again by it, so its live numbers are said again.
+  const css = (board && board.css) || "";
+  if (css !== cssSent) { cssSent = css; liveSaid.clear(); tell({ t: "css", css }); }
   const list = ss.map(f => {
     const s = { id: f.id, hash: f.hash, x: f.x, y: f.y, w: f.w, h: f.h };
     if (sent.get(f.id) !== f.hash && htmlOf.has(f.hash)) { s.html = htmlOf.get(f.hash); sent.set(f.id, f.hash); }
@@ -192,6 +199,7 @@ function docSaid(e) {
   if (!m || m.snyvi !== "board") return;
   if (m.t === "ready") {
     docReady = true;
+    cssSent = null;
     sent.clear(); liveSaid.clear();
     tell({ t: "tokens", vars: (board?.tokens?.vars || []).slice(0, 200) });
     syncDoc();

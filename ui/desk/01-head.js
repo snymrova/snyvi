@@ -60,6 +60,8 @@ let docsAll = false;
  *  whether the field had the focus are kept here, so the rail's redraws --
  *  the clock, a new document -- put them all back. */
 const DOCS_FIND = 12;
+/** How many waiting documents the rail lists before it names the rest (1.67, #236). */
+const DOCS_WAITING = 4;
 let docsFind = "", findCaret = 0, findOn = false;
 /** The ones the reader removed from this desk's list (the daemon's
  *  `removed`), whether "N removed · Show" is open, and the row just removed

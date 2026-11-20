@@ -495,6 +495,8 @@ function entries(ctx, el, byKey = false) {
       dk && { label: "Keys…", run: () => dk.keysHere() },
       // 1.57: more panels on this desk, in its folder (#217): the head's + too.
       dk && dk.newTab && { label: "New tab", run: () => dk.newTab() },
+      // 1.67: what a ✕ took from view here, after its six-second Undo.
+      dk && dk.closedHere && { label: "Recently closed…", about: "panels and tabs, to reopen", run: () => dk.closedHere() },
       // Focus follows the pointer left this menu for the foot strip (1.43):
       // it is the whole app's, and here it read as this desk's alone.
       RULE,

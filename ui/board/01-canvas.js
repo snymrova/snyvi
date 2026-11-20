@@ -45,13 +45,16 @@ const ISLAND_H = 600;
 /** A section not measured yet, so a fit before the heights has a box to fit. */
 const UNMEASURED_H = 240;
 
-const shown = () => (board ? board.frames.filter(f => !f.hidden) : []);
+/** The frames on the board, each as it is drawn: at an older version when
+ *  the reader stepped it there (07-acts.js). */
+const shown = () => (board ? board.frames.filter(f => !f.hidden).map(asShown) : []);
 /** How tall `f` is drawn: the agent's height, else what was measured. */
 const heightOf = f => f.h || (f.island ? ISLAND_H : measured[f.id] || UNMEASURED_H);
 
 function applyView() {
   if (world) world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
   if (host) host.style.setProperty("--bd-k", String(view.k));
+  viewKept();
 }
 
 /** Zoom by `by` about the point (cx, cy) on screen, so what is under the
@@ -114,13 +117,17 @@ function wire() {
     else { view.x -= e.deltaX; view.y -= e.deltaY; applyView(); }
   }, { passive: false });
   host.addEventListener("keydown", e => {
-    if (e.target.closest("input, textarea")) return;
+    if (e.target.closest("input, textarea")) {
+      // Esc in the bar's field puts the bar back.
+      if (e.key === "Escape" && barMode) { barMode = ""; paintBar(); e.preventDefault(); e.stopPropagation(); }
+      return;
+    }
     const r = host.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
     if (e.key === "0") fit();
     else if (e.key === "f") fit(shown().filter(f => picked.includes(f.id)));
     else if (e.key === "+" || e.key === "=") { touched = true; zoomAt(1.25, cx, cy); }
     else if (e.key === "-") { touched = true; zoomAt(0.8, cx, cy); }
-    else if (e.key === "Escape" && (lookOpen || boardsOpen)) { lookOpen = false; boardsOpen = false; paintList(); }
+    else if (e.key === "Escape" && (lookOpen || boardsOpen || hiddenOpen)) { lookOpen = false; boardsOpen = false; hiddenOpen = false; paintList(); }
     else if (e.key === "Escape" && picked.length) pick(null, false);
     else return;
     e.preventDefault();

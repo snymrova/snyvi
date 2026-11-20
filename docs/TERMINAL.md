@@ -335,7 +335,8 @@ section 4's placement problem.
 content an agent wrote. Desks keep the two apart: *snyvi never makes input
 from content it received.* There is no fan-out and no run-this-block (B is
 still declined), and nothing a document says is ever typed. Bytes reach a
-PTY from a single function, `input()` in `ui/desk.js`, called from a key
+PTY from the daemon's `press` (1.67: the reader's own answer or Approve,
+DESK.md §invariants 3) and from `input()` in `ui/desk.js`, called from a key
 event, a paste event, or the reader's click on a control that shows the one
 line it types (Send now, Run, a step of a run, DESK.md §invariants 3). The
 daemon accepts input only for a pane that socket
@@ -411,7 +412,16 @@ a step, and bytes still reach a PTY's input from the reader's keys alone. A
 stage starts as a process (`claude … -- "<step>"`), the way a panel's Start
 already started `claude --resume`.
 
-**Hidden since 1.43** (2026-10-16): the window no longer offers pipelines
+**Removed in 1.67** (plan f586a9fe09): the runner, the planner, the routes
+and the window's part are gone, and with them this section's exception:
+the daemon no longer starts an agent on a plan of its own. What replaced
+it is the line (`src/desk/line.rs`): the reader orders their notes and
+presses Start next, and the panel that press opens is started with
+snyvi's fixed words and the note's number (`api_line::words`), never a
+step a model or a friend wrote. `src/pipeline.rs` keeps the two tables,
+since nothing is deleted. The paragraph below is how it stood until then.
+
+**Hidden since 1.43** (2026-10-16): the window no longer offered pipelines
 (`PIPES_SHOWN` in `ui/desk/13-pipeline.js`), while a simpler shape for
 working while the reader is away is worked out. The routes, the runner and
 this rule stay as they are, so a pipeline made earlier still runs to its end

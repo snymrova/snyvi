@@ -24,6 +24,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/events.rs` | 249 | SSE: the stream, the window/agent mark, `resync`, focus |
 | `src/server/ws.rs` | 291 | the desk socket |
 | `src/server/lifecycle.rs` | 912 | health, about, restart and the planned exit, the update watcher, relaunch, reset |
+| `src/server/press.rs` | 160 | 1.67: the reader's press typed into the panel that asked -- an answer, a card's answers, an Approve's go-ahead -- with `src/pane/press.rs` (the pane's side: at rest at its prompt, or why not) and `src/thread/press.rs` (a card's questions) |
 | `src/server/restore_run.rs` | 485 | after a crash or a stop (1.58): the offers this start found, the queue that brings them back two at a time under memory pressure, the marks' sink |
 | `src/server/api_restore.rs` | 75 | `GET`/`POST /api/restore`: what is on offer, Restore all, a desk's, Choose…, Stop, ✕ (capability) |
 | `src/desk/marks.rs` | 190 | `panes.resume_next`: the marks for the next start, the live mark a crash leaves, how an offer ages and lapses |
@@ -48,8 +49,9 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/api_page.rs` | 520 | the Page view's routes on the capability, `offer_post`'s on the token, `/pages/{file}`, door (a) on a shipped thread |
 | `src/server/api_wall.rs` | 640 | the press (Everyone, Friends only), take down, the outbox's flush and its minute tick, the wall's daily line arriving, a friend's page arriving, Home's `/api/wall` |
 | `src/server/api_board.rs` | 440 | a board over HTTP (1.58): the agent's `board_*`/`frame_*`/`read_focus` on the token, the page's read and focus on the capability; frames are documents, so no frame HTML is served here |
-| `src/mcp/page.rs` | 60 | `offer_post`: a card in the desk's corner, never a publish |
-| `src/mcp/board.rs` | 300 | the six board tools and how they say a board |
+| `src/mcp/page.rs` | 60 | `offer` post: a card in the desk's corner, never a publish |
+| `src/mcp/merged.rs` | 435 | the merged tools (1.67): `read_desk`'s sections, `mark_desk_note` done, `suggest`, `offer`, `show_card` clear and pin, `board_read` look, `board_arrange` export; the old names answer, unlisted |
+| `src/mcp/board.rs` | 300 | the board tools and how they say a board |
 | `src/claude_mod.rs` | 144 | the snyvi mod (`mod/`) built in, written to the data folder, named in a panel's `CLAUDE_CODE_PLUGIN_DIRS` |
 | `src/mcp/threads.rs` | 247 | the eight #90 MCP tools: start_thread, move_thread, ask, hand_over, settle_asks, remove_card, suggest_panel, suggest_desk |
 | `src/project.rs` | 168 | cwd → project (git root) |
@@ -88,6 +90,12 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/music.rs` | 234 | Music's stations (each probed before it was listed), a stream address's check, the folder's tracks two levels down, the stream a station plays through |
 | `src/due.rs` | 530 | a date on a line (1.47): the tail grammar (`by fri 10`), the local offset read once, the clock that raises one `due` card at the hour, its Done and Later |
 | `src/onyou.rs` | 558 | On you, widened (1.54): every row that is the reader's -- cards, dated lines, a routine's line, plans, lines to keep, left-offs -- ranked into one list with its sentence; when the tray opens itself (`arrive`); Tomorrow and Not this on a left-off; what the brief says was Not this |
+| `src/desk/closed.rs` | 120 | Recently closed (1.67): the panels and tabs a ✕ took from a desk's view, newest first, a tab with the panels that closed with it; read only, for `GET /api/desks/{id}/closed` and the desk's ⋯ |
+| `src/desk/line.rs` | 330 | The line (1.67): a desk's goal, the reader's order over its notes (`ord`), a note's done-when command, and the claim that keeps two panels off one note (it holds while its panel is open). `next_for` hands a panel the first free note. Only the page writes the goal, the order and the command |
+| `src/server/api_line.rs` | 210 | The line's routes: `GET`/`POST /api/desks/{id}/line`, `POST …/line/next` (Start next: a worktree from `git::worktree_for`, a panel in it started with snyvi's fixed words and the note's number, never its text), and the agent's `POST /api/panes/{id}/next-work` |
+| `src/mcp/line.rs` | 120 | `next_work`: the next note of the desk's line, claimed for this panel |
+| `src/thread/facts.rs` | 60 | A thread's stage read from what happened (1.67): `stage` moves it forward on a first commit (building) or an open PR (review), `not_yours` refuses those and shipped from an agent once git or a PR was seen on it |
+| `src/onyou/prompt.rs` | 62 | Claude's own prompt open in a panel (1.67): one Waiting row per panel that says `needs_you`, "Go to panel", counted as an agent stuck; nothing stored |
 | `src/waiting.rs` | 198 | what waits on the reader (1.47): `needs` on a left-off, Approve on a plan and on a left-off, Home's Waiting on you rows |
 | `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |
 | `src/agents.rs` | 1157 | the registry: claude, codex, cursor, gemini; what each has |

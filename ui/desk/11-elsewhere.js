@@ -30,7 +30,7 @@ export function elsewhere(doc) {
     // list from before the page came.
     if (docsAt !== d.id || docList.length || docOff.length) return;
     const who = doc.desk.slot ? `Panel ${doc.desk.slot}` : "This desk";
-    k.rise({ kind: "first", key: `d${doc.id}`, from: `${who} sent this desk's first page`, title: doc.title, label: "Read it", go: open, where: "Every page stays under <b>Documents</b>, in the rail." });
+    k.rise({ kind: "first", key: `d${doc.id}`, from: `${who} sent this desk's first page`, title: doc.title, label: "Read it", go: open, where: "Every page stays in the <b>Inbox</b>, under this desk's name." });
   } else k.rise({ kind: "doc", key: `d${doc.id}`, from: `${ewFrom(doc, esc)} sent a document`, title: doc.title, go: open });
 }
 

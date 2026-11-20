@@ -820,6 +820,7 @@ pub(crate) async fn lately(
 ) -> Response {
     let before = q.get("before").and_then(|b| b.parse().ok()).unwrap_or(0);
     let desks = refuse_desk(&app, &headers, &q).is_none();
+    let prompts = app.panes.prompting();
     let read = app.store.clocked(|c, now| {
         let turns = if desks {
             crate::thread::waiting(c, now)?
@@ -830,7 +831,7 @@ pub(crate) async fn lately(
         // `crate::onyou`): behind the same gate as the turns. Only the
         // first page asks; a page of older Lately does not need it again.
         let onyou = if desks && before == 0 {
-            Some(crate::onyou::gather(c, now)?)
+            Some(crate::onyou::gather_with(c, now, &prompts)?)
         } else {
             None
         };

@@ -14,14 +14,23 @@ async function load() {
   host.querySelector(".bd-off").hidden = true;
   if (j.unchanged) return;
   board = j;
+  versKeep();
   picked = picked.filter(id => shown().some(f => f.id === id));
   paintFrames();
   syncDoc();
   paintBar();
-  if (!fitted && shown().length) { fit(); fitted = true; }
+  if (!fitted && shown().length) {
+    // Where the reader left this board, else all of it (07-acts.js).
+    const v = viewSaved();
+    if (v) { view = v; touched = true; applyView(); } else fit();
+    fitted = true;
+  }
   paintList();
   paintIntro();
   if (o.named) o.named();
+  // Read with the board on screen is looked at: the desk's count of what
+  // is new on it starts again from here.
+  if (o.seen) o.seen(board.id);
 }
 
 /* The empty board says what a board is and asks what to draw (1.62, V2):
@@ -61,9 +70,11 @@ export function changed(ev) {
 }
 
 /** Open a board in `opts.host`: everything it needs is in `opts`
- *  ({host, desk, board, api, esc, focus, named, dir}, and 1.62's boards,
+ *  ({host, desk, board, api, esc, focus, named, dir}, 1.62's boards,
  *  make, rename, switch and ask: the desk's boards, a new one, a name,
- *  another opened, and words typed into the docked Claude). Opening another board, or
+ *  another opened, and words typed into the docked Claude; and 1.67's hide,
+ *  versions, read and seen: a section hidden or shown, its versions, its
+ *  document opened, and the board looked at). Opening another board, or
  *  the same one again, starts clean. */
 export function open(opts) {
   close();
@@ -79,6 +90,10 @@ export function open(opts) {
   list = host.querySelector(".bd-list");
   list.addEventListener("click", listClick);
   list.addEventListener("submit", boardsSubmit);
+  bar.addEventListener("click", barClick);
+  bar.addEventListener("submit", barSubmit);
+  verAt.clear(); verList.clear();
+  hiddenOpen = false; barMode = ""; barSaid = ""; barUndo = "";
   addEventListener("message", docSaid);
   lookOpen = false; boardsOpen = false;
   view = { x: 0, y: 0, k: 1 };

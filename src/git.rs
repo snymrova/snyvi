@@ -649,6 +649,32 @@ fn run(dir: &Path, args: &[&str]) -> Option<String> {
     run_for("git", dir, &all, WAIT)
 }
 
+/// A worktree for desk note `n`, beside the repository `root` is in: the
+/// folder `<repo>-<n>` on a branch `note-<n>` cut from the main line, so a
+/// piece of work starts from what is released and not from whatever the
+/// desk's folder has out. Made on the reader's Start next (`api_line`) and
+/// only then: the one place snyvi writes with git. One made before is used
+/// again. `None` outside a repository, or when that folder is something
+/// else's.
+pub fn worktree_for(root: &Path, n: i64) -> Option<String> {
+    let top = run(root, &["rev-parse", "--show-toplevel"])?;
+    let top = std::path::PathBuf::from(top.trim());
+    let name = top.file_name()?.to_string_lossy().into_owned();
+    let path = top.parent()?.join(format!("{name}-{n}"));
+    let p = path.to_string_lossy().into_owned();
+    let branch = format!("note-{n}");
+    if path.exists() {
+        return (branch_of(&path).as_deref() == Some(branch.as_str())).then_some(p);
+    }
+    let made = match main_ref(&top) {
+        Some(m) => run(&top, &["worktree", "add", "-q", "-b", &branch, &p, m]),
+        None => run(&top, &["worktree", "add", "-q", "-b", &branch, &p]),
+    };
+    // The branch was there already: a worktree removed, its branch kept.
+    made.or_else(|| run(&top, &["worktree", "add", "-q", &p, &branch]))?;
+    path.is_dir().then_some(p)
+}
+
 /// The branch a worktree has out, or None on a detached head or outside a
 /// repository: what a thread's own folder says its branch is, when the
 /// folder is a worktree made for it (`thread::repair_branch`).

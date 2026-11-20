@@ -263,7 +263,11 @@ async function main() {
       if (name === before) inRange = false;
       if (!inRange || (only && !only.test(name))) return;
       const t = Date.now();
-      const r = await rows();
+      // A section that throws is one failed row under its own name, and the
+      // run goes on (1.67): one `page: TypeError` used to end the whole run
+      // with no row printed and no word of which section it was in.
+      let r;
+      try { r = await rows(); } catch (e) { r = [["the section ran to its end", false, `it threw: ${(e && e.message) || e}`]]; }
       sections.push([`${name}  (${((Date.now() - t) / 1000).toFixed(1)} s)`, r]);
     };
     await section("the rail, 1280 px wide", () => railRows(p, url, md, send));
@@ -2733,17 +2737,19 @@ async function deskRows(cdp, base, token) {
     // builtin keeps it running, since this bench's PATH has no /usr/bin.
     const started202 = await post(`/api/panes/${third}/start`, { cmd: "while :; do read -r x; done" }).catch(e => ({ error: String(e) }));
     await sleep(500);
-    const r202 = await fetch(`${base}/api/panes/${third}/handover`, { method: "POST", headers: TK, body: JSON.stringify({ kind: "do", text: "bench: a card on still-b", by: "bench-agent" }) });
+    // 1.67: the one count is agents waiting, so what is said of the other
+    // desks is a question asked there, not a chore.
+    const r202 = await fetch(`${base}/api/panes/${third}/ask`, { method: "POST", headers: TK, body: JSON.stringify({ text: "bench: a card on still-b", options: ["Yes", "No"], by: "bench-agent" }) });
     const asked202 = await r202.text().then(t => { try { return JSON.parse(t); } catch { return { status: r202.status, body: t }; } });
     const t202 = asked202.turn && asked202.turn.id;
-    const tipped = !!t202 && await until(`/\\d+ on other desks/.test(document.querySelector("#meta .oy-foot")?.dataset.tipSub || "")`, 40);
+    const tipped = !!t202 && await until(`/\\d+ waiting on other desks/.test(document.querySelector("#meta .oy-foot")?.dataset.tipSub || "")`, 40);
     const nAfter = await p.ev(handN);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     if (tipped) await p.clickOn("#meta .oy-foot");
     const trayOpen = tipped && await until(`!!document.querySelector("#onyou .oy-tray")`, 30);
     const listed202 = trayOpen && await p.ev(`!/bench: a card on still-b/.test(document.querySelector("#onyou .oy-tray").textContent)`);
     rows.push(["a desk's hand counts that desk, and its tray holds that desk's own", tipped && nAfter === nBefore && listed202,
-      !t202 ? `the hand-over answered ${JSON.stringify(asked202).slice(0, 120)}, its panel's start ${JSON.stringify(started202).slice(0, 120)}` : !tipped ? "the hand's tip never said what is on other desks" : nAfter !== nBefore ? `still-a's hand went from "${nBefore}" to "${nAfter}" for still-b's card` :
+      !t202 ? `the ask answered ${JSON.stringify(asked202).slice(0, 120)}, its panel's start ${JSON.stringify(started202).slice(0, 120)}` : !tipped ? "the hand's tip never said what is on other desks" : nAfter !== nBefore ? `still-a's hand went from "${nBefore}" to "${nAfter}" for still-b's card` :
         !trayOpen ? "the hand opened no tray" : !listed202 ? "still-b's card is in still-a's tray" : `still-a's hand stayed at "${nBefore}", and still-b's card is not in its tray`]);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     if (t202) await post(`/api/desks/${db}/turns/${t202}/remove`, {}).catch(() => {});
@@ -2978,13 +2984,13 @@ async function homeRows(cdp, base, token, arrive, tmp) {
   try {
     // Home and the Inbox, each at its own address.
     await p.goto(`${base}/#cap=${cap}`);
-    const home = await until(`!!document.querySelector(".hm .hm-pick [data-hm-open]") && [...document.querySelectorAll(".hm a[data-desk]")].some(a => a.textContent.includes("home-bench"))`);
+    const home = await until(`!!document.querySelector(".hm .hm-floor") && [...document.querySelectorAll(".hm a[data-desk]")].some(a => a.textContent.includes("home-bench"))`);
     const quiet = await p.ev(`document.querySelector(".hm .hm-status")?.textContent || ""`);
-    rows.push(["the mark opens Home, with Pick up and a one-line status", home && /Nothing needs you/.test(quiet),
-      !home ? "no Home, no Pick up, or the desk is not on it" : `the status says "${quiet.replace(/\s+/g, " ").trim().slice(0, 60)}"`]);
+    rows.push(["the mark opens Home, with the floor and a one-line status", home && /Nothing needs you/.test(quiet),
+      !home ? "no Home, no floor, or the desk is not on it" : `the status says "${quiet.replace(/\s+/g, " ").trim().slice(0, 60)}"`]);
     // The page is a grid, not the reading measure.
-    const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-pick")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
-    rows.push(["Home takes the width, with the side column beside Pick up and the desks", wide.beside, `${wide.hm}px wide; ${wide.beside ? "Pick up, the desks and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
+    const wide = await p.ev(`(() => { const hm = document.querySelector(".hm").getBoundingClientRect().width, days = document.querySelector(".hm .hm-main")?.getBoundingClientRect(), side = document.querySelector(".hm .hm-side")?.getBoundingClientRect(), pick = document.querySelector(".hm .hm-floor")?.getBoundingClientRect(); const at = b => b ? Math.round(b.left) + "," + Math.round(b.top) + "-" + Math.round(b.right) : "none"; return { hm: Math.round(hm), at: "main " + at(days) + " pick " + at(pick) + " side " + at(side), beside: !!days && !!side && !!pick && Math.abs(days.top - side.top) < 2 && side.left > days.right && side.left > pick.right }; })()`);
+    rows.push(["Home takes the width, with the side column beside the floor", wide.beside, `${wide.hm}px wide; ${wide.beside ? "the floor and the week on the left, the side column beside them from the top" : `not side by side: ${wide.at}`}`]);
     // A2 of the audit of 1.46.2: at 1000 px, sidebar open, Home's container
     // is under 760 px and the grid is one real column. It was three tracks,
     // with the note bar drawn over the Claude box.
@@ -3024,7 +3030,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     await p.clickOn(".hm [data-hm=barundo]");
     const undone = await until(`document.querySelector("input[data-hm=bar]").value === "Write the bar's own row"`);
     const offDesk = !(await notesOn(d)).includes("Write the bar's own row");
-    rows.push(["the note bar: a, a line, Enter puts it on Pick up's desk; Undo takes it back", inBar && added && onDesk && undone && offDesk,
+    rows.push(["the note bar: a, a line, Enter puts it on the desk touched last; Undo takes it back", inBar && added && onDesk && undone && offDesk,
       !inBar ? "a did not put the hand in the bar, on home-bench" : !added ? `the bar says "${await p.ev(`document.querySelector(".hm-nb-say")?.textContent || ""`)}"` : !onDesk ? "the line is not on the desk" : !undone || !offDesk ? "Undo left the line on the desk, or did not give the words back" : "added, said in the bar's row, and taken back into the bar"]);
 
     // `#` and the start of a name, then Tab: that desk on the chip, the
@@ -3033,7 +3039,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     other = two.desk ? two.desk.id : two.id;
     // A query of its own: the same address with only a new fragment is not a load.
     await p.goto(`${base}/?two=1#cap=${cap}`);
-    await until(`!!document.querySelector(".hm input[data-hm=bar]") && !!document.querySelector(".hm-dk-add")`);
+    await until(`!!document.querySelector(".hm input[data-hm=bar]") && !!document.querySelector(".hm-floor")`);
     await p.clickOn(".hm input[data-hm=bar]");
     await p.ev(`(() => { const b = document.querySelector("input[data-hm=bar]"); b.value = ""; b.dispatchEvent(new InputEvent("input", { bubbles: true })); return 1; })()`);
     await p.type("Ship it #bench-t");
@@ -3046,13 +3052,6 @@ async function homeRows(cdp, base, token, arrive, tmp) {
       hashList !== "bench-two" ? `#bench-t hashList "${hashList}"` : hashed.chip !== "bench-two" ? `the chip says ${hashed.chip}` : hashed.text !== "Ship it " ? `the line is "${hashed.text}"` : !plain ? "#77 opened the list or lost its text" : "bench-two on the chip, \"Ship it #77\" in the line"]);
     await p.press("Escape");
 
-    // A card's +, at the foot of a scrolled page: its desk on the chip, the
-    // hand in the bar, and neither the page nor the card moves.
-    const plusAt = await p.ev(`(() => { const m = document.querySelector("#main"); m.style.scrollBehavior = "auto"; m.scrollTo({ top: m.scrollHeight }); const b = [...document.querySelectorAll(".hm-dk-add")].pop(); b.dataset.bench = "1"; return { y: m.scrollTop, h: b.closest(".hm-dk").getBoundingClientRect().height, name: b.getAttribute("aria-label").replace("A new note on ", "") }; })()`);
-    await p.clickOn(`.hm-dk-add[data-bench="1"]`);
-    const plussed = await p.ev(`(() => { const m = document.querySelector("#main"), b = [...document.querySelectorAll(".hm-dk-add")].find(x => x.getAttribute("aria-label") === ${JSON.stringify("A new note on ")} + ${JSON.stringify(plusAt.name)}); m.style.scrollBehavior = ""; return { y: m.scrollTop, h: b?.closest(".hm-dk").getBoundingClientRect().height, chip: document.querySelector(".hm [data-hm=to]").textContent, inBar: document.activeElement?.dataset?.hm === "bar", top: Math.round(document.querySelector(".hm-nb").getBoundingClientRect().top) }; })()`);
-    rows.push(["a card's + puts its desk on the bar, in view, and nothing moves", plussed.chip === plusAt.name && plussed.inBar && Math.abs(plussed.y - plusAt.y) < 1 && Math.abs(plussed.h - plusAt.h) < 1 && plussed.top >= 0,
-      plussed.chip !== plusAt.name ? `the chip says ${plussed.chip}, not ${plusAt.name}` : !plussed.inBar ? "the hand is not in the bar" : Math.abs(plussed.y - plusAt.y) >= 1 ? `the page moved ${plusAt.y} → ${plussed.y}` : Math.abs(plussed.h - plusAt.h) >= 1 ? `the card grew ${plusAt.h} → ${plussed.h} px` : `${plusAt.name} on the chip, the bar held ${plussed.top} px from the top`]);
     await post(`/api/desks/${other}/delete`); other = 0;
 
     await p.goto(`${base}/inbox#cap=${cap}`);
@@ -3173,7 +3172,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // the pointer, the hand in the bar, left alone), no read of /api/home
     // and none of /api/peers, which only a friends event asks for.
     await p.goto(`${base}/#cap=${cap}`);
-    await until(`!!document.querySelector(".hm .hm-pick")`);
+    await until(`!!document.querySelector(".hm .hm-floor")`);
     await sleep(600);
     await p.ev(`(() => { const d = document.querySelector("#doc"); window.__hm = { draws: 0, peers: 0, home: 0 }; new MutationObserver(() => window.__hm.draws++).observe(d, { childList: true }); const f = window.fetch; window.fetch = (u, ...r) => { const s = String(u); if (/\\/api\\/peers(\\?|$)/.test(s)) window.__hm.peers++; if (/\\/api\\/home(\\?|$)/.test(s)) window.__hm.home++; return f(u, ...r); }; return 1; })()`);
     for (let i = 0; i < 20; i++) {
@@ -3993,14 +3992,20 @@ async function panelRows(cdp, base, token) {
     const one = await (await agent("ask", { text: "bench: $(echo never typed)?", options: ["Yes", "No"], by: "bench-agent" })).json().catch(() => ({}));
     const oneId = one.turn?.id;
     const oneUp = !!oneId && await until(`!!document.querySelector('#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]')`, 60);
-    // 1.66: the press is the send -- Yes types the answer, no Send now.
-    await q.ev(`window.__typed = []; 1`);
+    // 1.67: the press is the send, and the daemon types it (press.rs) --
+    // the page sends no keys of its own, the turn is marked told, and the
+    // answer says `typed`. Past the 2 s a press waits after the reader's keys.
+    // The answer's own reply is read, since a turn's told_at is the daemon's
+    // and never sent to the page.
+    await sleep(800);
+    await q.ev(`window.__typed = []; window.__said = null; window.__f0 = window.__f0 || window.fetch; window.fetch = async (u, o) => { const r = await window.__f0(u, o); if (/[/]turns[/]${oneId}[/]answer$/.test(new URL(String(u), location.href).pathname)) r.clone().json().then(j => { window.__said = j; }).catch(() => {}); return r; }; 1`);
     if (oneUp) await q.clickOn(`#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]`);
-    const sentTyped = oneUp && await until(`window.__typed.length >= 2`, 30) ? await q.ev("window.__typed") : [];
-    const said1 = (sentTyped[0] || "").replace("\u001b[200~", "").replace("\u001b[201~", "");
-    rows.push(["Yes types only the reader's answer, into a Claude at its prompt", said1 === "Answered in snyvi: Yes" && sentTyped[1] === "\r",
-      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : `typed ${JSON.stringify(sentTyped)}`]);
-    rmSync(paste, { force: true });
+    const saidUp = oneUp && await until(`!!window.__said`, 30);
+    const pressed = saidUp ? await q.ev("window.__said") : {};
+    await q.ev(`window.fetch = window.__f0; 1`);
+    const pageTyped = oneUp ? await q.ev("window.__typed") : [];
+    rows.push(["Yes is typed by the daemon, the reader's answer alone, into a Claude at its prompt", pressed.sent === "typed" && pressed.turn?.answer === "Yes" && pageTyped.length === 0,
+      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : pageTyped.length ? `the page typed ${JSON.stringify(pageTyped)}` : `the daemon said ${JSON.stringify({ sent: pressed.sent, why: pressed.why })}`]);
 
     // U1, U2: the corner is the rail's column, over no panel, and above the
     // rail's foot (its repository and links).
@@ -4019,7 +4024,9 @@ async function panelRows(cdp, base, token) {
 
     // B1: a card of questions answered elsewhere goes with one ✕ -- its
     // Later menu's "Answered in the chat" (1.64, C5) -- and its one Undo
-    // brings every question back.
+    // brings every question back. Panel a is still at its prompt (S1's
+    // paste is on), so a "done" sent without `quiet` would be typed there
+    // and marked told, which no Undo takes back (1.67).
     const g2 = await (await agent("ask", { by: "bench-agent", questions: [
       { question: "bench: all one?", options: ["A", "B"] }, { question: "bench: all two?", options: ["A", "B"] }] })).json().catch(() => ({}));
     const g2Id = g2.turns?.[0]?.id;
@@ -4031,7 +4038,8 @@ async function panelRows(cdp, base, token) {
     if (gxGone) await q.clickOn('#onyou [data-a="fd-back"][data-k="g"]');
     const gxBack = gxGone && await until(`document.querySelectorAll('.dk-turn.grp[data-g="${g2Id}"] .tn-gq').length === 2`, 40);
     rows.push(["a card of questions goes with one ✕, and one Undo brings it all back", !!gxBack,
-      !g2Id ? `ask answered ${JSON.stringify(g2).slice(0, 80)}` : !gx ? "no ✕ for the whole card" : !gxGone ? "the card stayed, or no Undo" : "the Undo did not bring both back"]);
+      !g2Id ? `ask answered ${JSON.stringify(g2).slice(0, 80)}` : !gx ? "no ✕ for the whole card" : !gxGone ? "the card stayed, or no Undo" : gxBack ? "both questions back, nothing typed into the panel" : "the Undo did not bring both back"]);
+    rmSync(paste, { force: true });
 
     // 1.65 (plan 2d186a80c1): the desk's Decisions. On you's tray ends on a
     // line for them; pressed, the shelf takes the tray's place. A pick there
@@ -4119,21 +4127,19 @@ async function panelRows(cdp, base, token) {
       pinHeld && pinKept && pinOff,
       !trayUp ? "no tray with a pin" : !pinOn ? "the pin did not press" : !pinHeld ? "the tray closed under the pin" : !pinKept ? "the pin was not remembered" : !pinOff ? "the ✕ left it open, or pinned" : "held open, remembered, then closed and unpinned"]);
 
-    // #118: with nothing fresh, the pill says they are all older, and its
-    // tray opens onto them -- not onto one more "N older" to press in an
-    // empty box. 1.43: the pill is the rail's notch, its count in quiet ink
-    // (not `on`) and "all older" in its label; 1.44: the foot's button, and
-    // an older ask is one line in the tray (09-thread.js olderLine), not a
-    // turn's card. An hour on the page's clock makes every waiting turn an
-    // older one.
+    // 1.67 (was #118): age folds and dims nothing. An hour on the page's
+    // clock, a question is still lit in the hand, still counted, and whole
+    // in the tray: at half an hour it used to be one dimmed line under
+    // "Older", out of the count.
     await q.ev(`window.__now = Date.now; Date.now = () => window.__now.call(Date) + 3600e3; 1`);
-    const later = await agent("handover", { kind: "try", text: "bench: try the older tray", by: "bench-agent" });
+    const later = await agent("ask", { text: "bench: an hour old?", options: ["Yes", "No"], by: "bench-agent" });
     const laterTurn = (await later.json().catch(() => ({}))).turn?.id;
-    const olderPill = await until(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return !!b && !b.classList.contains('on') && /, all older$/.test(b.getAttribute('aria-label') || ""); })()`, 60);
-    if (olderPill) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
-    const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-older') && t.querySelectorAll('.dk-turn, .oy-old .cn-row').length >= 2; })()`, 30);
-    rows.push(["with nothing fresh the pill says older, and its tray opens onto them", olderOpen,
-      !olderPill ? `the pill read "${await q.ev(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray held only a fold to press" : "the pill said all older, and its tray opened onto them"]);
+    const olderPill = await until(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return !!b && b.classList.contains('on') && +b.querySelector('.n')?.textContent >= 1; })()`, 60);
+    if (olderPill && !(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    if (olderPill) await q.clickOn(`#onyou .oy-tab[data-k="waiting"]`).catch(() => {});
+    const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-old') && [...t.querySelectorAll('.dk-turn')].some(li => /an hour old/.test(li.textContent) && !!li.querySelector('[data-v="Yes"]')); })()`, 30);
+    rows.push(["an hour on, a question is still counted and whole in the tray", olderOpen,
+      !olderPill ? `the hand read "${await q.ev(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray folded it, or left it out" : "lit, counted, and answerable where it is"]);
     await q.ev(`Date.now = window.__now; document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
     for (const id of [keyTurn, laterTurn]) if (id) await agent(`turns/${id}`, { drop: true });
 
@@ -4403,13 +4409,14 @@ async function tabRows(cdp, base) {
     rows.push(["its Undo brings the tab back, with its panels", undone && inGrp(d, t2).length === 2,
       !undone ? "the tab did not come back, or is not shown" : `server holds ${inGrp(d, t2).length}`]);
 
-    // Home: a desk of two tabs has a chip for each, and one opens that tab.
+    // Home: a panel's row on the floor opens its desk on that panel's tab
+    // (1.67: the floor took the desk cards' place, and their tab chips).
     await p.goto(`${base}/#cap=${cap}`);
-    const chip = `.hm-tab[data-desk="${desk}"][data-grp="${t1}"]`;
+    const chip = `a[data-desk="${desk}"][data-grp="${t1}"]`;
     const chipped = await until(`!!document.querySelector('${chip}')`);
-    if (chipped) await p.clickOn(chip);
+    if (chipped) await p.ev(`document.querySelector('${chip}').click(), 1`);
     const opened = chipped && await until(`location.pathname === "/desk/${desk}" && document.querySelector(".dk-groups .dk-group.on")?.dataset.grp === "${t1}"`);
-    rows.push(["Home's chip opens the desk on that tab", opened, !chipped ? "no chip on the desk's card" : opened ? "the desk, on Tab 1" : `on ${await p.ev("location.pathname")}, tab ${(await shown())?.name}`]);
+    rows.push(["Home's row for a panel opens the desk on that panel's tab", opened, !chipped ? "no row on the floor for a panel of that tab" : opened ? "the desk, on Tab 1" : `on ${await p.ev("location.pathname")}, tab ${(await shown())?.name}`]);
   } finally {
     const d = await deskNow(desk).catch(() => null);
     for (const x of (d && d.panes) || []) await post(`/api/panes/${x.id}/stop`).catch(() => {});
@@ -4606,7 +4613,7 @@ async function viewRows(cdp, base, token, env, tmp) {
     const appeared = await untilAsync(async () => /Board · home/.test(await menuViews()) || null, 20);
     const after = await menuViews(), x1 = await p.ev(headAt);
     rows.push(["the views are in the desk's ⋯, Panels ticked; a board the agent draws joins them, and the head moves nothing",
-      wrote === 201 && !!appeared && before === "Panels ✓ | Folder | Page" && after === "Panels ✓ | Folder | Page | Board · home" && x0 === x1 && !(await p.ev(`!!document.querySelector(".dk-views, .dk-vchip")`)),
+      wrote === 201 && !!appeared && before === "Panels ✓ | Folder | Page" && after === "Panels ✓ | Folder | Page | Board · home" && x0 === x1 && !(await p.ev(`!!document.querySelector(".dk-views, .dk-vchip:not(.dk-vnew)")`)),
       wrote !== 201 ? `the frame write answered ${wrote}` : !appeared ? `the menu still says "${after}"` : x0 !== x1 ? `the head moved ${x0} → ${x1}` : `"${before}" → "${after}"`]);
 
     const deskName = await p.ev(`Math.round(document.querySelector(".dk-head > .dk-name").getBoundingClientRect().left)`);
@@ -4943,7 +4950,9 @@ async function senderRows(cdp, base, token) {
   const P = id => `.pn[data-id="${id}"]`;
   const onRow = `document.querySelector("#toc .dk-pane.on .dk-focus")?.dataset.focus`;
   const focusOn = async id => { await q.clickOn(`${P(id)} .pn-body`); return until(`${onRow} === "${id}"`); };
-  const read = async id => { await until(`!!document.querySelector('#toc a[data-read="${id}"]')`); await q.ev(`document.querySelector('#toc a[data-read="${id}"]').click(); 1`); return until(`!document.querySelector("#chrome .over").hidden && document.querySelector("#toc .dk-doc.on a")?.dataset.read === "${id}"`); };
+  // Since 1.67 the rail lists only what waits to be read (#236), so a page
+  // read once is put back on the queue before it is opened from there again.
+  const read = async id => { await post("/api/queue/unread", { ids: [id] }, TK); await until(`!!document.querySelector('#toc a[data-read="${id}"]')`); await q.ev(`document.querySelector('#toc a[data-read="${id}"]').click(); 1`); return until(`!document.querySelector("#chrome .over").hidden && document.querySelector("#toc .dk-doc.on a")?.dataset.read === "${id}"`); };
   const ex = `document.querySelector("#chrome .over-x")`;
   const docTop = `Math.round(document.querySelector("#doc").getBoundingClientRect().top * 10) / 10`;
   try {
@@ -5182,7 +5191,10 @@ async function footRows(cdp, base, token) {
     const steps = await agent(pa, "handover", { kind: "run", text: "bench: a walk-through", by: "bench-agent",
       options: ["$ echo one", "Plug the phone in", "# Is it seen?", "$ echo two"] });
     const bad = await agent(pa, "handover", { kind: "run", text: "bench: a bad step", options: ["$ echo one\necho two"] });
-    await q.ev(`document.querySelector('[data-a="oy-open"]')?.click(); 1`);
+    // A hand-over is the reader's To do, one of On you's three tabs (1.67).
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.ev(`document.querySelector('#onyou [data-a="oy-open"], #meta [data-a="oy-open"]')?.click(); 1`);
+    await until(`!!document.querySelector('#onyou .oy-tab[data-k="todo"]')`, 20);
+    await q.ev(`document.querySelector('#onyou .oy-tab[data-k="todo"]')?.click(); 1`);
     const card = await until(`document.querySelectorAll(".tn-walk .tn-step").length === 3`, 40);
     const first = await q.ev(`(() => { const s = [...document.querySelectorAll(".tn-walk .tn-step")]; return { on: s[0]?.classList.contains("on"), done: !!s[0]?.querySelector('[data-a="tn-step-done"]'), later: !!s[2]?.querySelector('[data-a="tn-step-run"]'), laterDone: !!s[2]?.querySelector('[data-a="tn-step-done"]') }; })()`);
     await q.ev(`document.querySelector('.tn-walk .tn-step.on [data-a="tn-step-done"]')?.click(); 1`);

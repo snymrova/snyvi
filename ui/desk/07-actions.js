@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await checksAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d) || await decAct(a, b, d))) return;
+    if (d && (changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await checksAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d) || await decAct(a, b, d) || await lineAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -38,7 +38,7 @@ async function act(b, byKey) {
     else if (a === "reveal") ctx.reveal({ desk: d.id });
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
-    else if (a === "more") { docsAll = !docsAll; rail(); }
+    else if (a === "docs-inbox") docsInbox(d);
     else if (a === "notes-more" || a === "notes-done" || a === "notes-checks") { a === "notes-more" ? notesAll = !notesAll : a === "notes-done" ? notesDone = !notesDone : agedOpen = !agedOpen; rail(); }
     // Off this desk's list, and back: the row keeps its place with an Undo,
     // as a note's does, and the daemon is told after the rail has changed.
@@ -195,10 +195,13 @@ async function gateAct(a, b, d) {
   const undo = b.dataset.undo === "1", was = x.ok_at;
   x.ok_at = undo ? 0 : Date.now() / 1000;
   rail();
+  let j = null;
   if (await told(b.dataset, `n${x.id}`, undo ? "Could not take it back" : "Could not approve it", () => { x.ok_at = was; },
-    () => ctx.api(`/api/desks/${d.id}/plans/${encodeURIComponent(b.dataset.doc)}/approve`, { undo }))) {
+    () => ctx.api(`/api/desks/${d.id}/plans/${encodeURIComponent(b.dataset.doc)}/approve`, { undo }).then(r => (j = r)))) {
     await getNotes(d.id, true);
-    if (!undo) goAhead(d, b.dataset.doc);
+    // The daemon typed the go-ahead (1.67); when it could not, the row says
+    // why, and the line's Start types it once its panel is at its prompt.
+    if (!undo && j && j.sent === "later" && x.stage_pane) notSent(x.stage_pane, slotOf(d, x.stage_pane), "It hears the approval at its next prompt, or on Start.", j.why);
   }
   return true;
 }
@@ -660,6 +663,8 @@ export function open(c) {
   const d = current();
   if (d && slot) toSlot(d, d.panes.find(x => x.slot === slot));
   draw();
+  // The view the address names, or the address the view (32-ways.js).
+  addrOpened(c.push);
   ctx.docEl.addEventListener("click", click);
   ctx.docEl.addEventListener("contextmenu", tabMenu);
   ctx.docEl.addEventListener("keydown", tabMenu);
@@ -856,7 +861,6 @@ export function actions(el) {
       R,
       { label: "Rename…", key: ctx.keyHint("f2"), moves: 1, run: () => renamePanel(v) },
       ...threadItems(v),
-      ...pipeItems(v),
       { label: "Close panel", key: ctx.keyHint("ctrl+alt+w"), danger: true, run: does("close") },
     ] };
   }
@@ -904,7 +908,7 @@ export function actions(el) {
       // An undated open line of the reader's own can go to a friend as a line
       // (F20). A dated one goes as a promise, above: its text has the date
       // cut out, and a plain send would lose it.
-      ...(!x.done && !x.sent_by && !x.due_at ? (friendsList || []).map(f => ({ label: `Send to ${f.name}`, run: () => sendLine(x, f) })) : []),
+      ...(!x.done && !x.sent_by && !x.due_at ? (friendsList || []).map(f => ({ label: `Send to ${f.name}`, run: () => sendLine(d, x, f) })) : []),
       // The line's first link, by its host, and the words themselves: the
       // text is a button that rewrites, so neither can be had from it.
       ...webLinks(x.text).slice(0, 1).map(l => ({ label: `Open ${l.host}`, run: () => openLink(l.url) })),

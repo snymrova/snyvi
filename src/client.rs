@@ -832,12 +832,11 @@ pub fn agent_state(
     tell_agent(paths, pane, body);
 }
 
-/// A turn's end in a panel: the state, and what a pipeline's runner reads
-/// of it (`server::pipeline_run`) -- the transcript's path, the reply and
+/// A turn's end in a panel: the state, and what the daemon reads of it
+/// (`server::turn_end`) -- the transcript's path, the reply and
 /// whether a Stop hook already kept this turn going. The answer is a reason
-/// to keep going when the panel's pipeline asks for one: its stage is past
-/// the context limit, and is to say where it is (`leave_off`) before a
-/// fresh session takes it on. A daemon from before 1.40 answers nothing,
+/// to keep going when the daemon has one: answers the reader pressed in
+/// snyvi while the agent worked. A daemon from before 1.40 answers nothing,
 /// and a slow one is not waited on past a second and a half.
 pub fn agent_stop(
     paths: &Paths,
@@ -1028,7 +1027,7 @@ pub fn tick_desk_note(paths: &Paths, pane: &str, note: i64, body: &Value) -> Res
     let mut resp = pane_post(paths, &format!("{pane}/notes/{note}/tick"), body.clone())?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_json()?),
-        409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a note already done stays done"),
+        409 => bail!("there is no open note with id {note} on this desk -- read_desk's notes section lists them, and a note already done stays done"),
         400 => bail!("{}", said(&mut resp)),
         404 => {
             bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
@@ -1056,7 +1055,7 @@ pub fn mark_desk_note(
     )?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_json()?),
-        409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a done note has no stage"),
+        409 => bail!("there is no open note with id {note} on this desk -- read_desk's notes section lists them, and a done note has no stage"),
         400 => bail!("{}", said(&mut resp)),
         404 => {
             bail!("snyvi has no running pane by this id (or the daemon is older than this tool)")
@@ -1346,11 +1345,18 @@ pub fn has_friends() -> Option<bool> {
 
 /// Offer a document to a friend, from this pane: `offer_document`. The
 /// daemon writes the question for the reader and sends nothing.
-pub fn offer_document(paths: &Paths, pane: &str, to: &str, id: &str, by: &str) -> Result<Value> {
+pub fn offer_document(
+    paths: &Paths,
+    pane: &str,
+    to: &str,
+    id: &str,
+    review: bool,
+    by: &str,
+) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/offer"),
-        serde_json::json!({ "to": to, "doc": id, "by": by }),
+        serde_json::json!({ "to": to, "doc": id, "by": by, "review": review }),
     )?;
     match resp.status().as_u16() {
         201 => Ok(resp.body_mut().read_json()?),

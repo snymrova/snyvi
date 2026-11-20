@@ -9,24 +9,26 @@ use serde_json::{json, Value};
 
 const READ: &str = "Read a board on this snyvi desk: its sections (id, size, place, version), what the user has \
 selected on it, and the design's tokens and DESIGN.md's first paragraph. Read it before the first section, and \
-before acting on \"this\" or \"these\": the selection is what they mean. Leave `board` out to list the desk's \
-boards (the user can make empty ones, by name). A board is design/<board>/ in the desk's folder; frame_write \
-makes one. Pass `since` (the last read's hash) to learn only whether it changed.";
+before acting on \"this\" or \"these\": the selection is what they mean. No `board` lists the desk's boards. \
+A board is design/<board>/ in the desk's folder; frame_write makes one. `since` (the last hash) says only \
+whether it changed; `look` (a frame's id) shows that frame as the window draws it.";
 
 const WRITE: &str = "Draw one section on a board in this snyvi desk, whole: a self-contained HTML fragment (CSS inline in a \
-<style>, no network, no script), 300 to 3,000 bytes, at a width in CSS pixels. A new board's name makes the \
+<style>, no network, no script), 300 to 6,000 bytes, at a width in CSS pixels. A new board's name makes the \
 board. Show options as several sections side by side (hero-a, hero-b), not as prose. `html: null` hides one; \
 its versions stay. Read the skill's board.md before the first section, and look at what you drew \
-(frame_look) before saying done.";
+(board_read with `look`) before saying done.";
 
 const ARRANGE: &str =
     "Move, reorder or name frames on a board in this snyvi desk, or name the board, or make a frame \
 live with `source` (`threads`: what shipped and what was told, posted into the frame by snyvi). Only \
-frames already on it; an unknown id is refused.";
+frames already on it; an unknown id is refused. `css` is the board's shared CSS, whole: put what every \
+section repeats there once (classes, type, colours), and each section's own <style> only adds to it. `export` writes design/<board>.html.";
 
-const LOOK: &str = "See a frame on a board in this snyvi desk as the window draws it. Until snyvi can, it answers \
-with the file and size to render yourself (Playwright, or chromium --headless --screenshot): do that, and read \
-the picture, before saying a frame is done.";
+const LOOK: &str = "See a frame on a board in this snyvi desk as the window draws it: a picture, from a snyvi \
+window open on this desk. Look before saying a frame is done. With no window on the desk, or for a frame that \
+runs a script, it answers with the file and size to render yourself (Playwright, or chromium --headless \
+--screenshot) instead.";
 
 const EXPORT: &str =
     "Write one HTML page of every shown frame of a board in this snyvi desk, in order, to \
@@ -76,7 +78,8 @@ pub(super) fn specs() -> Vec<Value> {
                     "order": { "type": "integer" }, "name": { "type": "string" },
                     "source": { "type": "string", "enum": ["threads", ""], "description": "A live frame: snyvi posts this source's numbers into it (board.md, A live frame); empty takes it off." } },
                     "required": ["id"], "additionalProperties": false } },
-                "name": { "type": "string", "description": "The board's title." } },
+                "name": { "type": "string", "description": "The board's title." },
+                "css": { "type": "string", "maxLength": 16384, "description": "The board's shared CSS, whole, before every section's own. Empty takes it off." } },
                 "additionalProperties": false }, "annotations": annotations(false) }),
         json!({ "name": "frame_look", "title": "Look at a frame", "description": LOOK,
             "inputSchema": { "type": "object", "properties": { "board": board_prop(), "frame": frame_prop() },
@@ -224,6 +227,11 @@ fn say_board(v: &Value) -> String {
             vars.join("; ")
         ));
     }
+    if let Some(css) = v["css"].as_str().filter(|c| !c.is_empty()) {
+        out.push_str(&format!(
+            "Shared CSS (board.css, before every section's own; board_arrange `css` rewrites it):\n{css}\n"
+        ));
+    }
     out.push_str(&format!("hash: {}", v["hash"].as_str().unwrap_or("")));
     out
 }
@@ -325,7 +333,7 @@ impl Session {
         match client::pane_board(&self.paths, &p, &path, Some(body)) {
             Ok((201, v)) => said(
                 format!(
-                    "Drew {frame} on {board} ({}){}. Look at it with frame_look before saying it is done.",
+                    "Drew {frame} on {board} ({}){}. Look at it with board_read's `look` before saying it is done.",
                     v["path"].as_str().unwrap_or(""),
                     if v["same_version"] == json!(true) { ", the same version as your last write" } else { ", a new version" }
                 ),
@@ -344,6 +352,7 @@ impl Session {
         let body = json!({
             "frames": args.get("frames").cloned().unwrap_or(json!([])),
             "name": args.get("name").and_then(Value::as_str),
+            "css": args.get("css").and_then(Value::as_str),
         });
         match client::pane_board(
             &self.paths,
@@ -375,7 +384,16 @@ impl Session {
         match client::pane_board(&self.paths, &p, &path, Some(json!({}))) {
             // Not an error to the agent: what to do instead, which it does.
             Ok((501, v)) => said(refusal(501, &v), false),
-            Ok((200, v)) => said(v.to_string(), false),
+            Ok((200, v)) => json!({
+                "content": [
+                    { "type": "image", "data": v["png"], "mimeType": "image/png" },
+                    { "type": "text", "text": format!(
+                        "{frame} on {board}, {} wide, as the window draws it.",
+                        v["w"]
+                    ) },
+                ],
+                "isError": false,
+            }),
             Ok((s, v)) => said(refusal(s, &v), true),
             Err(e) => said(format!("snyvi did not answer: {e}"), true),
         }

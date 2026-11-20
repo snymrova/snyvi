@@ -464,9 +464,14 @@ is how `snyvi mcp` knows which desk it is in; and it writes snyvi's
 hooks to `~/.codex/hooks.json`, the same events as Claude Code's, so the
 panel shows what Codex is doing and Codex is handed the desk brief and
 the desk's changes at each prompt. Codex runs no hook it has not been
-shown: open `/hooks` in Codex once and trust them. Plans and auto-send
-stay Claude Code's; Codex has neither an ExitPlanMode nor a file path in
-its edit hook.
+shown: open `/hooks` in Codex once and trust them. Since 1.67 a press
+reaches a Codex panel as it does a Claude one: an Approve, or an answer
+you give on Home or in the corner, is typed at its prompt when it is at
+rest there, and an answer pressed while it works goes back as its turn
+stops. Its panel offers the conversation back with `codex resume`. snyvi
+tells the two apart by the conversation's id: Codex's are UUIDs of version
+7, Claude Code's of version 4. Plans and auto-send stay Claude Code's;
+Codex has neither an ExitPlanMode nor a file path in its edit hook.
 
 The viewer says the same thing, on *Agents* (`/connect`): one row per agent, read by the daemon from the
 agent's own file, saying whether it is set up, not set up, or
@@ -491,16 +496,21 @@ URL, and its description tells Claude what snyvi can show and when to pick
 each -- Markdown with Mermaid for a plan, one self-contained HTML file for a
 mockup or a chart, an image or a recording, a PDF. `send_aside` is the small
 one, and [Asides](#asides) below says what it is for. Offered only to a
-Claude running in a desk's panel: `read_desk_notes` reads that desk's
-notes, `mark_desk_note` says how far a line has got, `tick_desk_note` ticks
-one done (with the commit, the document and a link to where the work can be
-seen) -- both take several lines at once, and `send_document` marks the
+Claude running in a desk's panel: `read_desk` reads the desk (its notes,
+threads, panels, checkouts, decisions, what you have open, its widgets, by
+section), `mark_desk_note` says how far a line has got and, with `done`,
+ticks it (with the commit, the document and a link to where the work can be
+seen) -- it takes several lines at once, and `send_document` marks the
 lines a plan is for as planned, so a batch of notes is a few calls and not a
-few per note -- `suggest_desk_note` offers a line you
-can keep or not, `leave_off` says in a sentence where the work stands,
-`name_panel` names the panel it runs in, and six more file the work itself
+few per note -- `suggest` offers what you decide on (a line you can keep or
+not, a launch, checks, a panel, a desk), `offer` what only your press sends
+(a document or a line to a friend, a post for the page, a routine),
+`leave_off` says in a sentence where the work stands, `name_panel` names the
+panel it runs in, and four more file the work itself
 ([Threads and On you](#threads-and-on-you) below): `start_thread` and
-`move_thread`, `ask` and `hand_over`, `suggest_panel` and `suggest_desk`.
+`move_thread`, `ask` and `hand_over`. Through 1.66 each of those ways was a
+tool of its own, 38 in all; 1.67 lists 23, and the old names still answer a
+session started before the update.
 The tool descriptions tell Claude
 when to use each; a line in your global `CLAUDE.md` helps it remember:
 
@@ -827,13 +837,13 @@ row or Rename… in its menu names it; the ⋯ at the end of the desk's head
 is the desk's own menu. A panel running Claude shows its model and how full
 its context window is, amber from 85%. Under it, the foot of the rail links
 the repository the desk's folder lives in (`owner/repo ↗`, read from its
-`origin` remote, never fetched), and Home's Pick up has the same link.
+`origin` remote, never fetched).
 
 **Desks keep your order.** Drag a desk's row in the sidebar to put it
 where you want it, or use Move to top, Move up and Move down in its menu,
-or alt ↑ / ↓ on the row. The sidebar, Home's cards, Home's # list and ⌘K
+or alt ↑ / ↓ on the row. The sidebar, Home's # list and ⌘K
 all show that order; a new desk goes at the bottom, and a reopened one goes
-back where it was. Only Pick up follows the desk you touched last.
+back where it was. Home's floor lists desks by the one touched last.
 
 **Or let the sidebar sort them.** The arrows beside the Desks head's +
 sort the sidebar's list: Your order, Last opened, or A–Z. The sort is
@@ -861,6 +871,24 @@ the first letter move through it, and Esc closes it and puts you back. In
 the window, right-clicking anywhere else shows nothing rather than the web
 view's Back and Reload; a text field and a selection in a document keep
 their usual menu for Copy and Paste.
+
+**Recently closed** (1.67), in the desk's ⋯, lists the panels and tabs
+closed on this desk, newest first, after the six-second Undo in the rail is
+over. *Reopen* brings a panel back stopped, in a free slot on the side it
+was on, and a tab with the panels that closed with it. A panel that held a
+Claude session says it can resume. Nothing was deleted; this is where it
+went.
+
+**A hand-over asks whose it is** (1.67). A To do card two days old says
+*still yours?* beside its age: press Done if you did it, or Later and *Not
+mine* with a word, which gives it back to its agent in its next brief. It
+is asked in the card's own line, and nothing is put away for you.
+
+**A panel in the back says what it is doing** (1.67). Its chip in the
+desk's head reads "forum host · asks you · 2 h" in amber, "tabs polish ·
+working 18 min", "reel 12 · finished 11:40" or, for a shell, "running", "a
+command failed" or how it ended. Until 1.67 an agent that asked read as "a
+command failed", the words for a dead dev server.
 
 In a panel, hold **Ctrl** over a link a program printed and it is
 underlined; **Ctrl-click** opens it in your browser. A plain click never
@@ -1096,7 +1124,12 @@ Suggested in the rail's corner, where nothing they do moves the page.
   it lives in, and a stage -- idea, planned, building, review, waiting,
   shipped, or parked with the next step to pick it up by. Claude starts one
   with `start_thread` when it takes the work on and moves it with
-  `move_thread`. A panel holds one thread, the one it last took up, shown as
+  `move_thread`. From 1.67 the stage is read where it can be: the first
+  commit on the thread's branch is building, its open PR is review, the
+  merge is shipped, and once snyvi has seen that branch or PR it refuses
+  those three from an agent, which keeps parked, waiting and told. Work
+  with no branch -- a chapter, a clip -- is still staged by the agent's
+  word, since there is nothing else to read. A panel holds one thread, the one it last took up, shown as
   a small chip on the panel's row with its stage. Its tip has the name, the
   PR, the checks or the merge as they come, the folder, the branch and its
   commits, and *Decided*: the questions you answered on it. A
@@ -1129,12 +1162,13 @@ Suggested in the rail's corner, where nothing they do moves the page.
   conversation and Claude carries on (mid-turn, Claude Code holds it until
   the turn ends). **New panel** runs it in a shell of its own, and **Copy**
   copies it. A command with a newline or an escape in it is refused, so what
-  Run types is exactly what the card shows. Your answer goes
-  with your next message to the panel that asked; while Claude in that
-  panel is at its prompt, **Send now** types your answer in -- only your
-  answer, numbered as Claude asked when it was a card -- and presses Enter
-  for you. Into a panel with no Claude in it, a shell, nothing is typed.
-  snyvi never starts a turn by itself.
+  Run types is exactly what the card shows. Your answer is typed
+  into the panel that asked, wherever you pressed it -- on the desk, on Home,
+  in the corner -- while Claude in that panel is at its prompt: only your
+  answer, numbered as Claude asked when it was a card, and Enter pressed
+  for you. A Claude at work hears it when its turn ends, and **Send now**
+  types it once it is back at its prompt. Into a panel with no Claude in
+  it, a shell, nothing is typed. snyvi starts a turn only on your press.
 
   Some settle by themselves. A key asked for by its name is answered when
   you add a key of that name on the desk; a merge on a thread is answered
@@ -1148,12 +1182,17 @@ Suggested in the rail's corner, where nothing they do moves the page.
   **+N more**. Left alone, it settles after a few seconds into the **On
   you** pill, which opens the tray: newest first, then Suggested.
   **Ctrl+Alt+Y** opens and closes it from anywhere on the desk; Esc or a
-  click elsewhere closes it. A turn goes quiet once the panel that asked
-  has closed, after half an hour, or once you have written to that panel
-  since: it no longer rises or rings, counts nowhere -- not the pill, not
-  Home, not the desk brief, not the six an agent may have waiting -- and
-  the tray shows it under the fresh ones, dimmed. After three days it is put away by
-  itself, as ✕ would. With the rail folded or hidden, nothing rises over a
+  click elsewhere closes it. The tray is the same three tabs as Home's box
+  and the corner's tray -- **Waiting**, **To do**, **News** -- with this
+  desk's rows, and its number is the agents waiting on you here, the one
+  count snyvi has. A question waits until you answer it, a plan from the
+  minute it was sent, and neither folds or dims with age. Claude's own
+  permission prompt, open in a panel, is a Waiting row too, with **Go to
+  panel**: it is answered only there. A turn goes quiet once you have
+  written to the panel that asked since: it no longer rings or counts, and
+  the tray shows it last, as one line. Each row's clock opens the same
+  **Later**: Tomorrow, Next week, or Not mine with a word for the agent.
+  With the rail folded or hidden, nothing rises over a
   panel: the pill lights in the window's corner. Claude's own question
   dialog is on screen in its panel already, so it neither rises nor waits
   in the corner; Home lists it.
@@ -1217,12 +1256,21 @@ Suggested in the rail's corner, where nothing they do moves the page.
   line rings once per date; a daemon that was off at the hour rings when it
   starts. The next panel to take a prompt on the desk hears that it came
   due and what you did; nothing is typed into a panel. A Claude can
-  suggest a line with a date (`suggest_desk_note`'s `due`) when the line
+  suggest a line with a date (`suggest` note's `due`) when the line
   has a natural day, a launch step or a follow-up.
 - **A routine comes back.** **Routines** is a section of its own under
-  Notes, always there: one line when a desk has none, the field, **New
-  routine…**. Type what runs: a slash command, a skill, or your own words
-  (`open PRs, summarise`). Clicking the field lists the commands and skills
+  Notes, always there: one line when a desk has none, the field, **What
+  should happen, and when?** From 1.67 it is one door: say it in your
+  words ("write the release notes after every merge") and press Enter,
+  and snyvi types that wish, in its own sentence, into a Claude at its
+  prompt on this desk. That agent writes the command, tries it once and
+  offers the routine back; only your Start runs it. With no Claude at its
+  prompt your words make a draft, as before. A slash command or a skill
+  typed with its `/` still makes its draft directly. A started routine's
+  row now leads with its last run: the hour and what the run said in its
+  last line, "looked, nothing to do" for a quiet run, and in amber
+  "stopped at Claude's limit 07:02, nothing was made · runs again 02:00".
+  A click on that line opens its runs. Clicking the field lists the commands and skills
   Claude Code would run here, over the desk, the project's first and then
   yours, each with its first line; typing `/` and a few letters narrows it,
   by name and then by what each says it does; a name in two places is the
@@ -1235,7 +1283,8 @@ Suggested in the rail's corner, where nothing they do moves the page.
   - **What it does**: the file and where it lives, and its scripts' folder.
   - **When**: its times, up to six hours, each line a cadence and its hours
     (`every day 09:30 13:00`, `every weekday 9`, `every mon 09:00`, `every
-    1st`, a press away), the words that hour adds to the prompt (`case`),
+    1st`, a press away; from 1.67 `every 6 hours` or `every 8 hours from 7`,
+    which is that day's hours 4, 6, 8 or 12 apart), the words that hour adds to the prompt (`case`),
     and an **Only if** tick. Each line says when it first runs. A draft may
     have no when yet: **Try once now** works without one.
   - **Only if**: a command asked before each time ticked Only if (on by
@@ -1309,13 +1358,13 @@ Suggested in the rail's corner, where nothing they do moves the page.
   view**; a draft's has **Try once now** and **Start it**. The sheet's foot
   does the same, and its **Save** lights once something changed. A Claude
   can write a command, its gate and watch scripts and offer it as a routine
-  (`offer_routine`, from the skill's `routine.md`; every panel is told to
+  (`offer` routine, from the skill's `routine.md`; every panel is told to
   use it instead of cron, `/loop` or `/schedule`); **Accept…** opens the
   same sheet, and it runs on its own only after your Start. A Claude's
-  `read_desk_notes` ends with the desk's routines, so it can say what runs
+  `read_desk`'s notes end with the desk's routines, so it can say what runs
   here on its own.
 - **A launch is a list.** When you say *launch*, Claude suggests its steps
-  as one set of dated lines (`suggest_launch`, from the skill's `launch.md`;
+  as one set of dated lines (`suggest` launch, from the skill's `launch.md`;
   each post it drafts follows the channel's rules in `grow.md`, and the
   posting stays yours): pictures and copy a week out, the site, the post, Show HN,
   and what happened a week after. **Keep all** on the set's first row keeps
@@ -1336,8 +1385,11 @@ Suggested in the rail's corner, where nothing they do moves the page.
   stars, downloads and visitors, hourly, with your own `gh`, on the same
   card any agent's widget comes on.
 - **A tick shows what it rests on.** A line an agent ticked with no commit,
-  no document and no link reads as a hollow ✓, *ticked without evidence:
-  needs a look*. Nothing counts them; the check is yours when you want it.
+  no document and no link reads as a hollow ✓, *claimed, ticked without
+  evidence: needs a look*. One whose commit is not on main yet reads
+  *claimed · on a branch*, and one whose commit git found on main reads
+  *checked: on main* (the two words are 1.67's). Nothing counts them; the
+  check is yours when you want it.
 - **A promise.** A dated open line's menu has **Promise to Trapti…**: the
   line goes to them with its date and lands on their Home as yours to keep,
   *post the release note · by Fri 10:00*. The rail marks it **→ Trapti**.
@@ -1351,8 +1403,11 @@ Suggested in the rail's corner, where nothing they do moves the page.
   `send_document` with `notes` makes, the lines then read **planned** --
   has **Approve** in its head, beside where it came from. Press it and those
   lines read **planned ✓**, and the panel that planned them is told at its
-  next prompt that you approved: go ahead. Claude waits for that, or for
-  your go-ahead in the panel, before it marks a planned line working.
+  next prompt that you approved: go ahead (1.67: snyvi types it into that
+  panel when its Claude is at rest). Approve is a gate from 1.67: until
+  you press it, snyvi refuses an agent's "working" on those lines, and a
+  line with no plan cannot be marked working at all. A yes in the chat is
+  not a press; the agent says so and waits.
   **Approved ✓**, pressed again, takes it back. A new plan for the same
   lines needs a new Approve.
 - **Suggested** is a panel or a desk Claude thinks the work wants, with the
@@ -1395,15 +1450,40 @@ panel it runs in. It never starts a turn and never approves or blocks a
 tool. About has the switch, *Claude Code mod*, under *In panels*; a panel started
 before you flip it picks the change up at its next start.
 
+## The line
+
+A desk can have a goal and a queue (1.67). **The line** is the section over
+Notes in the desk's rail: one line saying what the desk is for, and the
+notes you chose, in the order to do them. "4 of 9 done" counts the ticked
+ones, which keep their place.
+
+- **Set a goal** is a click on the goal's line. Enter keeps it.
+- **+ Add a note to the line** puts an open note at the end. ↑ and ↓ over
+  a row's end move it; ✕ takes it off the line and leaves it on your list.
+- **Done when** is a command of yours a note may carry: "done when
+  `node bench/ui.mjs back` passes". snyvi does not run it. The note's agent
+  is told it and runs it before it ticks.
+- **Start next** is on the first note nobody has. One press makes a
+  worktree beside the repository (`../<repo>-<n>`, on a branch `note-<n>`
+  cut from the main line), opens a panel in it, and starts Claude there
+  with snyvi's own sentence and the note's number. The note is that
+  panel's from then on, and its row says which panel has it.
+
+An agent takes the next note with `next_work`: the first one that is open
+and free, claimed for its panel, so two panels never take the same note.
+A claim holds while its panel is open; close the panel and the note is
+free again. An agent cannot reorder the line, write a done-when, or start
+another agent: those are yours, on the page. A second agent that tries to
+mark a claimed note working is refused and told to ask for the next one.
+
 ## Pipelines
 
-Set aside. 1.40 let a panel work through a list of steps, one step looped,
-or a goal a planner wrote, each stage a fresh Claude on a branch of its own.
-The window no longer offers it: a simpler shape for working while you are
-away is being worked out, and the 1.40 one will come back changed or not at
-all. The daemon's side stays (`docs/TERMINAL.md` §9a says what it holds to),
-so nothing already made is lost, and a pipeline you started before 1.43 keeps
-its chip in the panel's head, with Pause and Stop, until it ends.
+Removed in 1.67. From 1.40 a panel could work through a list of steps, one
+step looped, or a goal a planner wrote, each stage a fresh Claude the
+daemon started; the window stopped offering it in 1.43. Its one good idea,
+working a list until it is done, is the line above, where each start is
+your press. The rows a pipeline left stay in the database; nothing reads
+them.
 
 ## The rail
 
@@ -1464,11 +1544,9 @@ with Undo in the row); and a plan sent for notes that no one approved, a
 day on, with **Approve**; and a desk quiet for ten days with lines still
 open. A left-off row and a quiet desk have **Park it** too, with Undo in
 the row. A Claude says a left-off is yours with
-`leave_off`'s `needs: you`; snyvi never reads it into the words. For one
-said before 1.47, **On me** beside Pick up's *Left off* marks it yours by
-hand.
+`leave_off`'s `needs: you`; snyvi never reads it into the words.
 
-**Your week** opens above Pick up on Sunday at 20:00 and stays until
+**Your week** opens above the floor on Sunday at 20:00 and stays until
 Tuesday 06:00, so a window shut on Sunday evening sees it on Monday: what
 shipped this week and whether it was told (with where), three numbers from
 what snyvi already keeps -- lines ticked with nothing asked of you, the
@@ -1482,7 +1560,7 @@ writes them; **Not this week** puts the box away until next Sunday;
 
 **The note bar** is at the top of the left column, and stays there as the
 page scrolls: one field for a line on any desk's list. The chip at its left
-says which desk, and starts on Pick up's; click it for the list of desks, or
+says which desk, and starts on the one touched last; click it for the list of desks, or
 type `#` and the start of a desk's name in the note and press Tab. A `#`
 that names no desk -- "#77" -- stays in the note as written. Enter adds the
 line and leaves the bar empty for the next, as the desk's own field does. A
@@ -1491,12 +1569,24 @@ says where the line went, "Added to snyvi · Undo", for a few seconds; Undo
 takes it off again and puts the words back in the bar. `a` puts you in the
 bar, with the letter keys on.
 
-**Pick up** is one desk, large: the one you touched last, or the one you
-pin there with *Pin here* (*Unpin* lets it follow the desk touched last). It says when you last touched it, where the
-work was left -- or, when no one said, the last thing that happened on it,
-marked *Last* -- the open notes (with their dates), what git says in its folder (the branch,
-what is changed, what is not pushed, the last commit), and each panel in
-words, and its moving threads. Enter opens it.
+**The floor** (1.67) is every panel on every desk, by what it is doing.
+Its head counts them, "14 agents on 9 desks · 3 need you". First is **On
+you**, the same three tabs as the corner and a desk: answer a question or
+approve a plan there and snyvi types it into the panel that asked. A shell
+that rang is a row under it, with *Go to panel*. Then **Working**, each
+agent with its panel's title, its thread's PR and how long it has been at
+it; **Finished**, newest first, with *Look*; and **Idle**, one line of the
+panels that are doing nothing. Five rows a group, the rest a click away. A
+row opens its desk on that panel. Pick up and the desk cards, which showed
+one desk large and the rest by their notes, are gone: the notes are on the
+desk, and the note bar above still adds to any of them.
+
+**Focus** (1.67), at the floor's right, picks the desks you are on today.
+With a focus set, the sidebar, the Inbox, On you and the floor show those
+desks only; the sidebar says "Focus: 3 of 19 · change". An agent stuck on
+another desk is still counted, in one line under On you with *Show all
+desks*, so a focus hides nothing that waits. None picked is every desk.
+It is kept in this window.
 
 **Your days** is what happened, day by day and desk by desk: notes ticked
 (with the commit and the link the agent gave), documents sent, commits in
@@ -1506,13 +1596,10 @@ lines; the rest are a click away. *Send this week as a doc*, on its
 heading, files the last seven days as a document in each desk's own
 project.
 
-**Other desks** is every other desk, a card each, as many across as the
-window fits: its age, where it was left, its first open notes (tick one
-where it stands), its moving threads, and a **+** that puts the desk on the
-note bar's chip. A desk quiet for ten days offers *Park it?*: it asks for
-the next step, takes the desk out of Pick up, and keeps it on a Parked
-shelf under the cards with that step until you *Unpark* it. Nothing on a
-parked desk is closed.
+**Parked**, under the floor, is the shelf: a desk you parked, with its
+next step, until you *Unpark* it. A desk quiet for ten days with lines
+still open is a row on On you with *Park it*. Nothing on a parked desk is
+closed.
 
 The date is beside the title.
 
@@ -1548,8 +1635,17 @@ a friend…*; when an update is ready, its card is under the foot.
 Git is read only in a desk's own folder, never in your home directory,
 read-only and with a two-second limit, and nothing leaves the machine.
 Home is one read of the daemon, and it follows what changes while it is
-open. Other desks, Claude and Friends can be hidden with *Hide* on their
-heading; "2 sections hidden · Show" at the foot brings them back. The Inbox is at `/inbox`, and `i` still opens it. An empty
+open. Claude and Friends can be hidden with *Hide* on their
+heading; "2 sections hidden · Show" at the foot brings them back. The Inbox is at `/inbox`, and `i` still opens it.
+
+**The Inbox has filters** (1.67). Under its head is a chip per desk that
+sent something, with how many wait; a chip shows that desk's documents
+alone, from further back than the newest sixty, and a second click on it
+goes back to all. *Find by title* narrows the rows as you type. With a
+focus set on Home, the Inbox leaves out the other desks' documents and
+says how many, with *Show*. A desk's rail no longer lists every document
+it sent: it keeps the ones that wait, and *All N in the Inbox* opens the
+Inbox on that desk's chip. An empty
 library still opens on Welcome.
 
 A document opens where you left it, however you open it -- the tree, the
@@ -1720,8 +1816,9 @@ desk and written only by you; an agent's asides never land on it.
 
 An agent can *read* that list, and tick a line done, and nothing else of
 snyvi's. A Claude running in one of a desk's panels is offered
-`read_desk_notes`, which returns that desk's notes, open and done, each
-with its number, and `tick_desk_note`, which marks one open line done when
+`read_desk` with its notes section, which returns that desk's notes, open
+and done, each with its number, and `mark_desk_note` done, which marks one
+open line done when
 the work it names is finished. A line an agent ticked carries the agent's
 name at its end, and, when the agent passed them, the commit the work went
 into (click it to copy the hash) and a ↗ that opens the document it sent

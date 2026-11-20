@@ -64,8 +64,8 @@ the word there.
   reads as a desk without tabs. A panel moved to another tab takes its
   documents.
 - What makes a panel -- the rail's + New panel, the desk ⋯'s New panel,
-  `⌃⌥N` -- makes it in the tab on screen. A link to a panel by its slot (Home's
-  Pick up, a document's "From desk [n]") carries its tab too.
+  `⌃⌥N` -- makes it in the tab on screen. A link to a panel by its slot (a row
+  of Home's floor, a document's "From desk [n]") carries its tab too.
 - A panel's brief names its tab: *You are in panel 2 of 3 in the tab "insta"
   of the snyvi desk "ohmydog" (~/Studio)*; on a desk with no tabs the
   sentence is the one it always was.
@@ -156,7 +156,7 @@ nobody follows a dev server's log, so the back holds four more
   130, a ctrl-C. The mark is a status: it lights a dot and is never typed
   anywhere. A shell snyvi does not dress only has its own end heard, and the
   drawer says so.
-- **Agents only suggest it.** `suggest_panel` takes `back: true`; the card
+- **Agents only suggest it.** `suggest` panel takes `back: true`; the card
   says Open in the back, and opening it is the reader's click.
 
 **Slots, not splits.** There are two columns and four slots. An odd pane out
@@ -219,6 +219,14 @@ the one on screen ticked, and the head keeps one chip while a view is open
 the left-off line, whose room it takes from; ✕, Esc on a board or the page,
 or ⌃⌥F for Folder go back (`ui/desk/25-views.js`).
 
+**Ways to a board (1.67, `ui/desk/32-ways.js`).** A board or the page open
+over the desk is in the address, `/desk/<id>#view=board:<name>`, so a
+reload, Back and a link land on it. While the panels are up and a board has
+sections drawn since the reader last had it on screen, the head carries one
+chip in the same place, `Board · Pricing · 9 new`; a click opens it, its ✕
+is "not now". ⌃⌥D goes to that board, else the last one open, and back to
+the panels from a board.
+
 Every view **docks one panel** the same way (1.60, views audit a5057fcd18):
 the pane's own element moves into the dock, socket, scrollback and keys
 untouched, and `layout` leaves it out of the grid until Panels puts it back.
@@ -249,7 +257,7 @@ only, only while a page shows that desk, and the page waits for the reader to
 stop typing. The open view sets the reader's
 **focus** (`src/focus.rs`, `POST /api/desks/{id}/focus`): one per desk, in
 memory, which the brief says as its second line for half an hour and
-`read_focus` reads, so "this one" names a file or the frames selected. It is a
+`read_desk`'s `focus` reads, so "this one" names a file or the frames selected. It is a
 name, never input. The board itself is `docs/BOARD.md`. The studio this
 replaces failed for want of the dock, the tools and the focus; if a month in
 the board is not opened, the view goes and the folder stays.
@@ -285,7 +293,12 @@ the board is not opened, the view goes and the folder stays.
    in its first frame, because a browser `WebSocket` cannot set headers.
 3. **snyvi never makes input from content it received.** There is no fan-out
    and no run-this-block, and nothing derived from a document is ever typed.
-   Bytes reach a PTY from exactly one place: `input()` in `ui/desk.js`, which
+   Bytes reach a PTY from two places. Since 1.67 the daemon types the
+   reader's own press (`src/server/press.rs`, `pane::Live::press`): the
+   answer they chose on a card, or snyvi's fixed words for an Approve, on a
+   capability route, into a Claude session at rest at its prompt, wherever
+   the press was -- never the agent's question or anything a document or a
+   friend said. The other is `input()` in `ui/desk.js`, which
    is called from a key event, a paste event, or the reader's click on a
    control that shows them, whole, exactly what it will type: Send now and
    Send answers (the reader's own answer), and Run (an agent's `run` command,
@@ -294,10 +307,11 @@ the board is not opened, the view goes and the folder stays.
    types is one line with no control character, refused at the door
    otherwise (`thread::command`, `thread::steps`); one click types one line,
    and nothing that finishes starts the next. The daemon accepts `in` only for
-   a pane that socket is watching (`desk_session`). A pipeline's
-   stage (1.40) is not input: it is a new process with the step as one argv
-   entry, started by the runner (`server/pipeline_run.rs`) for a pipeline the
-   window made and started. `docs/TERMINAL.md` §9a has the rule as rewritten.
+   a pane that socket is watching (`desk_session`). Start next
+   (1.67, `api_line`) is not input from content: it is a new panel whose
+   command is snyvi's own sentence and a note's number, on the reader's
+   press. Pipelines, which started stages on their own from 1.40, are gone
+   (`docs/TERMINAL.md` §9a).
 4. **The query string is refused as a transport for the capability.** A
    request path lands in logs. The fragment never leaves the browser, but it
    is not unlogged either: it arrives as `snyvi-app` argv, where `ps` can see
@@ -312,7 +326,7 @@ the board is not opened, the view goes and the folder stays.
    then that the pane is running, and only then touches the store, to find
    the pane's desk and read that desk's list. A pane id seen in an old
    screen or a log reads nothing once its shell is gone. An agent has one
-   write, since 1.6: `tick_desk_note` marks an open line done
+   write, since 1.6: `mark_desk_note` done (`tick_desk_note` through 1.66) marks an open line done
    (`POST /api/panes/{id}/notes/{note}/tick`), through the same checks, and
    records the agent's name beside it (`desk_notes.done_by`), and, since
    1.7.1, the commit it names (`done_commit`, 7 to 40 hex digits) and a
@@ -337,8 +351,8 @@ the board is not opened, the view goes and the folder stays.
    They are held *from the agent by construction*: `DeskNote` has no field
    for them, only `checks_held`, the count `checks::count_into` fills; the
    lines are read by `checks::for_desk`, which only the page's `desk_notes`
-   handler calls. `read_desk_notes` and the brief say "(2 checks held)" and
-   nothing more. The agent's one write is `suggest_check`
+   handler calls. `read_desk`'s notes and the brief say "(2 checks held)" and
+   nothing more. The agent's one write is `suggest` check
    (`POST /api/panes/{id}/notes/{note}/suggest-check` `{texts, by}`, the token
    and a running pane): at most five a call and three waiting on a note,
    answered with how many landed and were refused, never the list. The
@@ -446,7 +460,9 @@ document's meta reads **From snyvi [1] ▸**. It is a link to the desk with
 that pane focused, and it still names the desk after the desk is closed.
 
 The attribution runs the other way too. The desk's rail has a **Documents**
-list under its panes: everything sent from a pane on this desk, newest
+list under its panes: what a pane on this desk sent that waits to be read
+(1.67, #236; until then every document, which the Inbox now lists on the
+desk's chip, one click from the rail's *All N in the Inbox*), newest
 first, each row with the unread mark, the title, the slot it came from and
 its age, from `GET /api/desks/{id}/docs`, behind the same gate as every
 other desk route. A click opens the document as the page, and the rail
@@ -615,7 +631,7 @@ the hook's: `POST /api/panes/{id}/agent` takes `model` and `ctx: {pct, size,
 input}` from `snyvi statusline` for a running pane, and the pane's status
 carries them as `model`, `ctx_pct`, `ctx_size`, `ctx_in`. The `name_panel`
 MCP tool writes the same name through `POST /api/panes/{id}/name`, behind the
-token and a running pane. The `pin_link` MCP tool pins a link in the rail's
+token and a running pane. `show_card` with `kind: "pin"` (`pin_link` through 1.66) pins a link in the rail's
 foot through `POST /api/panes/{id}/links` `{label, url}` (the token and a
 running pane; http or https, 32 characters of label, six shown, the same url
 relabels it, one the reader hid stays hidden), and the reader's ✕ and Undo are

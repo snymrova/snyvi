@@ -83,7 +83,8 @@ fn a_write_makes_the_board_and_round_trips() {
         vec![BoardHead {
             id: "home".into(),
             name: "home".into(),
-            frames: 2
+            frames: 2,
+            marks: boards(&d.path)[0].marks.clone(),
         }]
     );
     assert_eq!(
