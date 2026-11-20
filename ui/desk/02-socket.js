@@ -85,7 +85,7 @@ function receive(f) {
     // Anything else -- a new title, which an agent changes about once a
     // second while it works -- is the row's name, set where it stands, so
     // the row under the pointer is never swapped for a copy of itself.
-    const mark = x => `${x.running}${x.blocked}${x.agent}${talked({ ...v, status: x })}`, was = mark(v.status);
+    const mark = x => `${x.running}${x.blocked}${x.agent}${x.said || ""}${talked({ ...v, status: x })}`, was = mark(v.status);
     v.status = f.s; header(v); resume(v);
     // A switch of account waits on the stop it asked for (`switchPanel`).
     if (v.onStop && !f.s.running) { const k = v.onStop; v.onStop = null; k(); }

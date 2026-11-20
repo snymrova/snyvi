@@ -192,6 +192,17 @@ pub struct Status {
     /// Empty for everything else, which keeps `blocked` as its only signal.
     pub agent: &'static str,
     pub agent_since: Option<i64>,
+    /// 1.67.1: what the program in this pane said of itself through
+    /// `OSC 7501` (`Screen::said`): `working`, `needs_you`, `done`, `error`,
+    /// and the name it gave itself. For drawing only. It is text any program
+    /// can print, a `cat` of a file too, so it is never `agent` and never
+    /// `agent_in`: a press, a routine, a restore and a thread read those and
+    /// do not see this. Dropped while a hook's agent is in the pane, and gone
+    /// when the command or the process ends.
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub said: &'static str,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub said_app: String,
     /// Why the agent's last turn ended without its answer: Claude Code's
     /// `StopFailure` error (`STOP_REASONS`), `rate_limit` when the account
     /// ran out. Set with `done` and cleared by whatever the agent says next.
@@ -295,6 +306,41 @@ fn clear_context(s: &mut Status) {
     s.seven_day = None;
     s.cards.clear();
     s.closed.clear();
+}
+
+/// A pane's last word on the page-wide stream: `(running, blocked, agent,
+/// said)`.
+type Told = (bool, bool, &'static str, &'static str);
+
+/// What a program said of itself (`Status::said`) put on its pane. A hook's
+/// agent in the pane wins: its word is the one everything else reads, and
+/// two voices for one program would only disagree. `needs_you` and `error`
+/// are also `blocked`, as an agent's `needs_you` is, and leaving them takes
+/// back only what they set. Whether anything changed, and whether the pane
+/// just came to wait on its reader.
+fn say(s: &mut Status, word: &'static str, app: String) -> (bool, bool) {
+    let hooked = s.agent_in || !s.agent.is_empty();
+    let (word, app) = if hooked || !s.running {
+        ("", String::new())
+    } else {
+        (word, app)
+    };
+    if s.said == word && s.said_app == app {
+        return (false, false);
+    }
+    let waits = |w: &str| w == "needs_you" || w == "error";
+    let mut rang = false;
+    if waits(word) && !s.blocked {
+        s.blocked = true;
+        s.blocked_since = Some(crate::store::now());
+        rang = true;
+    } else if waits(s.said) && !waits(word) && s.agent != "needs_you" {
+        s.blocked = false;
+        s.blocked_since = None;
+    }
+    s.said = word;
+    s.said_app = app;
+    (true, rang)
 }
 
 /// A rate-limit window as the page writes it: the whole percent left and
@@ -648,9 +694,9 @@ pub struct Panes {
     /// deleted, so the tick's write on its own thread never lands on top of a
     /// close's, or brings back a file a discard has just removed.
     writing: Mutex<()>,
-    /// What each pane last said on that stream: `(running, blocked, agent)`.
-    /// Forgotten with the pane.
-    told: Mutex<HashMap<String, (bool, bool, &'static str)>>,
+    /// What each pane last said on that stream (`Told`). Forgotten with the
+    /// pane.
+    told: Mutex<HashMap<String, Told>>,
     /// The panes the last daemon marked to resume or to offer, and the
     /// clocks on them. See `Marks`.
     marks: Mutex<Marks>,
@@ -1126,6 +1172,11 @@ impl Panes {
         {
             return true;
         }
+        if !state.is_empty() {
+            // A hook's agent speaks for this pane now (`say`), and what the
+            // program printed goes first, taking back the `blocked` it set.
+            say(&mut i.status, "", String::new());
+        }
         // `needs_you` is also `blocked`, so everything that already shows a
         // pane waiting on its reader -- the sidebar's `!`, its count -- shows
         // this one too. Leaving it takes back only what it set.
@@ -1162,6 +1213,7 @@ impl Panes {
             return false;
         }
         if !i.status.agent_in {
+            say(&mut i.status, "", String::new());
             i.status.agent_in = true;
             let s = i.status.clone();
             drop(i);
@@ -1498,13 +1550,13 @@ impl Panes {
         // An exact repeat of the last word is dropped: every page redraws on
         // this, and a redraw that changes nothing still takes the row out from
         // under the pointer.
-        let now = (status.running, status.blocked, status.agent);
+        let now = (status.running, status.blocked, status.agent, status.said);
         if self.told.lock().unwrap().insert(id.to_string(), now) == Some(now) {
             return;
         }
         let _ = self.events.send(format!(
             "panes\n{}",
-            serde_json::json!({ "id": id, "running": status.running, "blocked": status.blocked, "agent": status.agent })
+            serde_json::json!({ "id": id, "running": status.running, "blocked": status.blocked, "agent": status.agent, "said": status.said })
         ));
     }
 }
@@ -1919,6 +1971,8 @@ impl Live {
             i.status.agent_since = None;
             i.status.stopped = "";
             i.status.agent_in = false;
+            i.status.said = "";
+            i.status.said_app.clear();
             i.unsaved = false;
             i.unsaved_lines = false;
             i.saved_at = Instant::now();
@@ -2119,18 +2173,27 @@ async fn frames(me: std::sync::Weak<Live>, panes: std::sync::Weak<Panes>) {
             status.blocked_since = Some(crate::store::now());
             rang = true;
         }
+        // 1.67.1: what the program said of itself (`OSC 7501`). Read like the
+        // bell, never typed. It changes a few times a command, not once a
+        // second as a title does, so the sidebar hears each change.
+        let mut spoke = false;
+        if let Some((word, app)) = screen.said.take() {
+            let (changed, waits) = say(status, word, app);
+            spoke = changed;
+            rang |= waits;
+        }
         let retitled = screen.title != status.title;
         if retitled {
             status.title = screen.title.clone();
         }
-        if rang || retitled {
+        if rang || retitled || spoke {
             said = Some(status.clone());
         }
         if let Some(s) = &said {
             let _ = l.tx.send(status_frame(&l.id, s).into());
         }
         drop(i);
-        if let (true, Some(s), Some(p)) = (rang, said, panes.upgrade()) {
+        if let (true, Some(s), Some(p)) = (rang || spoke, said, panes.upgrade()) {
             p.changed(&l.id, &s);
         }
     }

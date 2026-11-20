@@ -123,7 +123,7 @@
    *  the panel's head -- ringed while an agent is working, and nothing when
    *  idle. It was a hollow grey ring for running here and green everywhere
    *  else (the audit of 1.46.2). */
-  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.agent === "working") ? "●" : ps.some(p => p.status && p.status.running) ? "◦" : "○";
+  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && (p.status.agent || p.status.said) === "working") ? "●" : ps.some(p => p.status && p.status.running) ? "◦" : "○";
   const needYou = n => `${plural(n, "panel")} ${n === 1 ? "needs" : "need"} you`;
   /** The fullest context window among a desk's panels, as their status lines said. */
   const fullest = d => { const ps = d.panes.map(p => p.status && p.status.ctx_pct).filter(x => x != null); return ps.length ? Math.max(...ps) : null; };
@@ -661,7 +661,7 @@
     es.addEventListener("panes", ev => {
       // Claude's own prompt opened or closed in a panel: On you has a row for it (1.67, src/onyou/prompt.rs), so the list is read again.
       const j = parse(ev), you = s => s === "needs_you"; if (!j) return;
-      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) { if (you(p.status?.agent) !== you(j.agent)) cornerMod?.moved("panes"); p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent }; }
+      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) { if (you(p.status?.agent) !== you(j.agent)) cornerMod?.moved("panes"); p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent, said: j.said }; }
       renderDesks();
     });
     for (const ev of ["peeroffers", "peernotes", "peerdone", "peerreply"]) es.addEventListener(ev, onPeer);

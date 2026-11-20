@@ -22,6 +22,7 @@ the questions the design left open.
 | That Claude was open in a pane when the daemon stopped | `panes.resume_next`: 1 after a planned restart, 2 after any other stop, 3 while an agent is in it (so a crash leaves it), 4 an offer a crash left, 5 an offer a window has seen (`src/desk/marks.rs`) | until the panel starts, or the second start after a window saw it |
 | A pane's last screen, as plain text | `panes/<id>.txt` beside the store | yes, shown greyed |
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
+| What the program in a pane said of itself (1.67.1): `working`, `needs_you`, `done`, `error` and the name it gave | memory, `Status::said` and `said_app`, from `OSC 7501` | no; gone when its command or its process ends |
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
 | A desk's links in the rail's foot, the hidden ones too | `desks.links`, JSON, `src/links.rs` | yes |
 | A routine: its line, Waits list, limits, its panel, the file its name resolved to and its hash (with its scripts folder's), its Start (a draft has none), its gate, watch, shape, model, effort and context, and its runs | `routines`, `routine_runs`, `src/routine.rs`; the text as allowed, for its diff, in `routines/<id>/allowed.md` | yes; a run under way when the daemon stops is ended, said so |
@@ -554,6 +555,26 @@ or an OSC 9 or OSC 777 notification. The block is cleared by the next input
 to that pane. Silence is not a signal, because every idle shell would read as
 blocked. The page shows a count beside `Desks`, a `!` on the desk and one
 amber rule under the pane. There is no modal, and focus is not moved.
+
+**What a program says of itself (1.67.1).** A program can say what it is
+doing with `OSC 7501`, the Program Status Protocol other terminals read too:
+
+    printf '\e]7501;state=working:app=deploy\e\\'
+
+`state` is `working`, `done`, `blocked` (shown as "needs you", and a block
+like a bell's) or `error`; `idle` and `clear` take the word back. `app` is a
+name for the panel's head, kept to 24 plain characters. Nothing else in the
+report is read: no progress, no title, no message, and no record with an
+`id`. The word is gone when the command finishes (`OSC 133;D`) or the
+process ends.
+
+It is text any program can print, a `cat` of a file too, so it is for
+drawing and for nothing else. It is kept in `Status::said`, apart from
+`Status::agent`, which only an agent's hook sets with the token. A press
+typed into a panel, a routine waiting on its panel, a restore after a crash,
+a thread that "runs here" and an account switch all read `agent` and
+`agent_in` and never `said` (`src/pane.rs`, `say`; a test holds a press to
+it). While a hook's agent is in the pane, a printed word is dropped.
 
 **What an agent is doing.** Claude Code says more than a bell can. Its
 hooks run `snyvi hook`, and inside a pane that command knows the pane by

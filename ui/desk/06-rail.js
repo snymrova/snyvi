@@ -189,7 +189,7 @@ function rail() {
   const d = current();
   if (!d) return;
   const { esc } = ctx, j = ctx.desks;
-  const dot = v => v.status.blocked ? "!" : v.status.agent === "done" ? "✓" : v.status.running ? "●" : "○";
+  const dot = v => v.status.blocked ? "!" : (v.status.agent || v.status.said) === "done" ? "✓" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean), blocked = vs.filter(v => v.status.blocked).length;
   // The grid's count against its cap; the back's beside it (18-back.js).
   const nGrid = gridPanes(d).length, nBack = d.panes.length - nGrid;

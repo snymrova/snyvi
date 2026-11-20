@@ -55,6 +55,11 @@ waits for the user.
 | a picture kept | `add_to_gallery` | `snyvi gallery add FILE` |
 | something on a schedule | `offer` routine | `snyvi routine wake NAME "line"` |
 
+A script or a long command of yours can say what it is doing on its panel's
+dot, with no tool: `printf '\e]7501;state=working:app=NAME\e\\'`, then
+`state=done`, or `state=blocked` when it waits on the user. It ends with the
+command.
+
 `read_desk` lists the other desks by name. A document sent with `-p` is
 filed under that folder's project, not this desk.
 
