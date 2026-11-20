@@ -3995,15 +3995,17 @@ async function panelRows(cdp, base, token) {
     // 1.67: the press is the send, and the daemon types it (press.rs) --
     // the page sends no keys of its own, the turn is marked told, and the
     // answer says `typed`. Past the 2 s a press waits after the reader's keys.
+    // The answer's own reply is read, since a turn's told_at is the daemon's
+    // and never sent to the page.
     await sleep(800);
-    await q.ev(`window.__typed = []; 1`);
+    await q.ev(`window.__typed = []; window.__said = null; window.__f0 = window.__f0 || window.fetch; window.fetch = async (u, o) => { const r = await window.__f0(u, o); if (/[/]turns[/]${oneId}[/]answer$/.test(new URL(String(u), location.href).pathname)) r.clone().json().then(j => { window.__said = j; }).catch(() => {}); return r; }; 1`);
     if (oneUp) await q.clickOn(`#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]`);
-    const toldOf = async () => ((await (await fetch(`${base}/api/desks/${desk}/threads`, { headers: H })).json().catch(() => ({}))).turns || []).find(w => w.id === oneId) || {};
-    let one1 = {};
-    for (let i = 0; oneUp && i < 30 && !one1.told_at; i++) { await sleep(100); one1 = await toldOf(); }
+    const saidUp = oneUp && await until(`!!window.__said`, 30);
+    const pressed = saidUp ? await q.ev("window.__said") : {};
+    await q.ev(`window.fetch = window.__f0; 1`);
     const pageTyped = oneUp ? await q.ev("window.__typed") : [];
-    rows.push(["Yes is typed by the daemon, the reader's answer alone, into a Claude at its prompt", !!one1.told_at && one1.answer === "Yes" && pageTyped.length === 0,
-      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : pageTyped.length ? `the page typed ${JSON.stringify(pageTyped)}` : `the turn was not marked told: ${JSON.stringify(one1).slice(0, 120)}`]);
+    rows.push(["Yes is typed by the daemon, the reader's answer alone, into a Claude at its prompt", pressed.sent === "typed" && pressed.turn?.answer === "Yes" && pageTyped.length === 0,
+      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : pageTyped.length ? `the page typed ${JSON.stringify(pageTyped)}` : `the daemon said ${JSON.stringify({ sent: pressed.sent, why: pressed.why })}`]);
     rmSync(paste, { force: true });
 
     // U1, U2: the corner is the rail's column, over no panel, and above the
@@ -4405,13 +4407,14 @@ async function tabRows(cdp, base) {
     rows.push(["its Undo brings the tab back, with its panels", undone && inGrp(d, t2).length === 2,
       !undone ? "the tab did not come back, or is not shown" : `server holds ${inGrp(d, t2).length}`]);
 
-    // Home: a desk of two tabs has a chip for each, and one opens that tab.
+    // Home: a panel's row on the floor opens its desk on that panel's tab
+    // (1.67: the floor took the desk cards' place, and their tab chips).
     await p.goto(`${base}/#cap=${cap}`);
-    const chip = `.hm-tab[data-desk="${desk}"][data-grp="${t1}"]`;
+    const chip = `a[data-desk="${desk}"][data-grp="${t1}"]`;
     const chipped = await until(`!!document.querySelector('${chip}')`);
-    if (chipped) await p.clickOn(chip);
+    if (chipped) await p.ev(`document.querySelector('${chip}').click(), 1`);
     const opened = chipped && await until(`location.pathname === "/desk/${desk}" && document.querySelector(".dk-groups .dk-group.on")?.dataset.grp === "${t1}"`);
-    rows.push(["Home's chip opens the desk on that tab", opened, !chipped ? "no chip on the desk's card" : opened ? "the desk, on Tab 1" : `on ${await p.ev("location.pathname")}, tab ${(await shown())?.name}`]);
+    rows.push(["Home's row for a panel opens the desk on that panel's tab", opened, !chipped ? "no row on the floor for a panel of that tab" : opened ? "the desk, on Tab 1" : `on ${await p.ev("location.pathname")}, tab ${(await shown())?.name}`]);
   } finally {
     const d = await deskNow(desk).catch(() => null);
     for (const x of (d && d.panes) || []) await post(`/api/panes/${x.id}/stop`).catch(() => {});
@@ -4608,7 +4611,7 @@ async function viewRows(cdp, base, token, env, tmp) {
     const appeared = await untilAsync(async () => /Board · home/.test(await menuViews()) || null, 20);
     const after = await menuViews(), x1 = await p.ev(headAt);
     rows.push(["the views are in the desk's ⋯, Panels ticked; a board the agent draws joins them, and the head moves nothing",
-      wrote === 201 && !!appeared && before === "Panels ✓ | Folder | Page" && after === "Panels ✓ | Folder | Page | Board · home" && x0 === x1 && !(await p.ev(`!!document.querySelector(".dk-views, .dk-vchip")`)),
+      wrote === 201 && !!appeared && before === "Panels ✓ | Folder | Page" && after === "Panels ✓ | Folder | Page | Board · home" && x0 === x1 && !(await p.ev(`!!document.querySelector(".dk-views, .dk-vchip:not(.dk-vnew)")`)),
       wrote !== 201 ? `the frame write answered ${wrote}` : !appeared ? `the menu still says "${after}"` : x0 !== x1 ? `the head moved ${x0} → ${x1}` : `"${before}" → "${after}"`]);
 
     const deskName = await p.ev(`Math.round(document.querySelector(".dk-head > .dk-name").getBoundingClientRect().left)`);
@@ -5186,7 +5189,10 @@ async function footRows(cdp, base, token) {
     const steps = await agent(pa, "handover", { kind: "run", text: "bench: a walk-through", by: "bench-agent",
       options: ["$ echo one", "Plug the phone in", "# Is it seen?", "$ echo two"] });
     const bad = await agent(pa, "handover", { kind: "run", text: "bench: a bad step", options: ["$ echo one\necho two"] });
-    await q.ev(`document.querySelector('[data-a="oy-open"]')?.click(); 1`);
+    // A hand-over is the reader's To do, one of On you's three tabs (1.67).
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.ev(`document.querySelector('#onyou [data-a="oy-open"], #meta [data-a="oy-open"]')?.click(); 1`);
+    await until(`!!document.querySelector('#onyou .oy-tab[data-k="todo"]')`, 20);
+    await q.ev(`document.querySelector('#onyou .oy-tab[data-k="todo"]')?.click(); 1`);
     const card = await until(`document.querySelectorAll(".tn-walk .tn-step").length === 3`, 40);
     const first = await q.ev(`(() => { const s = [...document.querySelectorAll(".tn-walk .tn-step")]; return { on: s[0]?.classList.contains("on"), done: !!s[0]?.querySelector('[data-a="tn-step-done"]'), later: !!s[2]?.querySelector('[data-a="tn-step-run"]'), laterDone: !!s[2]?.querySelector('[data-a="tn-step-done"]') }; })()`);
     await q.ev(`document.querySelector('.tn-walk .tn-step.on [data-a="tn-step-done"]')?.click(); 1`);
