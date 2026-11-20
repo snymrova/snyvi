@@ -4006,7 +4006,6 @@ async function panelRows(cdp, base, token) {
     const pageTyped = oneUp ? await q.ev("window.__typed") : [];
     rows.push(["Yes is typed by the daemon, the reader's answer alone, into a Claude at its prompt", pressed.sent === "typed" && pressed.turn?.answer === "Yes" && pageTyped.length === 0,
       !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : pageTyped.length ? `the page typed ${JSON.stringify(pageTyped)}` : `the daemon said ${JSON.stringify({ sent: pressed.sent, why: pressed.why })}`]);
-    rmSync(paste, { force: true });
 
     // U1, U2: the corner is the rail's column, over no panel, and above the
     // rail's foot (its repository and links).
@@ -4025,7 +4024,9 @@ async function panelRows(cdp, base, token) {
 
     // B1: a card of questions answered elsewhere goes with one ✕ -- its
     // Later menu's "Answered in the chat" (1.64, C5) -- and its one Undo
-    // brings every question back.
+    // brings every question back. Panel a is still at its prompt (S1's
+    // paste is on), so a "done" sent without `quiet` would be typed there
+    // and marked told, which no Undo takes back (1.67).
     const g2 = await (await agent("ask", { by: "bench-agent", questions: [
       { question: "bench: all one?", options: ["A", "B"] }, { question: "bench: all two?", options: ["A", "B"] }] })).json().catch(() => ({}));
     const g2Id = g2.turns?.[0]?.id;
@@ -4037,7 +4038,8 @@ async function panelRows(cdp, base, token) {
     if (gxGone) await q.clickOn('#onyou [data-a="fd-back"][data-k="g"]');
     const gxBack = gxGone && await until(`document.querySelectorAll('.dk-turn.grp[data-g="${g2Id}"] .tn-gq').length === 2`, 40);
     rows.push(["a card of questions goes with one ✕, and one Undo brings it all back", !!gxBack,
-      !g2Id ? `ask answered ${JSON.stringify(g2).slice(0, 80)}` : !gx ? "no ✕ for the whole card" : !gxGone ? "the card stayed, or no Undo" : "the Undo did not bring both back"]);
+      !g2Id ? `ask answered ${JSON.stringify(g2).slice(0, 80)}` : !gx ? "no ✕ for the whole card" : !gxGone ? "the card stayed, or no Undo" : gxBack ? "both questions back, nothing typed into the panel" : "the Undo did not bring both back"]);
+    rmSync(paste, { force: true });
 
     // 1.65 (plan 2d186a80c1): the desk's Decisions. On you's tray ends on a
     // line for them; pressed, the shelf takes the tray's place. A pick there

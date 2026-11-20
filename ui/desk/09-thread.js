@@ -841,7 +841,7 @@ async function laterGo(d, key, v, word) {
   for (const w of ws) stepsForget(w.id);
   putAway(k, id, `${said}: ${ws[0].text}`, "", ws.map(x => x.id)); rail();
   const one = w => v === "done"
-    ? ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.kind === "decide" ? "answered in the chat" : T.DONE[w.kind] || "Done" })
+    ? ctx.api(`/api/desks/${d.id}/turns/${w.id}/answer`, { answer: w.kind === "decide" ? "answered in the chat" : T.DONE[w.kind] || "Done", quiet: true })
     : ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, v === "not" ? { not: word } : { later: v });
   await told({ a: "tn-lt", k: key, v }, `${k}${id}`, "Could not do that", () => { filed.turns.push(...ws); filedGone = null; },
     filedAway(() => Promise.all(ws.map(one))));
