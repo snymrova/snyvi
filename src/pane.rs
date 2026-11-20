@@ -308,41 +308,6 @@ fn clear_context(s: &mut Status) {
     s.closed.clear();
 }
 
-/// A pane's last word on the page-wide stream: `(running, blocked, agent,
-/// said)`.
-type Told = (bool, bool, &'static str, &'static str);
-
-/// What a program said of itself (`Status::said`) put on its pane. A hook's
-/// agent in the pane wins: its word is the one everything else reads, and
-/// two voices for one program would only disagree. `needs_you` and `error`
-/// are also `blocked`, as an agent's `needs_you` is, and leaving them takes
-/// back only what they set. Whether anything changed, and whether the pane
-/// just came to wait on its reader.
-fn say(s: &mut Status, word: &'static str, app: String) -> (bool, bool) {
-    let hooked = s.agent_in || !s.agent.is_empty();
-    let (word, app) = if hooked || !s.running {
-        ("", String::new())
-    } else {
-        (word, app)
-    };
-    if s.said == word && s.said_app == app {
-        return (false, false);
-    }
-    let waits = |w: &str| w == "needs_you" || w == "error";
-    let mut rang = false;
-    if waits(word) && !s.blocked {
-        s.blocked = true;
-        s.blocked_since = Some(crate::store::now());
-        rang = true;
-    } else if waits(s.said) && !waits(word) && s.agent != "needs_you" {
-        s.blocked = false;
-        s.blocked_since = None;
-    }
-    s.said = word;
-    s.said_app = app;
-    (true, rang)
-}
-
 /// A rate-limit window as the page writes it: the whole percent left and
 /// when it resets. A reply moves the share used by a fraction of a point,
 /// and that alone sends no frame.
@@ -2497,5 +2462,7 @@ fn display_cmd(typed: &str) -> &str {
 }
 
 mod press;
+mod said;
+use said::{say, Told};
 #[cfg(test)]
 mod tests;
