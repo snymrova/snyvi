@@ -4571,14 +4571,14 @@ async function deskFolderRows(cdp, base, token, env, tmp) {
       left.folders ? "#browse-nav is still in the sidebar" : left.icon ? "the rail still has the folder icon" : "Inbox, Desks, Widgets"]);
     if (door) await p.clickOn(dirSel);
     const over = door && await until(`location.pathname.startsWith("/b/") && !!document.querySelector('${sub}')`);
-    const seen = await p.ev(`({ x: !!document.querySelector("#doc > .dk-fhead .dk-vchip:not(.dk-vboard)"), tip: document.querySelector("#doc > .dk-fhead .dk-vchip:not(.dk-vboard)")?.textContent.trim() || "", rail: !!document.querySelector('#toc [data-sec="panels"]') })`);
+    const seen = await p.ev(`({ x: !!document.querySelector('#doc > .dk-fhead .dk-sw [data-sw="folder"][aria-pressed="true"]'), tip: document.querySelector("#doc > .dk-fhead .dk-sw .dk-sw-b.on")?.textContent.trim() || "", rail: !!document.querySelector('#toc [data-sec="panels"]') })`);
     rows.push(["the desk row's folder opens the desk's folder over the desk", over && seen.x && seen.rail,
-      !door ? "no folder button on the desk's row" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "no chip in the desk's head" : `the tree, the desk's rail, and the chip "${seen.tip}"`]);
+      !door ? "no folder button on the desk's row" : !over ? `the page is on ${await p.ev("location.pathname")}` : !seen.rail ? "the desk's rail went" : !seen.x ? "the head's switcher is not on Folder" : `the tree, the desk's rail, and the switcher on "${seen.tip}"`]);
     if (over) await p.clickOn(`${sub} > summary`);
     const opened = over && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
-    if (over) await p.clickOn("#doc > .dk-fhead .dk-vchip:not(.dk-vboard)");
+    if (over) await p.clickOn('#doc > .dk-fhead [data-sw="panels"]');
     const back = over && await until(`location.pathname === "/desk/${desk}" && !!document.querySelector(".dk-grid")`);
-    rows.push(["its chip goes back to the panels", back, back ? "the desk, as it was" : `the page is on ${await p.ev("location.pathname")}`]);
+    rows.push(["the switcher's Panels goes back to the panels", back, back ? "the desk, as it was" : `the page is on ${await p.ev("location.pathname")}`]);
     if (back) await p.clickOn(dirSel);
     const kept = back && await until(`!!document.querySelector('${sub}[open] .b-dir > details[data-path="sub/inner"]')`);
     const mem = await p.ev(`(() => { try { return Object.values(JSON.parse(localStorage.getItem("snyvi.folders") || "{}")).some(m => (m.open || []).includes("sub")); } catch { return false; } })()`);
@@ -4638,10 +4638,11 @@ async function viewRows(cdp, base, token, env, tmp) {
   const p = new Driver(cdp, sessionId);
   const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   const untilAsync = async (fn, tries = 40) => { for (let i = 0; i < tries; i++) { const v = await fn(); if (v) return v; await sleep(100); } return null; };
-  // 1.60 (plan 586c0491b6): the views are in the desk's ⋯, the one on
-  // screen ticked; the head keeps one chip, `Folder ✕`, while one is open.
+  // 1.68 (plan d2db60758c): the views are the head's switcher, Panels,
+  // Folder, Page and Boards, at one width; a board is in Boards' list.
   const { menuViews, viaMenu } = viewMenu(p, until);
-  const headAt = `[...document.querySelectorAll(".dk-head > .dk-name, .dk-head .dk-group-new, .dk-head .dk-keys, .dk-head .dk-plus, .dk-head .dk-menu")].map(e => Math.round(e.getBoundingClientRect().left)).join(",")`;
+  const headAt = `[...document.querySelectorAll(".dk-head > .dk-name, .dk-head .dk-group-new, .dk-head .dk-sw, .dk-head .dk-keys, .dk-head .dk-plus, .dk-head .dk-menu")].map(e => Math.round(e.getBoundingClientRect().left)).join(",")`;
+  const swAt = `(() => { const r = document.querySelector("#doc .dk-head .dk-sw")?.getBoundingClientRect(); return r ? Math.round(r.left) + "+" + Math.round(r.width) : ""; })()`;
   const gridPanes = `[...document.querySelectorAll(".dk-grid > .pn")].map(e => e.dataset.id).join(" ")`;
   const dockedIn = sel => `document.querySelector("${sel} > .pn")?.dataset.id || ""`;
   try {
@@ -4651,11 +4652,13 @@ async function viewRows(cdp, base, token, env, tmp) {
     const wrote = await frame("hero", "Hero");
     const appeared = await untilAsync(async () => /Board · home/.test(await menuViews()) || null, 20);
     const after = await menuViews(), x1 = await p.ev(headAt);
-    rows.push(["the views are in the desk's ⋯, Panels ticked; a board the agent draws joins them, and the head moves nothing",
-      wrote === 201 && !!appeared && before === "Panels ✓ | Folder | Page" && after === "Panels ✓ | Folder | Page | Board · home" && x0 === x1 && !(await p.ev(`!!document.querySelector(".dk-views, .dk-vchip:not(.dk-vnew)")`)),
-      wrote !== 201 ? `the frame write answered ${wrote}` : !appeared ? `the menu still says "${after}"` : x0 !== x1 ? `the head moved ${x0} → ${x1}` : `"${before}" → "${after}"`]);
+    const menuRows = await p.ev(`(async () => { document.querySelector(".dk-head .dk-menu").click(); await new Promise(r => setTimeout(r, 300)); const t = [...document.querySelectorAll("#ctx [role=menuitemradio]")].length; document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); return t; })()`);
+    rows.push(["the views are the head's switcher, Panels on; a board the agent draws joins Boards' list, ⋯ lists no view, and the head moves nothing",
+      wrote === 201 && !!appeared && before === "Panels ✓ | Folder | Page" && after === "Panels ✓ | Folder | Page | Board · home" && x0 === x1 && !menuRows && !(await p.ev(`!!document.querySelector(".dk-views, .dk-vchip:not(.dk-vboard)")`)),
+      wrote !== 201 ? `the frame write answered ${wrote}` : !appeared ? `the switcher still says "${after}"` : x0 !== x1 ? `the head moved ${x0} → ${x1}` : menuRows ? `⋯ still lists ${menuRows} views` : `"${before}" → "${after}"`]);
 
     const deskName = await p.ev(`Math.round(document.querySelector(".dk-head > .dk-name").getBoundingClientRect().left)`);
+    const swPanels = await p.ev(swAt);
     await viaMenu("Board · home");
     // 1.62: a section is drawn in the board's one document, not an iframe of its own.
     const open = appeared && await until(`!!document.querySelector('.dk-grid > .dk-view .bd-frame.bd-sec[data-id="hero"]') && !!document.querySelector(".dk-view .bd-world > iframe.bd-doc") && !!document.querySelector(".dk-dock-b > .pn")`);
@@ -4702,33 +4705,94 @@ async function viewRows(cdp, base, token, env, tmp) {
     const swapped = open && await until(`(${dockedIn(".dk-view .dk-dock-b")}) === "${other}" && (${gridPanes}).includes("${sat.dock}")`);
     rows.push(["another panel picked by name in the dock sends the one there back to the grid", swapped && /^1 · .+ \| 2 · .+$/.test(picker), swapped ? `panel ${other} docked from "${picker}", ${sat.dock} back in the grid` : `docked: ${await p.ev(dockedIn(".dk-view .dk-dock-b"))}, the picker says "${picker}"`]);
 
-    const chip = await p.ev(`document.querySelector(".dk-head .dk-vchip")?.textContent || ""`);
-    await p.clickOn(`.dk-head .dk-vchip`);
+    const chip = await p.ev(`document.querySelector(".dk-head .dk-sw-bd")?.textContent.trim() || ""`), swBoard = await p.ev(swAt);
+    await p.clickOn(`.dk-head [data-sw="panels"]`);
     const back = await until(`!document.querySelector(".dk-view") && document.querySelectorAll(".dk-grid > .pn").length === 2`);
     const cleared = back && await untilAsync(async () => ((await focus()).focus == null ? true : null));
-    rows.push(["the head's chip says the board by its name and goes back: both panels in the grid, the focus cleared", back && !!cleared && /^Board · home/.test(chip),
-      !back ? `the grid has ${await p.ev(gridPanes)}` : !cleared ? `the focus is still ${JSON.stringify((await focus()).focus)}` : `chip "${chip}", the panels as they were`]);
+    rows.push(["Boards says the board by its name, and Panels goes back in one press: both panels in the grid, the focus cleared", back && !!cleared && chip.startsWith("home"),
+      !back ? `the grid has ${await p.ev(gridPanes)}` : !cleared ? `the focus is still ${JSON.stringify((await focus()).focus)}` : `Boards said "${chip}", the panels as they were`]);
 
-    // 1.62 (V1, V2): ⋯ → New board makes an empty one and opens it, which
-    // says what a board is; Ask Claude types nothing into a panel with no
-    // Claude at its prompt, and says so where the press was.
-    await p.ev(`(async () => { document.querySelector(".dk-head .dk-menu").click(); })(); 1`);
-    await until(`!document.querySelector("#ctx")?.hidden`);
-    await p.ev(`[...document.querySelectorAll("#ctx [role^=menuitem]")].find(b => b.querySelector("span")?.textContent === "New board")?.click(); 1`);
-    const made2 = await until(`!!document.querySelector(".dk-view .bd.bd-none .bd-intro h3") && getComputedStyle(document.querySelector(".bd-intro")).visibility === "visible"`);
-    const named = made2 && await untilAsync(async () => /Board · Board/.test(await menuViews()) || null, 20);
+    // 1.68: + New board… in Boards' list asks the name first, then makes the
+    // board and opens it, which says what a board is (1.62, V1, V2); Ask
+    // Claude types nothing into a panel with no Claude at its prompt.
+    await p.clickOn(`.dk-head .dk-sw-bd`);
+    const listed = await until(`!!document.querySelector(".dk-bl [data-bl-new]")`);
+    if (listed) await p.clickOn(`.dk-bl [data-bl-new]`);
+    const asks = listed && await until(`document.activeElement === document.querySelector('.dk-bl [data-bl-form="new"] input')`);
+    if (asks) await p.ev(`(() => { const f = document.querySelector('.dk-bl [data-bl-form="new"]'); f.elements.n.value = "Sketches"; f.requestSubmit(); return 1; })()`);
+    const made2 = asks && await until(`!!document.querySelector(".dk-view .bd.bd-none .bd-intro h3") && getComputedStyle(document.querySelector(".bd-intro")).visibility === "visible"`);
+    const named = made2 && await untilAsync(async () => (await menuViews()).includes("Board · Sketches ✓") || null, 20);
     if (made2) await p.ev(`(() => { const f = document.querySelector(".bd-ask"); f.what.value = "a pricing card"; f.requestSubmit(); return 1; })()`);
     const told = made2 && await until(`/no Claude at its prompt/.test(document.querySelector(".bd-ask-said")?.textContent || "")`);
-    rows.push(["⋯ → New board makes an empty board that says what it is, and Ask Claude says why nothing was typed", !!made2 && !!named && !!told,
-      !made2 ? "no empty board with its intro" : !named ? `the menu says "${await menuViews()}"` : `the intro says "${await p.ev(`document.querySelector(".bd-ask-said")?.textContent`)}"`]);
+    rows.push(["Boards' + New board… asks the name, makes the board and opens it, which says what it is; Ask Claude says why nothing was typed", !!made2 && !!named && !!told,
+      !listed ? "Boards opened no list" : !asks ? "+ New board… asked no name" : !made2 ? "no empty board with its intro" : !named ? `the switcher says "${await menuViews()}"` : `the intro says "${await p.ev(`document.querySelector(".bd-ask-said")?.textContent`)}"`]);
+
+    // A section drawn on another board while this one is up: a dot on
+    // Boards, in room the segment kept, and its count in the list.
+    const swSketch = await p.ev(swAt);
+    const dotBefore = await p.ev(`document.querySelector(".dk-head .dk-sw-dot")?.classList.contains("on") || false`);
+    await sleep(1100);
+    const drew = made2 && await frame("later", "Later");
+    const dot = drew === 201 && await until(`document.querySelector(".dk-head .dk-sw-dot")?.classList.contains("on")`, 100);
+    const swDot = await p.ev(swAt);
+    rows.push(["a section drawn on another board puts a dot on Boards, moving nothing, and the list counts it", !!dot && !dotBefore && swDot === swSketch && (await menuViews()).includes("Board · home"),
+      drew !== 201 ? `the write answered ${drew}` : dotBefore ? "the dot was on before the write" : !dot ? "no dot on Boards" : `the switcher moved ${swSketch} → ${swDot}`]);
+
+    // Remove from the row's ⋯: the row says so in place with Undo, focused;
+    // the board's files stay, an agent's write to it is refused with the
+    // reader's words, and Undo brings it back where it was.
+    const desks = async () => (await (await fetch(`${base}/api/desks`, { headers: H })).json().catch(() => ({}))) || {};
+    await p.clickOn(`.dk-head .dk-sw-bd`);
+    await until(`!!document.querySelector('.dk-bl [data-bl-more="home"]')`);
+    await p.clickOn(`.dk-bl [data-bl-more="home"]`);
+    await until(`!!document.querySelector('.dk-bl [data-bl-rm="home"]')`);
+    await p.clickOn(`.dk-bl [data-bl-rm="home"]`);
+    const rmd = await until(`document.activeElement === document.querySelector('.dk-bl [data-bl-undo="home"]')`);
+    const shelf = rmd && await desks();
+    const refused = rmd && await fetch(`${base}/api/panes/${pa}/board/home/frames/after`, { method: "POST", headers: TK, body: JSON.stringify({ html: "<p>after</p>" }) })
+      .then(async r => ({ status: r.status, error: ((await r.json().catch(() => ({}))).error) || "" }));
+    const unread = rmd && (await fetch(`${base}/api/panes/${pa}/board/home`, { headers: TK })).status;
+    if (rmd) await p.clickOn(`.dk-bl [data-bl-undo="home"]`);
+    const undone = rmd && await until(`document.activeElement === document.querySelector('.dk-bl [data-bl-go="home"]')`);
+    const removedSaid = shelf && JSON.stringify(((shelf.removed_boards || {})[desk] || []).map(b => b.id));
+    rows.push(["Remove in a board's ⋯ says Removed · Undo in its row; the agent's write and read are refused until Undo brings it back", !!undone && removedSaid === '["home"]' && refused.status === 400 && refused.error.includes("bring it back from Removed") && unread === 400 && !((shelf.boards || {})[desk] || []).some(b => b.id === "home"),
+      !rmd ? "no Removed · Undo in the row, focused" : removedSaid !== '["home"]' ? `the desks list says removed ${removedSaid}` : refused.status !== 400 ? `the write answered ${refused.status}` : !refused.error.includes("bring it back from Removed") ? `the write was refused with "${refused.error}"` : unread !== 400 ? `board_read answered ${unread}` : !undone ? "Undo did not bring the row back, focused" : "removed, refused, brought back"]);
+
+    // Move down, and the order holds through a reload.
+    if (undone) await p.clickOn(`.dk-bl [data-bl-more="home"]`);
+    const down = undone && await until(`!!document.querySelector('.dk-bl [data-bl-down="home"]:not(:disabled)')`);
+    if (down) await p.clickOn(`.dk-bl [data-bl-down="home"]`);
+    const moved = down && await until(`document.activeElement === document.querySelector('.dk-bl [data-bl-down="home"]') || document.activeElement === document.querySelector('.dk-bl [data-bl-up="home"]')`);
+    await p.press("Escape");
+    // A reload, not a goto: the same URL with only its hash differing loads nothing.
+    await p.reload();
+    await until(`!!document.querySelector(".dk-head .dk-sw-bd")`);
+    const order = moved && await untilAsync(async () => { const v = await menuViews(); return v.includes("Board · Sketches") && v.includes("Board · home") ? v : null; }, 40);
+    rows.push(["Move down puts the board after the next, and the order holds through a reload", !!order && order.indexOf("Board · Sketches") < order.indexOf("Board · home"),
+      !down ? "no Move down for home" : !moved ? "the focus left the moved row" : `the list says "${order}"`]);
+
+    // A board an agent made, never opened here: a card under Boards, once,
+    // naming the panel; Open opens it and the card goes.
+    const agentMade = await fetch(`${base}/api/panes/${pa}/board/drafts/frames/a`, { method: "POST", headers: TK, body: JSON.stringify({ html: "<p>a draft</p>", w: 300, h: 120 }) }).then(r => r.status);
+    const card = agentMade === 201 && await until(`(document.querySelector(".dk-head .dk-sw-tip")?.textContent || "").includes("Claude made a board · drafts")`, 80);
+    const cardSays = await p.ev(`document.querySelector(".dk-head .dk-sw-tip")?.textContent || ""`);
+    if (card) await p.clickOn(`.dk-head [data-sw-tip="open"]`);
+    const opened = card && await until(`!!document.querySelector('.dk-view .bd-frame[data-id="a"]') && !document.querySelector(".dk-head .dk-sw-tip")`);
+    rows.push(["a board an agent made gets a card under Boards once, naming its panel, and Open opens it", !!opened && cardSays.includes("Claude in panel"),
+      agentMade !== 201 ? `the write answered ${agentMade}` : !card ? `no card under Boards: "${cardSays}"` : !cardSays.includes("Claude in panel") ? `the card says "${cardSays}"` : !opened ? "Open did not open the board, or the card stayed" : `"${cardSays}"`]);
+    const swPage = await (async () => { await viaMenu("Page"); await until(`!!document.querySelector(".dk-view .pg")`); return p.ev(swAt); })();
 
     // Folder: the desk's own folder over the desk, a panel docked beside it.
     await viaMenu("Folder");
     const folder = await until(`location.pathname.startsWith("/b/") && !!document.querySelector("#doc > .fp-split") && !!document.querySelector("#doc > .dk-fdock .dk-dock-b > .pn")`);
     const below = await p.ev(`(() => { const a = document.querySelector("#doc > .fp-split")?.getBoundingClientRect(), b = document.querySelector("#doc > .dk-fdock")?.getBoundingClientRect(); return a && b ? { under: b.top >= a.bottom - 1, wide: Math.abs(b.width - a.width) < 2 } : null; })()`);
-    const kept = folder && await p.ev(`({ head: !!document.querySelector("#doc > .dk-fhead .dk-vchip"), bar: getComputedStyle(document.querySelector("#chrome .over")).display, name: Math.round(document.querySelector(".dk-fhead > .dk-name").getBoundingClientRect().left) })`);
-    rows.push(["Folder keeps the desk's head where the desk has it, its chip the way back, and the page's bar steps aside", !!kept && kept.head && kept.bar === "none" && kept.name === deskName,
-      !kept ? "no folder" : !kept.head ? "no head over the folder" : kept.bar !== "none" ? `the page's bar is ${kept.bar}` : `the name is at ${kept.name}, on the desk at ${deskName}`]);
+    const kept = folder && await p.ev(`({ head: !!document.querySelector('#doc > .dk-fhead [data-sw="folder"][aria-pressed="true"]'), bar: getComputedStyle(document.querySelector("#chrome .over")).display, name: Math.round(document.querySelector(".dk-fhead > .dk-name").getBoundingClientRect().left) })`);
+    const swFolder = folder && await p.ev(swAt);
+    rows.push(["Folder keeps the desk's head where the desk has it, the switcher on Folder, and the page's bar steps aside", !!kept && kept.head && kept.bar === "none" && kept.name === deskName,
+      !kept ? "no folder" : !kept.head ? "no switcher on Folder over the folder" : kept.bar !== "none" ? `the page's bar is ${kept.bar}` : `the name is at ${kept.name}, on the desk at ${deskName}`]);
+    // One width, one place, in all four views (audit F9: + tab went in Folder).
+    const swAll = [swPanels, swBoard, swPage, swFolder];
+    rows.push(["the switcher stands in one place, at one width, on the panels, a board, the page and the folder", !!swPanels && swAll.every(w => w === swPanels), swAll.join(" · ")]);
     rows.push(["Folder reads the desk's folder with a panel docked below it, as wide as the folder", folder && !!below && below.under && below.wide,
       !folder ? `the page is on ${await p.ev("location.pathname")}, docked: ${await p.ev(dockedIn("#doc > .dk-fdock .dk-dock-b"))}` : !below ? "no dock box" : !below.under ? "the dock is not under the folder" : "the dock is narrower than the folder"]);
 
@@ -4749,11 +4813,11 @@ async function viewRows(cdp, base, token, env, tmp) {
     rows.push(["the dock folds to the panel's head below the folder, and a click on the head brings it back", !!fold && !!unfolded,
       !file ? "no file" : !fold ? "the dock did not fold to its head" : !unfolded ? "the head did not open it" : "folded, then back"]);
 
-    // The chip in the head goes back to the panels from a file too.
-    if (folder) await p.clickOn("#doc > .dk-fhead .dk-vchip");
+    // Panels goes back to the panels from a file too.
+    if (folder) await p.clickOn('#doc > .dk-fhead [data-sw="panels"]');
     const home = folder && await until(`location.pathname === "/desk/${desk}" && document.querySelectorAll(".dk-grid > .pn").length === 2 && !document.querySelector(".dk-fdock")`);
     const gone = home && await untilAsync(async () => ((await focus()).focus == null ? true : null));
-    rows.push(["Folder ✕ goes back to the panels, the docked one in its slot, the focus cleared", home && !!gone,
+    rows.push(["Panels goes back from the folder, the docked one in its slot, the focus cleared", home && !!gone,
       !home ? `the chip went to ${await p.ev("location.pathname")}, the grid has ${await p.ev(gridPanes)}` : !gone ? `the focus is still ${JSON.stringify((await focus()).focus)}` : "both panels in the grid"]);
 
     // open_view (1.60): an agent opens Folder at a file on its own desk, the
@@ -4762,10 +4826,10 @@ async function viewRows(cdp, base, token, env, tmp) {
     const bad = await ov({ view: "folder", path: "../x" }), none = await ov({ view: "board:nope" });
     const asked = home && await ov({ view: "folder", path: "plan.py" });
     const there = asked && asked.j.opened && await until(`location.pathname.endsWith("/plan.py") && (${dockedIn("#doc > .dk-fdock .dk-dock-b")}) === "${pb}"`);
-    const by = there && await p.ev(`document.querySelector(".dk-vchip")?.dataset.tipSub || ""`);
+    const by = there && await p.ev(`document.querySelector('.dk-sw [data-sw="panels"]')?.dataset.tipSub || ""`);
     rows.push(["open_view opens Folder at the file on its own desk, the asking panel beside it; ../ and an unknown board are refused", !!there && /Claude in panel 2/.test(by) && bad.status === 400 && none.status === 400,
-      bad.status !== 400 || none.status !== 400 ? `../ answered ${bad.status}, board:nope ${none.status}` : !asked || !asked.j.opened ? `it answered ${JSON.stringify(asked && asked.j)}` : !there ? `the page is on ${await p.ev("location.pathname")}, docked: ${await p.ev(dockedIn("#doc > .dk-fdock .dk-dock-b"))}` : `the chip says "${by}"`]);
-    if (there) await p.clickOn("#doc > .dk-fhead .dk-vchip");
+      bad.status !== 400 || none.status !== 400 ? `../ answered ${bad.status}, board:nope ${none.status}` : !asked || !asked.j.opened ? `it answered ${JSON.stringify(asked && asked.j)}` : !there ? `the page is on ${await p.ev("location.pathname")}, docked: ${await p.ev(dockedIn("#doc > .dk-fdock .dk-dock-b"))}` : `Panels says "${by}"`]);
+    if (there) await p.clickOn('#doc > .dk-fhead [data-sw="panels"]');
   } finally {
     await post(`/api/desks/${desk}/delete`).catch(() => {});
     await post(`/api/browse/${rid}/close`, {}, TK).catch(() => {});
@@ -4774,20 +4838,31 @@ async function viewRows(cdp, base, token, env, tmp) {
   return rows;
 }
 
-/** 1.60: the desk's views, in its ⋯ menu: what it lists (a ticked one as
- *  "Panels ✓"), and one of them pressed. */
+/** 1.68: the desk's views, in its head's switcher and Boards' list: what
+ *  they say (the one on screen as "Panels ✓", a board as "Board · home"),
+ *  and one of them pressed. */
 function viewMenu(p, until) {
-  const open = async () => { await p.clickOn(".dk-head .dk-menu"); await until(`!document.querySelector("#ctx")?.hidden`); };
-  const rows = `[...document.querySelectorAll("#ctx [role=menuitemradio]")]`;
+  const segs = `[...document.querySelectorAll("#doc .dk-head .dk-sw [data-sw]:not([data-sw=boards])")]`;
+  const list = async () => {
+    if (!(await p.ev(`!!document.querySelector(".dk-bl")`))) await p.clickOn("#doc .dk-head .dk-sw-bd");
+    return until(`!!document.querySelector(".dk-bl")`);
+  };
+  const shut = async () => { await p.ev(`document.querySelector(".dk-bl") && document.querySelector(".dk-bl").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`); await until(`!document.querySelector(".dk-bl")`); };
   return {
     menuViews: async () => {
-      await open();
-      const v = await p.ev(`${rows}.map(b => b.querySelector("span").textContent + (b.getAttribute("aria-checked") === "true" ? " ✓" : "")).join(" | ")`);
-      await p.press("Escape");
-      await until(`document.querySelector("#ctx").hidden`);
-      return v;
+      const v = await p.ev(`${segs}.map(b => b.getAttribute("aria-label") + (b.getAttribute("aria-pressed") === "true" ? " ✓" : "")).join(" | ")`);
+      const none = await p.ev(`(document.querySelector("#doc .dk-head .dk-sw-bd")?.textContent || "").includes("+ Board")`);
+      if (none) return v;
+      await list();
+      const bs = await p.ev(`[...document.querySelectorAll(".dk-bl [data-bl-go]")].map(b => "Board · " + b.querySelector(".dk-bl-n").textContent + (b.getAttribute("aria-current") === "true" ? " ✓" : "")).join(" | ")`);
+      await shut();
+      return bs ? `${v} | ${bs}` : v;
     },
-    viaMenu: async label => { await open(); await p.ev(`${rows}.find(b => b.querySelector("span").textContent === ${JSON.stringify(label)})?.click(); 1`); },
+    viaMenu: async label => {
+      if (!label.startsWith("Board · ")) { await p.ev(`${segs}.find(b => b.getAttribute("aria-label") === ${JSON.stringify(label)})?.click(); 1`); return; }
+      await list();
+      await p.ev(`[...document.querySelectorAll(".dk-bl [data-bl-go]")].find(b => b.querySelector(".dk-bl-n").textContent === ${JSON.stringify(label.slice(8))})?.click(); 1`);
+    },
   };
 }
 
@@ -4849,7 +4924,7 @@ async function pageRows(cdp, base, token, env, tmp) {
     await p.goto(`${base}/desk/${desk}#cap=${cap}`);
     await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
     const sw = await menuViews();
-    rows.push(["Page is in the desk's ⋯ views, after Folder", sw === "Panels ✓ | Folder | Page", `"${sw}"`]);
+    rows.push(["Page is in the head's switcher, after Folder", sw === "Panels ✓ | Folder | Page", `"${sw}"`]);
 
     await viaMenu("Page");
     const open = await until(`!!document.querySelector(".dk-view .pg .pt-title") && !!document.querySelector(".dk-view .pg-intro") && !!document.querySelector(".dk-view .dk-dock-b > .pn")`);
@@ -4876,7 +4951,7 @@ async function pageRows(cdp, base, token, env, tmp) {
     const moment = kept && await until(`[...document.querySelectorAll(".pg-sheet .pt-tl li h4")].some(b => b.firstChild?.textContent.trim() === "Chapter 4 accepted")`);
     rows.push(["a moment kept shows on the page", !!moment, moment ? "Chapter 4 accepted is on it" : `moments: ${JSON.stringify(((await read()).moments || []).map(m => m.title))}`]);
 
-    await p.clickOn(`.dk-head .dk-vchip`);
+    await p.clickOn(`.dk-head [data-sw="panels"]`);
     const back = await until(`!document.querySelector(".dk-view") && document.querySelectorAll(".dk-grid > .pn").length === 2`);
     await sleep(300);
     const before = await p.ev(panes);

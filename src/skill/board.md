@@ -110,6 +110,10 @@ before the numbers come the same size as after, so nothing moves.
 file and every version stay, and the reader can bring it back. Say that you
 hid it. To hand one over to be read as a document, `send_document` its file.
 
+A whole board is the reader's to remove, from its list; you have no tool for
+it. A removed board is out of `board_read`, and a write to it is refused: ask
+them to bring it back from Removed rather than start it again under a new name.
+
 ## When it is done
 
 `board_arrange` with `export` makes one HTML page of every shown section in order, a file

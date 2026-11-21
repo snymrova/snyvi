@@ -4,9 +4,11 @@ A board is a view over a desk (1.58, plan 6ff79c55a7): an empty canvas of
 **sections** an agent draws (frames, before 1.62; the tools keep the word),
 which the reader watches arrive with the panel they talk to docked with
 them, below the board or beside it. It is a folder in the desk's folder, in
-git, not a kind of desk. A desk has as many as it likes: each appears in the
-desk's ⋯ menu, under Views, by its name, and ⋯ → New board or the board's
-own title makes one (1.62, `POST /api/desks/{id}/boards`), empty.
+git, not a kind of desk. A desk has as many as it likes. They are reached
+from the head's view switcher (1.68, docs/DESK.md): its Boards segment, or
+the board's own title, opens **the boards list**, the one place a board is
+opened, made (`+ New board…`, asking the name first,
+`POST /api/desks/{id}/boards`), renamed, moved and removed.
 
 ```mermaid
 flowchart LR
@@ -59,7 +61,29 @@ Every `frame_write` is a document version: `board::send` puts the file through
   over, as it does a hook's draft, and the frame becomes a document that
   waits to be read.
 - **Nothing deleted.** Hiding is `hidden: true` in `board.json`; the file and
-  every version stay.
+  every version stay. Removing a whole board (1.68) is a mark beside the
+  boards, below; its folder stays.
+
+## The boards list (1.68, plan d2db60758c)
+
+`ui/desk/33-switch.js`. Each board a row, in the reader's order -- the one
+on screen ticked, "3 new", how many sections -- and a ⋯ with Rename, Move
+up, Move down and Remove. Focus stays on the row acted on; ↑ ↓ move, Enter
+opens, F2 renames, ⌫ removes, Esc goes back out.
+
+| What | Where |
+|---|---|
+| order, removed | `design/boards.json`: `{"order": ["home", …], "removed": {"scratch": 1795182061}}`, written whole and atomically, in git with the boards (`board::Shelf`). A board it does not order goes after the rest, by folder name; a file broken by hand is read as no order |
+| Move up, Move down | `POST /api/desks/{id}/boards/order` `{order: [...]}` (capability), the whole order |
+| Remove, Undo, Bring back | `POST /api/desks/{id}/board/{board}/remove` `{removed: bool}` (capability). The row says `Removed · Undo` in place for 6 s; Removed (n) at the list's foot and ⋯ → Recently closed bring it back. Removing the board on screen opens the next one, or the panels, and the Undo is under the Boards segment |
+
+A removed board is out of the desks list's `boards` and `views` (it is in
+`removed_boards`), out of `board_read`'s list, and `open_view` cannot open
+it. `frame_write`, `board_arrange`, hide and shared CSS on it are refused,
+the reader's own rename too: "the reader removed the board; ask them to
+bring it back from Removed". A write never brings it back behind the
+reader's back, and an agent has no route or tool to remove one. `create`
+never takes a removed board's folder name: its folder is still there.
 
 ## Shown (1.62)
 
@@ -163,8 +187,12 @@ whole with `board_arrange`'s `css` (16 KB at most) and reads it in
 
 **What is new.** The desks list carries, for each board, when each shown
 section's file last changed (`marks`). The window counts those newer than
-when the reader last had the board on screen, and says the count on one chip
-in the desk's head. Board versions stay out of the Inbox, as before.
+when the reader last had the board on screen. Since 1.68 a dot on the
+switcher's Boards segment says so in every view, and the boards list counts
+each board's; a board an agent made that this window never had open gets a
+card under the segment once, `Claude made a board · pricing · Open`, naming
+the panel when the `board` event said it (`by`). It stays until opened, put
+away, or the desk left. Board versions stay out of the Inbox, as before.
 
 ## The agent
 

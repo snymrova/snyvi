@@ -47,10 +47,10 @@ const BOARD_CSS = `
 .bd-intro h3 { margin: 0 0 var(--sp-2); color: var(--fg); font-size: var(--fs-body-s); font-weight: 600; }
 .bd-intro p { margin: 0 0 var(--sp-3); line-height: 1.5; }
 .bd-intro code { font-family: var(--mono); font-size: var(--fs-small); color: var(--fg); }
-.bd-ask, .bd-bform { display: flex; gap: var(--sp-2); margin: 0; }
-.bd-ask input, .bd-bform input { flex: 1; min-width: 0; height: 30px; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-sm);
+.bd-ask { display: flex; gap: var(--sp-2); margin: 0; }
+.bd-ask input { flex: 1; min-width: 0; height: 30px; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-sm);
   background: var(--bg); box-shadow: inset 0 0 0 1px var(--rule-2); color: var(--fg); font: inherit; }
-.bd-ask button, .bd-bform button { flex: none; height: 30px; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-sm);
+.bd-ask button { flex: none; height: 30px; padding: 0 var(--sp-3); border: 0; border-radius: var(--r-sm);
   background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 500; cursor: pointer; }
 .bd-intro .bd-ask-said { min-height: 1.5em; margin: var(--sp-2) 0 0; color: var(--fg-3); font-size: var(--fs-small); }
 /* The board's own bar, top left (03-list.js): one row that never wraps, so

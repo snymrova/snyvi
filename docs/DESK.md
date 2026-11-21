@@ -214,19 +214,28 @@ first hook -- has nothing to bring back.
 
 **Views over a desk (1.58, plan 6ff79c55a7).** A desk has views, not kinds:
 Panels, Folder, Page, and a Board for each `design/<board>/` its folder
-holds. Since 1.60 (plan 586c0491b6) they are the head of the desk's ⋯ menu,
-the one on screen ticked, and the head keeps one chip while a view is open
-(`Folder ✕`, `Board · Pricing ✕` by the name its `board.json` gives), before
-the left-off line, whose room it takes from; ✕, Esc on a board or the page,
-or ⌃⌥F for Folder go back (`ui/desk/25-views.js`).
+holds. Since 1.68 (plan d2db60758c) they are a **switcher** in the head,
+after the tabs (`ui/desk/33-switch.js`): four segments, always there, always
+in this order -- Panels, Folder, Page, Boards ▾. The one on screen says its
+name, the others are icons with a tip and their key, and the switcher's
+width is fixed (Boards takes what the others leave), so a view opening
+moves nothing. Coming back is always the same press, Panels; Esc on a board
+or the page, ⌃⌥F and ⌃⌥D go back too. Boards names the board on screen and
+opens the boards list (docs/BOARD.md). From 1.60 to 1.67 the views were in
+the desk's ⋯ and the head kept only a `Board · Pricing ✕` chip, whose ✕
+meant "back" there and "not now" on the next chip; the reader got lost
+coming back, and ⋯ grew a row per board. ⋯ now holds the desk's own actions.
+Over the folder the tabs' `+` keeps its room, unseen, so the switcher stands
+where it stands on the panels.
 
 **Ways to a board (1.67, `ui/desk/32-ways.js`).** A board or the page open
 over the desk is in the address, `/desk/<id>#view=board:<name>`, so a
-reload, Back and a link land on it. While the panels are up and a board has
-sections drawn since the reader last had it on screen, the head carries one
-chip in the same place, `Board · Pricing · 9 new`; a click opens it, its ✕
-is "not now". ⌃⌥D goes to that board, else the last one open, and back to
-the panels from a board.
+reload, Back and a link land on it. A board with sections drawn since the
+reader last had it on screen puts a dot on the switcher's Boards segment,
+in any view, and "9 new" on its row in the boards list; a new board an
+agent made gets a card under the segment, once (docs/BOARD.md). ⌃⌥D goes to
+the board with the most new, else the last one open, and back to the panels
+from a board.
 
 Every view **docks one panel** the same way (1.60, views audit a5057fcd18):
 the pane's own element moves into the dock, socket, scrollback and keys

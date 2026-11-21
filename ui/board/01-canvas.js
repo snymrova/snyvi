@@ -127,7 +127,7 @@ function wire() {
     else if (e.key === "f") fit(shown().filter(f => picked.includes(f.id)));
     else if (e.key === "+" || e.key === "=") { touched = true; zoomAt(1.25, cx, cy); }
     else if (e.key === "-") { touched = true; zoomAt(0.8, cx, cy); }
-    else if (e.key === "Escape" && (lookOpen || boardsOpen || hiddenOpen)) { lookOpen = false; boardsOpen = false; hiddenOpen = false; paintList(); }
+    else if (e.key === "Escape" && (lookOpen || hiddenOpen)) { lookOpen = false; hiddenOpen = false; paintList(); }
     else if (e.key === "Escape" && picked.length) pick(null, false);
     else return;
     e.preventDefault();

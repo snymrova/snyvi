@@ -85,6 +85,7 @@ fn a_write_makes_the_board_and_round_trips() {
             name: "home".into(),
             frames: 2,
             marks: boards(&d.path)[0].marks.clone(),
+            removed: None,
         }]
     );
     assert_eq!(
@@ -386,4 +387,60 @@ fn a_new_board_is_named_and_its_folder_never_taken_twice() {
     assert!(views(&d.path).contains(&"board:pricing-page".to_string()));
     let renamed = arrange(&d.path, "pricing-page-2", &[], Some("Pricing, take two")).unwrap();
     assert_eq!(renamed.name, "Pricing, take two");
+}
+
+#[test]
+fn a_removed_board_leaves_the_list_keeps_its_files_and_is_refused_until_brought_back() {
+    let d = Dir::new("snyvi-board");
+    let p = write(&d.path, "home", "hero", "<h1>Hi</h1>", Size::default()).unwrap();
+    create(&d.path, "Scratch").unwrap();
+    assert!(remove(&d.path, "scratch", true).unwrap());
+    assert!(!remove(&d.path, "nope", true).unwrap());
+    let ids = |v: Vec<BoardHead>| v.into_iter().map(|b| b.id).collect::<Vec<_>>();
+    assert_eq!(ids(boards(&d.path)), ["home"]);
+    assert_eq!(ids(removed_boards(&d.path)), ["scratch"]);
+    assert!(removed_boards(&d.path)[0].removed.is_some());
+    assert!(!views(&d.path).contains(&"board:scratch".to_string()));
+    // Kept on disk, and in git: a mark beside the boards, nothing deleted.
+    assert!(dir(&d.path, "scratch", false).unwrap().is_some());
+    assert!(d.path.join("design/boards.json").is_file());
+
+    // Nothing writes to it, the reader's own rename included, until it is back.
+    for e in [
+        write(&d.path, "scratch", "a", "<p>a</p>", Size::default()).map(|_| ()),
+        arrange(&d.path, "scratch", &[], Some("x")).map(|_| ()),
+        set_css(&d.path, "scratch", "p{}"),
+    ] {
+        assert!(format!("{:#}", e.unwrap_err()).contains("bring it back from Removed"));
+    }
+    // A new board never takes the removed one's folder.
+    assert_eq!(create(&d.path, "Scratch").unwrap(), "scratch-2");
+
+    assert!(remove(&d.path, "scratch", false).unwrap());
+    assert!(removed_boards(&d.path).is_empty());
+    write(&d.path, "scratch", "a", "<p>a</p>", Size::default()).unwrap();
+    assert_eq!(std::fs::read_to_string(p).unwrap(), "<h1>Hi</h1>");
+}
+
+#[test]
+fn the_readers_order_holds_and_a_board_it_leaves_out_goes_after() {
+    let d = Dir::new("snyvi-board");
+    for n in ["Alpha", "Beta", "Gamma"] {
+        create(&d.path, n).unwrap();
+    }
+    let ids = |r: &std::path::Path| boards(r).into_iter().map(|b| b.id).collect::<Vec<_>>();
+    assert_eq!(ids(&d.path), ["alpha", "beta", "gamma"]);
+    order(&d.path, &["gamma".into(), "alpha".into(), "gamma".into()]).unwrap();
+    assert_eq!(ids(&d.path), ["gamma", "alpha", "beta"]);
+    create(&d.path, "Aardvark").unwrap();
+    assert_eq!(ids(&d.path), ["gamma", "alpha", "aardvark", "beta"]);
+    assert!(order(&d.path, &["nope".into()]).is_err());
+    // The order survives a remove and a bring back.
+    remove(&d.path, "gamma", true).unwrap();
+    assert_eq!(ids(&d.path), ["alpha", "aardvark", "beta"]);
+    remove(&d.path, "gamma", false).unwrap();
+    assert_eq!(ids(&d.path)[0], "gamma");
+    // A shelf broken by hand is no order, not an error.
+    std::fs::write(d.path.join("design/boards.json"), "{not json").unwrap();
+    assert_eq!(ids(&d.path), ["aardvark", "alpha", "beta", "gamma"]);
 }

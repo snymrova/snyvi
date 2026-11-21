@@ -477,14 +477,11 @@ function entries(ctx, el, byKey = false) {
     const here = el.matches("[data-desk-menu]"), dk = here && ctx.desk;
     const id = +(el.dataset.desk || el.dataset.deskMenu), d = ctx.state.desks && ctx.state.desks.desks.find(x => x.id === id);
     if (!d || !capability) return null;
-    // 1.60: the desk's views lead its own ⋯ -- the head no longer carries a
-    // switcher (plan 586c0491b6) -- the one on screen ticked, Folder with its key.
+    // 1.68: the views are the head's switcher again (plan d2db60758c), and
+    // a board is made, renamed and removed in its list: ⋯ is the desk's own.
+    // Which view is up still decides Full view.
     const vs = (dk && dk.viewsHere && dk.viewsHere()) || [];
     return { head: d.name, items: [
-      vs.length && { section: "Views of this desk" },
-      ...vs.map(x => ({ label: x.label, about: x.about, on: x.on, key: x.v === "folder" ? ctx.keyHint("ctrl+alt+f") : "", run: () => dk.viewHere(x.v) })),
-      // 1.62 (V1): a board could only appear once Claude drew one.
-      vs.length && dk.newBoardHere && { label: "New board", about: "an empty canvas Claude draws on", run: () => dk.newBoardHere() }, vs.length && RULE,
       !here && { label: "Show", run: () => ctx.show(id, true) },
       // On the desk shown, its own: in the tab on screen, which says why when
       // that tab is full (#217); a desk elsewhere, the tab it reopens on.
@@ -496,7 +493,7 @@ function entries(ctx, el, byKey = false) {
       // 1.57: more panels on this desk, in its folder (#217): the head's + too.
       dk && dk.newTab && { label: "New tab", run: () => dk.newTab() },
       // 1.67: what a ✕ took from view here, after its six-second Undo.
-      dk && dk.closedHere && { label: "Recently closed…", about: "panels and tabs, to reopen", run: () => dk.closedHere() },
+      dk && dk.closedHere && { label: "Recently closed…", about: "panels, tabs and boards, to bring back", run: () => dk.closedHere() },
       // Focus follows the pointer left this menu for the foot strip (1.43):
       // it is the whole app's, and here it read as this desk's alone.
       RULE,

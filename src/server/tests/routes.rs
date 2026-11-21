@@ -512,6 +512,21 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         true,
     ),
+    // 1.68: the reader removes a board or brings it back, and orders them.
+    (
+        "POST",
+        "/api/desks/1/board/home/remove",
+        Some(r#"{"removed":false}"#),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/desks/1/boards/order",
+        Some(r#"{"order":[]}"#),
+        Gate::Desk,
+        true,
+    ),
     // 1.67: the reader's hide, a section's versions, a window's picture.
     (
         "POST",

@@ -479,6 +479,8 @@ pub(crate) async fn desks(
             // And their names (1.62): the menu and switcher say a board's
             // title, not its folder.
             "boards": super::api_board::boards_by_desk(&desks),
+            // And the ones the reader removed (1.68), to bring back.
+            "removed_boards": super::api_board::removed_by_desk(&desks),
             // So a pane's header can say `~/snyvi` rather than the whole path.
             "home": dirs::home_dir(),
             "panes": panes,

@@ -21,10 +21,15 @@
 //! The origin is quiet and coalesces only with itself, within 20 s.
 //!
 //! **Nothing is deleted.** Hiding a frame is a flag in `board.json`; the file
-//! stays, and so does every version in the store.
+//! stays, and so does every version in the store. Removing a board (1.68) is
+//! a mark in `design/boards.json`, beside the boards, which also holds the
+//! order the reader put them in (`Shelf`): the board's folder, its files and
+//! its versions stay, and Bring back takes the mark off. A removed board is
+//! not listed and not written to, by the reader or by an agent, until then.
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The folder, under a desk's root, every board is in.
@@ -102,6 +107,9 @@ pub struct BoardHead {
     /// the window counts "new since you looked" from, with no file read.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub marks: Vec<u64>,
+    /// When the reader removed it, in seconds (1.68); only a removed board's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removed: Option<i64>,
 }
 
 /// A frame as it is read: its place, and what is in its file now.
@@ -263,9 +271,56 @@ fn next_place(frames: &[Frame]) -> (i64, i64) {
         .map_or((0, 0), |right| (right + GAP, 0))
 }
 
-/// Every board in a desk's folder: each `design/*/` with a `board.json`, by
-/// name. What the desk's JSON offers as views (`views`).
-pub fn boards(root: &Path) -> Vec<BoardHead> {
+/// `design/boards.json` (1.68): the order the reader put the boards in, and
+/// the boards they removed, each by folder name, with when. Small, written
+/// whole and atomically, and in git with the boards. A board it does not name
+/// is shown, after the ones it orders, by folder name.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct Shelf {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed: BTreeMap<String, i64>,
+}
+
+const SHELF: &str = "boards.json";
+
+/// The shelf, leniently: missing or unreadable is no order and nothing
+/// removed, and a name that is not a board's name is dropped.
+pub fn shelf(root: &Path) -> Shelf {
+    let Ok(Some((_, design))) = design_dir(root, false) else {
+        return Shelf::default();
+    };
+    let Some(bytes) = read_frame(&design.join(SHELF)) else {
+        return Shelf::default();
+    };
+    let mut s: Shelf = serde_json::from_slice(&bytes).unwrap_or_default();
+    s.order.retain(|id| valid_name(id));
+    s.removed.retain(|id, _| valid_name(id));
+    s
+}
+
+fn save_shelf(root: &Path, s: &Shelf) -> Result<()> {
+    let (_, design) = design_dir(root, false)?.context("this desk has no boards")?;
+    let mut bytes = serde_json::to_vec_pretty(s)?;
+    bytes.push(b'\n');
+    atomic_write(&design.join(SHELF), &bytes)
+}
+
+/// Refused with the words the agent is told: a removed board is the
+/// reader's to bring back, never undone behind their back by a write.
+fn refuse_removed(root: &Path, board: &str) -> Result<()> {
+    if shelf(root).removed.contains_key(board) {
+        bail!(
+            "the reader removed the board {board:?}; ask them to bring it back from Removed in its list"
+        );
+    }
+    Ok(())
+}
+
+/// Every board in the folder, shown or removed: each `design/*/` with a
+/// `board.json`, by folder name.
+fn heads(root: &Path, s: &Shelf) -> Vec<BoardHead> {
     let Ok(Some((_, design))) = design_dir(root, false) else {
         return Vec::new();
     };
@@ -292,6 +347,7 @@ pub fn boards(root: &Path) -> Vec<BoardHead> {
                         .filter(|f| !f.hidden)
                         .filter_map(|f| changed_at(&d, &f.id))
                         .collect(),
+                    removed: s.removed.get(&id).copied(),
                     id,
                 }
             })
@@ -299,6 +355,80 @@ pub fn boards(root: &Path) -> Vec<BoardHead> {
         .collect();
     out.sort_by(|a, b| a.id.cmp(&b.id));
     out
+}
+
+/// The boards a desk shows, in the reader's order: what the desk's JSON
+/// offers as views (`views`) and `board_read` lists. A removed one is not
+/// among them (`removed_boards`).
+pub fn boards(root: &Path) -> Vec<BoardHead> {
+    let s = shelf(root);
+    let at = |id: &str| s.order.iter().position(|o| o == id).unwrap_or(usize::MAX);
+    let mut out: Vec<BoardHead> = heads(root, &s)
+        .into_iter()
+        .filter(|b| b.removed.is_none())
+        .collect();
+    // Stable: the unordered keep their folder-name order, after the rest.
+    out.sort_by_key(|b| at(&b.id));
+    out
+}
+
+/// The boards the reader removed, the latest first: the list's Removed (n).
+pub fn removed_boards(root: &Path) -> Vec<BoardHead> {
+    let s = shelf(root);
+    let mut out: Vec<BoardHead> = heads(root, &s)
+        .into_iter()
+        .filter(|b| b.removed.is_some())
+        .collect();
+    out.sort_by_key(|b| std::cmp::Reverse(b.removed));
+    out
+}
+
+/// Remove a board from view, or bring it back: a mark in the shelf, its
+/// folder, files and versions untouched. False when there is no such board.
+pub fn remove(root: &Path, board: &str, removed: bool) -> Result<bool> {
+    let Some(d) = dir(root, board, false)? else {
+        return Ok(false);
+    };
+    if !d.join("board.json").is_file() {
+        return Ok(false);
+    }
+    let mut s = shelf(root);
+    if removed {
+        s.removed.insert(board.to_string(), crate::store::now());
+    } else {
+        s.removed.remove(board);
+    }
+    save_shelf(root, &s)?;
+    Ok(true)
+}
+
+/// The reader's order of the boards, whole: each named once, each a board
+/// the desk has. A board it leaves out keeps its place after them, as one
+/// the shelf never named does.
+pub fn order(root: &Path, ids: &[String]) -> Result<()> {
+    let s0 = shelf(root);
+    let known: Vec<String> = heads(root, &s0).into_iter().map(|b| b.id).collect();
+    let mut order: Vec<String> = Vec::new();
+    for id in ids {
+        if !known.contains(id) {
+            bail!("this desk has no board {id:?}");
+        }
+        if !order.contains(id) {
+            order.push(id.clone());
+        }
+    }
+    for id in s0.order.iter().filter(|id| known.contains(id)) {
+        if !order.contains(id) {
+            order.push(id.clone());
+        }
+    }
+    save_shelf(
+        root,
+        &Shelf {
+            order,
+            removed: s0.removed,
+        },
+    )
 }
 
 /// When a frame's file last changed, in seconds since 1970.
@@ -328,6 +458,7 @@ pub fn set_css(root: &Path, board: &str, css: &str) -> Result<()> {
             MAX_CSS_BYTES / 1024
         );
     }
+    refuse_removed(root, board)?;
     let d = dir(root, board, false)?.with_context(|| format!("no board {board:?}"))?;
     atomic_write(&d.join("board.css"), css.as_bytes())
 }
@@ -449,6 +580,7 @@ pub fn write(root: &Path, board: &str, id: &str, html: &str, size: Size) -> Resu
     if !valid_name(id) {
         bail!("a frame's id is lowercase letters, digits and hyphens: {id:?}");
     }
+    refuse_removed(root, board)?;
     let d = dir(root, board, true)?.context("the board's folder")?;
     // Strict first: a board.json that does not parse is refused, not
     // rewritten. Then the board as it is shown, so a frame file that arrived
@@ -490,6 +622,7 @@ pub fn hide(root: &Path, board: &str, id: &str, hidden: bool) -> Result<bool> {
     let Some(d) = dir(root, board, false)? else {
         return Ok(false);
     };
+    refuse_removed(root, board)?;
     frame_path(&d, id)?;
     // Strict where it matters: a board.json that does not parse is not
     // rewritten from the lenient read.
@@ -521,6 +654,7 @@ pub struct Place {
 /// does not have, so a typo is said rather than dropped.
 pub fn arrange(root: &Path, board: &str, places: &[Place], name: Option<&str>) -> Result<Board> {
     let d = dir(root, board, false)?.with_context(|| format!("no board {board:?}"))?;
+    refuse_removed(root, board)?;
     load(&d)?;
     let mut b = read(&d);
     for p in places {
@@ -774,7 +908,8 @@ pub fn slug(name: &str) -> String {
 
 /// A new, empty board named `name`: `design/<slug>/board.json` with only
 /// its name. Its folder's name is the slug, with `-2`, `-3`… when a board
-/// already has it. Returns the folder's name.
+/// already has it -- a removed board too, whose folder is still there, so a
+/// new board never takes a removed one's name. Returns the folder's name.
 pub fn create(root: &Path, name: &str) -> Result<String> {
     let name: String = name.trim().chars().take(80).collect();
     if name.is_empty() {
