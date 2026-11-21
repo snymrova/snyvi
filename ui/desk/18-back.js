@@ -165,8 +165,10 @@ const backRow = (d, esc) => {
   // The field says what it is for and where it runs (1.56, audit B7): a
   // bare `npm run dev` was a mini-language in a placeholder.
   if (backField && !full) return `<form class="dk-backnew"><input spellcheck="false" autocomplete="off" placeholder="npm run dev · runs in this desk's folder" aria-label="A command to run in the back, in this desk's folder with its keys" data-tip="A command, run in the back" data-tip-sub="in this desk's folder, with its keys, out of the grid: a dev server, a watcher" value="${esc(backDraft)}"><button type="submit" class="dk-new" data-tip="Start it in the back" data-tip-sub="a shell of its own, in this desk's folder">Start</button><button type="button" class="dk-new" data-a="back-new-x">Cancel</button></form>`;
-  return `<button type="button" class="dk-new${full ? ` dim" aria-disabled="true` : ""}" data-a="back-new" data-tip="New panel in the back" data-tip-sub="${esc(full ? `The back holds ${ctx.desks.in_back}` : "a dev server, a watcher: running, out of the grid")}">+ In the back…</button>`;
+  return `<button type="button" class="dk-new dk-new-back${full ? ` dim" aria-disabled="true` : ""}" data-a="back-new" data-tip="New panel in the back" data-tip-sub="${esc(full ? `The back holds ${ctx.desks.in_back}` : "a dev server, a watcher: running, out of the grid")}">in the back…</button>`;
 };
+/** Whether the back's field has the foot's line (06-rail.js). */
+const backFieldOpen = d => backField && backViews(d).length < ctx.desks.in_back;
 
 /* The rail is drawn again on every status a panel sends: what is typed in
  * the field, and the caret, are kept here and put back after a draw. */
@@ -267,6 +269,10 @@ const BACK_CSS = `
 .dk-dr-body .pn-full { display: none; }
 .dk-dr-foot { margin: 0; height: 16px; flex: none; color: var(--fg-3); font-size: var(--fs-micro); line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-backnew { display: flex; gap: 4px; align-items: center; }
+/* On New panel's own line (1.68), and quieter than it: the second way in. */
+.dk-foot .dk-backnew { flex: 1; min-width: 0; }
+.dk-foot .dk-new-back { padding-left: 0; font-size: var(--fs-micro); align-self: center; }
+.dk-foot .dk-new-back::before { content: "· "; }
 .dk-backnew input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-xs); background: var(--bg); color: var(--fg); }
 #toc .dk-backline { margin: 6px 0 2px; padding-left: 8px; color: var(--fg-3); font-size: var(--fs-micro); list-style: none; }
 `;

@@ -49,10 +49,10 @@ let docList = [], docsAt = null;
  *  section says so, with a Retry, rather than looking empty. */
 let docsOff = null, notesOff = null;
 const noReach = w => `<p class="no-reach" role="alert">Could not reach snyvi<button type="button" data-a="reload" data-w="${w}">Retry</button></p>`;
-/** The rail shows the latest six of those and names the rest; a click on
- *  the rest opens the whole list, and again folds it back. No box that
- *  scrolls inside the rail: six rows is what a glance takes in, and the
- *  notes under them stay in reach. */
+/** The rail shows six of those, what waits to be read first and then the
+ *  newest, and names the rest: the Inbox lists them all, on this desk's
+ *  chip (1.67, #236). No box that scrolls inside the rail: six rows is what
+ *  a glance takes in, and the notes under them stay in reach. */
 const DOCS_SHOWN = 6;
 let docsAll = false;
 /** Past this many, a field at the head of the list finds one by its title,
@@ -60,8 +60,6 @@ let docsAll = false;
  *  whether the field had the focus are kept here, so the rail's redraws --
  *  the clock, a new document -- put them all back. */
 const DOCS_FIND = 12;
-/** How many waiting documents the rail lists before it names the rest (1.67, #236). */
-const DOCS_WAITING = 4;
 let docsFind = "", findCaret = 0, findOn = false;
 /** The ones the reader removed from this desk's list (the daemon's
  *  `removed`), whether "N removed · Show" is open, and the row just removed

@@ -461,10 +461,11 @@ document's meta reads **From snyvi [1] ▸**. It is a link to the desk with
 that pane focused, and it still names the desk after the desk is closed.
 
 The attribution runs the other way too. The desk's rail has a **Documents**
-list under its panes: what a pane on this desk sent that waits to be read
-(1.67, #236; until then every document, which the Inbox now lists on the
-desk's chip, one click from the rail's *All N in the Inbox*), newest
-first, each row with the unread mark, the title, the slot it came from and
+list under its panes: six of what a pane on this desk sent, what waits to
+be read first and then the newest read (1.68; 1.67 listed only what
+waits, #236, and until then every document, which the Inbox now lists on
+the desk's chip, one click from the rail's *All N in the Inbox →*), each
+row with the unread mark, the title, the slot it came from and
 its age, from `GET /api/desks/{id}/docs`, behind the same gate as every
 other desk route. A click opens the document as the page, and the rail
 stays the desk's: the panes, and the documents with the open one marked, so
@@ -643,6 +644,18 @@ outside. `⌘` combinations go to the platform.
 Ctrl+Shift+C and Ctrl+Shift+V are copy and paste, as in a Linux terminal.
 Every other key goes to the pane, including the single-letter keys the
 reading view uses.
+
+**The rail's rows since 1.68.** A panel's row gives its width to the name:
+the thread's stage is a 16 px mark at the row's end (a diamond, filled while
+the work moves, hollow before it starts or while it is parked, a ✓ once
+shipped), with the word in its tip, and the context figure is on the row
+only from 60% (`CTX_SHOWN`), as `ctx 72%`; under that it is in the row's
+tip, "context 15% full". The head counts `2 of 4`. The foot is one line:
+`+ New panel`, then a quieter `in the back…`, whose field takes the line
+while it is open. Documents is under Panels by default (`widget::RIGHT`; a
+stored layout keeps its order), then Notes with **Next up** over them: the
+line of 1.67 under the name a reader sees, `line` everywhere else. A note
+is added to it from `+ Add a note`, whose menu lies over what is under it.
 
 **The routes 1.7.1 added**, all behind the capability: `POST
 /api/panes/{id}/restore` (Undo a close), `POST /api/panes/{id}/rename`

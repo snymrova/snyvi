@@ -199,10 +199,13 @@ function rail() {
   // A row just removed keeps its place through a read that no longer has it.
   const gone = docGone && docGone.at === d.id ? docGone.x : null;
   const dl = gone && !dl0.includes(gone) ? [...dl0.slice(0, docGone.i), gone, ...dl0.slice(docGone.i)] : dl0;
-  // 1.67 (#236): the rail no longer lists the desk's documents; the Inbox
-  // does, on this desk's chip. What stays here is what waits to be read,
-  // and always the one on the page: its row is the way back to the panels.
-  const shown = dl.filter(x => x === gone || x.id === reading || x.unread).filter((x, i) => i < DOCS_WAITING || x.id === reading || x === gone);
+  // 1.67 (#236) took the desk's whole list to the Inbox, on this desk's
+  // chip, and left here only what waits to be read: a desk all read was a
+  // heading over one sentence. So the rail lists six (1.68): what waits
+  // first, then the newest read, and always the one on the page, whose row
+  // is the way back to the panels. A row just removed holds its place among
+  // the six until its Undo goes, so nothing under it moves up meanwhile.
+  const shown = [...dl.filter(x => x.unread), ...dl.filter(x => !x.unread)].filter((x, i) => i < DOCS_SHOWN || x.id === reading || x === gone);
   const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
   const stopped = vs.filter(x => !x.status.running).length;
   // A new desk whose panels have never started (held): the panel's card is
@@ -221,7 +224,7 @@ function rail() {
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
     return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v === sent ? " sent" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
-      `<button type="button" class="dk-focus" data-focus="${v.id}"${v === sent ? ' data-tip="Sent the page you are reading" data-tip-sub="the ✕ comes back here"' : ""}><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) == null ? "" : `<span class="${ctxCls(ctxPct(v.status))}">${ctxPct(v.status)}%</span>`}</button>` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}"${v === sent ? ' data-tip="Sent the page you are reading" data-tip-sub="the ✕ comes back here"' : ""}><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) >= CTX_SHOWN ? `<span class="${ctxCls(ctxPct(v.status))}">ctx ${ctxPct(v.status)}%</span>` : ""}</button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" data-tip="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
@@ -245,27 +248,28 @@ function rail() {
     // and a panel just closed opens it, so its Undo is never out of reach.
     panels: () => sec("panels", "rail.panels", "Panels", {
       open: closedRow && closedRow.desk === d.id, tip: "Panels", sub: `${here} · ${total}`,
-      count: `${blocked ? `!${blocked} · ` : ""}${nGrid}/${j.per_desk}${nBack ? ` · ${nBack} back` : ""}`, tone: blocked ? "warn" : "",
+      count: `${blocked ? `!${blocked} · ` : ""}${nGrid} of ${j.per_desk}${nBack ? ` · ${nBack} back` : ""}`, tone: blocked ? "warn" : "",
       countTip: blocked ? `${ctx.plural(blocked, "panel")} ${blocked === 1 ? "needs" : "need"} you` : "",
     }, `<ul class="dk-panes">` + vs.filter(v => !isBack(v.pane)).map(paneRow).join("") +
       (nBack ? `<li class="dk-backline" role="presentation">In the back</li>` + vs.filter(v => isBack(v.pane)).map(paneRow).join("") : "") + tabLines(d, esc) + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
-    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>` +
-    `<div class="dk-foot">${backRow(d, esc)}</div>`),
-    // Notes before Documents, Points after (1.56, B6; src/widget.rs RIGHT); routines under the notes (19-routine.js).
-    // The line over them (1.67, 31-line.js): the same notes, in an order.
-    notes: () => lineSec(d) + noteSec(d) + routineSec(d),
-    // The documents that wait, and the way to the rest. The count is how
-    // many wait; the row's [n] says which panel sent it.
+    // One foot (1.68): New panel, then the back's quieter way in on the same
+    // line. Its field takes the line while it is open, so nothing is added.
+    `<div class="dk-foot">` + (backFieldOpen(d) ? backRow(d, esc) : `<button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
+    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + backRow(d, esc)) + `</div>`),
+    // The documents, waiting ones first, and the way to the rest. The count
+    // is how many wait; the row's [n] says which panel sent it.
     docs: () => sec("docs", "rail.docs", "Documents", {
-      tip: "Documents", sub: "What this desk's panels sent that waits to be read; the rest is in the Inbox",
+      tip: "Documents", sub: "What this desk's panels sent, what waits to be read first; the rest is in the Inbox",
       count: waiting || "", tone: waiting ? "accent" : "", countTip: waiting ? `${waiting} waiting to be read` : "",
     },
     (shown.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") + `</ul>`
       : docsOff === d.id ? noReach("docs") : live.length ? "" : waitingFirst(d, fresh, asked)) +
     (live.length ? `<p class="dk-offs-line">${waiting > shown.filter(x => x.unread && x !== gone).length ? `${waiting - shown.filter(x => x.unread && x !== gone).length} more waiting · ` : ""}` +
-      `<button type="button" class="dk-link" data-a="docs-inbox" data-tip="This desk's documents" data-tip-sub="every one it sent, in the Inbox on this desk's chip">All ${live.length} in the Inbox</button></p>` : "")),
+      `<button type="button" class="dk-link" data-a="docs-inbox" data-tip="This desk's documents" data-tip-sub="every one it sent, in the Inbox on this desk's chip">All ${live.length} in the Inbox →</button></p>` : "")),
+    // Documents under the panels that sent them, then the notes, Points after (1.68; src/widget.rs RIGHT); routines under the notes (19-routine.js).
+    // Next up over them (1.67, 31-line.js): the same notes, in an order.
+    notes: () => lineSec(d) + noteSec(d) + routineSec(d),
     points: () => pointSec(vs),
     widgets: () => widgetSec(d),
   };
@@ -504,6 +508,9 @@ function drawIn(el, html) {
   return true;
 }
 
+/** From this much of its context used, a panel's row says so. */
+const CTX_SHOWN = 60;
+
 /** A pane's row in the rail takes its new name, and how full its context
  *  window is, in place. */
 function named(v) {
@@ -512,15 +519,17 @@ function named(v) {
   const here = v.status.cwd || v.pane.cwd;
   b.dataset.tip = what(v);
   const acc = (ctx.desks.accounts || []).length ? `Claude as ${accountOf(v).label}` : "";
-  const sub = [here && tilde(here), acc].filter(Boolean).join(" · ");
+  // How full its context is, is always in the tip; on the row only once it
+  // is worth a glance (1.68): "15%" beside "review" read as progress.
+  const cp = ctxPct(v.status);
+  const sub = [here && tilde(here), acc, cp == null ? "" : `context ${cp}% full`].filter(Boolean).join(" · ");
   if (sub) b.dataset.tipSub = sub; else delete b.dataset.tipSub;
   b.querySelector(".nm").textContent = short(v);
-  const cp = ctxPct(v.status);
   let c = b.querySelector(".ctx");
-  if (cp == null) { c?.remove(); return; }
+  if (cp == null || cp < CTX_SHOWN) { c?.remove(); return; }
   if (!c) b.append(c = document.createElement("span"));
   c.className = ctxCls(cp);
-  c.textContent = `${cp}%`;
+  c.textContent = `ctx ${cp}%`;
 }
 
 /* ---------- the list ----------

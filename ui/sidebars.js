@@ -76,12 +76,12 @@ const SECS = {
   panels: ["Panels", "this desk's panels"],
   points: ["Points", "passages a panel kept for you; drawn when one does"],
   docs: ["Documents", "what this desk's panels sent"],
-  notes: ["Notes", "this desk's list"],
+  notes: ["Notes", "this desk's list, with what is next up"],
 };
-// The rail's order (1.56, audit B6): panels, the change and its notes, the
-// documents, then what is empty until something arrives. Folders left the
+// The rail's order (1.68): panels, the documents they sent, the notes with
+// what is next up, then what is empty until something arrives. Folders left the
 // left side in 1.56 too (#214): a folder is read through its desk.
-const DEFAULT = { left: ["inbox", "desks", "widgets"], right: ["panels", "notes", "docs", "points", "widgets"], hidden: [] };
+const DEFAULT = { left: ["inbox", "desks", "widgets"], right: ["panels", "docs", "notes", "points", "widgets"], hidden: [] };
 
 let c = null, data = null, styled = false;
 

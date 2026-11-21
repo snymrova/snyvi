@@ -115,8 +115,12 @@ function threadChip(d, pane, esc) {
     t.notes.length ? t.notes.map(n => `#${n}`).join(" ") : "",
     t.told_at ? `told${t.told_url ? ` at ${t.told_url}` : t.told_how === "none" ? ": no one needed to know" : ""}` : untold ? "not told yet: Told at… in its menu" : "",
   ].filter(Boolean);
-  return `<span class="dk-pth${shipped ? " shipped" : ""}${untold ? " untold" : ""}" data-t="${t.id}" data-tip="${esc(t.name)}" data-tip-sub="${esc([...facts, threadSub(t)].join(" · "))}">` +
-    `<span class="th-word">${t.told_at ? "✓ told" : shipped ? "✓ shipped" : esc(t.stage)}</span></span>`;
+  // 1.68: the stage is a mark at the row's end, its word in the tip and for
+  // a screen reader. As a pill it took a third of the row from the panel's
+  // name, the one thing that tells two panels apart.
+  const word = t.told_at ? "✓ told" : shipped ? "✓ shipped" : t.stage;
+  return `<span class="dk-pth${shipped ? " shipped" : ""}${untold ? " untold" : ""}" data-stage="${esc(t.stage)}" data-t="${t.id}" data-tip="${esc(t.name)}" data-tip-sub="${esc([word.replace("✓ ", ""), ...facts, threadSub(t)].filter(Boolean).join(" · "))}">` +
+    `<span class="th-mark" aria-hidden="true">${shipped ? "✓" : ""}</span><span class="th-word vh">${esc(word)}</span></span>`;
 }
 
 /** Under a panel's row, only for a moment: a thread just removed, with its
@@ -852,13 +856,22 @@ const THREAD_CSS = `
 .dk-sugcard { position: relative; padding: 7px 8px 8px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); font-size: var(--fs-ui); }
 .sg-what { margin: 0; color: var(--fg); }
 .th-in { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }
-/* A panel's thread: its stage, a chip on the panel's row between the name
-   and the context, in the rail's quiet ink; the name gives way before it does. */
-.dk-pth { flex: none; margin-left: auto; padding: 0 6px; border-radius: var(--r-pill); background: var(--rule); font-size: var(--fs-micro); font-weight: 500; line-height: 16px; color: var(--fg-2); }
-.dk-pth.shipped { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
-/* Shipped, not told: the same ✓ hollow, an outline where the fill was. */
-.dk-pth.untold { background: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent); }
-.dk-pane.on .dk-pth { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--fg); }
+/* A panel's thread: its stage, a mark at the end of the panel's row, before
+   the context (1.68; a pill with the word until then). Sixteen pixels,
+   whatever the stage, so the name has the row. A diamond, so it is never
+   taken for the panel's own dot: filled while the work moves (building in
+   the accent, review in amber, waiting grey), hollow before it starts or
+   while it is parked; shipped is a ✓. */
+.dk-pth { position: relative; flex: none; display: grid; place-items: center; width: 16px; height: 16px; margin-left: auto; color: var(--fg-3); font-size: var(--fs-micro); font-weight: 600; line-height: 16px; }
+.th-mark:empty { width: 7px; height: 7px; transform: rotate(45deg); background: currentColor; box-shadow: inset 0 0 0 1.5px currentColor; }
+.dk-pth:is([data-stage="idea"], [data-stage="planned"], [data-stage="parked"]) .th-mark { background: none; }
+.dk-pth[data-stage="planned"] { color: var(--fg-2); }
+.dk-pth[data-stage="parked"] { opacity: .6; }
+.dk-pth[data-stage="building"] { color: var(--accent); }
+.dk-pth[data-stage="review"] { color: var(--warn); }
+.dk-pth.shipped { color: var(--ok); }
+/* Shipped, not told: the same ✓, fainter until it is told. */
+.dk-pth.untold { opacity: .6; }
 .dk-focus .dk-pth + .ctx { margin-left: 0; padding-left: 0; }
 .th-edit { padding: 0 3px 2px 51px; }
 .th-edit .th-in { margin: 0; }

@@ -3688,11 +3688,50 @@ async function panelRows(cdp, base, token) {
     const told = await fetch(`${base}/api/panes/${pa}/agent`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ model: "Fable 5.1", ctx: { pct: 87.4, size: 200000, input: 174800 } }) });
     // The head gives the tokens against the window, the model and the % in
-    // its tip; the rail's row, which has less room, the %.
+    // its tip; the rail's row, which has less room, the % -- said as what
+    // it is, "ctx 87%", and only once it is worth a glance (1.68).
     const ctxShown = await until(`document.querySelector('${P(pa)} .pn-ctx')?.textContent === "175k / 200k"`, 30);
     const ctxLook = await q.ev(`({ hot: !!document.querySelector('${P(pa)} .pn-ctx.hot'), title: document.querySelector('${P(pa)} .pn-ctx')?.dataset.tip || "", row: document.querySelector('.dk-pane:has([data-focus="${pa}"]) .ctx')?.textContent || "" })`);
-    rows.push(["a panel says how full its agent's context window is", told.status === 204 && ctxShown && ctxLook.hot && /Fable 5\.1/.test(ctxLook.title) && /87(\.4)?%/.test(ctxLook.title) && ctxLook.row === "87%",
+    rows.push(["a panel says how full its agent's context window is", told.status === 204 && ctxShown && ctxLook.hot && /Fable 5\.1/.test(ctxLook.title) && /87(\.4)?%/.test(ctxLook.title) && ctxLook.row === "ctx 87%",
       told.status !== 204 ? `the route answered ${told.status}` : !ctxShown ? "the head never showed it" : !ctxLook.hot ? "87% is not amber" : !ctxLook.row ? "the rail's row does not show it" : `"${ctxLook.title}", amber, and in the rail`]);
+
+    // 1.68: under 60% the row keeps the room for the panel's name, and the
+    // figure is in its tip, said in full. Then the bench's 87% is put back.
+    const sayCtx = pct => fetch(`${base}/api/panes/${pa}/agent`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "Fable 5.1", ctx: { pct, size: 200000, input: Math.round(pct * 2000) } }) });
+    const rowBtn = `document.querySelector('.dk-pane [data-focus="${pa}"]')`;
+    await sayCtx(15);
+    const ctxLow = await until(`!${rowBtn}?.querySelector(".ctx") && /context 15% full/.test(${rowBtn}?.dataset.tipSub || "")`, 30);
+    rows.push(["under 60% the rail's row keeps it to its tip", ctxLow,
+      ctxLow ? "no figure on the row; \"context 15% full\" in its tip" : `the row says "${await q.ev(`${rowBtn}?.querySelector(".ctx")?.textContent || ""`)}", its tip "${await q.ev(`${rowBtn}?.dataset.tipSub || ""`)}"`]);
+    await sayCtx(87.4);
+    await until(`${rowBtn}?.querySelector(".ctx")?.textContent === "ctx 87%"`, 30);
+
+    // 1.68: a note is added to Next up from a row and its menu, which lies
+    // over what is under it: the section below stays where it was.
+    const lnNote = (await post(`/api/desks/${desk}/notes`, { text: "a note for next up" })).note;
+    const lnAdd = `document.querySelector('#toc .dk-ln-add[data-a="line-add"]')`;
+    const under = `Math.round(document.querySelector("#toc .dk-line")?.nextElementSibling?.getBoundingClientRect().top ?? -1)`;
+    const lnThere = !!lnNote && await until(`!!${lnAdd}`, 40);
+    await q.ev(`${lnAdd}?.click(); 1`);
+    const lnOpen = await until(`!!document.querySelector('#toc .dk-ln-pop [data-a="line-put"][data-n="${lnNote?.id}"]')`, 30);
+    const topOpen = await q.ev(under);
+    await q.ev(`${lnAdd}?.click(); 1`);
+    const lnShut = await until(`!document.querySelector("#toc .dk-ln-pop")`, 30);
+    const topShut = await q.ev(under);
+    // A press anywhere else shuts it as well: here, on a panel.
+    await q.ev(`${lnAdd}?.click(); 1`);
+    await until(`!!document.querySelector("#toc .dk-ln-pop")`, 30);
+    await q.ev(`document.querySelector('${P(pa)}')?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); 1`);
+    const lnAway = await until(`!document.querySelector("#toc .dk-ln-pop") && ${lnAdd}?.getAttribute("aria-expanded") === "false"`, 30);
+    await q.ev(`${lnAdd}?.click(); 1`);
+    await until(`!!document.querySelector("#toc .dk-ln-pop")`, 30);
+    await q.ev(`document.querySelector('#toc .dk-ln-pop [data-n="${lnNote?.id}"]')?.click(); 1`);
+    const lnPut = await until(`/a note for next up/.test(document.querySelector("#toc .dk-ln-row .dk-ln-t")?.textContent || "") && !document.querySelector("#toc .dk-ln-pop")`, 40);
+    // The focus comes back to the row the menu hung from, or the goal when no note is left to add.
+    const lnBack = lnPut && await until(`document.activeElement?.matches(".dk-ln-add, .dk-ln-goal")`, 30);
+    rows.push(["Next up takes a note from a row's menu, which a press elsewhere shuts, and the menu moves nothing", lnThere && lnOpen && lnShut && lnAway && topOpen === topShut && topOpen >= 0 && lnPut && lnBack && !(await q.ev(`!!document.querySelector("#toc select")`)),
+      !lnThere ? "no + Add a note row" : !lnOpen ? "its menu did not open on the note" : !lnShut ? "a second press did not shut it" : !lnAway ? "a press on a panel left it open" : topOpen !== topShut ? `the section under it at ${topOpen} open, ${topShut} shut` : !lnPut ? "the note did not land in the order" : !lnBack ? `the focus went to ${await q.ev(`document.activeElement?.tagName + "." + document.activeElement?.className`)}` : "the note is first in the order, the focus back on its row; what is under the menu stayed put"]);
 
     // 1.29.0 (#107): the same hover says what is left of the account, from
     // the freshest panel -- a reading from the other panel is news here too;
@@ -4950,8 +4989,8 @@ async function senderRows(cdp, base, token) {
   const P = id => `.pn[data-id="${id}"]`;
   const onRow = `document.querySelector("#toc .dk-pane.on .dk-focus")?.dataset.focus`;
   const focusOn = async id => { await q.clickOn(`${P(id)} .pn-body`); return until(`${onRow} === "${id}"`); };
-  // Since 1.67 the rail lists only what waits to be read (#236), so a page
-  // read once is put back on the queue before it is opened from there again.
+  // A page is put back on the queue before it is opened from the rail: what
+  // waits is first there, so its row is in the six whatever else was sent.
   const read = async id => { await post("/api/queue/unread", { ids: [id] }, TK); await until(`!!document.querySelector('#toc a[data-read="${id}"]')`); await q.ev(`document.querySelector('#toc a[data-read="${id}"]').click(); 1`); return until(`!document.querySelector("#chrome .over").hidden && document.querySelector("#toc .dk-doc.on a")?.dataset.read === "${id}"`); };
   const ex = `document.querySelector("#chrome .over-x")`;
   const docTop = `Math.round(document.querySelector("#doc").getBoundingClientRect().top * 10) / 10`;
@@ -5011,6 +5050,16 @@ async function senderRows(cdp, base, token) {
     const drawer = await until(`document.querySelector(".dk-drawer")?.classList.contains("open") && !!document.querySelector('.dk-drawer ${P(pc)}')`);
     rows.push(["one in the back opens its drawer", drawer && /^Back to panel [5-8] · /.test(backTip),
       !drawer ? `no drawer on it; the ✕ said "${backTip}"` : `the drawer is open on it; the ✕ said "${backTip}"`]);
+
+    // 1.68: a desk all read still lists its documents, and one that waits
+    // again goes to the head of them, whatever its age.
+    const list = `[...document.querySelectorAll("#toc .dk-docs:not(.dk-offs) a[data-read]")].map(a => (a.classList.contains("new") ? "!" : "") + a.dataset.read).join(" ")`;
+    const allRead = await until(`(l => l.split(" ").length === 3 && !l.includes("!"))(${list})`);
+    const readList = await q.ev(list);
+    await post("/api/queue/unread", { ids: [noPanel] }, TK);
+    const first = await until(`(${list}).startsWith("!${noPanel} ")`);
+    rows.push(["a desk all read lists its documents, and one that waits again is first", allRead && first,
+      !allRead ? `the rail listed "${readList}" with all three read` : first ? "three read rows, then the oldest first once it waits" : `it waits, and the rail lists "${await q.ev(list)}"`]);
   } finally {
     for (const pane of [pa, pb, pc]) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});

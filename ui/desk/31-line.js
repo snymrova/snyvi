@@ -1,6 +1,6 @@
 /* ui/desk/31-line.js: a part of desk.js, one module. build.rs joins ui/desk/*.js in name
  * order (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
-// ---------- the line (1.67) ----------
+// ---------- the line (1.67), which the reader reads as "Next up" (1.68) ----------
 
 /* A desk has a goal and an ordered queue of its notes (src/desk/line.rs,
  * plan f586a9fe09). Until now the reader picked every next piece by hand:
@@ -17,9 +17,16 @@
  * capability routes; an agent takes the next note (`next_work`) and
  * cannot reorder or start another. Every row keeps its height whatever
  * its state, and the field for the goal or a command opens in the room
- * its words had: nothing under it moves. */
+ * its words had: nothing under it moves.
+ *
+ * 1.68: the section is headed "Next up". "The line" was a play on two
+ * things at once, the goal in one line and the notes in a line, and said
+ * neither to someone new; it stays the name in the code, the routes and
+ * what agents are told. And a note is added from a row like every other
+ * in the rail, whose menu lies over what is under it: the one native
+ * select in the rail read as a field of some other form. */
 
-let lineAt = null, lineGot = null, lineEdit = null, lineDraft = "", lineFocused = false, lineBusy = false;
+let lineAt = null, lineGot = null, lineEdit = null, lineDraft = "", lineFocused = false, lineBusy = false, lineMenu = false, lineAway = null;
 const LINE_NONE = { goal: "", queue: [], next: 0 };
 
 /** Read again: with the notes, and on their `desknotes` event. */
@@ -48,9 +55,9 @@ function lineRow(d, l, r, i, by, esc) {
   const start = next
     ? `<button type="button" class="dk-ln-start" data-a="line-start"${lineBusy ? " disabled" : ""} data-tip="Start next" data-tip-sub="a panel in a worktree of its own, started with snyvi's words and this note's number">${lineBusy ? "Starting…" : "Start next"}</button>` : "";
   const tools = `<span class="dk-ln-tools">` +
-    `<button type="button" data-a="line-up" data-n="${r.id}"${i ? "" : " disabled"} aria-label="Move note ${r.id} up the line" data-tip="Earlier">↑</button>` +
-    `<button type="button" data-a="line-down" data-n="${r.id}"${i < l.queue.length - 1 ? "" : " disabled"} aria-label="Move note ${r.id} down the line" data-tip="Later">↓</button>` +
-    `<button type="button" data-a="line-off" data-n="${r.id}" aria-label="Take note ${r.id} off the line" data-tip="Off the line" data-tip-sub="the note stays on your list">${ico("x")}</button></span>`;
+    `<button type="button" data-a="line-up" data-n="${r.id}"${i ? "" : " disabled"} aria-label="Move note ${r.id} earlier" data-tip="Earlier">↑</button>` +
+    `<button type="button" data-a="line-down" data-n="${r.id}"${i < l.queue.length - 1 ? "" : " disabled"} aria-label="Move note ${r.id} later" data-tip="Later">↓</button>` +
+    `<button type="button" data-a="line-off" data-n="${r.id}" aria-label="Take note ${r.id} off Next up" data-tip="Off Next up" data-tip-sub="the note stays on your list">${ico("x")}</button></span>`;
   return `<li class="dk-ln-row${r.done ? " done" : ""}${next ? " next" : ""}"><span class="dk-ln-i" aria-hidden="true">${r.done ? "✓" : i + 1}</span>` +
     `<span class="dk-ln-b"><span class="dk-ln-t" data-tip="${esc(text)}" data-tip-overflow>#${r.id} ${esc(text)}</span>` +
     `<span class="dk-ln-s"><span class="dk-ln-st">${state}${tree}</span>${when ? " · " + when : ""}</span></span>${start}${tools}</li>`;
@@ -67,13 +74,17 @@ function lineSec(d) {
     : `<button type="button" class="dk-ln-goal" data-a="line-goal" data-tip="The goal" data-tip-sub="one line of yours; click to change it">${l.goal ? `<b>Goal:</b> ${esc(l.goal)}` : "Set a goal"}</button>`;
   const bar = all ? `<span class="dk-ln-n">${done} of ${all} done</span><span class="dk-ln-bar" aria-hidden="true"><i style="width:${Math.round(done / all * 100)}%"></i></span>` : "";
   const free = notes.filter(x => !x.done && !x.gone && !x.suggested_by && !l.queue.some(r => r.id === x.id));
+  // The row is there whenever a note could be added, and its menu lies
+  // over what is under it: opening it moves nothing.
+  const open = lineMenu && free.length && all < 40;
   const add = free.length && all < 40
-    ? `<select class="dk-ln-add" aria-label="Add a note to the line"><option value="">+ Add a note to the line</option>${free.map(x => `<option value="${x.id}">#${x.id} ${esc(x.text.length > 56 ? x.text.slice(0, 55) + "…" : x.text)}</option>`).join("")}</select>` : "";
+    ? `<div class="dk-ln-addrow"><button type="button" class="dk-new dk-ln-add" data-a="line-add" aria-haspopup="menu" aria-expanded="${!!open}" data-tip="Add a note" data-tip-sub="one of your open notes, put last in the order">+ Add a note</button>` +
+      (open ? `<span class="dk-due-pop dk-ln-pop" role="menu" aria-label="Add a note to Next up">${free.map(x => `<button type="button" role="menuitem" data-a="line-put" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-overflow>#${x.id} ${esc(x.text)}</button>`).join("")}</span>` : "") + `</div>` : "";
   const rows = l.queue.map((r, i) => lineRow(d, l, r, i, by, esc)).join("");
   const left = all - done;
-  return sec("line", "rail.line", "The line", {
+  return sec("line", "rail.line", "Next up", {
     cls: "dk-line", part: "rail.line.head", empty: !all && !l.goal,
-    tip: "The line", sub: "This desk's goal and your notes in the order to do them. Start next opens a panel for the first one that is free; agents take the next, never reorder.",
+    tip: "Next up", sub: "This desk's goal and your notes in the order to do them. Start next opens a panel for the first one that is free; agents take the next, never reorder.",
     count: left || "", countTip: left ? `${left} to go` : "",
   }, `<div class="dk-ln-head">${goal}${bar}</div>` + errLine("line", esc, "p") +
     (rows ? `<ol class="dk-ln-list">${rows}</ol>` : "") + add);
@@ -81,14 +92,35 @@ function lineSec(d) {
 
 /** The field, put back after a redraw with what was typed in it. */
 function lineFocus() {
-  const sel = ctx.tocEl.querySelector(".dk-ln-add");
-  if (sel && !sel.$wired) {
-    sel.$wired = true;
-    sel.addEventListener("change", () => {
-      const d = current(), n = +sel.value;
-      if (d && n) lineSet(d, { order: [...lineOf(d).queue.map(r => r.id), n] });
+  // The menu's keys: Escape shuts it and gives the row the focus back; the
+  // arrows walk it. Stopped here, since the desk gives every other key to
+  // the shell in the focused panel.
+  const pop = ctx.tocEl.querySelector(".dk-ln-pop");
+  if (pop && !pop.$wired) {
+    pop.$wired = true;
+    pop.addEventListener("keydown", e => {
+      const its = [...pop.querySelectorAll("button")], at = its.indexOf(document.activeElement);
+      // Tab leaves it as Escape does: shut, the focus on the row it hangs from.
+      if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); lineMenu = false; rail(); ctx.tocEl.querySelector(".dk-ln-add")?.focus(); }
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); its[(at + (e.key === "ArrowDown" ? 1 : its.length - 1)) % its.length]?.focus(); }
     });
   }
+  // A press anywhere else shuts it too: a board's section, the page, a
+  // panel. The menu is taken out where it lies, not by drawing the rail
+  // again, so a press on another of the rail's buttons still lands on it.
+  if (pop && !lineAway) document.addEventListener("pointerdown", lineAway = e => {
+    if (lineMenu && e.target.closest?.(".dk-ln-addrow")) return;
+    document.removeEventListener("pointerdown", lineAway, true);
+    lineAway = null;
+    if (!lineMenu) return;
+    lineMenu = false;
+    const row = ctx.tocEl.querySelector(".dk-ln-addrow");
+    row?.querySelector(".dk-ln-pop")?.remove();
+    row?.querySelector(".dk-ln-add")?.setAttribute("aria-expanded", "false");
+    // The rail's last drawing still holds the menu: forget it, or opening
+    // the menu again draws the same words and `drawIn` skips them.
+    ctx.tocEl.$html = null;
+  }, true);
   const inp = ctx.tocEl.querySelector(".dk-ln-in");
   if (!inp) { lineFocused = false; return; }
   inp.value = lineDraft;
@@ -113,15 +145,30 @@ async function lineSet(d, body) {
   try {
     const j = await ctx.api(`/api/desks/${d.id}/line`, body);
     lineAt = d.id; lineGot = j.line || LINE_NONE;
-  } catch (e) { rowErr = { k: "line", why: "Could not change the line", raw: e.message }; }
+  } catch (e) { rowErr = { k: "line", why: "Could not change Next up", raw: e.message }; }
   rail();
 }
 
-/** The line's clicks. True when the click was one of them. */
+/** The line's clicks. True when the click was one of them. Any other press
+ *  shuts its menu, as the stage's is shut (22-change.js). */
 async function lineAct(a, b, d) {
-  if (!a?.startsWith("line-")) return false;
+  if (!a?.startsWith("line-")) { lineMenu = false; return false; }
   const l = lineOf(d), ids = l.queue.map(r => r.id), n = +b.dataset.n, i = ids.indexOf(n);
-  if (a === "line-goal") { lineEdit = { goal: true }; lineDraft = l.goal; lineFocused = true; ctx.fold("line", false); rail(); }
+  const menu = lineMenu;
+  lineMenu = false;
+  if (a === "line-add") {
+    lineMenu = !menu;
+    ctx.fold("line", false);
+    rail();
+    if (lineMenu) ctx.tocEl.querySelector(".dk-ln-pop button")?.focus();
+  }
+  else if (a === "line-put") {
+    if (n && i < 0) await lineSet(d, { order: [...ids, n] }); else rail();
+    // The focus back on the row the menu hung from; with no note left to
+    // add, that row is gone, and the goal takes it.
+    (ctx.tocEl.querySelector(".dk-ln-add") || ctx.tocEl.querySelector(".dk-ln-goal"))?.focus();
+  }
+  else if (a === "line-goal") { lineEdit = { goal: true }; lineDraft = l.goal; lineFocused = true; ctx.fold("line", false); rail(); }
   else if (a === "line-when") { lineEdit = { when: n }; lineDraft = l.queue[i]?.done_when || ""; lineFocused = true; rail(); }
   else if ((a === "line-up" || a === "line-down") && i >= 0) {
     const j = a === "line-up" ? i - 1 : i + 1;
@@ -185,5 +232,10 @@ const LINE_CSS = `
 .dk-ln-tools button:hover:not(:disabled) { color: var(--accent); }
 .dk-ln-tools button:disabled { opacity: .35; cursor: default; }
 .dk-ln-tools svg { width: 10px; height: 10px; }
-.dk-ln-add { display: block; width: calc(100% - 16px); margin: 4px 8px 2px; padding: 2px 4px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: transparent; color: var(--fg-3); font-size: var(--fs-micro); }
+/* The row a note is added from, New panel's own shape, and its menu over
+ * what is under it: the rail's menu (.dk-due-pop), as wide as the rail and
+ * no taller than nine notes. */
+.dk-ln-addrow { position: relative; margin-top: 2px; }
+.dk-ln-pop { position: absolute; z-index: var(--z-pop, 30); top: calc(100% - 2px); left: 8px; right: 8px; display: grid; gap: 1px; max-height: 232px; overflow-y: auto; padding: 4px; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-ln-pop > button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;

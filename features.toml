@@ -25,8 +25,15 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "rail-tidy"
+since = "1.68.0"
+title = "A desk's right side reads at a glance"
+line = "Documents lists the desk's six newest pages under its panels, what waits to be read first. A panel's name has its row: its stage is a small mark, and how full its context is shows from 60%. The line is called Next up, and a note is added to it from a menu."
+show = "desk .dk-docs"
+
+[[feature]]
 id = "said"
-since = "1.67.1"
+since = "1.68.0"
 title = "Any program can say what it is doing"
 line = "A script, a test run or any agent can light its panel's dot the way Claude does, by printing one line: working, done, or that it needs you. Ask your agent to make a script of yours say its status."
 small = "yes"
