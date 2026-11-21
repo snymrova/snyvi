@@ -64,11 +64,11 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 ```
 cargo test
 cargo +<CI stable> clippy --all-targets -- -D warnings    # CI's Rust is newer than local
-node bench/bytes.mjs --check && node bench/lint-ui.mjs --check && node bench/size.mjs --check
+node bench/bytes.mjs --bin <sandbox binary> --check && node bench/lint-ui.mjs --check && node bench/size.mjs --check
 snyvi bench --check
 ```
 
-Review in a test window on a spare port (`SNYVI_PORT=78xx`, `SNYVI_UI_DIR=ui` hot-reloads `ui/`), never the daemon on 7777.
+Run and review in the sandbox, never the daemon on 7777: `bench/sandbox.sh up` (a scratch HOME, a spare port, a binary built from this tree, `ui/` hot-reloaded), then `run <snyvi args>`, `status`, `shot`, `restart`, `down`. Do not start, stop, restart or `init-claude` a snyvi by hand from this checkout, and off CI give a bench its binary (`--bin`), the sandbox's.
 
 ## Working here
 

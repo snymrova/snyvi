@@ -22,6 +22,7 @@ the questions the design left open.
 | That Claude was open in a pane when the daemon stopped | `panes.resume_next`: 1 after a planned restart, 2 after any other stop, 3 while an agent is in it (so a crash leaves it), 4 an offer a crash left, 5 an offer a window has seen (`src/desk/marks.rs`) | until the panel starts, or the second start after a window saw it |
 | A pane's last screen, as plain text | `panes/<id>.txt` beside the store | yes, shown greyed |
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
+| What the program in a pane said of itself (1.67.1): `working`, `needs_you`, `done`, `error` and the name it gave | memory, `Status::said` and `said_app`, from `OSC 7501` | no; gone when its command or its process ends |
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
 | A desk's links in the rail's foot, the hidden ones too | `desks.links`, JSON, `src/links.rs` | yes |
 | A routine: its line, Waits list, limits, its panel, the file its name resolved to and its hash (with its scripts folder's), its Start (a draft has none), its gate, watch, shape, model, effort and context, and its runs | `routines`, `routine_runs`, `src/routine.rs`; the text as allowed, for its diff, in `routines/<id>/allowed.md` | yes; a run under way when the daemon stops is ended, said so |
@@ -213,19 +214,28 @@ first hook -- has nothing to bring back.
 
 **Views over a desk (1.58, plan 6ff79c55a7).** A desk has views, not kinds:
 Panels, Folder, Page, and a Board for each `design/<board>/` its folder
-holds. Since 1.60 (plan 586c0491b6) they are the head of the desk's ⋯ menu,
-the one on screen ticked, and the head keeps one chip while a view is open
-(`Folder ✕`, `Board · Pricing ✕` by the name its `board.json` gives), before
-the left-off line, whose room it takes from; ✕, Esc on a board or the page,
-or ⌃⌥F for Folder go back (`ui/desk/25-views.js`).
+holds. Since 1.68 (plan d2db60758c) they are a **switcher** in the head,
+after the tabs (`ui/desk/33-switch.js`): four segments, always there, always
+in this order -- Panels, Folder, Page, Boards ▾. The one on screen says its
+name, the others are icons with a tip and their key, and the switcher's
+width is fixed (Boards takes what the others leave), so a view opening
+moves nothing. Coming back is always the same press, Panels; Esc on a board
+or the page, ⌃⌥F and ⌃⌥D go back too. Boards names the board on screen and
+opens the boards list (docs/BOARD.md). From 1.60 to 1.67 the views were in
+the desk's ⋯ and the head kept only a `Board · Pricing ✕` chip, whose ✕
+meant "back" there and "not now" on the next chip; the reader got lost
+coming back, and ⋯ grew a row per board. ⋯ now holds the desk's own actions.
+Over the folder the tabs' `+` keeps its room, unseen, so the switcher stands
+where it stands on the panels.
 
 **Ways to a board (1.67, `ui/desk/32-ways.js`).** A board or the page open
 over the desk is in the address, `/desk/<id>#view=board:<name>`, so a
-reload, Back and a link land on it. While the panels are up and a board has
-sections drawn since the reader last had it on screen, the head carries one
-chip in the same place, `Board · Pricing · 9 new`; a click opens it, its ✕
-is "not now". ⌃⌥D goes to that board, else the last one open, and back to
-the panels from a board.
+reload, Back and a link land on it. A board with sections drawn since the
+reader last had it on screen puts a dot on the switcher's Boards segment,
+in any view, and "9 new" on its row in the boards list; a new board an
+agent made gets a card under the segment, once (docs/BOARD.md). ⌃⌥D goes to
+the board with the most new, else the last one open, and back to the panels
+from a board.
 
 Every view **docks one panel** the same way (1.60, views audit a5057fcd18):
 the pane's own element moves into the dock, socket, scrollback and keys
@@ -460,10 +470,11 @@ document's meta reads **From snyvi [1] ▸**. It is a link to the desk with
 that pane focused, and it still names the desk after the desk is closed.
 
 The attribution runs the other way too. The desk's rail has a **Documents**
-list under its panes: what a pane on this desk sent that waits to be read
-(1.67, #236; until then every document, which the Inbox now lists on the
-desk's chip, one click from the rail's *All N in the Inbox*), newest
-first, each row with the unread mark, the title, the slot it came from and
+list under its panes: six of what a pane on this desk sent, what waits to
+be read first and then the newest read (1.68; 1.67 listed only what
+waits, #236, and until then every document, which the Inbox now lists on
+the desk's chip, one click from the rail's *All N in the Inbox →*), each
+row with the unread mark, the title, the slot it came from and
 its age, from `GET /api/desks/{id}/docs`, behind the same gate as every
 other desk route. A click opens the document as the page, and the rail
 stays the desk's: the panes, and the documents with the open one marked, so
@@ -555,6 +566,26 @@ to that pane. Silence is not a signal, because every idle shell would read as
 blocked. The page shows a count beside `Desks`, a `!` on the desk and one
 amber rule under the pane. There is no modal, and focus is not moved.
 
+**What a program says of itself (1.67.1).** A program can say what it is
+doing with `OSC 7501`, the Program Status Protocol other terminals read too:
+
+    printf '\e]7501;state=working:app=deploy\e\\'
+
+`state` is `working`, `done`, `blocked` (shown as "needs you", and a block
+like a bell's) or `error`; `idle` and `clear` take the word back. `app` is a
+name for the panel's head, kept to 24 plain characters. Nothing else in the
+report is read: no progress, no title, no message, and no record with an
+`id`. The word is gone when the command finishes (`OSC 133;D`) or the
+process ends.
+
+It is text any program can print, a `cat` of a file too, so it is for
+drawing and for nothing else. It is kept in `Status::said`, apart from
+`Status::agent`, which only an agent's hook sets with the token. A press
+typed into a panel, a routine waiting on its panel, a restore after a crash,
+a thread that "runs here" and an account switch all read `agent` and
+`agent_in` and never `said` (`src/pane.rs`, `say`; a test holds a press to
+it). While a hook's agent is in the pane, a printed word is dropped.
+
 **What an agent is doing.** Claude Code says more than a bell can. Its
 hooks run `snyvi hook`, and inside a pane that command knows the pane by
 `SNYVI_SESSION`. So a prompt or a tool call marks the pane *working*, a
@@ -622,6 +653,18 @@ outside. `⌘` combinations go to the platform.
 Ctrl+Shift+C and Ctrl+Shift+V are copy and paste, as in a Linux terminal.
 Every other key goes to the pane, including the single-letter keys the
 reading view uses.
+
+**The rail's rows since 1.68.** A panel's row gives its width to the name:
+the thread's stage is a 16 px mark at the row's end (a diamond, filled while
+the work moves, hollow before it starts or while it is parked, a ✓ once
+shipped), with the word in its tip, and the context figure is on the row
+only from 60% (`CTX_SHOWN`), as `ctx 72%`; under that it is in the row's
+tip, "context 15% full". The head counts `2 of 4`. The foot is one line:
+`+ New panel`, then a quieter `in the back…`, whose field takes the line
+while it is open. Documents is under Panels by default (`widget::RIGHT`; a
+stored layout keeps its order), then Notes with **Next up** over them: the
+line of 1.67 under the name a reader sees, `line` everywhere else. A note
+is added to it from `+ Add a note`, whose menu lies over what is under it.
 
 **The routes 1.7.1 added**, all behind the capability: `POST
 /api/panes/{id}/restore` (Undo a close), `POST /api/panes/{id}/rename`

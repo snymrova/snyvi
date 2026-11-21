@@ -13,10 +13,10 @@
  *
  * A count. The desks list carries when each board's sections last changed
  * (`marks`, src/board.rs); this window keeps when the reader last had each
- * board on screen. What changed since is "N new", said in one place: a chip
- * in the desk's head while the panels are up, where the view's own chip
- * sits when a view is open. It takes from the left-off line's room and moves
- * no control. Its ✕ is "not now": seen, without opening.
+ * board on screen. What changed since is "N new": a dot on the switcher's
+ * Boards segment, in whatever view, and the count on the board's row in the
+ * boards list (33-switch.js, 1.68). Until 1.68 it was a chip in the head
+ * whose ✕ meant "not now"; it is gone, with that second meaning of ✕.
  *
  * A key. ⌃⌥D goes to the board with something new, else the last one open,
  * and back to the panels from a board.
@@ -57,38 +57,6 @@ function boardFresh(d) {
   return best;
 }
 
-/** The chip on the panels: "Board · name · 9 new", there only while a board
- *  has something the reader has not seen. */
-function waysChip(d, hd, on) {
-  const best = on === "panels" ? boardFresh(d) : null;
-  let el = hd.querySelector(".dk-vnew");
-  if (!best) { el?.remove(); return; }
-  if (!el) {
-    el = Object.assign(document.createElement("button"), { type: "button", className: "dk-vchip dk-vnew" });
-    const c = hd.querySelector(".dk-left-c");
-    if (c) c.before(el); else hd.querySelector(".dk-groups").after(el);
-  }
-  const { esc } = ctx, name = best.b.name || best.b.id;
-  const html = `<span>Board · ${esc(name)} · ${best.n} new</span><i data-board-seen="${esc(best.b.id)}" aria-hidden="true">✕</i>`;
-  if (el.$html !== html) { el.innerHTML = html; el.$html = html; }
-  el.dataset.viewOpen = `board:${best.b.id}`;
-  el.setAttribute("aria-label", `Open the board ${name}: ${best.n} new since you looked`);
-  el.dataset.tip = "Open the board";
-  el.dataset.tipSub = `${best.n} drawn since you looked · ✕ for not now`;
-  el.dataset.key = "ctrl+alt+d";
-}
-
-/** A click on the chip's ✕: seen, the board not opened. True when it was. */
-function waysClick(e) {
-  const x = e.target.closest("[data-board-seen]");
-  if (!x || deskId == null) return false;
-  e.preventDefault();
-  boardSeen(deskId, x.dataset.boardSeen);
-  const d = current();
-  if (d) viewsSlot(d);
-  return true;
-}
-
 /** ⌃⌥D: to the board with something new, else the last one open here, and
  *  from a board back to the panels. A desk without a board has no such key. */
 function boardKey(e) {
@@ -107,7 +75,7 @@ function boardKey(e) {
 }
 
 /** A board on this desk moved while it was not on screen: the desks list is
- *  read again, once for a burst, so the chip's count is the board's. */
+ *  read again, once for a burst, so the dot and the list count what is new. */
 let waysT = 0;
 function waysMoved() {
   clearTimeout(waysT);
@@ -161,7 +129,4 @@ async function lookAsked(j) {
   api(`/api/desks/${j.desk}/board/${encodeURIComponent(j.board)}/look/${j.n}`, { png: png.replace(/^data:image\/png;base64,/, "") }).catch(() => {});
 }
 
-const WAYS_CSS = `
-.dk-vnew { box-shadow: inset 0 0 0 1px var(--accent); }
-.dk-vnew i { cursor: pointer; }
-`;
+const WAYS_CSS = "";

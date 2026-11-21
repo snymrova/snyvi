@@ -4,9 +4,9 @@
 /*
  * A desk has views, not kinds: Panels (the grid, as ever), Folder (the desk's
  * folder read over it, #214), and a Board for each `design/<board>/` its
- * folder holds (docs/BOARD.md). The switcher sits in the head at a fixed
- * place, Panels and Folder always there, so a board appearing adds a button
- * at the end, into the head's free middle, and moves nothing.
+ * folder holds (docs/BOARD.md), and a Page. The switcher (33-switch.js) sits
+ * in the head after the tabs, its four segments always there at one width,
+ * so a view opening, or a board appearing, moves nothing.
  *
  * A board opens over the grid, inside it, and docks one panel beside it --
  * the one the reader last had focused, else the first -- so the agent they
@@ -39,55 +39,30 @@ function tellFocus(f) {
   ctx.api(`/api/desks/${deskId}/focus`, f).catch(() => {});
 }
 
-/* 1.60 (plan 586c0491b6): the views live in the desk's ⋯ menu, not in a
- * switcher in the head -- the head stays quiet, and the place of nothing in
- * it depends on which boards a folder holds. What the head keeps is the way
- * back: while a view other than the panels is open, one chip, `Folder ✕`,
- * at the start of the left-off line's room. That line takes the head's free
- * middle and cuts its own text, so the chip coming and going takes from
- * that text and moves no control. ✕ on the chip, Esc on the view, ⌃⌥F for
- * Folder, or Panels in ⋯ go back. */
+/* 1.60 put the views in the desk's ⋯ and kept only a way back in the head,
+ * a `Folder ✕` chip. 1.68 (plan d2db60758c) puts them back in the head, as
+ * the switcher (33-switch.js): the reader got lost coming back, and the ✕
+ * meant "back" on one chip and "not now" on the next. ⋯ keeps the desk's own
+ * actions. */
 
-/** The views this desk has, in the menu's order: `[view, label]`. */
-// Each with a line on what it is, for the menu: a view is a way of looking
-// at the same desk, and "Page" or "Board" alone does not say which way.
-const viewList = d => [["panels", "Panels", "your shells and Claude, side by side"],
-  ["folder", "Folder", "this desk's files, a panel with them"],
-  ["page", "Page", "the desk's landing page, to show people"],
-  ...boardHeads(d).map(b => [`board:${b.id}`, `Board · ${b.name}`, "sections Claude draws, a panel with them"])];
+/** The desk's views, in the switcher's order: `[view, label]`. */
+const viewList = d => [["panels", "Panels"], ["folder", "Folder"], ["page", "Page"],
+  ...boardHeads(d).map(b => [`board:${b.id}`, `Board · ${b.name}`])];
 
 /** The view open on desk `d`: "panels", "folder", "page" or "board:<name>". */
 const viewNow = d => fdock && fdock.desk === d.id ? "folder" : viewOn && viewOn.desk === d.id ? (viewOn.page ? "page" : `board:${viewOn.board}`) : "panels";
 
-/** Who opened the view on screen, when it was an agent (`open_view`): its tip says so. */
+/** Who opened the view on screen, when it was an agent (`open_view`): Panels' tip says so. */
 let viewBy = "";
 
-/** The chip, drawn in place on every layout: in the left-off line's box,
- *  before the line, there only while a view is open. */
+/** The switcher, and over a board's folder its way to the board, drawn in
+ *  place on every layout; the boards list, when open, follows the desk. */
 function viewsSlot(d) {
-  const hd = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
+  const hd = ctx.docEl.querySelector(".dk-head");
   if (!hd) return;
-  const on = viewNow(d);
-  // A board by the name its board.json gives, once read (V3); its folder's until then.
-  let name = (viewList(d).find(([v]) => v === on) || [, ""])[1];
-  if (on.startsWith("board:") && boardMod && boardMod.name()) name = `Board · ${boardMod.name()}`;
-  let el = hd.querySelector(".dk-vchip:not(.dk-vboard):not(.dk-vnew)");
-  // On the panels: a board with something new, when there is one (32-ways.js).
-  waysChip(d, hd, on);
-  if (on === "panels") { el?.remove(); boardHint(d, hd, on); return; }
-  if (!el) {
-    el = Object.assign(document.createElement("button"), { type: "button", className: "dk-vchip" });
-    // In the left-off box, before its line (05-desk.js `leftBox`, #227).
-    const c = hd.querySelector(".dk-left-c");
-    if (c) c.before(el); else hd.querySelector(".dk-groups").after(el);
-  }
-  const html = `<span>${esc(name)}</span><i aria-hidden="true">✕</i>`;
-  if (el.$html !== html) { el.innerHTML = html; el.$html = html; }
-  el.setAttribute("aria-label", `${name}: back to the panels`);
-  el.dataset.tip = "Back to the panels";
-  el.dataset.tipSub = (viewBy ? `opened by ${viewBy} · ` : "") + "Esc or ⋯ → Panels too";
-  if (on === "folder") el.dataset.key = "ctrl+alt+f"; else delete el.dataset.key;
-  boardHint(d, hd, on);
+  switchSlot(d);
+  boardHint(d, hd, viewNow(d));
+  blPaint();
 }
 
 /* Over the folder, inside a board's own folder (`design/<board>/`): the board
@@ -100,7 +75,9 @@ function boardHint(d, hd, on) {
   if (!b) { el?.remove(); return; }
   if (!el) {
     el = Object.assign(document.createElement("button"), { type: "button", className: "dk-vchip dk-vboard" });
-    hd.querySelector(".dk-vchip:not(.dk-vboard):not(.dk-vnew)")?.after(el);
+    // In the left-off box, before its line: it takes from the line's room.
+    const c = hd.querySelector(".dk-left-c");
+    if (c) c.before(el); else hd.querySelector(".dk-sw")?.after(el);
   }
   el.dataset.viewOpen = `board:${b}`;
   el.textContent = `Open as board`;
@@ -113,13 +90,12 @@ function folderPath() {
   try { return decodeURIComponent(location.pathname.replace(/^\/b\/[^/]+\/?/, "")); } catch { return ""; }
 }
 
-/** A click in the chip or the dock's controls. True when it was one of theirs. */
+/** A click in the switcher, its card, or the dock's controls. True when it was one of theirs. */
 function viewClick(e) {
   if (pageClick(e)) return true;
-  if (waysClick(e)) return true;
+  if (swClick(e)) return true;
   const vo = e.target.closest("[data-view-open]");
   if (vo) { e.preventDefault(); openView(vo.dataset.viewOpen); return true; }
-  if (e.target.closest(".dk-vchip")) { e.preventDefault(); openView("panels"); return true; }
   return dockClick(e);
 }
 
@@ -149,30 +125,17 @@ document.addEventListener("keydown", e => {
   openView("panels");
 });
 
-/** For the ⋯ menu (menu.js): the desk's views, the one on screen marked. */
+/** For the ⋯ menu (menu.js): the desk's views, the one on screen marked --
+ *  it offers Full view only on the panels. */
 export function viewsHere() {
   const d = current();
   if (!d) return null;
   const on = viewNow(d);
-  return viewList(d).map(([v, label, about]) => ({ v, label, about, on: v === on }));
+  return viewList(d).map(([v, label]) => ({ v, label, on: v === on }));
 }
 export const viewHere = v => openView(v);
 
-/** ⋯ → New board (1.62, V1): an empty board, made and opened, named
- *  "Board", "Board 2"… The reader renames it from its title. */
-export async function newBoardHere() {
-  const d = current();
-  if (!d) return;
-  const names = new Set(boardHeads(d).map(b => b.name));
-  let n = 1, name = "Board";
-  while (names.has(name)) name = `Board ${++n}`;
-  try {
-    const j = await makeBoard(d.id, name);
-    if (j && j.board) openView(`board:${j.board}`);
-  } catch (e) { ctx.toast("Could not make the board", e); }
-}
-
-/** A new board on desk `id`, and the desks list read again so ⋯ has it. */
+/** A new board on desk `id`, and the desks list read again so the switcher has it. */
 async function makeBoard(id, name) {
   const j = await ctx.api(`/api/desks/${id}/boards`, { name });
   await ctx.refresh();
@@ -300,10 +263,8 @@ function viewsMount(d) {
   boardUse().then(m => {
     if (viewOn !== want || !surf.isConnected) return;
     m.open({ host: surf, desk: d.id, board: want.board, api: ctx.api, esc: ctx.esc, focus: tellFocus, named: () => { const c = current(); if (c) viewsSlot(c); }, dir: "design",
-      boards: () => { const c = current(); return c ? boardHeads(c) : []; },
-      make: name => makeBoard(d.id, name),
-      rename: (b, name) => ctx.api(`/api/desks/${d.id}/board/${encodeURIComponent(b)}/name`, { name }).then(j => (ctx.refresh(), j)),
-      switch: b => openView(`board:${b}`),
+      // The board's title opens the desk's boards list, under it (33-switch.js).
+      list: el => blToggle(el, false),
       ask: askClaude, sayErr: e => ctx.sayErr(e).why,
       // 1.67: the reader's hide and show, a section's versions, its
       // document read over the desk, and the board looked at.
@@ -329,6 +290,8 @@ export function viewSaid(n, j) {
   if (n === "view") { viewAsked(j); return; }
   if (n === "look") { lookAsked(j); return; }
   const d = current();
+  // Who drew it, for the new board's card (33-switch.js).
+  if (n === "board" && j.board && j.by) swBy.set(j.board, j.by);
   if (n === "board" && d && j.board && !boardsOf(d).includes(j.board)) { ctx.refresh(); return; }
   if (n === "board" && boardMod && viewOn && viewOn.board === j.board) boardMod.changed(j);
   // A board drawn on while the reader is elsewhere on the desk: counted.
@@ -363,6 +326,9 @@ function viewAsked(j) {
 function viewsReset() {
   if (viewOn) { boardMod?.close(); pageMod?.close(); unfocus(viewOn.desk); }
   viewOn = null; docked = null; viewBy = "";
+  // The card under Boards and the boards list are this desk's.
+  swTip = null;
+  blShut();
   folderOff();
 }
 
@@ -653,7 +619,7 @@ function folderFocus() {
 }
 
 const VIEWS_CSS = `
-/* The chip: the one way back the head keeps, in the left-off line's room. */
+/* A chip in the left-off line's room: over a board's folder, its board (V8). */
 .dk-vchip { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 20px; margin: 1px 0; padding: 0 6px 0 10px; border: 0; border-radius: var(--r-pill);
   background: var(--wash); box-shadow: inset 0 0 0 1px var(--rule); font: inherit; font-size: var(--fs-small); color: var(--fg); white-space: nowrap; cursor: pointer; }
 .dk-vchip i { font-style: normal; font-size: var(--fs-micro); color: var(--fg-3); }

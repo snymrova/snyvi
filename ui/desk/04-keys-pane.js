@@ -522,7 +522,7 @@ const sentBy = (vs, slot) => {
   // What sends documents is an agent: a panel that has had a conversation
   // says so, even while its shell is back at the prompt.
   const agent = v.status.agent || v.pane.agent_session ? "claude" : "";
-  return `[${slot}] ${v.pane.name || agent || v.status.cmd || v.pane.cmd || "shell"}`;
+  return `[${slot}] ${v.pane.name || agent || v.status.said_app || v.status.cmd || v.pane.cmd || "shell"}`;
 };
 const talked = v => /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(v.pane.agent_session || "") && !v.status.agent ? v.pane.agent_session : "";
 /** The resume command without its id, `claude --resume`, as a tip says it.
@@ -623,7 +623,11 @@ function header(v) {
   // (C6), in place of "running" or "working": which panel waits on them,
   // not only that one does. "Needs you" from the agent's own prompt wins.
   const asks = !v.switching && s.running && s.agent !== "needs_you" && !s.blocked ? asksOf(v.pane.id) : 0;
-  put($(".pn-state"), v.switching ? `↻ as ${v.switching}…` : s.agent === "needs_you" ? "! needs you" : s.blocked ? "! needs you" : asks ? `asks you · ${asks}` : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : v.pane.held ? "○ ready" : "○ stopped");
+  // 1.67.1: the word drawn is the agent's (its hook's), or else what the
+  // program printed of itself (OSC 7501: `said`, and the name it gave). Only
+  // drawing reads `said`: a switch, a press and a routine wait on `agent`.
+  const w = s.agent || s.said || "", by = !s.agent && s.said_app ? ` · ${s.said_app}` : "";
+  put($(".pn-state"), v.switching ? `↻ as ${v.switching}…` : w === "error" ? `! error${by}` : w === "needs_you" || s.blocked ? `! needs you${by}` : asks ? `asks you · ${asks}` : w === "working" ? `● working${by}` : w === "done" ? `✓ done${by}` : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : v.pane.held ? "○ ready" : "○ stopped");
   if (v.el.classList.contains("asks") !== !!asks) {
     v.el.classList.toggle("asks", !!asks);
     const st = $(".pn-state");
@@ -632,11 +636,11 @@ function header(v) {
   }
   // Said once, to a reader who cannot see the dot: a panel that needs the
   // reader, or has finished. Working and running are the quiet states.
-  const word = s.agent === "needs_you" || s.blocked ? "needs you" : s.agent === "done" ? "done" : "";
+  const word = w === "needs_you" || s.blocked ? "needs you" : w === "done" ? "done" : "";
   if (word && v.said !== word) announce(`Panel ${v.pane.slot}${v.pane.name ? ` (${v.pane.name})` : ""} ${word}`);
   v.said = word;
   v.el.classList.toggle("blk", !!s.blocked);
-  v.el.classList.toggle("done", s.agent === "done");
+  v.el.classList.toggle("done", w === "done");
   v.el.classList.toggle("off", !s.running);
   // Ended: the last screen stays, greyed by .off, and Start sits over it with
   // what was run last already typed. A pane on its way back from a daemon

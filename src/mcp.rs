@@ -1523,6 +1523,47 @@ fn session_key() -> String {
 mod tests {
     use super::*;
 
+    /// Whether `text` holds `name` as a whole word: `suggest_desk` is not in
+    /// `suggest_desk_note`.
+    fn names(text: &str, name: &str) -> bool {
+        let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        text.match_indices(name).any(|(at, _)| {
+            !text[..at].chars().next_back().is_some_and(word)
+                && !text[at + name.len()..].chars().next().is_some_and(word)
+        })
+    }
+
+    /// 1.67.1: the skill and the tools, held to each other from the code and
+    /// not from a list typed beside them. Every tool a panel's agent is
+    /// offered is taught somewhere it reads -- the skill's files or these
+    /// instructions -- and no name `merged::AWAY` retired is still taught: an
+    /// agent told of a tool it cannot see tries it.
+    #[test]
+    fn the_skill_and_the_tools_name_each_other() {
+        let mut taught = instructions(true);
+        for (_, text) in crate::setup::skill_files() {
+            taught.push('\n');
+            taught.push_str(text);
+        }
+        assert!(names("`suggest_desk`", "suggest_desk"));
+        assert!(!names("suggest_desk_note", "suggest_desk"));
+        let listed: Vec<String> = tools(true, Some(true))
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(listed.len() > 10, "{listed:?}");
+        let untaught: Vec<&String> = listed.iter().filter(|n| !names(&taught, n)).collect();
+        assert!(untaught.is_empty(), "listed, never taught: {untaught:?}");
+        let stale: Vec<&&str> = merged::AWAY.iter().filter(|n| names(&taught, n)).collect();
+        assert!(stale.is_empty(), "retired, still taught: {stale:?}");
+        for name in &listed {
+            assert!(
+                !merged::AWAY.contains(&name.as_str()),
+                "{name} is listed and away"
+            );
+        }
+    }
+
     #[test]
     fn the_list_reads_as_the_rail_shows_it() {
         let v = json!({ "desk": "alpha", "notes": [

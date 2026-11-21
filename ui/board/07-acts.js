@@ -139,7 +139,7 @@ function hiddenChip(esc) {
 
 /** A click on the hidden chip or a row of its list. True when it was one. */
 function hiddenClick(e) {
-  if (e.target.closest("[data-bd-hidden]")) { hiddenOpen = !hiddenOpen; lookOpen = false; boardsOpen = false; paintList(); return true; }
+  if (e.target.closest("[data-bd-hidden]")) { hiddenOpen = !hiddenOpen; lookOpen = false; paintList(); return true; }
   const sh = e.target.closest("[data-bd-show]");
   if (!sh) return false;
   hiddenOpen = false;

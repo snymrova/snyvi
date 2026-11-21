@@ -244,6 +244,14 @@ pub struct Screen {
     /// last taken. A status, like the bell: it lights a dot for a panel in the
     /// back and is never typed anywhere.
     pub cmd_exit: Option<i32>,
+    /// 1.67.1: what the program last said of itself through `OSC 7501`, the
+    /// Program Status Protocol, since this was last taken: `working`, `needs_you`
+    /// (its `blocked`), `done` or `error`, and the name it gave itself, or `("", "")` when it took its word back
+    /// (`idle`, `clear`) or its command finished. A status, like the bell: it
+    /// is shown and never typed, and nothing that acts reads it
+    /// (`pane::Status::said`). Any program can print one, a `cat` of a file
+    /// too, which is why only the word and a clamped name are kept.
+    pub said: Option<(&'static str, String)>,
     /// What the terminal answers back to the program -- cursor position, the
     /// device attributes -- written to the PTY by the caller. A program that
     /// asks and hears nothing can wait forever.
@@ -303,6 +311,7 @@ impl Screen {
             title: String::new(),
             bell: false,
             cmd_exit: None,
+            said: None,
             replies: Vec::new(),
             scrollback: VecDeque::new(),
             scrollback_bytes: 0,
@@ -1483,12 +1492,58 @@ impl vte::Perform for Screen {
                     .get(2)
                     .and_then(|c| std::str::from_utf8(c).ok())
                     .and_then(|c| c.parse().ok());
+                // The command is over, and what it said of itself with it: a
+                // script that died saying `working` does not go on saying it.
+                self.said = Some(("", String::new()));
+            }
+            // The Program Status Protocol: `7501;state=working:app=deploy`.
+            // The word and the name, nothing else: no progress, no title or
+            // message (free text from a program stays off the desk's chrome),
+            // and a record with an id is one of the program's own children.
+            Some(b"7501") => {
+                if let Some(said) = params.get(1).and_then(|f| said_of(f)) {
+                    self.said = Some(said);
+                }
             }
             // 52 is a clipboard write from the program. Declined, and not
             // silently: `docs/DESK.md` says so. Nothing else here is acted on.
             _ => {}
         }
     }
+}
+
+/// One `7501` payload as its word and its program's name, or nothing for one
+/// snyvi does not take: a state it does not know, a child record (`id=`), a
+/// payload past any honest length. `idle` and `clear` are the empty word.
+fn said_of(fields: &[u8]) -> Option<(&'static str, String)> {
+    if fields.len() > 1024 {
+        return None;
+    }
+    let fields = std::str::from_utf8(fields).ok()?;
+    let (mut state, mut app) = (None, "");
+    for f in fields.split(':') {
+        match f.split_once('=') {
+            Some(("state", v)) => state = Some(v),
+            Some(("app", v)) => app = v,
+            Some(("id", v)) if !v.is_empty() => return None,
+            _ => {}
+        }
+    }
+    let word = match state? {
+        "working" => "working",
+        "blocked" => "needs_you",
+        "done" => "done",
+        "error" => "error",
+        "idle" | "clear" => "",
+        _ => return None,
+    };
+    let named = |c: &char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.');
+    let app = if word.is_empty() {
+        String::new()
+    } else {
+        app.chars().filter(named).take(24).collect()
+    };
+    Some((word, app))
 }
 
 // ---------- the wire ----------
@@ -1946,6 +2001,73 @@ mod tests {
         feed(&mut s, &mut p, "\x1b]133;A\x07\x1b]133;C\x07\x1b]133;D\x07");
         assert_eq!(s.cmd_exit, None);
         assert_eq!(row(&s, 0), "");
+    }
+
+    /// 1.67.1: a program says what it is doing with OSC 7501. The word, in
+    /// snyvi's own, and a clamped name; never its title or message.
+    #[test]
+    fn a_program_says_its_status() {
+        let (mut s, mut p) = screen(40, 4);
+        feed(&mut s, &mut p, "\x1b]7501;state=working:app=deploy\x1b\\");
+        assert_eq!(s.said.take(), Some(("working", "deploy".to_string())));
+        assert_eq!(s.said, None);
+        // BEL ends one as well, and `blocked` is snyvi's `needs_you`.
+        feed(
+            &mut s,
+            &mut p,
+            "\x1b]7501;state=blocked:kind=permission:app=my-agent\x07",
+        );
+        assert_eq!(s.said.take(), Some(("needs_you", "my-agent".to_string())));
+        feed(&mut s, &mut p, "\x1b]7501;app=x:progress=40:state=done\x07");
+        assert_eq!(s.said.take(), Some(("done", "x".to_string())));
+        feed(&mut s, &mut p, "\x1b]7501;state=error\x07");
+        assert_eq!(s.said.take(), Some(("error", String::new())));
+        // Taking the word back, either way, is the empty word and no name.
+        for back in ["idle", "clear"] {
+            feed(&mut s, &mut p, &format!("\x1b]7501;state={back}:app=x\x07"));
+            assert_eq!(s.said.take(), Some(("", String::new())));
+        }
+        // Not taken: a word nobody knows, no word, a child's record.
+        for odd in ["state=dancing", "app=x", "", "state=working:id=sub1"] {
+            feed(&mut s, &mut p, &format!("\x1b]7501;{odd}\x07"));
+            assert_eq!(s.said, None, "{odd}");
+        }
+        // The name is a label: 24 plain characters, and no title or message.
+        feed(
+            &mut s,
+            &mut p,
+            "\x1b]7501;state=working:app=a b<c>/d-_.01234567890123456789XYZ:title=aGk=:msg=aGk=\x07",
+        );
+        let (word, app) = s.said.take().unwrap();
+        assert_eq!(word, "working");
+        assert_eq!(app.len(), 24);
+        assert!(
+            app.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)),
+            "{app}"
+        );
+        // Nothing of it reaches the screen or the title, and nothing rings.
+        assert!(s.title.is_empty() && !s.bell);
+    }
+
+    /// The command ending takes back what it said: a script that died saying
+    /// `working` does not leave its panel working.
+    #[test]
+    fn a_finished_command_takes_its_word_back() {
+        let (mut s, mut p) = screen(40, 4);
+        feed(
+            &mut s,
+            &mut p,
+            "\x1b]7501;state=working:app=build\x07\x1b]133;D;1\x07",
+        );
+        assert_eq!(s.said.take(), Some(("", String::new())));
+        // And the next command's word after a prompt is its own.
+        feed(
+            &mut s,
+            &mut p,
+            "\x1b]133;D;0\x07\x1b]7501;state=working\x07",
+        );
+        assert_eq!(s.said.take(), Some(("working", String::new())));
     }
 
     /// A program that asks for the mouse, or goes to the alternate screen,

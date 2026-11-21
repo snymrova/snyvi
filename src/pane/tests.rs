@@ -1187,3 +1187,147 @@ async fn a_panel_in_the_back_that_dies_needs_you() {
         panes.get(id).stop();
     }
 }
+
+/// 1.67.1: `say` on its own. What a program printed of itself is drawn and
+/// nothing else: it sets `blocked` as an agent's `needs_you` does and takes
+/// back only that, and a hook's agent in the pane wins.
+#[test]
+fn what_a_program_says_is_kept_apart_from_the_agent() {
+    let mut s = Status {
+        running: true,
+        ..Status::default()
+    };
+    assert_eq!(say(&mut s, "working", "deploy".into()), (true, false));
+    assert_eq!((s.said, s.said_app.as_str()), ("working", "deploy"));
+    assert_eq!((s.agent, s.agent_in), ("", false), "never the agent's word");
+    assert_eq!(
+        say(&mut s, "working", "deploy".into()),
+        (false, false),
+        "a repeat is no change"
+    );
+    // Waiting on the reader: blocked, once, and rung.
+    assert_eq!(say(&mut s, "needs_you", "deploy".into()), (true, true));
+    assert!(s.blocked && s.blocked_since.is_some());
+    assert_eq!(
+        say(&mut s, "error", "deploy".into()),
+        (true, false),
+        "already waiting"
+    );
+    assert!(s.blocked);
+    assert_eq!(say(&mut s, "done", "deploy".into()), (true, false));
+    assert!(!s.blocked, "leaving takes back what it set");
+    // A bell the program rang is not this word's to take back... but a word
+    // that never blocked leaves a bell's `blocked` alone.
+    s.blocked = true;
+    assert_eq!(say(&mut s, "working", String::new()), (true, false));
+    assert!(s.blocked, "a bell's, not ours");
+    s.blocked = false;
+    // A hook's agent is in: nothing printed is taken, and what was is dropped.
+    s.agent_in = true;
+    assert_eq!(say(&mut s, "needs_you", "x".into()), (true, false));
+    assert_eq!((s.said, s.said_app.as_str(), s.blocked), ("", "", false));
+    assert_eq!(say(&mut s, "working", "x".into()), (false, false));
+    // And an agent's own `needs_you` is not unblocked by a printed word going.
+    let mut s = Status {
+        running: true,
+        said: "needs_you",
+        blocked: true,
+        agent: "needs_you",
+        ..Status::default()
+    };
+    say(&mut s, "", String::new());
+    assert!(s.blocked, "the agent's own prompt is still open");
+    // A stopped pane says nothing.
+    let mut s = Status::default();
+    assert_eq!(say(&mut s, "working", "x".into()), (false, false));
+}
+
+/// A real pane whose program prints OSC 7501: the word reaches its status
+/// and the page-wide stream, and nothing that acts sees an agent there. A
+/// press is refused as for any shell, and a hook's word then takes over.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_program_that_prints_its_status_is_drawn_and_never_an_agent() {
+    let dir = crate::store::tempdir::Dir::new("snyvi-said");
+    let (events, mut ev) = broadcast::channel(64);
+    let panes = Panes::new(&dir.path, events);
+    let id = "00112233445566778899aabbccddeeff";
+    let live = panes.get(id);
+    let (_, mut rx) = live.attach();
+    let cwd = dir.path.to_string_lossy().to_string();
+    live.start(
+        Start {
+            cwd: &cwd,
+            root: &cwd,
+            cmd: "printf '\\033]7501;state=blocked:app=deploy:msg=aGk=\\033\\\\'; read x",
+            desk: "d",
+            slot: 1,
+            cols: 80,
+            rows: 10,
+            accent: "",
+            offer: false,
+            args: &[],
+            env: &[],
+            account: 0,
+            back: false,
+        },
+        &panes,
+    )
+    .unwrap();
+    let mut seen = false;
+    for _ in 0..50 {
+        match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+            Ok(Ok(m)) => {
+                let v: serde_json::Value = serde_json::from_str(&m).unwrap_or_default();
+                if v["t"] == "status" && v["s"]["said"] == "needs_you" {
+                    assert_eq!(v["s"]["said_app"], "deploy");
+                    assert_eq!(v["s"]["agent"], "");
+                    assert!(v["s"].get("agent_in").is_none(), "{m}");
+                    seen = true;
+                    break;
+                }
+            }
+            _ => {
+                if panes.status(id).said == "needs_you" {
+                    seen = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(seen, "the status frame never said it");
+    let st = panes.status(id);
+    assert_eq!((st.said, st.agent, st.agent_in), ("needs_you", "", false));
+    assert!(st.blocked, "it waits on the reader, as a bell does");
+    assert!(
+        !is_answering(&st, Duration::ZERO),
+        "not an agent mid-answer"
+    );
+    assert_eq!(
+        live.press(&["yes".to_string()], &panes),
+        Err("no agent is in its panel"),
+        "a printed word never makes a pane one a press is typed into"
+    );
+    // The page-wide stream hears it a moment after the pane's own socket.
+    let mut dots = Vec::new();
+    for _ in 0..20 {
+        while let Ok(m) = ev.try_recv() {
+            dots.push(m);
+        }
+        if dots.iter().any(|d| d.contains("\"said\":\"needs_you\"")) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        dots.iter()
+            .any(|d| d.contains("\"said\":\"needs_you\"") && d.contains("\"agent\":\"\"")),
+        "{dots:?}"
+    );
+    // A hook's agent arrives: its word is the pane's, the printed one goes.
+    assert!(panes.set_agent(id, "working"));
+    let st = panes.status(id);
+    assert_eq!((st.said, st.agent), ("", "working"));
+    assert!(!st.blocked, "what the printed word blocked went with it");
+    live.stop();
+}

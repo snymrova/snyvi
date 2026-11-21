@@ -89,13 +89,12 @@ export function open(opts) {
   bar = host.querySelector(".bd-bar");
   list = host.querySelector(".bd-list");
   list.addEventListener("click", listClick);
-  list.addEventListener("submit", boardsSubmit);
   bar.addEventListener("click", barClick);
   bar.addEventListener("submit", barSubmit);
   verAt.clear(); verList.clear();
   hiddenOpen = false; barMode = ""; barSaid = ""; barUndo = "";
   addEventListener("message", docSaid);
-  lookOpen = false; boardsOpen = false;
+  lookOpen = false;
   view = { x: 0, y: 0, k: 1 };
   picked = [];
   fitted = false; touched = false; measured = {};

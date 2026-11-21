@@ -7,7 +7,9 @@
  * the page: the only way back was not to have closed it. This is the list
  * (src/desk/closed.rs), from the desk's ⋯: each panel and tab closed here,
  * newest first, with Reopen. A panel comes back stopped, as the Undo
- * brings it; one that held a Claude session says it can resume.
+ * brings it; one that held a Claude session says it can resume. A board
+ * removed from its list (1.68, 33-switch.js) is here too, after them, with
+ * Bring back: reachable when every board is removed and the list is empty.
  *
  * A sheet under the ⋯, over the grid: it pushes nothing. Esc, a click
  * outside or the ⋯ again puts it away. */
@@ -38,9 +40,11 @@ function closedWhen(at) {
   return d === 1 ? "yesterday" : `${d} days ago`;
 }
 
-function closedRows(rows) {
+function closedRows(rows, boards = []) {
   const { esc, plural } = ctx;
-  if (!rows.length) return `<p class="dk-cl-none">Nothing closed on this desk. A panel or a tab you close is kept here, to reopen.</p>`;
+  if (!rows.length && !boards.length) return `<p class="dk-cl-none">Nothing closed on this desk. A panel, a tab or a board you close is kept here, to bring back.</p>`;
+  const bs = boards.map(b => `<li class="dk-cl-row"><span class="dk-cl-b"><b>${esc(b.name || b.id)}</b><span class="dk-cl-s">board · ${plural(b.frames || 0, "section")} · removed ${b.removed ? closedWhen(b.removed) : ""}</span></span>` +
+    `<button type="button" class="dk-new" data-clb="${esc(b.id)}" aria-label="Bring back the board ${esc(b.name || b.id)}">Bring back</button></li>`).join("");
   return `<ul class="dk-cl-list">` + rows.map(r => {
     const what = r.kind === "tab" ? `tab with ${plural(r.panes || 0, "panel")}`
       : `panel${r.cmd ? ` · ${esc(r.cmd.length > 28 ? r.cmd.slice(0, 27) + "…" : r.cmd)}` : ""}`;
@@ -48,7 +52,7 @@ function closedRows(rows) {
     const name = r.name || (r.kind === "tab" ? "A tab" : "A panel");
     return `<li class="dk-cl-row"><span class="dk-cl-b"><b>${esc(name)}</b><span class="dk-cl-s">${what} · closed ${closedWhen(r.closed_at)}${keeps}</span></span>` +
       `<button type="button" class="dk-new" data-cl="${esc(r.id)}" data-kind="${r.kind}" aria-label="Reopen ${esc(name)}">Reopen</button></li>`;
-  }).join("") + `</ul>`;
+  }).join("") + bs + `</ul>`;
 }
 
 /** The sheet, open under the desk's ⋯ (or shut, when it was open). */
@@ -66,9 +70,14 @@ async function closedOpen(d) {
   host.append(el);
   document.addEventListener("keydown", closedKey, true);
   document.addEventListener("pointerdown", closedOut, true);
-  el.addEventListener("click", e => { const b = e.target.closest("[data-cl]"); if (b) closedBack(d, b); });
+  el.addEventListener("click", e => {
+    const b = e.target.closest("[data-cl]");
+    if (b) { closedBack(d, b); return; }
+    const bb = e.target.closest("[data-clb]");
+    if (bb) { bb.disabled = true; closedShut(); boardBack(d, bb.dataset.clb); }
+  });
   await closedFill(d);
-  el.querySelector("[data-cl]")?.focus();
+  el.querySelector("[data-cl], [data-clb]")?.focus();
 }
 
 async function closedFill(d) {
@@ -77,7 +86,8 @@ async function closedFill(d) {
   let rows;
   try { rows = (await ctx.api(`/api/desks/${d.id}/closed`)).closed || []; }
   catch (e) { if (closedSheet === el) el.querySelector(".dk-cl-body").innerHTML = `<p class="dk-cl-none">Could not read what was closed: ${ctx.esc(ctx.sayErr(e).why)}</p>`; return; }
-  if (closedSheet === el) el.querySelector(".dk-cl-body").innerHTML = closedRows(rows);
+  const boards = (ctx.desks && ctx.desks.removed_boards && ctx.desks.removed_boards[d.id]) || [];
+  if (closedSheet === el) el.querySelector(".dk-cl-body").innerHTML = closedRows(rows, boards);
 }
 
 /** Reopen: the panel stopped in the lowest free slot of the side it was

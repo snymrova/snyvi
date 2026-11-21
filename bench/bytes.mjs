@@ -40,7 +40,7 @@
 
 import { gzipSync } from "node:zlib";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, statSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -48,6 +48,14 @@ import { dirname, join, resolve } from "node:path";
 const args = process.argv.slice(2);
 const flag = name => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
 const CHECK = args.includes("--check");
+// 1.67.1: off CI, the binary is named. A worktree's target/ is a link to the
+// main checkout's, so the default was whatever was last built there: on
+// 2026-11-11 that was a five-day-old binary, and it ran on the real HOME.
+// `bench/sandbox.sh up` builds one and `status` says where it is.
+if (!flag("--bin") && !process.env.CI) {
+  console.error("bytes: pass --bin <snyvi>. Off CI the default (target/release/snyvi) may be an old build;\n  bench/sandbox.sh up builds one at $XDG_RUNTIME_DIR/snyvi-sandbox-<name>/bin/snyvi");
+  process.exit(2);
+}
 const BIN = flag("--bin") || "./target/release/snyvi";
 const PORT = flag("--port") || "7797";   // 7791, 7794-7796 and 7812-7814 are taken
 const UI = resolve(dirname(fileURLToPath(import.meta.url)), "..", "ui");
@@ -102,7 +110,12 @@ let tmp = "";
 
 async function main() {
   tmp = mkdtempSync(join(tmpdir(), "snyvi-bytes-bench-"));
-  const env = { ...process.env, SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT };
+  // A HOME of its own too: a daemon writes the skill and reads Claude Code's
+  // settings under HOME, and this one is a bench. And nothing of the panel it
+  // may have been run from.
+  mkdirSync(join(tmp, "home"));
+  const mine = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^SNYVI_(SESSION|DESK|SLOT|WIDGET|ROUTINE)$/.test(k)));
+  const env = { ...mine, HOME: join(tmp, "home"), SNYVI_DATA_DIR: join(tmp, "data"), SNYVI_CONFIG_DIR: join(tmp, "config"), SNYVI_PORT: PORT, SNYVI_NOTIFY: "0", SNYVI_UPDATES: "off" };
   // `unparsed` apart from `failed`: a page over its budget is failed too, and
   // the parse row read "ok" over a home.js the browser refused to load.
   let failed = false, unparsed = false;

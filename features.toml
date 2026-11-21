@@ -25,6 +25,34 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "switcher"
+since = "1.68.0"
+title = "Views in the head, and a way back that stays put"
+line = "Panels, Folder, Page and Boards sit in the desk's head, always in the same place: Panels takes you back from any view. A dot on Boards says a board has something new, and a board Claude made gets a card there once."
+show = "desk .dk-sw"
+
+[[feature]]
+id = "board-remove"
+since = "1.68.0"
+title = "Name, order and remove boards"
+line = "The boards list makes a board with the name you give it, renames it, moves it up or down, and removes it from view. Its files stay: Undo, Removed in the list or Recently closed bring it back."
+show = "desk .dk-sw-bd"
+
+[[feature]]
+id = "rail-tidy"
+since = "1.68.0"
+title = "A desk's right side reads at a glance"
+line = "Documents lists the desk's six newest pages under its panels, what waits to be read first. A panel's name has its row: its stage is a small mark, and how full its context is shows from 60%. The line is called Next up, and a note is added to it from a menu."
+show = "desk .dk-docs"
+
+[[feature]]
+id = "said"
+since = "1.68.0"
+title = "Any program can say what it is doing"
+line = "A script, a test run or any agent can light its panel's dot the way Claude does, by printing one line: working, done, or that it needs you. Ask your agent to make a script of yours say its status."
+small = "yes"
+
+[[feature]]
 id = "floor"
 since = "1.67.0"
 title = "Home is the floor: every agent, by what it is doing"

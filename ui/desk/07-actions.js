@@ -629,6 +629,9 @@ const ICONS = {
   up: '<path d="m6 15 6-6 6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   swap: '<path d="M4 8.5h14l-3.5-3.5M20 15.5H6l3.5 3.5"/>',
+  // The switcher's (33-switch.js): a landing page, a board of sections.
+  page: '<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M3.5 8.5h17M7.5 12.5h9M7.5 16h6"/>',
+  board: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><rect x="6.5" y="7.5" width="5" height="4" rx=".8"/><rect x="13.5" y="7.5" width="4" height="9" rx=".8"/><rect x="6.5" y="13.5" width="5" height="3" rx=".8"/>',
 };
 
 export function open(c) {

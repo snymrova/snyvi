@@ -195,6 +195,15 @@ pub(crate) async fn pane_board(
         Ok(p) => p,
         Err(no) => return *no,
     };
+    // A board the reader removed is out of the agent's sight too (1.68).
+    if board::shelf(std::path::Path::new(&placed.root))
+        .removed
+        .contains_key(&name)
+    {
+        return refused(anyhow::anyhow!(
+            "the reader removed the board {name:?}; ask them to bring it back from Removed in its list"
+        ));
+    }
     board_read(&app, placed.root, placed.desk_id, name, q.since, Some(id)).await
 }
 
@@ -248,7 +257,12 @@ pub(crate) async fn pane_frame_write(
     let p = board::payload(std::path::Path::new(&placed.root), &name, &path, Some(&id));
     match receive_and_emit(&app, p).await {
         Ok(r) => {
-            board_moved(&app, placed.desk_id, &name);
+            // Who drew it, for the window's "Claude made a board" (1.68).
+            emit(
+                &app,
+                "board",
+                json!({ "desk": placed.desk_id, "board": name, "by": format!("Claude in panel {}", placed.pane.slot) }),
+            );
             (
                 StatusCode::CREATED,
                 Json(json!({
@@ -670,7 +684,7 @@ pub(crate) async fn pane_open_view(
     };
     Json(json!({
         "opened": true,
-        "line": format!("Opened {view}{at} on the user's desk; they go back with its chip or Esc. read_desk's focus says where they are."),
+        "line": format!("Opened {view}{at} on the user's desk; they go back with Panels in the desk's head, or Esc. read_desk's focus says where they are."),
     }))
     .into_response()
 }
@@ -822,4 +836,80 @@ pub(crate) fn boards_by_desk(desks: &[crate::desk::Desk]) -> serde_json::Value {
         );
     }
     serde_json::Value::Object(m)
+}
+
+/// Each desk's removed boards (1.68), for the boards list's Removed (n) and
+/// ⋯ → Recently closed: the latest first, each with when.
+pub(crate) fn removed_by_desk(desks: &[crate::desk::Desk]) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    for d in desks {
+        let r = board::removed_boards(std::path::Path::new(&d.root));
+        if !r.is_empty() {
+            m.insert(d.id.to_string(), json!(r));
+        }
+    }
+    serde_json::Value::Object(m)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RemoveBody {
+    #[serde(default = "yes")]
+    pub(crate) removed: bool,
+}
+
+/// The reader removes a board from view, or brings it back (1.68): a mark
+/// in `design/boards.json`, the folder, its files and every version kept.
+/// The window's alone: an agent has no route to it, and no tool.
+pub(crate) async fn desk_board_remove(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, board_id)): Path<(i64, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<RemoveBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match board::remove(std::path::Path::new(&desk.root), &board_id, b.removed) {
+        Ok(true) => {
+            board_moved(&app, id, &board_id);
+            Json(json!({ "board": board_id, "removed": b.removed, "kept": true })).into_response()
+        }
+        Ok(false) => no_board(&board_id),
+        Err(e) => refused(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OrderBody {
+    #[serde(default)]
+    pub(crate) order: Vec<String>,
+}
+
+/// The reader's order of a desk's boards (1.68), whole, by folder name.
+pub(crate) async fn desk_boards_order(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<OrderBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let Ok(Some(desk)) = app.store.desk(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let root = std::path::Path::new(&desk.root);
+    match board::order(root, &b.order) {
+        Ok(()) => {
+            emit(&app, "board", json!({ "desk": id, "board": "" }));
+            let ids: Vec<String> = board::boards(root).into_iter().map(|b| b.id).collect();
+            Json(json!({ "order": ids })).into_response()
+        }
+        Err(e) => refused(e),
+    }
 }

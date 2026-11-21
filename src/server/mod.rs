@@ -582,6 +582,12 @@ fn board_routes() -> Router<Arc<App>> {
         // 1.62: a new, empty board, and the one document a board is drawn in.
         .route("/api/desks/{id}/boards", post(desk_board_new))
         .route("/api/desks/{id}/board/{board}/name", post(desk_board_name))
+        // 1.68: the reader's remove and bring back, and their order.
+        .route(
+            "/api/desks/{id}/board/{board}/remove",
+            post(desk_board_remove),
+        )
+        .route("/api/desks/{id}/boards/order", post(desk_boards_order))
         // 1.67: the reader's hide and show, a section's versions, and the
         // window's picture for a `frame_look`.
         .route(
