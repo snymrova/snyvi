@@ -5129,6 +5129,9 @@ async function senderRows(cdp, base, token) {
     // 1.68: a desk all read still lists its documents, and one that waits
     // again goes to the head of them, whatever its age.
     const list = `[...document.querySelectorAll("#toc .dk-docs:not(.dk-offs) a[data-read]")].map(a => (a.classList.contains("new") ? "!" : "") + a.dataset.read).join(" ")`;
+    // Clear first: a page opened over the desk and shut at once need not
+    // have been marked read by the time the row looks.
+    await post("/api/queue/clear", {}, TK);
     const allRead = await until(`(l => l.split(" ").length === 3 && !l.includes("!"))(${list})`);
     const readList = await q.ev(list);
     await post("/api/queue/unread", { ids: [noPanel] }, TK);
