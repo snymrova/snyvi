@@ -159,6 +159,20 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/update/later", Some("{}"), Gate::Window, true),
+    // Voice (1.70). The fetch is asked only to refuse: let through it would
+    // go looking for a release. The socket, like the desk's, proves itself
+    // in its first frame, so without an upgrade only the host gate is tested.
+    ("GET", "/api/voice", None, Gate::Desk, true),
+    ("POST", "/api/voice/fetch", Some("{}"), Gate::Desk, false),
+    (
+        "POST",
+        "/api/voice/on",
+        Some(r#"{"on":false}"#),
+        Gate::Desk,
+        true,
+    ),
+    ("POST", "/api/voice/remove", Some("{}"), Gate::Desk, true),
+    ("GET", "/api/voice/listen", None, Gate::Open, true),
     ("GET", "/api/reset", None, Gate::Open, true),
     // 999 documents is never the count there is, so the reset is refused
     // as stale once it is past the gate, and the store stays.

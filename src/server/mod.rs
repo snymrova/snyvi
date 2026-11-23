@@ -27,6 +27,7 @@ mod api_peer;
 mod api_restore;
 mod api_routine;
 mod api_thread;
+mod api_voice;
 mod api_wall;
 mod api_week;
 mod api_widget;
@@ -65,6 +66,7 @@ use api_peer::*;
 use api_restore::*;
 use api_routine::*;
 use api_thread::*;
+use api_voice::*;
 use api_wall::*;
 use api_week::*;
 use api_widget::*;
@@ -207,6 +209,9 @@ pub struct App {
     /// when this process could not say what file it runs from. See
     /// `crate::update`.
     pub update: Option<Arc<crate::update::Updater>>,
+    /// The speech helper a reader may turn on: fetched, started and stopped
+    /// here, and spoken to by the window alone (`crate::voice`, `api_voice`).
+    pub voice: crate::voice::Voice,
     /// Set when the window has been asked to quit so a newer one can be
     /// started in its place; acted on when its stream ends.
     pub relaunch_window: std::sync::atomic::AtomicBool,
@@ -377,6 +382,7 @@ fn new_app(
         doc_said: std::sync::Mutex::new(()),
         leaving: std::sync::Mutex::new(Leaving::Stopped),
         update,
+        voice: crate::voice::Voice::new(&paths.data_dir),
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
         restore: Default::default(),
         restarting: std::sync::atomic::AtomicBool::new(false),
@@ -818,6 +824,12 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/update/check", post(update_check))
         .route("/api/update/auto", post(update_auto))
         .route("/api/update/later", post(update_later))
+        // 1.70: voice (`api_voice`). The window's, every one.
+        .route("/api/voice", get(voice_status))
+        .route("/api/voice/fetch", post(voice_fetch))
+        .route("/api/voice/on", post(voice_on))
+        .route("/api/voice/remove", post(voice_remove))
+        .route("/api/voice/listen", get(voice_socket))
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/reveal", post(reveal))
         .route("/api/downloads/open", post(open_download))

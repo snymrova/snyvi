@@ -1580,6 +1580,84 @@ pub fn jitter_d(max: Duration) -> Duration {
 /// The key compiled in. Read with carriage returns taken out: a checkout on
 /// Windows may write the file with CRLF line endings, and the line it is
 /// read from must be the key and nothing else.
+// ---------- what a release carries beside snyvi ----------
+
+/// For `crate::voice`: the speech helper and its model are a release's
+/// downloads like any other, named in the same signed manifest, and taken by
+/// the same two steps -- the signature over the manifest, then the sum of
+/// each file against it. They are not staged or applied: an update never
+/// carries them, and only a reader turning voice on asks for them.
+impl Updater {
+    /// The signed manifest of the release this daemon is, so what it fetches
+    /// was built beside it; or of the newest, for a build that was never a
+    /// release. Read fresh each time: this is asked for once, by a press.
+    pub fn manifest_beside(&self) -> Result<Manifest> {
+        let own = self.source.manifest_for(&self.current().to_string());
+        self.signed(&own)
+            .or_else(|_| self.signed(&self.source.manifest()))
+    }
+
+    fn signed(&self, url: &str) -> Result<Manifest> {
+        let key = self.key.as_ref().ok_or_else(|| {
+            anyhow!(
+                "the release key in this build could not be read, so no manifest can be trusted"
+            )
+        })?;
+        let body = |url: &str| match self.fetch.get(url, None)? {
+            Got::Body { bytes, .. } => Ok(bytes),
+            Got::NotModified => bail!("{url}: not modified, with no ETag sent"),
+        };
+        let bytes = body(url)?;
+        verify(key, &bytes, &body(&format!("{url}.minisig"))?)?;
+        Manifest::parse(&bytes)
+    }
+
+    /// One download of `m` for this machine, by its role, into `to`: fetched,
+    /// and refused unless it is the file the manifest names.
+    pub fn fetch_role(&self, m: &Manifest, role: &str, to: &Path) -> Result<Asset> {
+        let asset = m.role(&self.platform, role)?;
+        let landed = self
+            .fetch
+            .download(&self.source.asset(&m.version, &asset.name), to);
+        match landed.and_then(|_| sha256_file(to)) {
+            Ok(sum) if sum == asset.sha256 => Ok(asset),
+            Ok(sum) => {
+                let _ = fs::remove_file(to);
+                bail!(
+                    "{}: its checksum is {sum}, not the manifest's {}",
+                    asset.name,
+                    asset.sha256
+                )
+            }
+            Err(e) => {
+                let _ = fs::remove_file(to);
+                Err(e)
+            }
+        }
+    }
+}
+
+impl Manifest {
+    /// A download that goes by the machine and not by the channel snyvi came
+    /// by: `linux-x64` whether this is a tarball or a .deb.
+    pub fn role(&self, platform: &Platform, role: &str) -> Result<Asset> {
+        let key = format!("{}-{}", platform.os, platform.arch);
+        let (name, sha256) = self
+            .assets
+            .get(&key)
+            .and_then(|t| t.get(role))
+            .ok_or_else(|| anyhow!("{} names no {role} download for {key}", self.version))?;
+        if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("{name}: the manifest's checksum is not a sha256");
+        }
+        Ok(Asset {
+            role: role.into(),
+            name: name.clone(),
+            sha256: sha256.to_ascii_lowercase(),
+        })
+    }
+}
+
 fn release_key() -> Option<minisign_verify::PublicKey> {
     minisign_verify::PublicKey::decode(&PUBLIC_KEY.replace('\r', "")).ok()
 }
@@ -1838,7 +1916,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 
 /// A file or directory of that name under `dir`, a few levels down: the
 /// tarballs hold a versioned top directory, the zip a folder.
-fn find(dir: &Path, name: &str, want_dir: bool) -> Result<PathBuf> {
+pub(crate) fn find(dir: &Path, name: &str, want_dir: bool) -> Result<PathBuf> {
     fn walk(dir: &Path, name: &str, want_dir: bool, depth: u8) -> Option<PathBuf> {
         let mut dirs = Vec::new();
         for e in fs::read_dir(dir).ok()?.flatten() {
@@ -1860,7 +1938,7 @@ fn find(dir: &Path, name: &str, want_dir: bool) -> Result<PathBuf> {
     walk(dir, name, want_dir, 3).ok_or_else(|| anyhow!("no {name} in the download"))
 }
 
-fn untar(archive: &Path, into: &Path) -> Result<()> {
+pub(crate) fn untar(archive: &Path, into: &Path) -> Result<()> {
     let f = fs::File::open(archive).with_context(|| format!("opening {}", archive.display()))?;
     let gz = flate2::read::GzDecoder::new(std::io::BufReader::new(f));
     let mut tar = tar::Archive::new(gz);
