@@ -152,6 +152,7 @@ const COMMANDS = [
   { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
   { cmd: "chime", get t() { return chimeOn() ? "Silence the chime" : "Chime when something waits on you"; }, get s() { return chimeOn() ? "Two soft notes when an agent asks or hands you something, a note comes due, or an offer waits" : "Off: what waits on you rises without a sound"; }, k: "sound mute notification" },
   { cmd: "quiet", get t() { return document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot"; }, s: "snyvi's face at rest, nothing of it moving" },
+  { cmd: "voice", t: "Voice…", s: `Hold ${/Mac/.test(navigator.platform) ? "⌃⌥M" : "Ctrl Alt M"} and say a command: turn it on, pick a microphone, try a phrase`, k: "microphone speech speak say talk", window: true, voice: true },
   { cmd: "keys", t: "Keys", key: "?", s: `Every key, and ${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for the letters` },
   { cmd: "updates", t: "Check for updates", s: "Ask now, rather than at the next check" },
   { cmd: "about", t: "About snyvi", s: "The version, where it keeps things, and updates" },
@@ -187,7 +188,20 @@ function commandItems(q) {
   const raw = m[1].trim(), l = raw.toLowerCase(), verbs = verbItems(raw);
   // Words after a verb are the reader's, not a search: only the verb's row.
   if (verbs.some(v => v.words)) return verbs.filter(v => v.words);
-  return verbs.concat(COMMANDS.filter(c => (!c.window || d.capability) && (!l || `${c.t} ${c.k || ""}`.toLowerCase().includes(l))));
+  return verbs.concat(offered().filter(c => !l || `${c.t} ${c.k || ""}`.toLowerCase().includes(l)));
+}
+/** The commands this window has. Voice is offered on Linux only, until its
+ *  microphone has been tried on a Mac and on Windows (src/voice.rs `offered`);
+ *  `snyvi.voice` set to 1 offers it anywhere, which is how it is tried there. */
+const voiceHere = () => { try { return /Linux/.test(navigator.userAgent) || localStorage.getItem("snyvi.voice") === "1"; } catch { return false; } };
+const offered = () => COMMANDS.filter(c => (!c.window || d.capability) && (!c.voice || voiceHere()));
+
+/** For voice (ui/voice.js): the commands that can be said, and the pick that
+ *  Enter makes. Theme… and New desk… are ways into rows of the box, so the
+ *  box goes up for them first. */
+export function spoken(deps) {
+  if (!d) { d = deps; wire(); }
+  return { commands: offered().filter(c => c.cmd !== "parts"), pick(it) { if (it.cmd === "theme" || it.cmd === "desk") d.openDialog(d.pal, d.input); pick(it); } };
 }
 
 /** Pairing without the `>`: a search for a friend, a code or pairing finds
@@ -312,6 +326,7 @@ function pick(it) {
   if (it.verb) { d.desk()?.[it.verb.run]?.(it.words); return; }
   if (it.cmd === "parts") { parts(); return; }
   if (it.cmd === "chime") { chimeFlip(d.peerCtx.toast); return; }
+  if (it.cmd === "voice") { d.voice(); return; }
   if (it.friend) { d.peerCtx.friend(it.friend); return; }
   if (it.cmd === "pair" || it.cmd === "join") { const p = d.peerCtx, m = it.cmd === "join" ? "join" : ""; p.peer().then(x => x.pair(p, "", m), () => p.toast("Could not open the pairing sheet")); return; }
   if (it.cmd) {

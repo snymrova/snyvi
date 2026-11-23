@@ -328,6 +328,9 @@ jobs:
         # bench/lint-ui.baseline.json. Report mode: the push fails only when
         # a count goes up, and a change that pays debt lowers the file.
         run: node bench/lint-ui.mjs --check
+      - name: What voice takes a heard phrase to be
+        if: matrix.shard == 'budgets'
+        run: node bench/voice.mjs --check
       - name: Nothing over a size ceiling grew
         if: matrix.shard == 'budgets'
         # CLAUDE.md: a file over 2,500 lines or a function over 120 may only

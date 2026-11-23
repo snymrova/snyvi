@@ -168,10 +168,16 @@
     let lk;
     try { [palMod, lk] = await Promise.all([palLoading ||= chunk("palette"), useLook()]); }
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", { sub: e }); return; }
-    const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
-    palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
-      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, toggleQuiet, checkUpdates, panel, showHome, showInbox, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, showSidebars, openHelp, peerCtx, places: deskPlaces, openCorner: () => corner(m => m.open()), desk: () => desk });
+    palMod.open(palDeps(lk));
   }
+  const palDeps = ({ THEMES, slot, previewTheme, setTheme, loadThemes }) => ({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
+    openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, toggleQuiet, checkUpdates, panel, showHome, showInbox, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, showSidebars, openHelp, peerCtx, places: deskPlaces, openCorner: () => corner(m => m.open()), desk: () => desk,
+    voice: () => chunk("voice").then(m => m.sheet(voiceCtx)) });
+  /* Voice (1.70) is ui/voice.js, fetched on the first hold of ⌃⌥M or the
+   * first Voice… in the palette. It is handed the palette's own pick, so a
+   * spoken command runs as a picked one does. */
+  const voiceCtx = { capability, state, toast, sayErr, showDesk, v: boot.v, desk: () => desk,
+    pal: async () => { const [m, lk] = await Promise.all([palLoading ||= chunk("palette"), useLook()]); return (palMod = m).spoken(palDeps(lk)); } };
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
   $("#btn-search").addEventListener("click", openPalette);
@@ -495,6 +501,13 @@
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
+    // Voice: held, from anywhere, a panel included (its keys hand ⌃⌥M back).
+    // The take ends when any of the three keys comes up.
+    if (e.ctrlKey && e.altKey && !e.metaKey && e.code === "KeyM" && capability) {
+      e.preventDefault();
+      if (!e.repeat) chunk("voice").then(m => m.hold(voiceCtx, new Promise(up => addEventListener("keyup", up, { once: true }))), () => {});
+      return;
+    }
     // Find, on the key every other app has it on (#156), letters awake or
     // not, and over the browser's own bar, which searched the sidebar and the
     // rail with the page. Not from a panel, where Ctrl+F, F3 and Ctrl+G are

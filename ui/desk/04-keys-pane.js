@@ -141,7 +141,7 @@ function makeView(p) {
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
     // and the zoom.
-    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWRBF]|Bracket(Left|Right))$/.test(e.code))) return;
+    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWRBFM]|Bracket(Left|Right))$/.test(e.code))) return;
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
