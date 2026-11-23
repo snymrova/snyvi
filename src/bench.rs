@@ -62,6 +62,7 @@ pub fn run(check: bool) -> Result<()> {
     failed |= render_rows(&fixtures, factor);
     failed |= find_rows(factor);
     failed |= process_rows(&fixtures, factor, shared)?;
+    failed |= voice_rows(factor)?;
     if check && failed {
         bail!("bench: at least one case exceeded its budget");
     }
@@ -586,6 +587,91 @@ fn files_under(dir: &Path) -> Vec<String> {
 }
 
 // ---------- the daemon, as a process ----------
+
+/// Where a fetched voice is, for the one row that needs it: a data folder
+/// with `voice/ears` and `voice/model` in it, as `Voice::fetch` leaves them.
+const VOICE_DIR: &str = "SNYVI_BENCH_VOICE";
+/// And a spoken command to hear: a 16-bit PCM WAV, mono or the first channel.
+const VOICE_WAV: &str = "SNYVI_BENCH_VOICE_WAV";
+
+/// Voice (1.70): from the key coming up to the words, through the daemon's
+/// own pipe to a warm helper. 300 ms is where a held key still feels
+/// answered; the plan's measure on a 2011 desktop was 90 to 170.
+///
+/// It runs only where it is asked to. The helper and its 170 MB model are a
+/// download the reader chooses, not part of the binary, so a bare `snyvi
+/// bench` has neither and says so in a line; the row is for the machine that
+/// has fetched them. Returns whether it was over budget.
+fn voice_rows(factor: f64) -> Result<bool> {
+    let (Some(dir), Some(wav)) = (std::env::var_os(VOICE_DIR), std::env::var_os(VOICE_WAV)) else {
+        println!("\nvoice: not measured here (set {VOICE_DIR} to a data folder with voice fetched, {VOICE_WAV} to a spoken command)");
+        return Ok(false);
+    };
+    let (rate, sound) = wav_f32(&std::fs::read(&wav).context("reading the spoken command")?)?;
+    let seconds = sound.len() as f64 / 4.0 / f64::from(rate);
+    let voice = crate::voice::Voice::new(Path::new(&dir));
+    let t = Instant::now();
+    voice.wake().context("starting the helper")?;
+    let load = t.elapsed().as_secs_f64() * 1000.0;
+    let mut best = f64::MAX;
+    let mut heard = String::new();
+    for _ in 0..5 {
+        let t = Instant::now();
+        let line = voice.hear(rate, &sound)?;
+        best = best.min(t.elapsed().as_secs_f64() * 1000.0);
+        heard = line["heard"].as_str().unwrap_or_default().to_string();
+    }
+    voice.stop();
+    let budget = 300.0 * factor;
+    let ok = best <= budget;
+    println!("\n{:<60} {:>9}   {:>7}", "voice", "ms", "budget");
+    println!(
+        "{:<60} {best:>9.1}   {budget:>7.0}{}",
+        format!("key up to words ({seconds:.1} s spoken, heard {heard:?})"),
+        if ok { " ok" } else { " OVER" }
+    );
+    println!(
+        "{:<60} {load:>9.1}   {:>7}",
+        "the helper's start, once per ten idle minutes", "[1500]"
+    );
+    Ok(!ok)
+}
+
+/// A 16-bit PCM WAV as the take the page sends: its rate, and its first
+/// channel as f32 little-endian bytes.
+fn wav_f32(b: &[u8]) -> Result<(u32, Vec<u8>)> {
+    if b.len() < 12 || &b[..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        bail!("not a WAV file");
+    }
+    let (mut at, mut fmt) = (12, None);
+    while at + 8 <= b.len() {
+        let len = u32::from_le_bytes(b[at + 4..at + 8].try_into()?) as usize;
+        let body = &b[at + 8..(at + 8 + len).min(b.len())];
+        match &b[at..at + 4] {
+            b"fmt " if body.len() >= 16 => {
+                let field = |i: usize| u16::from_le_bytes([body[i], body[i + 1]]);
+                if field(0) != 1 || field(14) != 16 {
+                    bail!("the WAV is not 16-bit PCM");
+                }
+                let rate = u32::from_le_bytes(body[4..8].try_into()?);
+                fmt = Some((usize::from(field(2)).max(1), rate));
+            }
+            b"data" => {
+                let (channels, rate) = fmt.context("the WAV has sound before its format")?;
+                let sound = body
+                    .chunks_exact(2 * channels)
+                    .flat_map(|s| {
+                        (f32::from(i16::from_le_bytes([s[0], s[1]])) / 32768.0).to_le_bytes()
+                    })
+                    .collect();
+                return Ok((rate, sound));
+            }
+            _ => {}
+        }
+        at += 8 + len + (len & 1);
+    }
+    bail!("the WAV has no sound in it")
+}
 
 /// The binary's budget, in MB. 15 until 1.7.0, when the daemon began
 /// updating itself: the manifest's signature, the checksums, reading a
@@ -1225,4 +1311,29 @@ fn resident_bytes(child: &Child) -> Option<(u64, bool)> {
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn resident_bytes(_: &Child) -> Option<(u64, bool)> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wav_is_read_as_the_take_the_page_sends() {
+        let mut w = b"RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x02\0".to_vec();
+        w.extend(16_000u32.to_le_bytes());
+        w.extend([0, 0, 0, 0, 4, 0, 16, 0]);
+        // Two frames of two channels: the first channel is what is kept.
+        w.extend(b"data\x08\0\0\0");
+        for s in [i16::MIN, 7, 16_384, 7] {
+            w.extend(s.to_le_bytes());
+        }
+        let (rate, sound) = wav_f32(&w).unwrap();
+        assert_eq!(rate, 16_000);
+        let heard: Vec<f32> = sound
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .collect();
+        assert_eq!(heard, [-1.0, 0.5]);
+        assert!(wav_f32(b"not a wav at all").is_err());
+    }
 }

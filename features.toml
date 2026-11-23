@@ -25,6 +25,12 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "voice"
+since = "1.70.0"
+title = "Say where to go"
+line = "On Linux, hold Ctrl Alt M, say a command, let go: a desk by its name, panel two, Board, anything in the command list. It only takes you places, and the sound never leaves your machine. Turn it on in Ctrl K, Voice…; it fetches about 200 MB once."
+
+[[feature]]
 id = "rest"
 since = "1.69.0"
 title = "Rest the desk"
