@@ -511,6 +511,16 @@ jobs:
           path: dist/snyvi-macos-*.tar.gz
           retention-days: 7
 
+  ears:
+    # The speech helper and its model, for a reader who turns voice on. Built
+    # and tested by its own workflow, which uploads onto the same draft; here
+    # only so that the release it is named in is the release it is on.
+    needs: create
+    if: ${{ !inputs.macos_only }}
+    uses: ./.github/workflows/ears.yml
+    with:
+      version: ${{ needs.create.outputs.version }}
+
   publish:
     # The gate. Nothing below it runs, and nothing above it is visible, until
     # every download is on the draft and the manifest that names them is
@@ -519,7 +529,7 @@ jobs:
     # is what lets the daemon take it at all, so a release without the
     # signing key stops here, a draft, rather than publish a manifest that
     # every daemon would refuse.
-    needs: [create, build, desktop, windows, macos]
+    needs: [create, build, desktop, windows, macos, ears]
     if: ${{ !inputs.macos_only }}
     runs-on: ubuntu-latest
     env:

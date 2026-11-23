@@ -15,10 +15,11 @@
 //!
 //! Out, on stdout, one line of JSON each:
 //!
-//! - once, when the model is loaded: `{"ready":true,"load_ms":…}`
+//! - once, when the model is loaded: `{"ready":true,"version":"…","load_ms":…}`
 //! - per take: `{"level":…,"quiet":…,"speech_ms":…,"heard":"…","ms":…}`
 //!
-//! `level` is the take's peak before any lift, which is what a meter should
+//! `version` is this helper's own, which is how a daemon knows the one it has
+//! on disk still speaks what it speaks. `level` is the take's peak before any lift, which is what a meter should
 //! show. `quiet` is true when there was nothing loud enough to be a voice; then
 //! `heard` is empty and the model was never asked. `ms` is `E` to this line.
 //!
@@ -193,7 +194,7 @@ fn run() -> Result<(), String> {
     let ears = open(&args.model, args.threads)?;
     println!(
         "{}",
-        json!({ "ready": true, "load_ms": ms(from), "threads": args.threads })
+        json!({ "ready": true, "version": env!("CARGO_PKG_VERSION"), "load_ms": ms(from) })
     );
 
     if let Some(wav) = args.wav {

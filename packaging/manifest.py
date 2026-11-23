@@ -52,6 +52,16 @@ ASSETS = {
     "deb-arm64": {"snyvi": "snyvi-linux-arm64.deb", "app": "snyvi-app-linux-arm64.deb"},
 }
 
+# Voice. Two more roles under each machine's own key, whatever channel snyvi
+# itself came by: `ears`, the helper built for that machine by ears.yml, and
+# `ears-model`, the one speech model they all open. A daemon takes neither
+# with an update; it fetches both only when its reader turns voice on, and
+# checks them against these sums as it does everything else. A daemon older
+# than voice asks the table for the roles it knows and never sees these.
+EARS_MODEL = "snyvi-ears-model-en.tar.gz"
+for _key in ("linux-x64", "linux-arm64", "macos-arm64", "macos-x64", "windows-x64"):
+    ASSETS[_key] |= {"ears": f"snyvi-ears-{_key}.tar.gz", "ears-model": EARS_MODEL}
+
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -69,7 +79,8 @@ def semver(s, what):
 
 
 def names():
-    return [name for roles in ASSETS.values() for name in roles.values()]
+    """Each download once: the model is named under every machine."""
+    return list(dict.fromkeys(name for roles in ASSETS.values() for name in roles.values()))
 
 
 def read_sum(sums, name):

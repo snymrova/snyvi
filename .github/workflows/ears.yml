@@ -1,0 +1,113 @@
+name: ears
+# The ears helper (ears/), built and made to hear on every platform a release
+# is cut for. It is not part of snyvi's own build: it links a speech runtime,
+# is fetched by a daemon only when its reader turns voice on, and so has a
+# workflow of its own that runs when ears/ changes and when a release asks.
+on:
+  push:
+    paths:
+      - "ears/**"
+      - ".github/workflows/ears.yml"
+  workflow_call:
+    inputs:
+      version:
+        description: "The release whose draft takes the downloads. Empty: build and test only."
+        type: string
+        default: ""
+
+# No permissions of its own: a push needs none, and a release lends this the
+# write to its draft that its other legs have.
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The same runners the release builds snyvi on, and pinned for the
+          # same reason: an image that moves under a build changes what the
+          # binary asks of a reader's machine.
+          - key: linux-x64
+            runner: ubuntu-24.04
+          - key: linux-arm64
+            runner: ubuntu-24.04-arm
+          - key: macos-arm64
+            runner: macos-15
+          - key: macos-x64
+            runner: macos-15-intel
+          - key: windows-x64
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The model
+        run: echo "SNYVI_EARS_MODEL=$(ears/model.sh "$RUNNER_TEMP/model")" >> "$GITHUB_ENV"
+      - name: Build, and hear the model's own clip
+        # tests/takes.rs starts the built helper, sends it a voice, silence
+        # and a voice too faint to be one, as frames on stdin, and reads the
+        # lines back: the whole of what the daemon will do with it.
+        working-directory: ears
+        run: |
+          cargo test --release -- --nocapture
+          cargo build --release
+      - name: What it asks of a Linux
+        # The helper is not static, as snyvi is: it needs the system's libc
+        # and libstdc++. This is the floor it was built to (Ubuntu 22.04,
+        # Debian 12), and a build that quietly asks for more fails here.
+        if: startsWith(matrix.key, 'linux')
+        run: |
+          B=ears/target/release/snyvi-ears
+          ldd $B
+          need=$(objdump -T $B | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)
+          echo "needs $need"
+          test "$(printf '%s\n' "$need" GLIBC_2.35 | sort -V | tail -1)" = GLIBC_2.35
+      - name: Hears on a CPU without AVX2
+        # As the daemon's own check in release.yml: the runner's CPU has every
+        # extension, and the reader this was first built for has a 2011 one.
+        # qemu as a Nehalem raises SIGILL on the first instruction that CPU
+        # lacks, in the helper or in the runtime linked into it.
+        if: matrix.key == 'linux-x64'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+          qemu-x86_64-static -cpu Nehalem ears/target/release/snyvi-ears \
+            --model "$SNYVI_EARS_MODEL" --wav "$SNYVI_EARS_MODEL/test_wavs/0.wav" | tee "$RUNNER_TEMP/heard"
+          grep -qi "ask not what your country can do for you" "$RUNNER_TEMP/heard"
+      - name: Package
+        run: |
+          exe=snyvi-ears; [ "${{ matrix.key }}" = windows-x64 ] && exe=snyvi-ears.exe
+          name=snyvi-ears-${{ matrix.key }}
+          mkdir -p dist/$name
+          cp ears/target/release/$exe ears/NOTICE dist/$name/
+          cp ~/.cargo/registry/src/*/sherpa-onnx-sys-*/LICENSE dist/$name/LICENSE-sherpa-onnx
+          tar -C dist -czf dist/$name.tar.gz $name
+          sum() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+          (cd dist && sum $name.tar.gz | sed 's/ \*/  /' > $name.tar.gz.sha256)
+          ls -l dist && cat dist/$name.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snyvi-ears-${{ matrix.key }}
+          path: dist/*.tar.gz*
+      - name: Onto the draft
+        if: inputs.version != ''
+        run: gh release upload "v${{ inputs.version }}" dist/*.tar.gz dist/*.sha256 --clobber
+
+  model:
+    # The model as snyvi's own download: the three files the helper opens,
+    # under one name, beside the release's other files and in its signed
+    # manifest. Only a release needs it; the build legs above fetch the
+    # upstream archive themselves, by the same sum.
+    if: inputs.version != ''
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: ears/model.sh --pack dist
+      - name: Onto the draft
+        run: gh release upload "v${{ inputs.version }}" dist/*.tar.gz dist/*.sha256 --clobber
