@@ -433,6 +433,8 @@ fn window(app: &tauri::App, parsed: tauri::Url, home: &str) -> tauri::Result<Web
     keep_inside(app.handle(), Some(&w));
     #[cfg(target_os = "linux")]
     paste_pictures(&w);
+    #[cfg(target_os = "linux")]
+    microphone(&w, home);
     Ok(w)
 }
 
@@ -739,6 +741,60 @@ fn paste_pictures(w: &WebviewWindow) {
             gtk::glib::Propagation::Proceed
         });
     });
+}
+
+/// The microphone, for snyvi's own page and for nothing else (voice, 1.70).
+///
+/// WebKitGTK refuses a page's `getUserMedia` unless its embedder says yes to
+/// the request, and has capture switched off until it is switched on; neither
+/// is done by the webview crate. So both are done here, and the yes is as
+/// narrow as it can be made: sound and never the camera, and only for a page
+/// on the daemon's origin, which the navigation rule already makes the only
+/// page this window shows. The page asks only while the reader holds the
+/// voice key (`ui/voice.js`); this is what lets that ask succeed without a
+/// prompt on every press. Any other request the engine makes -- there are
+/// none today -- is left to its default, which is no.
+#[cfg(target_os = "linux")]
+fn microphone(w: &WebviewWindow, home: &str) {
+    use gtk::prelude::*;
+    use webkit2gtk::{
+        PermissionRequestExt, SettingsExt, UserMediaPermissionRequest,
+        UserMediaPermissionRequestExt, WebViewExt,
+    };
+    let home = home.to_string();
+    let _ = w.with_webview(move |view| {
+        let view = view.inner();
+        if let Some(settings) = WebViewExt::settings(&view) {
+            settings.set_enable_media_stream(true);
+        }
+        view.connect_permission_request(move |view, request| {
+            let Some(media) = request.downcast_ref::<UserMediaPermissionRequest>() else {
+                return false;
+            };
+            let page = view.uri();
+            if may_listen(
+                page.as_deref(),
+                &home,
+                media.is_for_audio_device(),
+                media.is_for_video_device(),
+            ) {
+                request.allow();
+            } else {
+                request.deny();
+            }
+            true
+        });
+    });
+}
+
+/// Whether a page asking for capture may have it: the microphone alone, from
+/// the daemon's origin alone.
+#[cfg(any(target_os = "linux", test))]
+fn may_listen(page: Option<&str>, home: &str, audio: bool, video: bool) -> bool {
+    let from_home = page
+        .and_then(|u| tauri::Url::parse(u).ok())
+        .is_some_and(|u| u.origin().ascii_serialization() == home);
+    audio && !video && from_home
 }
 
 /// Whether anything answers on the daemon's port. A connection and nothing
@@ -1077,6 +1133,22 @@ mod tests {
 
     fn goes(url: &str) -> bool {
         stays_home(&url.parse().unwrap(), "http://127.0.0.1:7777")
+    }
+
+    #[test]
+    fn only_the_daemons_own_page_may_listen_and_never_watch() {
+        let home = "http://127.0.0.1:7777";
+        let asks = |page, audio, video| may_listen(page, home, audio, video);
+        assert!(asks(Some("http://127.0.0.1:7777/desk/3"), true, false));
+        // The camera is never given, with the microphone or alone.
+        assert!(!asks(Some("http://127.0.0.1:7777/"), true, true));
+        assert!(!asks(Some("http://127.0.0.1:7777/"), false, true));
+        assert!(!asks(Some("http://127.0.0.1:7777/"), false, false));
+        // Another port is another program; another host is the web.
+        assert!(!asks(Some("http://127.0.0.1:7778/"), true, false));
+        assert!(!asks(Some("https://example.com/"), true, false));
+        assert!(!asks(Some("about:blank"), true, false));
+        assert!(!asks(None, true, false));
     }
 
     #[test]

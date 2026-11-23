@@ -4489,6 +4489,7 @@ dependencies = [
  "unicode-width",
  "ureq",
  "vte",
+ "webkit2gtk",
  "windows-sys 0.60.2",
  "winresource",
  "x25519-dalek",
