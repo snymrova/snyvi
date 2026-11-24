@@ -33,6 +33,9 @@ const EARLY_FOR = 1000;
 /** After the key comes up the bar says nothing new for this long: a warm
  *  helper answers in 90 to 170 (docs/VOICE.md), well inside it. */
 const GRACE = 400;
+/** "Did you mean" waits this long for its yes, and a tap of the key that
+ *  says yes may be this long: a chord of three keys is not let go in 200. */
+const ASK_FOR = 3600, TAP = 450;
 /** Held this long with nothing said, the bar offers three things to say. */
 const HINT_AFTER = 1000;
 /** A sample this loud is someone speaking, not the room (of 1). */
@@ -74,25 +77,35 @@ const TINY = 4, SHORT = 6, EXACT = 0.9, NEAR = 0.85, BAR = 0.7, CLEAR = 0.04;
 /** What a phrase of `n` letters has to score. */
 const bar_ = n => (n <= TINY ? EXACT : n <= SHORT ? NEAR : BAR);
 
-/** What `heard` means among `targets` (`{ say: [phrases], ... }`), or null.
- *  Only the first sentence counts: the model sometimes says a phrase twice. */
-export function match(heard, targets) {
+/** The best of `targets` for `heard`, each phrase let in at its bar less
+ *  `slack`, or null when the best is not clear of the next. Only the first
+ *  sentence counts: the model sometimes says a phrase twice. */
+function best(heard, targets, slack) {
   const first = heard.split(/[.?!]/).find(s => s.trim()) || "";
   const h = run(first), hs = skel(first);
   if (!h) return null;
-  let best = null, top = 0, next = 0;
+  let hit = null, top = 0, next = 0;
   for (const t of targets) {
     let score = 0;
     for (const phrase of t.say) {
       const p = run(phrase);
       const s = Math.max(alike(h, p), alike(hs, skel(phrase)));
-      if (s >= bar_(p.length) && s > score) score = s;
+      if (s >= bar_(p.length) - slack && s > score) score = s;
     }
-    if (score > top) { next = top; top = score; best = t; }
+    if (score > top) { next = top; top = score; hit = t; }
     else if (score > next) next = score;
   }
-  return best && top - next >= CLEAR ? best : null;
+  return hit && top - next >= CLEAR ? hit : null;
 }
+/** What `heard` means among `targets` (`{ say: [phrases], ... }`), or null. */
+export const match = (heard, targets) => best(heard, targets, 0);
+/** What `heard` nearly meant: the one target that fell just under its bar,
+ *  when nothing cleared it. It is only ever asked about (`ask`), never run.
+ *  The slack is small on purpose. A wide one finds a command in any word --
+ *  "Tease." is nearer "themes" than "keys" by its letters -- and a question
+ *  that guesses wrong is worse than "no command". */
+const UNDER = 0.12;
+export const near = (heard, targets) => (match(heard, targets) ? null : best(heard, targets, UNDER));
 
 /** What a palette command is called aloud, beside its own title. */
 const ALSO = { home: ["go home"], inbox: ["open inbox"], theme: ["themes"], connect: ["agents"], sidebars: ["sidebars"], chime: ["chime"], updates: ["updates", "check updates"], about: ["about"], voice: ["voice"] };
@@ -236,6 +249,7 @@ const CSS = `
 #voicebar .vt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #voicebar .vt b { font-weight: 600; color: var(--fg); }
 #voicebar .vt q { quotes: "“" "”"; }
+#voicebar kbd { margin-left: 6px; padding: 0 5px; font: inherit; font-size: var(--fs-small); color: var(--fg-3); border: 1px solid var(--rule-2); border-radius: var(--r-sm); }
 #voicebar .vh { position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); white-space: nowrap; padding: 4px 12px;
   border-radius: var(--r-pill); font-size: var(--fs-small); color: var(--fg-3); background: var(--bg-raise); border: 1px solid var(--rule);
   opacity: 0; transition: opacity var(--dur-move); }
@@ -273,13 +287,14 @@ function say(html, { held = false, ms = 0 } = {}) {
   mount();
   clearTimeout(barT);
   offKey?.();
+  asking = null;
   bar.querySelector(".vt").innerHTML = html;
   bar.classList.toggle("held", held);
   if (!held) { lit(false); hint(null); }
   bar.classList.add("show");
   if (ms) barT = setTimeout(hide, ms);
 }
-function hide() { clearTimeout(barT); offKey?.(); bar?.classList.remove("show", "held", "live", "hint"); }
+function hide() { clearTimeout(barT); offKey?.(); asking = null; bar?.classList.remove("show", "held", "live", "hint"); }
 /** The line above the bar: what can be said here, or nothing. It lies over
  *  the page as the bar does, and the bar under it does not change. */
 function hint(list) {
@@ -298,7 +313,19 @@ function lit(on) {
 /** The bar lies over a panel's last line, which is where the next key goes.
  *  So once it has said where a take went, the first key takes it down. The
  *  key itself is not touched: it goes on to whatever has the keys. */
-let offKey = null;
+let offKey = null, asking = null;
+/** A near miss, asked: "Keys?" and the voice key to say yes -- the hand is
+ *  on it already, and it means nothing to a panel, where Enter would be the
+ *  shell's. A tap of it runs the command (`take`, where a slip is told from
+ *  a take). Any other key drops the question and goes on to whatever has the
+ *  keys, and so does the time running out. Nothing runs without the tap. */
+function ask(heard, hit) {
+  say(`<q>${esc(heard)}</q> · <b>${esc(hit.label)}</b>? <kbd>${KEY}</kbd>`, { ms: ASK_FOR });
+  asking = hit;
+  leaveOnKey();
+}
+/** Say where a take went, and go. */
+function went(html, hit) { say(html, { ms: SHOWN.went }); hit.go(); leaveOnKey(); }
 function leaveOnKey() {
   const on = e => { if (["Control", "Alt", "Shift", "Meta", "AltGraph"].includes(e.key) || (e.ctrlKey && e.altKey && e.code === "KeyM")) return; hide(); };
   addEventListener("keydown", on, true);
@@ -384,7 +411,8 @@ let taking = null;
 export async function hold(c, until, { dry = false, by = "key" } = {}) {
   ctx = c;
   if (taking) return;
-  const mine = taking = { up: false, at: Date.now() };
+  // A question on the bar when the key went down: this press may be its yes.
+  const mine = taking = { up: false, at: Date.now(), asked: dry ? null : asking };
   // The window losing the keys ends a take too: the key's coming up would
   // go to whatever took them, and the microphone would stay open.
   until = Promise.race([until, new Promise(gone => addEventListener("blur", gone, { once: true }))]);
@@ -437,7 +465,12 @@ async function take(mine, until, dry, by) {
     await opened;
   } catch (e) { opening.then(s => s.close(), () => {}); throw e; }
   finally { clearTimeout(hintT); hint(null); mic.stop(); lit(false); }
-  if (Date.now() - mine.at < SLIP) { sock.close(); say(`Hold the ${by} while you speak`, { ms: SHOWN.slip }); return; }
+  // Let go at once: a slip, or the yes to a question that was on the bar.
+  if (Date.now() - mine.at < (mine.asked ? TAP : SLIP)) {
+    sock.close();
+    if (mine.asked) went(`<b>${esc(mine.asked.label)}</b>`, mine.asked); else say(`Hold the ${by} while you speak`, { ms: SHOWN.slip });
+    return;
+  }
   // The key is up and the meter has gone dim, which is the truth. A warm
   // helper answers before anything else needs saying.
   const slow = setTimeout(() => say(cold ? "Waking…" : "…", { held: true }), GRACE);
@@ -452,10 +485,14 @@ async function take(mine, until, dry, by) {
   if (line.quiet) { say(`Too quiet · ${esc(mic.label)}`, { ms: SHOWN.miss }); return; }
   const heard = (line.heard || "").trim();
   if (!heard) { say("Heard nothing to act on", { ms: SHOWN.miss }); return; }
-  const hit = match(heard, await all);
-  if (!hit) { say(`<q>${esc(heard)}</q> · no command`, { ms: SHOWN.miss }); return; }
-  say(`<q>${esc(heard)}</q> → <b>${esc(hit.label)}</b>`, { ms: SHOWN.went });
-  if (!dry) { hit.go(); leaveOnKey(); }
+  const ts = await all, hit = match(heard, ts);
+  if (!hit) {
+    const nearly = dry ? null : near(heard, ts);
+    if (nearly) ask(heard, nearly); else say(`<q>${esc(heard)}</q> · no command`, { ms: SHOWN.miss });
+    return;
+  }
+  const html = `<q>${esc(heard)}</q> → <b>${esc(hit.label)}</b>`;
+  if (dry) say(html, { ms: SHOWN.went }); else went(html, hit);
 }
 
 // ---------- the sheet ----------

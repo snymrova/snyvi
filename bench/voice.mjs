@@ -11,7 +11,7 @@
  *
  *   node bench/voice.mjs --check
  */
-import { match, hints } from "../ui/voice.js";
+import { match, near, hints } from "../ui/voice.js";
 
 const t = (label, ...say) => ({ label, say });
 const TARGETS = [
@@ -39,6 +39,23 @@ for (const [heard, want] of HEARD) {
   const ok = got === want;
   if (!ok) bad++;
   console.log(`${ok ? "ok  " : "FAIL"} ${JSON.stringify(heard).padEnd(48)} → ${got ?? "nothing"}${ok ? "" : ` (wanted ${want ?? "nothing"})`}`);
+}
+
+// A near miss is asked about, never run: the one command just under its
+// bar. What the model says of a cough must still find nothing to ask, and
+// "Tease." (said for "Keys") is not near enough by its letters to ask
+// honestly, so it is not asked.
+const NEARLY = [
+  ["Black", "back"], ["In the box", "inbox"],
+  ["Tease.", null], ["You", null], ["Wow", null], ["Thank you, thank you", null], ["Pack", null],
+  ["I was going to say something else entirely", null],
+  // What is matched outright is not also asked.
+  ["Open inbox.", null], ["Back.", null],
+];
+for (const [heard, want] of NEARLY) {
+  const got = near(heard, TARGETS)?.label ?? null, ok = got === want;
+  if (!ok) bad++;
+  console.log(`${ok ? "ok  " : "FAIL"} near  ${JSON.stringify(heard).padEnd(42)} → ${got ? `${got}?` : "nothing"}${ok ? "" : ` (wanted ${want ?? "nothing"})`}`);
 }
 
 // The three things the bar offers a silent hold: from the live targets and
