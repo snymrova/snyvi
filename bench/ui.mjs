@@ -3588,6 +3588,20 @@ async function deskLossRows(cdp, base, token) {
     rows.push(["empty edit → ghost with Undo; Undo brings the text back", !!back,
       !ghost ? "the line went with no ghost" : !ghost.undo ? `the ghost "${ghost.text}" offers no Undo` : back ? `"${ghost.text} · Undo", and the Undo put the words back` : "the Undo did not bring the line back"]);
 
+    // 1.69: a list with a row has no standing field. The head's + lays one
+    // over what is under the list, and neither it nor Esc moves a thing.
+    const rtTop = `Math.round(document.querySelector('#toc [data-sec="routines"]')?.getBoundingClientRect().top ?? -1)`;
+    const fieldAtRest = await p.ev(`!!document.querySelector("#toc .dk-notes:not(.dk-rts) .dk-note.new")`);
+    const rt0 = await p.ev(rtTop);
+    await p.clickOn("#toc [data-a=note-new]");
+    const fieldOver = await until(`document.activeElement?.matches("#toc .dk-note.new.over .dk-note-in")`, 30);
+    const rt1 = await p.ev(rtTop);
+    await p.press("Escape");
+    const fieldShut = await until(`!document.querySelector("#toc .dk-notes:not(.dk-rts) .dk-note.new")`, 30);
+    const rt2 = await p.ev(rtTop);
+    rows.push(["a list with rows has no standing field; its + opens one over what is under it", !!back && !fieldAtRest && fieldOver && fieldShut && rt0 >= 0 && rt0 === rt1 && rt1 === rt2,
+      fieldAtRest ? "a field stands under the list at rest" : !fieldOver ? "the + opened no field, or not with the keyboard in it" : !fieldShut ? "Esc left the field open" : `Routines at ${rt0}, ${rt1} with the field open, ${rt2} shut`]);
+
     // A close, refused: the panel is still in its row, running, and no
     // "Closed · Undo" was ever said.
     await until(`!!document.querySelector("#toc .dk-pane [data-a=close]")`);
@@ -3709,6 +3723,10 @@ async function panelRows(cdp, base, token) {
 
     // 1.68: a note is added to Next up from a row and its menu, which lies
     // over what is under it: the section below stays where it was.
+    // 1.69: with no goal and no queue the section is not drawn at all; a
+    // goal draws it (the desk's ⋯ sets one, here the route it calls).
+    const lnHidden = await q.ev(`!document.querySelector("#toc .dk-line")`);
+    await post(`/api/desks/${desk}/line`, { goal: "bench: a goal" });
     const lnNote = (await post(`/api/desks/${desk}/notes`, { text: "a note for next up" })).note;
     const lnAdd = `document.querySelector('#toc .dk-ln-add[data-a="line-add"]')`;
     const under = `Math.round(document.querySelector("#toc .dk-line")?.nextElementSibling?.getBoundingClientRect().top ?? -1)`;
@@ -3730,6 +3748,7 @@ async function panelRows(cdp, base, token) {
     const lnPut = await until(`/a note for next up/.test(document.querySelector("#toc .dk-ln-row .dk-ln-t")?.textContent || "") && !document.querySelector("#toc .dk-ln-pop")`, 40);
     // The focus comes back to the row the menu hung from, or the goal when no note is left to add.
     const lnBack = lnPut && await until(`document.activeElement?.matches(".dk-ln-add, .dk-ln-goal")`, 30);
+    rows.push(["Next up is not drawn until it has a goal or a note", lnHidden && lnThere, !lnHidden ? "an empty Next up stood in the rail" : !lnThere ? "a goal did not draw it" : "nothing at rest; drawn once it had a goal"]);
     rows.push(["Next up takes a note from a row's menu, which a press elsewhere shuts, and the menu moves nothing", lnThere && lnOpen && lnShut && lnAway && topOpen === topShut && topOpen >= 0 && lnPut && lnBack && !(await q.ev(`!!document.querySelector("#toc select")`)),
       !lnThere ? "no + Add a note row" : !lnOpen ? "its menu did not open on the note" : !lnShut ? "a second press did not shut it" : !lnAway ? "a press on a panel left it open" : topOpen !== topShut ? `the section under it at ${topOpen} open, ${topShut} shut` : !lnPut ? "the note did not land in the order" : !lnBack ? `the focus went to ${await q.ev(`document.activeElement?.tagName + "." + document.activeElement?.className`)}` : "the note is first in the order, the focus back on its row; what is under the menu stayed put"]);
 

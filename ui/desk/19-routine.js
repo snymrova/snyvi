@@ -74,7 +74,7 @@ function routineSec(d) {
     cls: "dk-notes dk-rts", part: "rail.routines.head", empty: !mine.length, acts,
     tip: "Routines", sub: "Lines that come back: a /command or your own words, at its hours or when its watch wakes it. Try one once, then Start it, and snyvi runs it in a panel in the back.",
     count: running ? `● ${mine.length}` : mine.length || "", tone: running ? "accent" : "", countTip: running ? `${running} running` : "",
-  }, (rows ? `<ul class="dk-list">${rows}</ul>` : "") + rtFieldHtml(esc));
+  }, (rows ? `<ul class="dk-list">${rows}</ul>` : "") + rtFieldHtml(esc, !!rows));
 }
 
 /* Short enough for the rail's width. It was `/command · every day 9`,
@@ -94,15 +94,17 @@ const RT_HOLD = "What should happen, and when?";
  * draft as they always did, so the field never refuses. */
 const rtAsker = d => [views.get(focused), ...gridPanes(d).map(p => views.get(p.id))].find(v => v && sendsHere(v) && !rtPane(v.id));
 
-/** The field at the list's foot: quiet until clicked, then live, in the
- *  same room, so nothing under it moves as it opens and shuts. One field,
+/** The field. On an empty list it is the list: quiet until clicked, then
+ *  live, in the same room. Once there is a routine it is drawn only when
+ *  the head's + was pressed, over what is under the list (1.69, A4, as the
+ *  notes' field is): opening and shutting it moves nothing. One field,
  *  the row's whole width, for what runs (1.63, U1): beside a when field
  *  in 230 px, neither had room, and a when typed here met a grammar the
  *  sheet now asks for in its own part, with its preview (U2, U3). */
-function rtFieldHtml(esc) {
+function rtFieldHtml(esc, rows) {
   const lead = `<span class="dk-lead"><span class="dk-tick dk-ring ghost" aria-hidden="true">${RT_HANDS}</span></span>`;
-  if (!rtField) return `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="say what should happen and when, and an agent on this desk writes it, tries it once and offers it; or a /command of your own" spellcheck="false"></div>`;
-  return `<div class="dk-note new rt-new">${lead}<input class="rt-in" placeholder="What should happen, and when? Or a /command" aria-label="What should happen and when, in your words, or a /command" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="rt-comp" aria-expanded="false">` +
+  if (!rtField) return rows ? "" : `<div class="dk-note new idle rt-new">${lead}<input class="rt-in idle" placeholder="${RT_HOLD}" aria-label="A new routine on this desk" data-tip="A new routine" data-tip-sub="say what should happen and when, and an agent on this desk writes it, tries it once and offers it; or a /command of your own" spellcheck="false"></div>`;
+  return `<div class="dk-note new rt-new${rows ? " over" : ""}">${lead}<input class="rt-in" placeholder="What should happen, and when? Or a /command" aria-label="What should happen and when, in your words, or a /command" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="rt-comp" aria-expanded="false">` +
     (rtField.err ? `<span class="field-err" role="alert">${esc(rtField.err)}</span>` : "") + `</div>`;
 }
 

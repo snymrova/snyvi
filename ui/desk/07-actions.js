@@ -906,6 +906,8 @@ export function actions(el) {
       { label: "Edit", run: does("note-edit") },
       { label: x.done ? "Untick" : "Tick", run: does("note-tick") },
       { label: "Add a picture…", run: () => pickImages(x.id) },
+      // Next up's way in, and out (1.69, 31-line.js).
+      ...lineItems(d, x),
       // A dated open line can go to a friend as a promise (1.48).
       ...(!x.done && x.due_at && !promisedTo.has(x.id) ? (friendsList || []).map(f => ({ label: `Promise to ${f.name}…`, run: () => promise(d, x, f) })) : []),
       // An undated open line of the reader's own can go to a friend as a line

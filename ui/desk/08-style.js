@@ -594,6 +594,13 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
 /* A date caught while typing: over the field's right end, out of the flow. */
 .dk-note.new { position: relative; }
+/* The field asked for by a head's + on a list that has rows (1.69): over
+   what is under the list, where the line will land, taking no room. */
+.dk-notes > .sec-body { position: relative; }
+.dk-notes > .sec-body > .dk-note.new.over { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 0; right: 0; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-note.new.over:hover { background: var(--bg-raise); }
+/* A head's + is the one standing way to a new line now: in view at rest. */
+.dk-sec > .sec-head > .sec-acts { opacity: 1; }
 .dk-due-guess { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); padding: 0 5px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 14%, var(--bg)); color: var(--fg-2); font-size: var(--fs-micro); line-height: 16px; pointer-events: none; }
 /* Pick a time, at the foot of the date menu. */
 .dk-due-in { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }

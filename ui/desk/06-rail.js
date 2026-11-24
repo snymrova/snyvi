@@ -580,13 +580,15 @@ function noteSec(d) {
     // The changes first (1.56, 22-change.js): the rows above the lines they carry.
     changeRows(d, esc) +
     (rows ? `<ul class="dk-list">${rows}</ul>` : notesOff === d.id ? noReach("notes") : "") +
-    // The bar for a new line, always at the end of the list, where the line
-    // will land: a quiet field until it is clicked, or the head's + is, and
-    // then the live one, in the same room, so nothing under it moves as it
-    // opens and shuts. On an empty list it is the whole of the list.
+    // The field for a new line (1.69, A4). On an empty list it is the whole
+    // of the list: a quiet field, live once it is clicked, in the same room.
+    // Once the list has a row the field is not drawn until the head's + is
+    // pressed, and then it lies over what is under the list, at the place
+    // the line will land (`over`): a standing field under every list was a
+    // third of a short rail. Opening and shutting it moves nothing.
     (notesOff === d.id ? "" : !(noteField && noteField.kind === "new")
-      ? `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
-      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"><span class="dk-due-guess" aria-hidden="true" hidden></span>` +
+      ? rows ? "" : `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
+      : `<div class="dk-note new${rows ? " over" : ""}"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"><span class="dk-due-guess" aria-hidden="true" hidden></span>` +
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
         (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`));

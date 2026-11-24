@@ -24,7 +24,13 @@
  * neither to someone new; it stays the name in the code, the routes and
  * what agents are told. And a note is added from a row like every other
  * in the rail, whose menu lies over what is under it: the one native
- * select in the rail read as a field of some other form. */
+ * select in the rail read as a field of some other form.
+ *
+ * 1.69 (plan 520aa866b0, A3): the section is not drawn while it has no
+ * goal and no queue. A head over "Set a goal" stood in every rail, most of
+ * which never had one. The ways in are where the reader already is: "Put
+ * on Next up" in a note's own menu, and "Set a goal…" in the desk's ⋯.
+ * Either one draws it. */
 
 let lineAt = null, lineGot = null, lineEdit = null, lineDraft = "", lineFocused = false, lineBusy = false, lineMenu = false, lineAway = null;
 const LINE_NONE = { goal: "", queue: [], next: 0 };
@@ -63,10 +69,12 @@ function lineRow(d, l, r, i, by, esc) {
     `<span class="dk-ln-s"><span class="dk-ln-st">${state}${tree}</span>${when ? " · " + when : ""}</span></span>${start}${tools}</li>`;
 }
 
-/** The section, over Notes. */
+/** The section, over Notes; nothing while there is no goal, no queue, and
+ *  no goal being written. */
 function lineSec(d) {
   const { esc } = ctx;
   const l = lineOf(d), notes = notesAt === d.id ? noteList : [];
+  if (!l.queue.length && !l.goal && !(lineEdit && lineEdit.goal)) return "";
   const by = new Map(notes.map(x => [x.id, x]));
   const done = l.queue.filter(r => r.done).length, all = l.queue.length;
   const goal = lineEdit && lineEdit.goal
@@ -140,6 +148,28 @@ function lineFocus() {
   if (lineFocused) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
 }
 
+/** The goal's field, open: from the section's own line, or the desk's ⋯
+ *  (`goalHere`), which is how a desk with no Next up yet gets one. */
+function lineGoal(d) {
+  lineEdit = { goal: true }; lineDraft = lineOf(d).goal; lineFocused = true;
+  ctx.fold("line", false);
+  rail();
+  ctx.tocEl.querySelector(".dk-ln-head")?.scrollIntoView({ block: "nearest" });
+}
+export const goalHere = () => { const d = current(); if (d) lineGoal(d); };
+/** Whether the desk has a goal, for the menu's word. */
+export const goalSet = () => { const d = current(); return !!(d && lineOf(d).goal); };
+
+/** A note's menu rows for Next up (07-actions.js `menu`): put last in the
+ *  order, or taken off it. Only an open line of the reader's own. */
+function lineItems(d, x) {
+  if (x.done || x.gone || x.suggested_by) return [];
+  const ids = lineOf(d).queue.map(r => r.id);
+  if (ids.includes(x.id)) return [{ label: "Remove from Next up", about: "the note stays on your list", run: () => lineSet(d, { order: ids.filter(i => i !== x.id) }) }];
+  if (ids.length >= 40) return [];
+  return [{ label: "Put on Next up", about: "last in the order to do them", run: async () => { ctx.fold("line", false); await lineSet(d, { order: [...ids, x.id] }); ctx.tocEl.querySelector(".dk-line")?.scrollIntoView({ block: "nearest" }); } }];
+}
+
 /** One write, answered with the line as it is now. */
 async function lineSet(d, body) {
   try {
@@ -168,7 +198,7 @@ async function lineAct(a, b, d) {
     // add, that row is gone, and the goal takes it.
     (ctx.tocEl.querySelector(".dk-ln-add") || ctx.tocEl.querySelector(".dk-ln-goal"))?.focus();
   }
-  else if (a === "line-goal") { lineEdit = { goal: true }; lineDraft = l.goal; lineFocused = true; ctx.fold("line", false); rail(); }
+  else if (a === "line-goal") lineGoal(d);
   else if (a === "line-when") { lineEdit = { when: n }; lineDraft = l.queue[i]?.done_when || ""; lineFocused = true; rail(); }
   else if ((a === "line-up" || a === "line-down") && i >= 0) {
     const j = a === "line-up" ? i - 1 : i + 1;
