@@ -178,6 +178,11 @@
    * spoken command runs as a picked one does. */
   const voiceCtx = { capability, state, toast, sayErr, showDesk, v: boot.v, desk: () => desk,
     pal: async () => { const [m, lk] = await Promise.all([palLoading ||= chunk("palette"), useLook()]); return (palMod = m).spoken(palDeps(lk)); } };
+  /* Voice that was turned on is made ready once the page is idle: its code,
+   * its audio path, how it stands. Not the microphone, which opens on the key
+   * and no sooner. voice.js keeps the mark; a window that never turned voice
+   * on fetches nothing. */
+  if (capability && store.get("snyvi.voice.on") === "1") (window.requestIdleCallback || setTimeout)(() => chunk("voice").then(m => m.ready(voiceCtx), () => {}), { timeout: 3000 });
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
   $("#btn-search").addEventListener("click", openPalette);
@@ -502,8 +507,9 @@
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
     // Voice: held, from anywhere, a panel included (its keys hand ⌃⌥M back).
-    // The take ends when any of the three keys comes up.
-    if (e.ctrlKey && e.altKey && !e.metaKey && e.code === "KeyM" && capability) {
+    // The take ends when any of the three keys comes up. Not AltGr, which
+    // Windows reports as Ctrl+Alt: AltGr M is a µ on its way, not a take.
+    if (e.ctrlKey && e.altKey && !e.metaKey && e.code === "KeyM" && capability && !e.getModifierState?.("AltGraph")) {
       e.preventDefault();
       if (!e.repeat) chunk("voice").then(m => m.hold(voiceCtx, new Promise(up => addEventListener("keyup", up, { once: true }))), () => {});
       return;

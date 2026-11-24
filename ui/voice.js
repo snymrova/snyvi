@@ -23,6 +23,14 @@
  * opening a page. bench/voice.mjs holds the phrases this was tuned on.
  */
 
+// ---------- the timings ----------
+/* Every wait in voice, in one place, in milliseconds: they were chosen before
+ * a window had run a take, and the first review is where they are tuned. */
+/** A key held for less than this was a slip, not a take. */
+const SLIP = 200;
+/** The early microphone (see `early`) is closed if M has not followed. */
+const EARLY_FOR = 1000;
+
 // ---------- the match ----------
 
 const NUM = { 1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine" };
@@ -99,7 +107,10 @@ const api = (path, body) => fetch(path, { method: body ? "POST" : "GET", headers
   .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); return j; });
 /** How voice stands, asked once and again whenever the sheet changes it. */
 let stood = null;
-const status = fresh => (fresh || !stood ? (stood = api("/api/voice").catch(e => { stood = null; throw e; })) : stood);
+const status = fresh => (fresh || !stood ? (stood = api("/api/voice").then(st => (mark(st.on), st), e => { stood = null; throw e; })) : stood);
+/** Whether voice is on, kept for the next time this window opens: first
+ *  paint reads it and calls `ready` at idle (ui/app/09-answers.js). */
+const mark = on => { try { on ? localStorage.setItem("snyvi.voice.on", "1") : localStorage.removeItem("snyvi.voice.on"); } catch {} };
 
 /** The voice socket, allowed: the capability in the first frame, never the
  *  URL, as the desk's socket has it (ui/app/07-nav.js). */
@@ -119,9 +130,16 @@ function socket() {
  *  loaded into it once. */
 let ac = null, loaded = null;
 const micId = () => { try { return localStorage.getItem("snyvi.voice.mic") || ""; } catch { return ""; } };
-async function microphone() {
+/** The audio path without a microphone on it: made at idle by `ready`, so a
+ *  take has only the microphone left to ask for. An engine starts a context
+ *  made without a press asleep; the take wakes it. */
+function prepare() {
   ac ||= new AudioContext();
   loaded ||= ac.audioWorklet.addModule(`/assets/voice-worklet.js${ctx.v ? `?v=${ctx.v}` : ""}`);
+  loaded.catch(() => { loaded = null; });
+}
+async function microphone() {
+  prepare();
   const id = micId();
   // No processing: the helper levels the take itself, and an engine's noise
   // gate eats the first consonant of a short command.
@@ -136,6 +154,40 @@ async function microphone() {
   return { rate: ac.sampleRate, node, label: stream.getAudioTracks()[0]?.label || "the microphone",
     stop() { src.disconnect(); node.disconnect(); mute.disconnect(); node.port.onmessage = null; stream.getTracks().forEach(t => t.stop()); } };
 }
+
+/** Voice was on when this window last knew (`mark`), and the page is idle:
+ *  everything a take needs but the microphone and the socket. The socket
+ *  stays shut because opening it wakes the helper (src/server/api_voice.rs),
+ *  and a helper kept awake by an idle window is 220 MB held for nothing. */
+export async function ready(c) {
+  ctx = c;
+  let st;
+  try { st = await status(true); } catch { return; }
+  if (!st.on) return;
+  try { prepare(); } catch {}
+  let on = false;
+  try { on = localStorage.getItem("snyvi.voice.early") === "1"; } catch {}
+  if (on) for (const ev of ["keydown", "keyup"]) addEventListener(ev, early, true);
+}
+
+/* The early microphone, off unless `snyvi.voice.early` is 1. With it, the
+ * microphone is asked for when Ctrl and Alt are both down, before M, so the
+ * first word cannot be clipped. It is off because Ctrl and Alt are the
+ * desk's own keys: every ⌃⌥2 would open the microphone and blink the
+ * system's light for a take that never came (audit b56b6ceccd, A1). Nothing
+ * heard this way goes anywhere: the worklet's port has no listener until a
+ * take claims the microphone, and it is closed on any key but M, on either
+ * key coming up, or after EARLY_FOR. */
+let armed = null, armT = 0;
+const disarm = () => { clearTimeout(armT); const a = armed; armed = null; a?.then(m => m.stop(), () => {}); };
+function early(e) {
+  if (taking) return;
+  const chord = e.type === "keydown" && e.ctrlKey && e.altKey && !e.metaKey && !e.getModifierState?.("AltGraph");
+  if (chord && (e.key === "Control" || e.key === "Alt")) { if (!armed) { (armed = microphone()).catch(() => {}); armT = setTimeout(disarm, EARLY_FOR); } }
+  else if (!(chord && e.code === "KeyM")) disarm();
+}
+/** The microphone for a take: the early one if it is there, or a new one. */
+function claim() { const a = armed; armed = null; clearTimeout(armT); return a || microphone(); }
 
 // ---------- the bar ----------
 
@@ -188,8 +240,6 @@ const PAL = /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K";
 
 // ---------- the take ----------
 
-/** A key held for less than this was a slip, not a take. */
-const SLIP = 200;
 let taking = null;
 
 /** The key went down (ui/app/09-answers.js), or the sheet's Try was pressed.
@@ -214,18 +264,28 @@ async function take(mine, until, dry) {
   if (!st.on) { say(`Voice is off. Turn it on in <b>${PAL} › Voice…</b>`, { ms: 3200 }); return; }
   say("…");
   // Both at once: the socket wakes the helper while the microphone opens.
-  const [sock, mic] = await Promise.all([socket(), microphone()]);
-  let peak = 0;
+  // Neither waits for the other. Sound that comes before the socket is open
+  // is held here and sent when it is, so the first word is not lost to it.
+  const opening = socket();
+  opening.catch(() => {});
+  let mic;
+  try { mic = await claim(); } catch (e) { opening.then(s => s.close(), () => {}); throw e; }
+  const held = [];
+  let peak = 0, sock = null;
+  mic.node.port.onmessage = ev => {
+    let m = 0;
+    for (const x of ev.data) { const a = x < 0 ? -x : x; if (a > m) m = a; }
+    peak = Math.max(peak, m); meter(m);
+    if (!sock) held.push(ev.data.buffer); else if (sock.readyState === 1) sock.send(ev.data.buffer);
+  };
+  const opened = opening.then(s => { s.send(JSON.stringify({ t: "start", rate: mic.rate })); for (const b of held.splice(0)) s.send(b); return (sock = s); });
+  opened.catch(() => {});
   try {
-    sock.send(JSON.stringify({ t: "start", rate: mic.rate }));
-    mic.node.port.onmessage = ev => {
-      let m = 0;
-      for (const x of ev.data) { const a = x < 0 ? -x : x; if (a > m) m = a; }
-      peak = Math.max(peak, m); meter(m);
-      if (sock.readyState === 1) sock.send(ev.data.buffer);
-    };
-    if (!mine.up) { say("Listening", { live: true }); await until; }
-  } finally { mic.stop(); }
+    // A socket that will not open ends the take now, not at the key's coming up.
+    if (!mine.up) { say("Listening", { live: true }); await Promise.race([until, opened.then(() => until)]); }
+    await opened;
+  } catch (e) { opening.then(s => s.close(), () => {}); throw e; }
+  finally { mic.stop(); }
   if (Date.now() - mine.at < SLIP) { sock.close(); say("Hold the key while you speak", { ms: 2200 }); return; }
   say("…");
   const line = await new Promise((ok, no) => {
