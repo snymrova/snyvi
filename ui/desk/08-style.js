@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS + BACK_CSS + CHANGE_CSS + GROUPS_CSS + CHECKS_CSS + VIEWS_CSS + PAGE_DESK_CSS + DECISIONS_CSS + CLOSED_CSS + LINE_CSS + WAYS_CSS + SWITCH_CSS;
+  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS + BACK_CSS + CHANGE_CSS + GROUPS_CSS + CHECKS_CSS + VIEWS_CSS + PAGE_DESK_CSS + DECISIONS_CSS + CLOSED_CSS + LINE_CSS + WAYS_CSS + SWITCH_CSS + REST_CSS;
   document.head.append(s);
 }
 
@@ -197,15 +197,16 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * widths where it is a column; under them it is a sheet, as before. The
  * strip's first mark brings it back, so the head's button is not needed and
  * its room in the head goes too, except in the window, whose own three
- * buttons still sit at the top right. */
+ * buttons still sit at the top right. Not at rest (34-rest.js): there the
+ * right side is away whole, and the head's button is the way back. */
 .dk-strip { display: none; }
 @media (min-width: 1101px) {
-  :root[data-view="desk"][data-rail="0"]:not([data-full]) #app:not(:has(#rail.empty)) { grid-template-columns: var(--side-c) minmax(0,1fr) 44px; }
-  :root[data-view="desk"][data-rail="0"]:not([data-full]) #rail:not(.empty) { display: flex; padding: 0; }
-  :root[data-view="desk"][data-rail="0"] #rail > :not(.dk-strip, .rail-grip) { display: none; }
-  :root[data-view="desk"][data-rail="0"] .dk-strip { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 52px; }
-  :root[data-view="desk"][data-rail="0"]:not([data-frame="page"]) #app:not(:has(#rail.empty)) .dk-head { padding-right: 0; }
-  :root[data-view="desk"][data-rail="0"] #app:not(:has(#rail.empty)) #chrome #btn-rail { display: none; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]):not([data-full]) #app:not(:has(#rail.empty)) { grid-template-columns: var(--side-c) minmax(0,1fr) 44px; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]):not([data-full]) #rail:not(.empty) { display: flex; padding: 0; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]) #rail > :not(.dk-strip, .rail-grip) { display: none; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]) .dk-strip { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 52px; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]):not([data-frame="page"]) #app:not(:has(#rail.empty)) .dk-head { padding-right: 0; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]) #app:not(:has(#rail.empty)) #chrome #btn-rail { display: none; }
 }
 /* Over the window's drag grip, which keeps the strip's empty top. */
 .dk-strip { position: relative; z-index: 1; pointer-events: none; }
