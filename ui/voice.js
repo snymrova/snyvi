@@ -292,7 +292,7 @@ async function draw(fresh) {
     sheetEl.innerHTML = `${head}<p role="status">${esc(st.fetching)}…</p>`;
     poll = setInterval(() => draw(true), 1000);
   } else if (!st.installed) {
-    sheetEl.innerHTML = `${head}<p>Turning it on fetches a speech helper and its model, about 120 MB, onto this machine. What you say is heard here and goes nowhere else.</p>${err}
+    sheetEl.innerHTML = `${head}<p>Turning it on fetches a speech helper and its model, about 200 MB, onto this machine. What you say is heard here and goes nowhere else.</p>${err}
       <div class="vs-row"><button type="button" class="go" data-a="fetch">Turn voice on</button></div>`;
   } else if (!st.on) {
     sheetEl.innerHTML = `${head}<p>Voice is off. Its download is still here (${mb(st.bytes)}).</p>${err}
