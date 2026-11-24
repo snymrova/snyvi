@@ -4376,8 +4376,9 @@ async function backPanelRows(cdp, base) {
       !over ? "Ctrl Alt Shift S did not bring it over" : sides2 !== "0:0:over:fixed" ? `over, the sides are ${sides2}` : gridOver !== gridRest ? `the grid went ${gridRest} → ${gridOver}` : !down ? "the same chord did not put it down" : `fixed over a grid still ${gridOver}`]);
     // Round D: ⌘K, `> note` and words adds the note, the palette's own way.
     const said = "rest bench says this";
-    await q.press("k", { ctrl: true });
-    await until(`!document.querySelector("#palette").hidden && !!document.querySelector("#palette-list")`, 30);
+    // By its button: with a panel focused, Ctrl K is the panel's program's.
+    await q.ev(`document.querySelector("#btn-search").click(); 1`);
+    await until(`!document.querySelector("#palette").hidden && !!document.querySelector("#palette-list li")`, 30);
     await q.ev(`(() => { const i = document.querySelector("#palette-input"); i.value = "> note ${said}"; i.dispatchEvent(new Event("input", { bubbles: true })); return 1; })()`);
     const verbRow = await until(`document.querySelector("#palette-list li .t")?.textContent === "Note · ${said}" && document.querySelectorAll("#palette-list li").length === 1`, 30);
     await q.press("Enter");
