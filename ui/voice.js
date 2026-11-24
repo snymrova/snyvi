@@ -139,7 +139,7 @@ let stood = null;
 const status = fresh => (fresh || !stood ? (stood = api("/api/voice").then(st => (mark(st.on), st), e => { stood = null; throw e; })) : stood);
 /** Whether voice is on, kept for the next time this window opens: first
  *  paint reads it and calls `ready` at idle (ui/app/09-answers.js). */
-const mark = on => { try { on ? localStorage.setItem("snyvi.voice.on", "1") : localStorage.removeItem("snyvi.voice.on"); } catch {} };
+const mark = on => { try { on ? localStorage.setItem("snyvi.voice.on", "1") : localStorage.removeItem("snyvi.voice.on"); } catch {} button(on); };
 
 /** The voice socket, allowed: the capability in the first frame, never the
  *  URL, as the desk's socket has it (ui/app/07-nav.js). */
@@ -240,6 +240,10 @@ const CSS = `
   border-radius: var(--r-pill); font-size: var(--fs-small); color: var(--fg-3); background: var(--bg-raise); border: 1px solid var(--rule);
   opacity: 0; transition: opacity var(--dur-move); }
 #voicebar.hint .vh { opacity: 1; }
+#btn-voice.open { color: var(--accent); }
+#btn-voice.open .mb { fill: currentColor; }
+:root[data-side="0"] #btn-voice { display: none; }
+@media (max-width: 760px) { #btn-voice { display: none; } }
 #voicesheet details summary { cursor: pointer; color: var(--fg); }
 #voicesheet details p { margin-top: 6px; max-height: 132px; overflow: auto; color: var(--fg-3); font-size: var(--fs-small); }
 #voicesheet { position: fixed; left: 50%; bottom: 96px; z-index: var(--z-pop); transform: translateX(-50%); width: min(420px, 92vw);
@@ -285,7 +289,12 @@ function hint(list) {
 }
 /** The microphone is open, or shut: the meter at full and the bar edged in
  *  the accent, or neither. The one sign of it, set nowhere else. */
-function lit(on) { bar?.classList.toggle("live", on); if (!on) meter(0); }
+function lit(on) {
+  bar?.classList.toggle("live", on);
+  btn?.classList.toggle("open", on);
+  btn?.setAttribute("aria-pressed", on);
+  if (!on) meter(0);
+}
 /** The bar lies over a panel's last line, which is where the next key goes.
  *  So once it has said where a take went, the first key takes it down. The
  *  key itself is not touched: it goes on to whatever has the keys. */
@@ -299,6 +308,52 @@ const meter = level => { if (bar) bar.querySelector(".vm i").style.width = `${Ma
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const KEY = /Mac/.test(navigator.platform) ? "⌃⌥M" : "Ctrl Alt M";
 const PAL = /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K";
+
+// ---------- the button ----------
+
+/** A press and hold on `el`, by the pointer or by Space: `start` is handed a
+ *  promise that resolves when it is let go. The pointer is captured, so a
+ *  hand that drifts off the button while speaking has not let go. And the
+ *  press does not take the keys from whatever had them: a take that goes
+ *  nowhere leaves the reader in the panel they were typing in. */
+function press(el, start) {
+  el.addEventListener("mousedown", e => e.preventDefault());
+  el.addEventListener("pointerdown", e => {
+    if (e.button) return;
+    try { el.setPointerCapture(e.pointerId); } catch {}
+    const done = new AbortController();
+    start(new Promise(up => { for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) el.addEventListener(ev, () => { done.abort(); up(); }, { signal: done.signal }); }));
+  });
+  el.addEventListener("keydown", e => {
+    if (e.code !== "Space") return;
+    e.preventDefault();
+    if (!e.repeat) start(new Promise(up => el.addEventListener("keyup", up, { once: true })));
+  });
+  // Space coming up is the end of a hold here, not a click.
+  el.addEventListener("keyup", e => { if (e.code === "Space") e.preventDefault(); });
+}
+
+/** The microphone button, in the sidebar's foot once voice is on and gone
+ *  when it is off: the way in for a hand on the mouse, and the tell -- filled
+ *  while the microphone is open (`lit`), an outline when it is shut. It is
+ *  made here, so first paint carries none of it, and it comes and goes only
+ *  on the reader's own Turn voice on. Not on the folded sidebar, whose foot
+ *  holds one button; there the bar is the tell. */
+const MIC = `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect class="mb" x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5"/></svg>`;
+let btn = null;
+function button(on) {
+  if (!on) { btn?.remove(); btn = null; return; }
+  const set = document.querySelector(".side-foot .foot-set");
+  if (btn || !set) return;
+  mount();
+  btn = Object.assign(document.createElement("button"), { type: "button", id: "btn-voice", className: "icon", innerHTML: MIC });
+  btn.dataset.tip = "Hold to speak";
+  btn.dataset.tipSub = `Say where to go · or hold ${KEY}`;
+  btn.setAttribute("aria-label", "Voice: hold to speak");
+  btn.setAttribute("aria-pressed", "false");
+  set.after(btn);
+  press(btn, until => hold(ctx, until, { by: "button" }));
+}
 
 // ---------- when it does not work ----------
 
@@ -322,10 +377,11 @@ function plain(e) {
 
 let taking = null;
 
-/** The key went down (ui/app/09-answers.js), or the sheet's Try was pressed.
- *  `until` resolves when it comes up. `dry` hears and matches and runs
- *  nothing, which is the sheet's way to try a phrase. */
-export async function hold(c, until, dry = false) {
+/** The key went down (ui/app/09-answers.js), or the button, or the sheet's
+ *  Try. `until` resolves when it comes up. `dry` hears and matches and runs
+ *  nothing, which is the sheet's way to try a phrase; `by` is what was held,
+ *  for the line that says to hold it longer. */
+export async function hold(c, until, { dry = false, by = "key" } = {}) {
   ctx = c;
   if (taking) return;
   const mine = taking = { up: false, at: Date.now() };
@@ -333,12 +389,12 @@ export async function hold(c, until, dry = false) {
   // go to whatever took them, and the microphone would stay open.
   until = Promise.race([until, new Promise(gone => addEventListener("blur", gone, { once: true }))]);
   until.then(() => { mine.up = true; });
-  try { await take(mine, until, dry); }
+  try { await take(mine, until, dry, by); }
   catch (e) { say(plain(e), { ms: SHOWN.err }); }
   finally { taking = null; }
 }
 
-async function take(mine, until, dry) {
+async function take(mine, until, dry, by) {
   let st;
   try { st = await status(); } catch { st = {}; }
   if (!st.on) { say(`Voice is off. Turn it on in <b>${PAL} › Voice…</b>`, { ms: SHOWN.off }); return; }
@@ -381,7 +437,7 @@ async function take(mine, until, dry) {
     await opened;
   } catch (e) { opening.then(s => s.close(), () => {}); throw e; }
   finally { clearTimeout(hintT); hint(null); mic.stop(); lit(false); }
-  if (Date.now() - mine.at < SLIP) { sock.close(); say("Hold the key while you speak", { ms: SHOWN.slip }); return; }
+  if (Date.now() - mine.at < SLIP) { sock.close(); say(`Hold the ${by} while you speak`, { ms: SHOWN.slip }); return; }
   // The key is up and the meter has gone dim, which is the truth. A warm
   // helper answers before anything else needs saying.
   const slow = setTimeout(() => say(cold ? "Waking…" : "…", { held: true }), GRACE);
@@ -429,12 +485,9 @@ export async function sheet(c) {
   addEventListener("pointerdown", sheetOut, true);
   sheetEl.addEventListener("click", sheetClick);
   sheetEl.addEventListener("change", e => { if (e.target.id === "vs-mic") try { localStorage.setItem("snyvi.voice.mic", e.target.value); } catch {} });
-  // A press and hold on Try is a take that runs nothing.
-  sheetEl.addEventListener("pointerdown", e => {
-    if (!e.target.closest("[data-a=try]")) return;
-    hold(ctx, new Promise(up => addEventListener("pointerup", up, { once: true })), true);
-  });
   await draw(true);
+  // A dialog the keys cannot reach is no dialog: the first control has them.
+  sheetEl?.querySelector("button, select")?.focus();
 }
 
 async function draw(fresh) {
@@ -461,6 +514,8 @@ async function draw(fresh) {
       <details><summary>What you can say</summary><p></p></details>
       <div class="vs-row"><button type="button" data-a="off">Turn voice off</button><button type="button" data-a="remove">Remove the download · ${mb(st.bytes)}</button></div>`;
     mics();
+    // A press and hold on Try, or Space held on it, is a take that runs nothing.
+    press(sheetEl.querySelector("[data-a=try]"), until => hold(ctx, until, { dry: true, by: "button" }));
     // Everything that can be said from where the window is now.
     const list = sheetEl.querySelector("details p");
     targets(ctx).then(ts => { list.textContent = ts.map(spoken).join(" · "); }, () => {});
@@ -481,7 +536,16 @@ async function mics() {
 async function sheetClick(e) {
   const a = e.target.closest("button[data-a]")?.dataset.a;
   if (!a || a === "try") return;
-  e.target.closest("button").disabled = true;
+  const b = e.target.closest("button");
+  // Remove is 200 MB to fetch again, so it is asked once more, in the button
+  // that was pressed.
+  if (a === "remove" && !b.dataset.sure) {
+    const was = b.textContent;
+    b.dataset.sure = "1"; b.textContent = "Press again to remove";
+    setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = was; } }, 3000);
+    return;
+  }
+  b.disabled = true;
   try {
     if (a === "fetch") await api("/api/voice/fetch", {});
     else if (a === "remove") await api("/api/voice/remove", {});
