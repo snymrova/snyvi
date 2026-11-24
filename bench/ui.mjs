@@ -4120,7 +4120,15 @@ async function panelRows(cdp, base, token) {
     const dqId = dq.turn?.id;
     if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn(".dk-head .oy-btn, #onyou .oy-pill");
     const dLine = !!dqId && await until(`/decisions? open/.test(document.querySelector('#onyou .dc-line')?.textContent || "")`, 60);
-    if (dLine) await q.clickOn('#onyou .dc-line');
+    // The tray hangs from the head's button (1.69), so its last line moves
+    // down as a card comes in above it: wait for the question's own card,
+    // and for the line to hold still, before pressing it.
+    const dTop = () => q.ev(`Math.round(document.querySelector('#onyou .dc-line')?.getBoundingClientRect().top ?? -1)`);
+    if (dLine) {
+      await until(`!!document.querySelector('#onyou .oy-tray .dk-turn[data-w="${dqId}"]')`, 40);
+      for (let i = 0, was = -2; i < 20; i++) { const at = await dTop(); if (at === was) break; was = at; await sleep(150); }
+      await q.clickOn('#onyou .dc-line');
+    }
     const dRow = `#onyou .dc-shelf .dc-row[data-w="${dqId}"]`;
     const dShelf = dLine && await until(`!!document.querySelector('${dRow} [data-a="dec-pick"][data-v="Keep it"]')`, 40);
     if (dShelf) await q.clickOn(`${dRow} [data-a="dec-pick"][data-v="Keep it"]`);
