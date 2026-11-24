@@ -2731,7 +2731,7 @@ async function deskRows(cdp, base, token) {
     // A card asked on still-b leaves still-a's number where it was, and its
     // tip says it is on another desk. Since 1.56 the tray is this desk's
     // own: still-b's card is not in it (Home has every desk's).
-    const handN = `document.querySelector("#meta .oy-foot .n, #onyou .oy-pill .n")?.textContent || ""`;
+    const handN = `document.querySelector(".dk-head .oy-btn .n, #onyou .oy-pill .n")?.textContent || ""`;
     const nBefore = await p.ev(handN);
     // Only a running panel is an agent's to ask from (`agent_pane`); a
     // builtin keeps it running, since this bench's PATH has no /usr/bin.
@@ -2742,10 +2742,10 @@ async function deskRows(cdp, base, token) {
     const r202 = await fetch(`${base}/api/panes/${third}/ask`, { method: "POST", headers: TK, body: JSON.stringify({ text: "bench: a card on still-b", options: ["Yes", "No"], by: "bench-agent" }) });
     const asked202 = await r202.text().then(t => { try { return JSON.parse(t); } catch { return { status: r202.status, body: t }; } });
     const t202 = asked202.turn && asked202.turn.id;
-    const tipped = !!t202 && await until(`/\\d+ waiting on other desks/.test(document.querySelector("#meta .oy-foot")?.dataset.tipSub || "")`, 40);
+    const tipped = !!t202 && await until(`/\\d+ waiting on other desks/.test(document.querySelector(".dk-head .oy-btn")?.dataset.tipSub || "")`, 40);
     const nAfter = await p.ev(handN);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
-    if (tipped) await p.clickOn("#meta .oy-foot");
+    if (tipped) await p.clickOn(".dk-head .oy-btn");
     const trayOpen = tipped && await until(`!!document.querySelector("#onyou .oy-tray")`, 30);
     const listed202 = trayOpen && await p.ev(`!/bench: a card on still-b/.test(document.querySelector("#onyou .oy-tray").textContent)`);
     rows.push(["a desk's hand counts that desk, and its tray holds that desk's own", tipped && nAfter === nBefore && listed202,
@@ -3959,7 +3959,7 @@ async function panelRows(cdp, base, token) {
     // They rise in the corner as one card; the pill opens the tray, where
     // they wait however long the answering takes.
     const gRose = gIds.length === 3 && await until(`!!document.querySelector('#onyou .oy-card .dk-turn.grp[data-g="${gIds[0]}"]')`, 40);
-    if (gRose) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    if (gRose) await q.clickOn(".dk-head .oy-btn, #onyou .oy-pill");
     const gCard = gIds.length === 3 && await until(`document.querySelectorAll('.dk-turn.grp[data-g="${gIds[0]}"] .tn-gq').length === 3`, 40);
     const gRec = gCard && await q.ev(`document.querySelectorAll('.dk-turn.grp[data-g="${gIds[0]}"] .tn-opt.rec').length`);
     const steps = [];
@@ -3982,9 +3982,18 @@ async function panelRows(cdp, base, token) {
     rows.push(["with no Claude in the panel, Send answers is not offered", !!noSend,
       !gCard ? "no card to look at" : noSend ? "the answers go with the next message" : "Send answers is offered into a shell"]);
     if (gCard) await q.ev(`document.querySelector('[data-a="tn-gunsend"][data-g="${gIds[0]}"]')?.click(); 1`);
+    // 1.69: the tray asked for hangs under its button in the head, inside
+    // the window, and the head and the grid are where they were shut.
+    const trayAt = await q.ev(`(() => { const e = document.querySelector("#onyou"), t = e?.querySelector(".oy-tray")?.getBoundingClientRect(), b = document.querySelector(".dk-head .oy-btn")?.getBoundingClientRect();
+      return t && b ? { head: e.classList.contains("in-head"), below: t.top >= b.bottom, edge: Math.abs(t.right - b.right) <= 1 || t.left >= 0, inside: t.left >= 0 && t.right <= innerWidth && t.bottom <= innerHeight, pill: !!e.querySelector(".oy-pill") } : null; })()`);
+    const oyAt = `[...document.querySelectorAll(".dk-head > *")].map(e => Math.round(e.getBoundingClientRect().x)).join(",") + "|" + (() => { const r = document.querySelector(".dk-grid").getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round).join(","); })()`;
+    const oyOpenAt = await q.ev(oyAt);
     await q.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
     const trayShut = await until(`!document.querySelector('#onyou .oy-tray')`, 20);
-    rows.push(["the questions rose in the corner as one card, and the pill's tray held them until Esc", gRose && trayShut,
+    const oyShutAt = await q.ev(oyAt);
+    rows.push(["On you's tray opens under its button in the head, and moves nothing", !!trayAt && trayAt.head && trayAt.below && trayAt.inside && !trayAt.pill && oyOpenAt === oyShutAt,
+      !trayAt ? "no tray, or no button in the head" : oyOpenAt !== oyShutAt ? `the head or the grid moved: ${oyOpenAt} → ${oyShutAt}` : JSON.stringify(trayAt)]);
+    rows.push(["the questions rose in the corner as one card, and the button's tray held them until Esc", gRose && trayShut,
       !gRose ? "no card rose in the corner" : "the tray did not close on Esc"]);
 
     // Claude's own question dialog is on screen in its panel: it neither
@@ -4069,7 +4078,7 @@ async function panelRows(cdp, base, token) {
     const g2 = await (await agent("ask", { by: "bench-agent", questions: [
       { question: "bench: all one?", options: ["A", "B"] }, { question: "bench: all two?", options: ["A", "B"] }] })).json().catch(() => ({}));
     const g2Id = g2.turns?.[0]?.id;
-    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn(".dk-head .oy-btn, #onyou .oy-pill");
     const gx = !!g2Id && await until(`!!document.querySelector('#onyou [data-a="tn-lt-open"][data-g="${g2Id}"]')`, 40);
     if (gx) await q.clickOn(`#onyou [data-a="tn-lt-open"][data-g="${g2Id}"]`);
     if (gx && await until(`!!document.querySelector('#onyou .tn-later [data-a="tn-lt"][data-v="done"]')`, 20)) await q.clickOn(`#onyou .tn-later [data-a="tn-lt"][data-v="done"]`);
@@ -4087,7 +4096,7 @@ async function panelRows(cdp, base, token) {
     // of it, so the next agent does not ask again.
     const dq = await (await agent("ask", { by: "bench-agent", text: "bench: shelf question?", options: ["Keep it", "Drop it"] })).json().catch(() => ({}));
     const dqId = dq.turn?.id;
-    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn(".dk-head .oy-btn, #onyou .oy-pill");
     const dLine = !!dqId && await until(`/decisions? open/.test(document.querySelector('#onyou .dc-line')?.textContent || "")`, 60);
     if (dLine) await q.clickOn('#onyou .dc-line');
     const dRow = `#onyou .dc-shelf .dc-row[data-w="${dqId}"]`;
@@ -4150,7 +4159,7 @@ async function panelRows(cdp, base, token) {
     // #115: pinned, the tray stays open while the reader works elsewhere --
     // a click on the desk, an Esc there -- and is pinned again on the next
     // visit; its head's ✕ closes it, and unpins.
-    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn(".dk-head .oy-btn, #onyou .oy-pill");
     const trayUp = await until(`!!document.querySelector('#onyou .oy-tray [data-a="oy-pin"]')`, 20);
     if (trayUp) await q.clickOn('#onyou .oy-tray [data-a="oy-pin"]');
     const pinOn = trayUp && await until(`document.querySelector('#onyou .oy-pin')?.getAttribute("aria-pressed") === "true"`, 20);
@@ -4173,12 +4182,12 @@ async function panelRows(cdp, base, token) {
     await q.ev(`window.__now = Date.now; Date.now = () => window.__now.call(Date) + 3600e3; 1`);
     const later = await agent("ask", { text: "bench: an hour old?", options: ["Yes", "No"], by: "bench-agent" });
     const laterTurn = (await later.json().catch(() => ({}))).turn?.id;
-    const olderPill = await until(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return !!b && b.classList.contains('on') && +b.querySelector('.n')?.textContent >= 1; })()`, 60);
-    if (olderPill && !(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    const olderPill = await until(`(() => { const b = document.querySelector('.dk-head .oy-btn, #onyou .oy-pill'); return !!b && b.classList.contains('on') && +b.querySelector('.n')?.textContent >= 1; })()`, 60);
+    if (olderPill && !(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn(".dk-head .oy-btn, #onyou .oy-pill");
     if (olderPill) await q.clickOn(`#onyou .oy-tab[data-k="waiting"]`).catch(() => {});
     const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-old') && [...t.querySelectorAll('.dk-turn')].some(li => /an hour old/.test(li.textContent) && !!li.querySelector('[data-v="Yes"]')); })()`, 30);
     rows.push(["an hour on, a question is still counted and whole in the tray", olderOpen,
-      !olderPill ? `the hand read "${await q.ev(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray folded it, or left it out" : "lit, counted, and answerable where it is"]);
+      !olderPill ? `the hand read "${await q.ev(`(() => { const b = document.querySelector('.dk-head .oy-btn, #onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray folded it, or left it out" : "lit, counted, and answerable where it is"]);
     await q.ev(`Date.now = window.__now; document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
     for (const id of [keyTurn, laterTurn]) if (id) await agent(`turns/${id}`, { drop: true });
 
@@ -4658,7 +4667,7 @@ async function viewRows(cdp, base, token, env, tmp) {
   // 1.68 (plan d2db60758c): the views are the head's switcher, Panels,
   // Folder, Page and Boards, at one width; a board is in Boards' list.
   const { menuViews, viaMenu } = viewMenu(p, until);
-  const headAt = `[...document.querySelectorAll(".dk-head > .dk-name, .dk-head .dk-group-new, .dk-head .dk-sw, .dk-head .dk-keys, .dk-head .dk-plus, .dk-head .dk-menu")].map(e => Math.round(e.getBoundingClientRect().left)).join(",")`;
+  const headAt = `[...document.querySelectorAll(".dk-head > .dk-name, .dk-head .dk-group-new, .dk-head .dk-sw, .dk-head .dk-oy, .dk-head .dk-keys, .dk-head .dk-plus, .dk-head .dk-menu")].map(e => Math.round(e.getBoundingClientRect().left)).join(",")`;
   const swAt = `(() => { const r = document.querySelector("#doc .dk-head .dk-sw")?.getBoundingClientRect(); return r ? Math.round(r.left) + "+" + Math.round(r.width) : ""; })()`;
   const gridPanes = `[...document.querySelectorAll(".dk-grid > .pn")].map(e => e.dataset.id).join(" ")`;
   const dockedIn = sel => `document.querySelector("${sel} > .pn")?.dataset.id || ""`;
@@ -5326,9 +5335,9 @@ async function footRows(cdp, base, token) {
     await q.width(900);
     await agent(pa, "handover", { kind: "do", text: "bench: rung with the rail away", by: "bench-agent" });
     const cornered = await until(`!!document.querySelector("#onyou:not(.in-rail) .oy-card")`, 60);
-    const tipSaid = await q.ev(`document.querySelector("#onyou .oy-pill")?.dataset.tipSub || ""`);
+    const tipSaid = await q.ev(`document.querySelector(".dk-head .oy-btn")?.dataset.tipSub || ""`);
     rows.push(["with no rail in view, a turn rises in the window's corner, and On you says what rang", cornered && /Last chime: .*rung with the rail away/.test(tipSaid),
-      !cornered ? "nothing rose: the chime rang for a card no one could see" : `the pill's tip says ${JSON.stringify(tipSaid)}`]);
+      !cornered ? "nothing rose: the chime rang for a card no one could see" : `the button's tip says ${JSON.stringify(tipSaid)}`]);
     await q.wide();
 
     // #164: a run in steps is one card, run in order.
@@ -5336,7 +5345,7 @@ async function footRows(cdp, base, token) {
       options: ["$ echo one", "Plug the phone in", "# Is it seen?", "$ echo two"] });
     const bad = await agent(pa, "handover", { kind: "run", text: "bench: a bad step", options: ["$ echo one\necho two"] });
     // A hand-over is the reader's To do, one of On you's three tabs (1.67).
-    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.ev(`document.querySelector('#onyou [data-a="oy-open"], #meta [data-a="oy-open"]')?.click(); 1`);
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.ev(`document.querySelector('#onyou [data-a="oy-open"], .dk-head [data-a="oy-open"]')?.click(); 1`);
     await until(`!!document.querySelector('#onyou .oy-tab[data-k="todo"]')`, 20);
     await q.ev(`document.querySelector('#onyou .oy-tab[data-k="todo"]')?.click(); 1`);
     const card = await until(`document.querySelectorAll(".tn-walk .tn-step").length === 3`, 40);

@@ -531,10 +531,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * the sidebar's does, and is opaque and in front: the cards rise from behind
  * it (15-cards.js). A document read over the desk keeps this rail, and the
  * page is no longer the desk view (08-desks.js behindDesk), so the foot is
- * known by On you's button in it too: keyed on the view alone, its icons
- * stacked into a column there. */
-:root[data-view="desk"] #rail, #rail:has(> #meta > .oy-foot) { padding-bottom: 0; }
-:root[data-view="desk"] #meta, :root[data-view="desk"] #meta:empty, #meta:has(> .oy-foot) { height: var(--foot-h); max-height: none; overflow: hidden; display: flex; align-items: center; gap: 4px;
+ * known by the repository's slot in it too, which a desk's foot always has:
+ * keyed on the view alone, its icons stacked into a column there. */
+:root[data-view="desk"] #rail, #rail:has(> #meta > .dk-repo) { padding-bottom: 0; }
+:root[data-view="desk"] #meta, :root[data-view="desk"] #meta:empty, #meta:has(> .dk-repo) { height: var(--foot-h); max-height: none; overflow: hidden; display: flex; align-items: center; gap: 4px;
   margin-left: -8px; padding: 0 8px; border-top: 1px solid var(--rule); background: var(--bg-side); line-height: 1; white-space: nowrap; position: relative; z-index: 2; }
 /* The desk's repository on the web: an icon in a slot that is there whether
  * or not the answer has come, quiet until pointed at. */

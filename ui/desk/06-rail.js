@@ -481,7 +481,8 @@ function repoName(url) {
  *  on its rule, so the two feet read as one band across the window, and
  *  never a line more (#163). The repository's icon has a slot kept for it,
  *  there or not, so its late answer fills the slot and moves nothing; the
- *  desk's links follow it (17-links.js). The focused panel's line that was
+ *  desk's links follow it (17-links.js). On you's button was at its right
+ *  end, and is the head's since 1.69. The focused panel's line that was
  *  here -- its model, its context, its clock -- is under Claude's own prompt
  *  now (`snyvi statusline`), and what only its tip said, the pid and the
  *  folder the shell moved to, is on the panel's number in its head. */
@@ -491,7 +492,7 @@ function meta() {
   const { esc } = ctx;
   const url = repoOf(d), rn = url && repoName(url), on = rn && rn.path ? `${esc(rn.path)} on ${esc(rn.host)}` : "";
   const repo = on ? `<a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="${on}" data-tip-sub="${esc(url)}" aria-label="${on}">${REPO}</a>` : `<span class="dk-repo"></span>`;
-  linksDraw(ctx.metaEl, d, repo, oyFoot(d));
+  linksDraw(ctx.metaEl, d, repo);
   ctx.rail.classList.remove("empty");
   cards();
 }

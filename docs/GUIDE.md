@@ -884,8 +884,10 @@ went.
 mine* with a word, which gives it back to its agent in its next brief. It
 is asked in the card's own line, and nothing is put away for you.
 
-**A panel in the back says what it is doing** (1.67). Its chip in the
-desk's head reads "forum host · asks you · 2 h" in amber, "tabs polish ·
+**A panel in the back says what it is doing** (1.67). The back is one chip
+in the desk's head (1.69), a mark and a count, amber when a panel there
+asks or died; its tip, and the list it opens when there are several, read
+"forum host · asks you · 2 h" in amber, "tabs polish ·
 working 18 min", "reel 12 · finished 11:40" or, for a shell, "running", "a
 command failed" or how it ended. Until 1.67 an agent that asked read as "a
 command failed", the words for a dead dev server.
@@ -1197,13 +1199,13 @@ Suggested in the rail's corner, where nothing they do moves the page.
   dialog is on screen in its panel already, so it neither rises nor waits
   in the corner; Home lists it.
 
-  **On you** has its own button at the right end of the rail's foot, always
-  there, a raised hand: the count in amber while something is fresh, in
-  quiet ink when only older asks wait, no count with nothing on you. The
-  tray it opens is wider than the rail, over the edge of the first panel,
-  until you close it; a pinned tray, or one with nothing in it, stays at
-  the rail's width. The rail keeps its foot when you open one of its
-  documents, the button with it. An older ask is one line, what it
+  **On you** has its own button in the desk's head, before the keys, always
+  there, a raised hand: the count in amber while something is fresh, no
+  count with nothing on you; what waits on your other desks is in its tip
+  and the tray's head. The tray opens under the button, over the panels'
+  first rows, until you close it; a pinned tray sits in the rail's column,
+  at the rail's width, beside the work. A document read over the desk has
+  no head, and keeps a pill in the corner instead. An older ask is one line, what it
   is and how old, and a click opens its card.
 
   A card leaves when it stops being true, not only when you answer it.
