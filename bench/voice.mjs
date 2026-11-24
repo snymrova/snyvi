@@ -20,12 +20,15 @@ const TARGETS = [
   t("updates", "Check for updates", "updates"), t("keys", "Keys…"), t("voice", "Voice…", "voice"),
   t("new desk", "New desk…"), t("desk snyvi", "desk snyvi"), t("desk omd", "desk omd"),
   t("panel 1", "panel one"), t("panel 2", "panel two", "panel tests", "tests"), t("board", "Board", "Board view"),
+  t("back", "back", "go back"),
 ];
 const HEARD = [
   ["Open inbox.", "inbox"], ["Opening box", "inbox"], ["About stavey", "about"], ["About snifey", "about"],
   ["On inside bars", "sidebars"], ["Arrange sidebars.", "sidebars"], ["Desco md", "desk omd"],
   ["Desk snyvi", "desk snyvi"], ["Panel two.", "panel 2"], ["Go home. Thank you.", "home"], ["Board", "board"],
+  ["Back.", "back"], ["Go back", "back"], ["Go back.", "back"],
   // And what must run nothing.
+  ["Black", null], ["Pack", null], ["Bag", null],
   ["You", null], ["Wow", null], ["Thank you, thank you", null], ["Tease.", null], ["", null], ["...", null],
   ["I was going to say something else entirely", null],
 ];

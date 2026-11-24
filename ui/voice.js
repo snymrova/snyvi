@@ -67,9 +67,12 @@ function shared(a, b) {
 const alike = (a, b) => a.length + b.length ? 2 * shared(a, b) / (a.length + b.length) : 0;
 
 /** A phrase of six letters or fewer -- keys, home, on you -- is matched only
- *  when nearly exact; a longer one at 0.7. And the best has to be clear of
- *  the next thing it could have meant. */
-const SHORT = 6, NEAR = 0.85, BAR = 0.7, CLEAR = 0.04;
+ *  when nearly exact; a longer one at 0.7. Four letters or fewer -- back --
+ *  closer still, or "black" is "back". And the best has to be clear of the
+ *  next thing it could have meant. */
+const TINY = 4, SHORT = 6, EXACT = 0.9, NEAR = 0.85, BAR = 0.7, CLEAR = 0.04;
+/** What a phrase of `n` letters has to score. */
+const bar_ = n => (n <= TINY ? EXACT : n <= SHORT ? NEAR : BAR);
 
 /** What `heard` means among `targets` (`{ say: [phrases], ... }`), or null.
  *  Only the first sentence counts: the model sometimes says a phrase twice. */
@@ -83,7 +86,7 @@ export function match(heard, targets) {
     for (const phrase of t.say) {
       const p = run(phrase);
       const s = Math.max(alike(h, p), alike(hs, skel(phrase)));
-      if (s >= (p.length <= SHORT ? NEAR : BAR) && s > score) score = s;
+      if (s >= bar_(p.length) && s > score) score = s;
     }
     if (score > top) { next = top; top = score; best = t; }
     else if (score > next) next = score;
@@ -106,6 +109,9 @@ async function targets(ctx) {
     for (const p of desk.panelsHere()) out.push({ kind: "panel", say: [`panel ${NUM[p.slot]}`, ...(p.name ? [`panel ${p.name}`, p.name] : [])], label: `Panel ${p.slot}${p.name ? ` · ${p.name}` : ""}`, go: () => desk.panelHere(p.id) });
     for (const v of desk.viewsHere() || []) out.push({ kind: "view", say: [v.label, `${v.label} view`], label: v.label, go: () => desk.viewHere(v.v) });
   }
+  // The way back from a wrong arrival, by the same voice that made it: the
+  // step the window's back arrow takes.
+  out.push({ kind: "back", say: ["back", "go back"], label: "Back", go: () => history.back() });
   return out;
 }
 
@@ -294,6 +300,24 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 const KEY = /Mac/.test(navigator.platform) ? "⌃⌥M" : "Ctrl Alt M";
 const PAL = /Mac/.test(navigator.platform) ? "⌘K" : "Ctrl K";
 
+// ---------- when it does not work ----------
+
+/** What went wrong, as a line a person can act on. The engine's own names
+ *  for a refused or missing microphone, and this file's and the daemon's
+ *  own words for the rest; anything else is said as it came. */
+function plain(e) {
+  const m = `${e?.name || ""} ${e?.message || e || ""}`;
+  if (/NotAllowed|SecurityError|Permission/i.test(m)) return "snyvi may not use the microphone · allow it in the system's settings";
+  if (/Overconstrained/i.test(m)) return `The microphone you chose is not here · pick one in <b>${PAL} › Voice…</b>`;
+  if (/NotFound|NotReadable/i.test(m)) return "No microphone found";
+  if (/voice is off/.test(m)) { stood = null; return `Voice is off. Turn it on in <b>${PAL} › Voice…</b>`; }
+  if (/took too long/.test(m)) return "The speech helper did not answer · say it once more";
+  if (/did not answer|closed the socket|Failed to fetch|NetworkError/i.test(m)) return "snyvi's daemon did not answer · is it running?";
+  if (/no capability|refused/.test(m)) return "This window may not use voice · open it from snyvi again";
+  if (/fetch voice again/.test(m)) return `Voice needs fetching again · <b>${PAL} › Voice…</b>`;
+  return `Voice did not work: ${esc(ctx.sayErr(e).why)}`;
+}
+
 // ---------- the take ----------
 
 let taking = null;
@@ -310,7 +334,7 @@ export async function hold(c, until, dry = false) {
   until = Promise.race([until, new Promise(gone => addEventListener("blur", gone, { once: true }))]);
   until.then(() => { mine.up = true; });
   try { await take(mine, until, dry); }
-  catch (e) { say(`Voice did not work: ${esc(ctx.sayErr(e).why)}`, { ms: SHOWN.err }); }
+  catch (e) { say(plain(e), { ms: SHOWN.err }); }
   finally { taking = null; }
 }
 
