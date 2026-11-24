@@ -140,7 +140,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/look.js` | 358 | lazy | theme, accent, Aa |
 | `ui/corner.js` | 743 | lazy | the corner on every page: the card that rises, the pill, the tray (On you and Lately), snyvi's own lines, the chime; a desk's corner draws its parts (`docs/DESIGN.md` §4.5) |
 | `ui/palette.js` | 304 | lazy | ⌘K |
-| `ui/voice.js`, `ui/voice-worklet.js` | 350 | lazy | voice (1.70): the take, the bar, the match by sound, the sheet; fetched on the first hold of ⌃⌥M (`docs/VOICE.md`) |
+| `ui/voice.js`, `ui/voice-worklet.js` | 610 | lazy | voice (1.70): the take, the bar and its hints, the match by sound and the near miss, the microphone button, the sheet; fetched on the first hold of ⌃⌥M, or at idle where voice is on (`docs/VOICE.md`) |
 | `ui/player.js` | 114 | lazy | a song's own controls, and one player sounding at a time; fetched on the first press |
 | `ui/music.js` | 357 | lazy | ♪: the stations, a stream of your own, your folder, one `<audio>` that plays on across pages; fetched on the first press |
 | `ui/plan.js` | 34 | lazy | Approve on a plan's head (1.47); fetched on the first press |

@@ -14,9 +14,12 @@ sequenceDiagram
     participant P as Page (ui/voice.js)
     participant D as Daemon (src/voice.rs)
     participant E as snyvi-ears (helper)
-    R->>P: holds Ctrl Alt M
+    Note over P: voice on, page idle: code, audio path, worklet, status. No microphone, no socket
+    R->>P: holds Ctrl Alt M, or the microphone button
+    P->>P: bar says Listening, asks for the microphone
     P->>D: WS /api/voice/listen, first frame the capability
     D->>E: starts it if it is not warm
+    Note over P: sound is held until the socket is open
     P->>D: start, then sound as f32 frames
     R->>P: lets go
     P->>D: end
@@ -24,8 +27,37 @@ sequenceDiagram
     E->>D: one line: level, quiet, heard, ms
     D->>P: the same line
     P->>P: match by sound against what the window can do now
-    P->>R: goes there, and says where in the bar
+    P->>R: goes there and says where in the bar, or asks about a near miss
 ```
+
+## How it feels
+
+What the reader sees and does, and why (plan f87adbb180, audit b56b6ceccd).
+
+- **Ready before the key.** A window where voice is on fetches the code,
+  makes the audio path and loads the worklet at idle. The microphone opens on
+  M and the socket beside it; sound is held in the page until the socket is
+  open. The socket is not held open ahead: opening it wakes the helper.
+- **Not on Ctrl and Alt.** Opening the microphone before M is written and
+  off (`localStorage` `snyvi.voice.early` = 1). Ctrl and Alt are the desk's
+  own keys, so it would open the microphone on every ⌃⌥2. AltGr never
+  starts a take.
+- **One bar.** "Listening" from key down. The meter is dim until the
+  microphone is open; then it is live and the bar is edged in the accent.
+  After the key comes up nothing new is said for 400 ms; "Waking…" only when
+  the helper was asleep. The first key after an arrival takes the bar down.
+- **What you can say.** Held a second in silence, a line above the bar
+  offers three things from this view. The whole list folds out in the sheet.
+- **Back.** "back" and "go back" are the window's back arrow.
+- **The button.** In the sidebar's foot once voice is on; hold it with the
+  pointer or Space. Filled while the microphone is open. Not on the folded
+  sidebar.
+- **A near miss is asked.** One command just under its bar: "Back?" and a
+  tap of the voice key says yes. Any other key drops it and goes where it was
+  going. Nothing runs without the tap.
+- **Errors say what to do**, in `plain`.
+
+Every wait is a constant at the top of `ui/voice.js`.
 
 ## The parts
 
@@ -92,3 +124,5 @@ cd ears && SNYVI_EARS_MODEL=<model dir> cargo test
   consent is written for Linux only. `SNYVI_VOICE=1` offers it elsewhere for
   testing.
 - Words other than English, dictation, a wake word.
+- A page test with a stand-in microphone. `bench/voice.mjs` checks the
+  match, the near miss and the hints; nothing yet drives a take in a page.

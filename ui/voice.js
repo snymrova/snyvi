@@ -1,10 +1,11 @@
 /* Voice: hold a key, say a command, let go (1.70).
  *
  * A chunk, fetched on the first hold of ⌃⌥M or the first "Voice…" in the
- * palette; first paint carries one line for the key. Three things live here:
- * the take (the microphone while the key is down, sent to the daemon's voice
- * socket), the bar that says what was heard and what it does, and the sheet
- * that turns voice on and off.
+ * palette, or at idle in a window where voice is on (`ready`); first paint
+ * carries a line for the key and a line for that. Four things live here: the
+ * take (the microphone while the key is down, sent to the daemon's voice
+ * socket), the bar that says what was heard and what it does, the microphone
+ * button in the sidebar's foot, and the sheet that turns voice on and off.
  *
  * What a phrase MEANS is decided here and nowhere else. The daemon hands the
  * sound to its helper and hands back the words (src/voice.rs); this file
@@ -429,12 +430,12 @@ async function take(mine, until, dry, by) {
   // One bar for the whole hold, and one word: the meter is dim until the
   // microphone is truly open, and nothing else changes when it is.
   say("Listening", { held: true });
-  // Whether the helper was asleep, asked before the socket wakes it: it is
-  // the one case in which the answer is worth a word of its own.
   // What can be said now, read while the reader speaks: the hints want it
   // in a second, the match when the key comes up.
   const all = targets(ctx);
   all.catch(() => {});
+  // Whether the helper was asleep, asked before the socket wakes it: it is
+  // the one case in which the answer is worth a word of its own.
   let cold = false;
   api("/api/voice").then(now => { cold = !now.warm; }, () => {});
   // Both at once: the socket wakes the helper while the microphone opens.
