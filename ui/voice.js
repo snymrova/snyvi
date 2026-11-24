@@ -293,7 +293,9 @@ function say(html, { held = false, ms = 0 } = {}) {
   bar.classList.toggle("held", held);
   if (!held) { lit(false); hint(null); }
   bar.classList.add("show");
-  if (ms) barT = setTimeout(hide, ms);
+  // A last word, not the bar of a held key: it goes when its time is up, or
+  // at the first key, whichever is sooner.
+  if (ms) { barT = setTimeout(hide, ms); leaveOnKey(); }
 }
 function hide() { clearTimeout(barT); offKey?.(); asking = null; bar?.classList.remove("show", "held", "live", "hint"); }
 /** The line above the bar: what can be said here, or nothing. It lies over
@@ -302,6 +304,8 @@ function hint(list) {
   if (!bar) return;
   if (list?.length) bar.querySelector(".vh").textContent = `Say: ${list.join(" · ")}`;
   bar.classList.toggle("hint", !!list?.length);
+  // Said once, while it shows; not read again with every later word.
+  bar.querySelector(".vh").setAttribute("aria-hidden", !list?.length);
 }
 /** The microphone is open, or shut: the meter at full and the bar edged in
  *  the accent, or neither. The one sign of it, set nowhere else. */
@@ -312,8 +316,9 @@ function lit(on) {
   if (!on) meter(0);
 }
 /** The bar lies over a panel's last line, which is where the next key goes.
- *  So once it has said where a take went, the first key takes it down. The
- *  key itself is not touched: it goes on to whatever has the keys. */
+ *  So once it has said its last word -- where a take went, or that it went
+ *  nowhere -- the first key takes it down. The key itself is not touched: it
+ *  goes on to whatever has the keys. */
 let offKey = null, asking = null;
 /** A near miss, asked: "Keys?" and the voice key to say yes -- the hand is
  *  on it already, and it means nothing to a panel, where Enter would be the
@@ -323,10 +328,9 @@ let offKey = null, asking = null;
 function ask(heard, hit) {
   say(`<q>${esc(heard)}</q> · <b>${esc(hit.label)}</b>? <kbd>${KEY}</kbd>`, { ms: ASK_FOR });
   asking = hit;
-  leaveOnKey();
 }
 /** Say where a take went, and go. */
-function went(html, hit) { say(html, { ms: SHOWN.went }); hit.go(); leaveOnKey(); }
+function went(html, hit) { say(html, { ms: SHOWN.went }); hit.go(); }
 function leaveOnKey() {
   const on = e => { if (["Control", "Alt", "Shift", "Meta", "AltGraph"].includes(e.key) || (e.ctrlKey && e.altKey && e.code === "KeyM")) return; hide(); };
   addEventListener("keydown", on, true);
