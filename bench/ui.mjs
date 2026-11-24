@@ -4352,6 +4352,40 @@ async function backPanelRows(cdp, base) {
     rows.push(["several in the back are one chip, and its list moves nothing", /^1:2:\d+$/.test(w1) && listed && still && onIt,
       !/^1:2:/.test(w1) ? `the head has ${w1} (chips:count:width)` : !listed ? "the chip opened no list of two" : !still ? "the head or the grid moved under the list" : !onIt ? "a row did not open its panel's drawer" : `one chip, ${w1.split(":")[2]} px, a list of two over the head`]);
 
+    // 1.69 (Round C): the desk at rest. ⌃⌥S folds both sides by the two
+    // attributes the sides' own keys set, and again puts them back as they
+    // were; at rest ⌃⌥⇧S lays the right side over the panels, whose box
+    // does not change, so no program is sent a new size.
+    const chord = shift => q.ev(`document.querySelector(".dk-grid").dispatchEvent(new KeyboardEvent("keydown", { key: "s", code: "KeyS", ctrlKey: true, altKey: true, shiftKey: ${!!shift}, bubbles: true, cancelable: true })); 1`);
+    const sides = `(() => { const r = document.documentElement.dataset, e = document.querySelector("#rail"); return [r.side || "1", r.rail || "1", r.rest || "", getComputedStyle(e).display === "none" ? "gone" : getComputedStyle(e).position].join(":"); })()`;
+    const sides0 = await q.ev(sides), gridDocked = await q.ev(box(".dk-grid"));
+    await chord(false);
+    const rested = await until(`document.documentElement.dataset.rest === "1"`, 30);
+    const sides1 = await q.ev(sides), gridRest = await q.ev(box(".dk-grid"));
+    await chord(true);
+    const over = await until(`document.documentElement.dataset.rest === "over"`, 30);
+    const sides2 = await q.ev(sides), gridOver = await q.ev(box(".dk-grid"));
+    await chord(true);
+    const down = await until(`document.documentElement.dataset.rest === "1"`, 30);
+    await chord(false);
+    const woke = await until(`!document.documentElement.dataset.rest`, 30);
+    const sides3 = await q.ev(sides), gridBack = await q.ev(box(".dk-grid"));
+    rows.push(["Ctrl Alt S rests the desk, and again brings both sides back as they were", rested && sides1 === "0:0:1:gone" && woke && sides3 === sides0 && gridBack === gridDocked,
+      !rested ? `the chord did not rest the desk (${sides1})` : sides1 !== "0:0:1:gone" ? `at rest the sides are ${sides1} (side:rail:rest:rail's box)` : !woke ? "the chord did not wake it" : sides3 !== sides0 ? `back as ${sides3}, was ${sides0}` : gridBack !== gridDocked ? `the grid came back ${gridBack}, was ${gridDocked}` : `${sides0} → ${sides1} → ${sides3}`]);
+    rows.push(["at rest the right side comes over the panels, and the grid's box does not change", over && sides2 === "0:0:over:fixed" && gridOver === gridRest && down,
+      !over ? "Ctrl Alt Shift S did not bring it over" : sides2 !== "0:0:over:fixed" ? `over, the sides are ${sides2}` : gridOver !== gridRest ? `the grid went ${gridRest} → ${gridOver}` : !down ? "the same chord did not put it down" : `fixed over a grid still ${gridOver}`]);
+    // Round D: ⌘K, `> note` and words adds the note, the palette's own way.
+    const said = "rest bench says this";
+    await q.press("k", { ctrl: true });
+    await until(`!document.querySelector("#palette").hidden && !!document.querySelector("#palette-list")`, 30);
+    await q.ev(`(() => { const i = document.querySelector("#palette-input"); i.value = "> note ${said}"; i.dispatchEvent(new Event("input", { bubbles: true })); return 1; })()`);
+    const verbRow = await until(`document.querySelector("#palette-list li .t")?.textContent === "Note · ${said}" && document.querySelectorAll("#palette-list li").length === 1`, 30);
+    await q.press("Enter");
+    const noted = await until(`[...document.querySelectorAll("#toc .dk-notes .dk-note")].some(n => n.textContent.includes("${said}"))`, 40);
+    rows.push(["> note and words in the palette adds the note", verbRow && noted,
+      !verbRow ? `the palette's rows for "> note ${said}" are: ${await q.ev(`[...document.querySelectorAll("#palette-list li .t")].map(x => x.textContent).join(" | ")`)}` : !noted ? "Enter added no note to the desk's list" : "one row, and Enter added it"]);
+    if (!(await q.ev(`document.querySelector("#palette").hidden`))) await q.press("Escape");
+
     await post(`/api/panes/${server.id}/back`, { back: false });
     const forward = await until(`!!document.querySelector('.dk-grid > .pn[data-id="${server.id}"]') && !document.querySelector('${chip(server.id)}')`);
     const slot = await slotOf(desk, server.id);

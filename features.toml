@@ -25,6 +25,27 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "rest"
+since = "1.69.0"
+title = "Rest the desk"
+line = "Ctrl Alt S puts both sides away and leaves the panels the window; the same key brings them back as they were. At rest, rest the pointer on the window's right edge, or press Ctrl Alt Shift S, and the right side comes over the panels without resizing them."
+show = "desk .dk-grid"
+
+[[feature]]
+id = "verbs"
+since = "1.69.0"
+title = "Say it in search: > note, > routine, > goal"
+line = "On a desk, open search and type > note and your words to add a note, > routine to start a routine with them, > goal to set the desk's goal. > panel, > rest and > desk keys are there too."
+show = "desk #btn-search"
+
+[[feature]]
+id = "quiet-head"
+since = "1.69.0"
+title = "A quieter desk"
+line = "On you is one button in the desk's head, and its tray opens under it. Panels in the back are one chip with their count. A list that has rows keeps its field behind its +, and Next up shows once it has a goal or a note. In the sidebar a desk is marked only while an agent works or needs you."
+show = "desk .dk-head .oy-btn"
+
+[[feature]]
 id = "switcher"
 since = "1.68.0"
 title = "Views in the head, and a way back that stays put"
@@ -70,7 +91,7 @@ id = "the-line"
 since = "1.67.0"
 title = "A desk's line: a goal and the order to do its notes"
 line = "Give a desk a goal in one line and put its notes in the order you want them. Start next opens a panel on the next note in a checkout of its own, and two agents never take the same note."
-show = "desk .dk-line"
+show = "desk .dk-notes"
 
 [[feature]]
 id = "approve-gate"
@@ -218,7 +239,7 @@ id = "routine-wakes"
 since = "1.63.0"
 title = "Routines that wake when something happens"
 line = "A routine can wake on a watch -- a command that prints a line when you're tagged, a build fails or a message arrives -- and run about a minute later with just those ids. Give it several times, each with its own words, and an Only if check that keeps a quiet day quiet, with no session at all."
-show = "desk .dk-rts .rt-in"
+show = "desk .dk-rts [data-a=rt-new]"
 
 [[feature]]
 id = "routine-runs-with"
@@ -505,14 +526,14 @@ id = "routines-easier"
 since = "1.53.1"
 title = "Routines are easier to start"
 line = "Click the Routines field and your commands and skills are listed, with how to say when. The sheet says plainly what it does, when, and what it asks you before; Try once now comes first."
-show = "desk .dk-rts .rt-in"
+show = "desk .dk-rts [data-a=rt-new]"
 
 [[feature]]
 id = "routines-field"
 since = "1.53.0"
 title = "Routines have a field of their own"
 line = "Type / to pick a command or a skill, or write your own words, and say when. Try it once while you watch, then Start it, and it comes back at its hour."
-show = "desk .dk-rts .rt-in"
+show = "desk .dk-rts [data-a=rt-new]"
 
 [[feature]]
 id = "copy-markdown"
@@ -583,7 +604,7 @@ since = "1.50.0"
 title = "Routines"
 line = "A line that comes back. Type check-seedlings · every day 07:30 in a desk's notes, and snyvi runs that command at that hour, in a panel in the back. What it did waits for you on Home."
 still = "routines.png"
-show = "desk .dk-rts .rt-in"
+show = "desk .dk-rts [data-a=rt-new]"
 
 [[feature]]
 id = "undo-waits"

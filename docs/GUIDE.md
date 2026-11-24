@@ -832,7 +832,12 @@ narrower than 760 px always shows the sidebar this way.
 **On a desk**, with any key going to the panel otherwise: `⌃⌥1`–`⌃⌥4` a
 panel, `⌃⌥]` / `⌃⌥[` the next and the previous, `⌃⌥N` a new panel, `⌃⌥W`
 close it (its row keeps Undo for 8 s), `⌃⌥R` stop or start it, `⌃⌥Z` it
-alone, and `⌃⌥⇧` with an arrow moves it. The ✎ in a panel's head, F2 on its
+alone, and `⌃⌥⇧` with an arrow moves it. `⌃⌥S` rests the desk: both sides
+away, and the same key brings them back as they were; at rest the right
+side comes over the panels, resizing none, when the pointer rests on the
+window's right edge or on `⌃⌥⇧S`. In search, `>` and a verb acts on the
+desk without a visit to its right side: `> note` and your words adds a
+note, `> routine` starts a routine with them, `> goal` sets the goal. The ✎ in a panel's head, F2 on its
 row or Rename… in its menu names it; the ⋯ at the end of the desk's head
 is the desk's own menu. A panel running Claude shows its model and how full
 its context window is, amber from 85%. Under it, the foot of the rail links
