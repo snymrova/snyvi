@@ -112,9 +112,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    panes. A key just kept lights its row and the button once, in the
    background only, so nothing moves. */
 .dk-keys { position: relative; flex: none; display: flex; align-items: center; }
-.dk-keys-b { display: flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
+.dk-keys-b { display: flex; align-items: center; justify-content: center; gap: 3px; width: 40px; padding: 2px 0; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
 .dk-keys-b:is(:hover, [aria-expanded="true"]) { background: var(--rule); color: var(--fg); }
-.dk-keys-b .n { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.dk-keys-b .n { width: 2ch; text-align: left; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.dk-ks-t b { color: var(--fg); font-weight: 600; }
 .dk-keys-b.none { color: var(--fg-3); }
 @keyframes dk-kept { 0%, 40% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
 .dk-keys-b.kept, .dk-key.new { animation: dk-kept calc(var(--dur-moment) * 2) ease-out; }
@@ -171,7 +172,6 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The account a desk runs as, leading its key button when it is not your login:
    "as Trapti" in the button's own quiet colour, never bold -- bold, beside the
    desk's name, it read as the desk's title. */
-.dk-keys-b .acc { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; margin-right: 2px; }
 :is(.dk-keys-say, .dk-key-m) code { font-family: var(--mono); }
 /* An agent's suggestion: a ghost row, quieter than a line of the reader's,
    with its two answers always shown. */
@@ -416,7 +416,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * as a desk is; a document and a note are Sub-rows. */
 .dk-foot { display: flex; gap: 10px; margin-top: 2px; min-width: 0; }
 .dk-foot .dk-new { flex: none; white-space: nowrap; }
-.dk-why { color: var(--fg-3); font-size: 12px; align-self: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A head's + at the cap: quiet, its tip saying why. */
+.sec-acts > button.dim { opacity: .45; cursor: default; }
+.sec-acts > button.dim:hover { background: none; color: var(--fg-3); }
 /* #toc styles an outline -- a rule down the left, entries clamped to two
  * lines -- and these are rows, so both are undone at #toc's own weight. */
 #toc .dk-rail ul { list-style: none; margin: 2px 0 0; padding: 0; border-left: 0; }

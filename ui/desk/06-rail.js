@@ -250,13 +250,19 @@ function rail() {
       open: closedRow && closedRow.desk === d.id, tip: "Panels", sub: `${here} · ${total}`,
       count: `${blocked ? `!${blocked} · ` : ""}${nGrid} of ${j.per_desk}${nBack ? ` · ${nBack} back` : ""}`, tone: blocked ? "warn" : "",
       countTip: blocked ? `${ctx.plural(blocked, "panel")} ${blocked === 1 ? "needs" : "need"} you` : "",
+      // Quiet rather than disabled at the cap, so the keyboard still reaches
+      // it and hears why, as the head's + panel does.
+      acts: `<button type="button"${why ? ` class="dim" aria-disabled="true" aria-describedby="dk-new-why"` : ""} data-a="new" data-tip="New panel" data-tip-sub="${esc(why || "any agent, or a shell")}" data-key="ctrl+alt+n" aria-label="New panel">${ico("plus")}</button>`,
     }, `<ul class="dk-panes">` + vs.filter(v => !isBack(v.pane)).map(paneRow).join("") +
       (nBack ? `<li class="dk-backline" role="presentation">In the back</li>` + vs.filter(v => isBack(v.pane)).map(paneRow).join("") : "") + tabLines(d, esc) + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
-    // One foot (1.68): New panel, then the back's quieter way in on the same
-    // line. Its field takes the line while it is open, so nothing is added.
-    `<div class="dk-foot">` + (backFieldOpen(d) ? backRow(d, esc) : `<button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + backRow(d, esc)) + `</div>`),
+    // The foot (1.69, A5): New panel left it for a + on the head, where a
+    // new note's and a new routine's are, so the rail has one place for
+    // "another of these". What is left is the quieter pair: Start all,
+    // when more than one is stopped, and the back's way in, whose field
+    // takes the line while it is open, so nothing is added.
+    (why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : "") +
+    `<div class="dk-foot">` + (backFieldOpen(d) ? backRow(d, esc) : (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + backRow(d, esc)) + `</div>`),
     // The documents, waiting ones first, and the way to the rest. The count
     // is how many wait; the row's [n] says which panel sent it.
     docs: () => sec("docs", "rail.docs", "Documents", {

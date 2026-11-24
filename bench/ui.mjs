@@ -3322,9 +3322,11 @@ async function keysSheetRows(cdp, base) {
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   try {
     await p.goto(`${base}/desk/${desk}#cap=${cap}`);
-    const named = await until(`document.querySelector(".dk-keys-b .acc")?.textContent === "as Work"`);
+    // 1.69: the button is the key and a count at one width; whose Claude it
+    // is leads its tip, and the sheet's first line.
+    const named = await until(`/^Claude as Work/.test(document.querySelector(".dk-keys-b")?.dataset.tip || "") && !document.querySelector(".dk-keys-b .acc")`);
     rows.push(["the desk's head names the account its Claude runs as", !!acc && named,
-      !acc ? "the account was refused" : named ? "as Work, beside the key" : `the button says "${await p.ev(`document.querySelector(".dk-keys-b")?.textContent || ""`)}"`]);
+      !acc ? "the account was refused" : named ? "as Work, in the key's tip" : `the button's tip says "${await p.ev(`document.querySelector(".dk-keys-b")?.dataset.tip || ""`)}"`]);
     await p.clickOn(".dk-keys-b");
     const opened = await until(`!!document.querySelector(".dk-keys-sheet .dk-acc-rows input")`);
     const at = opened ? await p.ev(`({ on: document.activeElement?.matches(".dk-acc-rows input:checked") ? document.activeElement.value : "", open: document.querySelectorAll(".dk-keys-sheet .dk-add[open]").length, renew: document.querySelectorAll(".dk-keys-sheet .dk-acc-rows [data-a=acc-renew]").length })`) : null;
@@ -4453,7 +4455,7 @@ async function tabRows(cdp, base) {
 
     // A new panel goes in the tab on screen: the rail's, then the desk ⋯'s
     // from the other tab.
-    if (stepped) await p.clickOn('#toc .dk-new[data-a="new"]');
+    if (stepped) await p.clickOn('#toc [data-part="rail.panels"] .sec-acts [data-a="new"]');
     const railNew = stepped && await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
     d = await deskNow(desk);
     rows.push(["the rail's + New panel lands in the tab on screen", railNew && inGrp(d, t1).length === 2 && inGrp(d, t2).length === 1,
