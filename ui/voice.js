@@ -30,6 +30,11 @@
 const SLIP = 200;
 /** The early microphone (see `early`) is closed if M has not followed. */
 const EARLY_FOR = 1000;
+/** After the key comes up the bar says nothing new for this long: a warm
+ *  helper answers in 90 to 170 (docs/VOICE.md), well inside it. */
+const GRACE = 400;
+/** How long each last word stays: an arrival, a miss, a slip, an error. */
+const SHOWN = { went: 2600, miss: 3600, slip: 2200, off: 3200, err: 4000 };
 
 // ---------- the match ----------
 
@@ -195,11 +200,14 @@ const CSS = `
 #voicebar { position: fixed; left: 50%; bottom: 56px; z-index: var(--z-toast); transform: translateX(-50%); pointer-events: none;
   display: flex; align-items: center; gap: 10px; max-width: min(560px, 90vw); padding: 7px 14px; border-radius: var(--r-pill);
   font-size: var(--fs-ui); color: var(--fg-2); background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow);
-  opacity: 0; transition: opacity var(--dur-move); }
+  opacity: 0; transition: opacity var(--dur-move), border-color var(--dur-quick); }
 #voicebar.show { opacity: 1; transition-duration: var(--dur-quick); }
-#voicebar .vm { flex: none; width: 44px; height: 6px; border-radius: var(--r-pill); background: var(--rule); overflow: hidden; }
+#voicebar .vm { flex: none; width: 64px; height: 6px; border-radius: var(--r-pill); background: var(--rule); overflow: hidden; opacity: .45; }
 #voicebar .vm i { display: block; height: 100%; width: 0; background: var(--accent); transition: width var(--dur-instant) linear; }
-#voicebar:not(.live) .vm { display: none; }
+#voicebar:not(.held) .vm { display: none; }
+#voicebar.held { min-width: 176px; }
+#voicebar.live { border-color: var(--accent); }
+#voicebar.live .vm { opacity: 1; }
 #voicebar .vt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #voicebar .vt b { font-weight: 600; color: var(--fg); }
 #voicebar .vt q { quotes: "“" "”"; }
@@ -224,14 +232,30 @@ function mount() {
   bar.setAttribute("role", "status");
   document.body.append(bar);
 }
-/** Say `html` in the bar. `live` shows the meter; `ms` takes it down after. */
-function say(html, { live = false, ms = 0 } = {}) {
+/** Say `html` in the bar. `held` is the bar while the key is down: one
+ *  width, the meter in it, dim until `lit`. `ms` takes the bar down after. */
+function say(html, { held = false, ms = 0 } = {}) {
   mount();
   clearTimeout(barT);
+  offKey?.();
   bar.querySelector(".vt").innerHTML = html;
-  bar.classList.toggle("live", live);
+  bar.classList.toggle("held", held);
+  if (!held) lit(false);
   bar.classList.add("show");
-  if (ms) barT = setTimeout(() => bar.classList.remove("show", "live"), ms);
+  if (ms) barT = setTimeout(hide, ms);
+}
+function hide() { clearTimeout(barT); offKey?.(); bar?.classList.remove("show", "held", "live"); }
+/** The microphone is open, or shut: the meter at full and the bar edged in
+ *  the accent, or neither. The one sign of it, set nowhere else. */
+function lit(on) { bar?.classList.toggle("live", on); if (!on) meter(0); }
+/** The bar lies over a panel's last line, which is where the next key goes.
+ *  So once it has said where a take went, the first key takes it down. The
+ *  key itself is not touched: it goes on to whatever has the keys. */
+let offKey = null;
+function leaveOnKey() {
+  const on = e => { if (["Control", "Alt", "Shift", "Meta", "AltGraph"].includes(e.key) || (e.ctrlKey && e.altKey && e.code === "KeyM")) return; hide(); };
+  addEventListener("keydown", on, true);
+  offKey = () => { removeEventListener("keydown", on, true); offKey = null; };
 }
 const meter = level => { if (bar) bar.querySelector(".vm i").style.width = `${Math.min(100, Math.round(Math.sqrt(level) * 110))}%`; };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -254,15 +278,21 @@ export async function hold(c, until, dry = false) {
   until = Promise.race([until, new Promise(gone => addEventListener("blur", gone, { once: true }))]);
   until.then(() => { mine.up = true; });
   try { await take(mine, until, dry); }
-  catch (e) { say(`Voice did not work: ${esc(ctx.sayErr(e).why)}`, { ms: 4000 }); }
+  catch (e) { say(`Voice did not work: ${esc(ctx.sayErr(e).why)}`, { ms: SHOWN.err }); }
   finally { taking = null; }
 }
 
 async function take(mine, until, dry) {
   let st;
   try { st = await status(); } catch { st = {}; }
-  if (!st.on) { say(`Voice is off. Turn it on in <b>${PAL} › Voice…</b>`, { ms: 3200 }); return; }
-  say("…");
+  if (!st.on) { say(`Voice is off. Turn it on in <b>${PAL} › Voice…</b>`, { ms: SHOWN.off }); return; }
+  // One bar for the whole hold, and one word: the meter is dim until the
+  // microphone is truly open, and nothing else changes when it is.
+  say("Listening", { held: true });
+  // Whether the helper was asleep, asked before the socket wakes it: it is
+  // the one case in which the answer is worth a word of its own.
+  let cold = false;
+  api("/api/voice").then(now => { cold = !now.warm; }, () => {});
   // Both at once: the socket wakes the helper while the microphone opens.
   // Neither waits for the other. Sound that comes before the socket is open
   // is held here and sent when it is, so the first word is not lost to it.
@@ -282,27 +312,29 @@ async function take(mine, until, dry) {
   opened.catch(() => {});
   try {
     // A socket that will not open ends the take now, not at the key's coming up.
-    if (!mine.up) { say("Listening", { live: true }); await Promise.race([until, opened.then(() => until)]); }
+    if (!mine.up) { lit(true); await Promise.race([until, opened.then(() => until)]); }
     await opened;
   } catch (e) { opening.then(s => s.close(), () => {}); throw e; }
-  finally { mic.stop(); }
-  if (Date.now() - mine.at < SLIP) { sock.close(); say("Hold the key while you speak", { ms: 2200 }); return; }
-  say("…");
+  finally { mic.stop(); lit(false); }
+  if (Date.now() - mine.at < SLIP) { sock.close(); say("Hold the key while you speak", { ms: SHOWN.slip }); return; }
+  // The key is up and the meter has gone dim, which is the truth. A warm
+  // helper answers before anything else needs saying.
+  const slow = setTimeout(() => say(cold ? "Waking…" : "…", { held: true }), GRACE);
   const line = await new Promise((ok, no) => {
     const t = setTimeout(() => no(new Error("the helper took too long")), 8000);
     sock.onmessage = ev => { clearTimeout(t); try { ok(JSON.parse(ev.data)); } catch (e) { no(e); } };
     sock.onclose = sock.onerror = () => { clearTimeout(t); no(new Error("the daemon closed the socket")); };
     if (sock.readyState !== 1) return sock.onclose();
     sock.send(JSON.stringify({ t: "end" }));
-  }).finally(() => { sock.onclose = sock.onerror = null; sock.close(); });
+  }).finally(() => { clearTimeout(slow); sock.onclose = sock.onerror = null; sock.close(); });
   if (line.error) throw new Error(line.error);
-  if (line.quiet) { say(`Too quiet · ${esc(mic.label)}`, { ms: 3200 }); return; }
+  if (line.quiet) { say(`Too quiet · ${esc(mic.label)}`, { ms: SHOWN.miss }); return; }
   const heard = (line.heard || "").trim();
-  if (!heard) { say("Heard nothing to act on", { ms: 2600 }); return; }
+  if (!heard) { say("Heard nothing to act on", { ms: SHOWN.miss }); return; }
   const hit = match(heard, await targets(ctx));
-  if (!hit) { say(`<q>${esc(heard)}</q> · no command`, { ms: 3600 }); return; }
-  say(`<q>${esc(heard)}</q> → <b>${esc(hit.label)}</b>`, { ms: 2600 });
-  if (!dry) hit.go();
+  if (!hit) { say(`<q>${esc(heard)}</q> · no command`, { ms: SHOWN.miss }); return; }
+  say(`<q>${esc(heard)}</q> → <b>${esc(hit.label)}</b>`, { ms: SHOWN.went });
+  if (!dry) { hit.go(); leaveOnKey(); }
 }
 
 // ---------- the sheet ----------
