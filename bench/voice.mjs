@@ -11,7 +11,7 @@
  *
  *   node bench/voice.mjs --check
  */
-import { match } from "../ui/voice.js";
+import { match, hints } from "../ui/voice.js";
 
 const t = (label, ...say) => ({ label, say });
 const TARGETS = [
@@ -37,5 +37,20 @@ for (const [heard, want] of HEARD) {
   if (!ok) bad++;
   console.log(`${ok ? "ok  " : "FAIL"} ${JSON.stringify(heard).padEnd(48)} → ${got ?? "nothing"}${ok ? "" : ` (wanted ${want ?? "nothing"})`}`);
 }
-console.log(bad ? `\n${bad} of ${HEARD.length} wrong` : `\nall ${HEARD.length} as they should be`);
+
+// The three things the bar offers a silent hold: from the live targets and
+// nowhere else, what is nearest first.
+const k = (kind, ...say) => ({ kind, say });
+const HINTS = [
+  ["on a desk", [k("cmd", "Home"), k("cmd", "Inbox"), k("desk", "desk omd"), k("panel", "panel one"), k("panel", "panel two"), k("view", "Board")], ["panel one", "board", "desk omd"]],
+  ["on Home", [k("cmd", "Home"), k("cmd", "Inbox"), k("cmd", "Theme…"), k("cmd", "Keys…")], ["home", "inbox", "theme"]],
+  ["two things only", [k("cmd", "Home"), k("desk", "desk omd")], ["desk omd", "home"]],
+  ["nothing to say", [], []],
+];
+for (const [name, targets, want] of HINTS) {
+  const got = hints(targets), ok = JSON.stringify(got) === JSON.stringify(want);
+  if (!ok) bad++;
+  console.log(`${ok ? "ok  " : "FAIL"} hints ${name.padEnd(42)} → ${got.join(" · ") || "nothing"}${ok ? "" : ` (wanted ${want.join(" · ") || "nothing"})`}`);
+}
+console.log(bad ? `\n${bad} wrong` : `\nall as they should be`);
 if (bad && process.argv.includes("--check")) process.exit(1);

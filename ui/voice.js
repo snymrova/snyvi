@@ -33,6 +33,10 @@ const EARLY_FOR = 1000;
 /** After the key comes up the bar says nothing new for this long: a warm
  *  helper answers in 90 to 170 (docs/VOICE.md), well inside it. */
 const GRACE = 400;
+/** Held this long with nothing said, the bar offers three things to say. */
+const HINT_AFTER = 1000;
+/** A sample this loud is someone speaking, not the room (of 1). */
+const SPEECH = 0.06;
 /** How long each last word stays: an arrival, a miss, a slip, an error. */
 const SHOWN = { went: 2600, miss: 3600, slip: 2200, off: 3200, err: 4000 };
 
@@ -95,14 +99,28 @@ const ALSO = { home: ["go home"], inbox: ["open inbox"], theme: ["themes"], conn
  *  minute ago is there. */
 async function targets(ctx) {
   const pal = await ctx.pal();
-  const out = pal.commands.map(c => ({ say: [c.t, ...(ALSO[c.cmd] || [])], label: c.t.replace(/…$/, ""), go: () => pal.pick(c) }));
-  for (const k of ctx.state.desks?.desks || []) out.push({ say: [`desk ${k.name}`], label: `Desk · ${k.name}`, go: () => ctx.showDesk(k.id, true) });
+  const out = pal.commands.map(c => ({ kind: "cmd", say: [c.t, ...(ALSO[c.cmd] || [])], label: c.t.replace(/…$/, ""), go: () => pal.pick(c) }));
+  for (const k of ctx.state.desks?.desks || []) out.push({ kind: "desk", say: [`desk ${k.name}`], label: `Desk · ${k.name}`, go: () => ctx.showDesk(k.id, true) });
   const desk = ctx.state.view === "desk" && ctx.desk();
   if (desk) {
-    for (const p of desk.panelsHere()) out.push({ say: [`panel ${NUM[p.slot]}`, ...(p.name ? [`panel ${p.name}`, p.name] : [])], label: `Panel ${p.slot}${p.name ? ` · ${p.name}` : ""}`, go: () => desk.panelHere(p.id) });
-    for (const v of desk.viewsHere() || []) out.push({ say: [v.label, `${v.label} view`], label: v.label, go: () => desk.viewHere(v.v) });
+    for (const p of desk.panelsHere()) out.push({ kind: "panel", say: [`panel ${NUM[p.slot]}`, ...(p.name ? [`panel ${p.name}`, p.name] : [])], label: `Panel ${p.slot}${p.name ? ` · ${p.name}` : ""}`, go: () => desk.panelHere(p.id) });
+    for (const v of desk.viewsHere() || []) out.push({ kind: "view", say: [v.label, `${v.label} view`], label: v.label, go: () => desk.viewHere(v.v) });
   }
   return out;
+}
+
+/** A target as it is said: its first phrase, in lower case. */
+const spoken = t => t.say[0].replace(/…$/, "").toLowerCase();
+/** Three things to say here, for a hand that is holding the key and a head
+ *  that has gone blank: what is nearest first -- a panel, a view, a desk --
+ *  and the rest from the commands. Only ever from the live `targets`. */
+export function hints(targets) {
+  const out = [];
+  for (const kind of ["panel", "view", "desk", "cmd", "cmd", "cmd"]) {
+    const t = out.length < 3 && targets.find(t => t.kind === kind && !out.includes(t));
+    if (t) out.push(t);
+  }
+  return out.map(spoken);
 }
 
 // ---------- the daemon ----------
@@ -170,6 +188,7 @@ export async function ready(c) {
   try { st = await status(true); } catch { return; }
   if (!st.on) return;
   try { prepare(); } catch {}
+  ctx.pal().catch(() => {});
   let on = false;
   try { on = localStorage.getItem("snyvi.voice.early") === "1"; } catch {}
   if (on) for (const ev of ["keydown", "keyup"]) addEventListener(ev, early, true);
@@ -211,6 +230,12 @@ const CSS = `
 #voicebar .vt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #voicebar .vt b { font-weight: 600; color: var(--fg); }
 #voicebar .vt q { quotes: "“" "”"; }
+#voicebar .vh { position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%); white-space: nowrap; padding: 4px 12px;
+  border-radius: var(--r-pill); font-size: var(--fs-small); color: var(--fg-3); background: var(--bg-raise); border: 1px solid var(--rule);
+  opacity: 0; transition: opacity var(--dur-move); }
+#voicebar.hint .vh { opacity: 1; }
+#voicesheet details summary { cursor: pointer; color: var(--fg); }
+#voicesheet details p { margin-top: 6px; max-height: 132px; overflow: auto; color: var(--fg-3); font-size: var(--fs-small); }
 #voicesheet { position: fixed; left: 50%; bottom: 96px; z-index: var(--z-pop); transform: translateX(-50%); width: min(420px, 92vw);
   padding: 16px 18px; border-radius: var(--r-md); background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow);
   font-size: var(--fs-ui); color: var(--fg-2); display: grid; gap: 10px; }
@@ -228,7 +253,7 @@ let bar = null, barT = 0;
 function mount() {
   if (bar) return;
   document.head.append(Object.assign(document.createElement("style"), { id: "voice-css", textContent: CSS }));
-  bar = Object.assign(document.createElement("div"), { id: "voicebar", innerHTML: `<span class="vm"><i></i></span><span class="vt"></span>` });
+  bar = Object.assign(document.createElement("div"), { id: "voicebar", innerHTML: `<span class="vh"></span><span class="vm"><i></i></span><span class="vt"></span>` });
   bar.setAttribute("role", "status");
   document.body.append(bar);
 }
@@ -240,11 +265,18 @@ function say(html, { held = false, ms = 0 } = {}) {
   offKey?.();
   bar.querySelector(".vt").innerHTML = html;
   bar.classList.toggle("held", held);
-  if (!held) lit(false);
+  if (!held) { lit(false); hint(null); }
   bar.classList.add("show");
   if (ms) barT = setTimeout(hide, ms);
 }
-function hide() { clearTimeout(barT); offKey?.(); bar?.classList.remove("show", "held", "live"); }
+function hide() { clearTimeout(barT); offKey?.(); bar?.classList.remove("show", "held", "live", "hint"); }
+/** The line above the bar: what can be said here, or nothing. It lies over
+ *  the page as the bar does, and the bar under it does not change. */
+function hint(list) {
+  if (!bar) return;
+  if (list?.length) bar.querySelector(".vh").textContent = `Say: ${list.join(" · ")}`;
+  bar.classList.toggle("hint", !!list?.length);
+}
 /** The microphone is open, or shut: the meter at full and the bar edged in
  *  the accent, or neither. The one sign of it, set nowhere else. */
 function lit(on) { bar?.classList.toggle("live", on); if (!on) meter(0); }
@@ -291,6 +323,10 @@ async function take(mine, until, dry) {
   say("Listening", { held: true });
   // Whether the helper was asleep, asked before the socket wakes it: it is
   // the one case in which the answer is worth a word of its own.
+  // What can be said now, read while the reader speaks: the hints want it
+  // in a second, the match when the key comes up.
+  const all = targets(ctx);
+  all.catch(() => {});
   let cold = false;
   api("/api/voice").then(now => { cold = !now.warm; }, () => {});
   // Both at once: the socket wakes the helper while the microphone opens.
@@ -301,21 +337,26 @@ async function take(mine, until, dry) {
   let mic;
   try { mic = await claim(); } catch (e) { opening.then(s => s.close(), () => {}); throw e; }
   const held = [];
-  let peak = 0, sock = null;
+  let sock = null, spoke = false, hintT = 0;
   mic.node.port.onmessage = ev => {
     let m = 0;
     for (const x of ev.data) { const a = x < 0 ? -x : x; if (a > m) m = a; }
-    peak = Math.max(peak, m); meter(m);
+    meter(m);
+    if (m >= SPEECH && !spoke) { spoke = true; hint(null); }
     if (!sock) held.push(ev.data.buffer); else if (sock.readyState === 1) sock.send(ev.data.buffer);
   };
   const opened = opening.then(s => { s.send(JSON.stringify({ t: "start", rate: mic.rate })); for (const b of held.splice(0)) s.send(b); return (sock = s); });
   opened.catch(() => {});
   try {
     // A socket that will not open ends the take now, not at the key's coming up.
-    if (!mine.up) { lit(true); await Promise.race([until, opened.then(() => until)]); }
+    if (!mine.up) {
+      lit(true);
+      hintT = setTimeout(() => all.then(ts => { if (!spoke && !mine.up) hint(hints(ts)); }, () => {}), HINT_AFTER);
+      await Promise.race([until, opened.then(() => until)]);
+    }
     await opened;
   } catch (e) { opening.then(s => s.close(), () => {}); throw e; }
-  finally { mic.stop(); lit(false); }
+  finally { clearTimeout(hintT); hint(null); mic.stop(); lit(false); }
   if (Date.now() - mine.at < SLIP) { sock.close(); say("Hold the key while you speak", { ms: SHOWN.slip }); return; }
   // The key is up and the meter has gone dim, which is the truth. A warm
   // helper answers before anything else needs saying.
@@ -331,7 +372,7 @@ async function take(mine, until, dry) {
   if (line.quiet) { say(`Too quiet · ${esc(mic.label)}`, { ms: SHOWN.miss }); return; }
   const heard = (line.heard || "").trim();
   if (!heard) { say("Heard nothing to act on", { ms: SHOWN.miss }); return; }
-  const hit = match(heard, await targets(ctx));
+  const hit = match(heard, await all);
   if (!hit) { say(`<q>${esc(heard)}</q> · no command`, { ms: SHOWN.miss }); return; }
   say(`<q>${esc(heard)}</q> → <b>${esc(hit.label)}</b>`, { ms: SHOWN.went });
   if (!dry) { hit.go(); leaveOnKey(); }
@@ -393,8 +434,12 @@ async function draw(fresh) {
     sheetEl.innerHTML = `${head}${err}
       <div class="vs-row"><label for="vs-mic">Microphone</label><select id="vs-mic"><option value="">The system's own</option></select></div>
       <div class="vs-row"><button type="button" data-a="try">Hold to try a phrase</button><span class="vs-dim">Say “go home”. Nothing runs from here.</span></div>
+      <details><summary>What you can say</summary><p></p></details>
       <div class="vs-row"><button type="button" data-a="off">Turn voice off</button><button type="button" data-a="remove">Remove the download · ${mb(st.bytes)}</button></div>`;
     mics();
+    // Everything that can be said from where the window is now.
+    const list = sheetEl.querySelector("details p");
+    targets(ctx).then(ts => { list.textContent = ts.map(spoken).join(" · "); }, () => {});
   }
 }
 
