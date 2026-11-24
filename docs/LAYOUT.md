@@ -57,7 +57,7 @@ reach.
 | Name | What it is | Where |
 |---|---|---|
 | `desk.groups` | the desk's named tabs, after its name in the head, the shown one underlined, a `!` on one whose panel needs you, a ✕ on each (on hover, and on the shown one), and `+` for a new one (1.57); the `+` alone on a desk with no tabs, or one | `.dk-groups` · `groupsHead()` in `desk.js` |
-| `desk.back` | the chips of the panels in the back, after the grid's tabs in the desk's head (1.49) | `.dk-back` · `backChips()` in `desk.js` |
+| `desk.back` | the one chip for the panels in the back, and its list, after the grid's tabs in the desk's head (1.49, 1.69) | `.dk-back` · `backChips()` in `desk.js` |
 | `desk.drawer` | the drawer over the bottom of the grid, open on one panel in the back; laid out always, seen only open | `.dk-drawer` · `backLayout()` |
 
 ## Home

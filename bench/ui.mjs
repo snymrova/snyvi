@@ -4273,7 +4273,8 @@ async function backPanelRows(cdp, base) {
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
   const q = new Driver(cdp, sessionId);
   const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
-  const chip = id => `.dk-tabs .dk-back .dk-chip[data-drawer="${id}"]`;
+  // One chip for the whole back (1.69): it names the panels it stands for.
+  const chip = id => `.dk-tabs .dk-back .dk-chip[data-ids~="${id}"]`;
   const box = sel => `(() => { const r = document.querySelector(${JSON.stringify(sel)})?.getBoundingClientRect(); return r ? [r.x, r.y, r.width, r.height].map(Math.round).join(",") : ""; })()`;
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
@@ -4304,11 +4305,27 @@ async function backPanelRows(cdp, base) {
     const hint = died ? "" : await q.ev(`(document.querySelector('${chip(dies)}')?.className || "no chip") + " / " + (document.querySelector('a[data-desk="${desk}"] .dot')?.className || "no dot")`);
     rows.push(["a panel that dies in the back needs you", died, died ? "its chip amber, the desk's dot too" : `after it exited 3: ${hint}`]);
 
+    // Two in the back: the one chip counts them at the width it had, and a
+    // click lays their list over the head, which moves nothing; a row of
+    // it opens that panel's drawer.
+    const one = ".dk-tabs .dk-back .dk-chip";
+    const headXs = `[...document.querySelectorAll(".dk-head > *")].map(e => Math.round(e.getBoundingClientRect().x)).join(",")`;
+    const w1 = await q.ev(`document.querySelectorAll(${JSON.stringify(one)}).length + ":" + document.querySelector(${JSON.stringify(one)})?.textContent.trim() + ":" + Math.round(document.querySelector(${JSON.stringify(one)})?.getBoundingClientRect().width || 0)`);
+    const xs0 = await q.ev(headXs), grid3 = await q.ev(box(".dk-grid"));
+    await q.ev(`document.querySelector(${JSON.stringify(one)}).click(); 1`);
+    const listed = await until(`document.querySelectorAll(".dk-back-list [data-drawer]").length === 2`, 30);
+    const still = (await q.ev(headXs)) === xs0 && (await q.ev(box(".dk-grid"))) === grid3;
+    await q.ev(`document.querySelector('.dk-back-list [data-drawer="${dies}"]')?.click(); 1`);
+    const onIt = await until(`document.querySelector(".dk-drawer")?.classList.contains("open") && !!document.querySelector('.dk-drawer .pn.cur[data-id="${dies}"]') && !document.querySelector(".dk-back-list")`, 30);
+    await q.ev(`document.querySelector(".dk-drawer .pn.cur .pn-hide")?.click(); 1`);
+    rows.push(["several in the back are one chip, and its list moves nothing", /^1:2:\d+$/.test(w1) && listed && still && onIt,
+      !/^1:2:/.test(w1) ? `the head has ${w1} (chips:count:width)` : !listed ? "the chip opened no list of two" : !still ? "the head or the grid moved under the list" : !onIt ? "a row did not open its panel's drawer" : `one chip, ${w1.split(":")[2]} px, a list of two over the head`]);
+
     await post(`/api/panes/${server.id}/back`, { back: false });
     const forward = await until(`!!document.querySelector('.dk-grid > .pn[data-id="${server.id}"]') && !document.querySelector('${chip(server.id)}')`);
     const slot = await slotOf(desk, server.id);
     rows.push(["brought forward, it takes the grid's next place", forward && slot === 2,
-      !forward ? "it is still a chip, or not in the grid" : `in the grid at slot ${slot}`]);
+      !forward ? "the chip still counts it, or it is not in the grid" : `in the grid at slot ${slot}`]);
   } finally {
     for (const pane of [front, server.id, dies]) if (pane) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});
