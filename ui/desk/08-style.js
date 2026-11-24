@@ -453,7 +453,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: var(--danger); }
 .dk-tools button[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .dk-panes .dot { width: 8px; flex: none; text-align: center; font-size: 8px; color: var(--fg-3); align-self: center; }
-.dk-panes .run .dot { color: var(--ok); }
+.dk-panes .wk .dot { color: var(--ok); }
 .dk-panes .blk .dot { color: var(--warn); font-weight: 700; font-size: 11px; }
 .dk-panes .slot, .dk-docs .slot { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
 /* The rail's panel rows number as the panel heads do (#227): a small box. */

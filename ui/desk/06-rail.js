@@ -185,11 +185,16 @@ function tabLines(d, esc) {
   }).join("");
 }
 
+/** A panel row's mark (1.69, B2): needs you, an agent working, finished and
+ *  not yet looked at. A shell merely running, or stopped, has none: its
+ *  place is kept, and the row's own Stop or Start says which. */
+const paneSt = v => v.status.agent || v.status.said;
+const paneDot = v => v.status.blocked ? "!" : paneSt(v) === "done" ? "✓" : paneSt(v) === "working" ? "●" : "";
+
 function rail() {
   const d = current();
   if (!d) return;
   const { esc } = ctx, j = ctx.desks;
-  const dot = v => v.status.blocked ? "!" : (v.status.agent || v.status.said) === "done" ? "✓" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean), blocked = vs.filter(v => v.status.blocked).length;
   // The grid's count against its cap; the back's beside it (18-back.js).
   const nGrid = gridPanes(d).length, nBack = d.panes.length - nGrid;
@@ -223,8 +228,8 @@ function rail() {
   const sent = sentFrom();
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
-    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v === sent ? " sent" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
-      `<button type="button" class="dk-focus" data-focus="${v.id}"${v === sent ? ' data-tip="Sent the page you are reading" data-tip-sub="the ✕ comes back here"' : ""}><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) >= CTX_SHOWN ? `<span class="${ctxCls(ctxPct(v.status))}">ctx ${ctxPct(v.status)}%</span>` : ""}</button>` +
+    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v === sent ? " sent" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${!v.status.blocked && paneSt(v) === "working" ? " wk" : ""}${v.closing ? " closing" : ""}">` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}"${v === sent ? ' data-tip="Sent the page you are reading" data-tip-sub="the ✕ comes back here"' : ""}><span class="dot">${paneDot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) >= CTX_SHOWN ? `<span class="${ctxCls(ctxPct(v.status))}">ctx ${ctxPct(v.status)}%</span>` : ""}</button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" data-tip="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
