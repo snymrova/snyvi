@@ -178,11 +178,14 @@
    * spoken command runs as a picked one does. */
   const voiceCtx = { capability, state, toast, sayErr, showDesk, v: boot.v, desk: () => desk,
     pal: async () => { const [m, lk] = await Promise.all([palLoading ||= chunk("palette"), useLook()]); return (palMod = m).spoken(palDeps(lk)); } };
-  /* Voice that was turned on is made ready once the page is idle: its code,
-   * its audio path, how it stands. Not the microphone, which opens on the key
-   * and no sooner. voice.js keeps the mark; a window that never turned voice
-   * on fetches nothing. */
-  if (capability && store.get("snyvi.voice.on") === "1") (window.requestIdleCallback || setTimeout)(() => chunk("voice").then(m => m.ready(voiceCtx), () => {}), { timeout: 3000 });
+  /* Voice that is on is made ready once the page is idle: its code, its
+   * audio path, its button in the foot. Not the microphone, which opens on
+   * the key and no sooner. The daemon is asked, not this window's own memory
+   * of it: a window that has never taken a take -- a new one, or one whose
+   * storage was cleared -- has voice as much as any, and showed no button.
+   * A window where voice is off fetches nothing more than the answer. */
+  if (capability) (window.requestIdleCallback || setTimeout)(() => fetch("/api/voice", { headers: { "x-snyvi-capability": capability } })
+    .then(r => r.ok && r.json()).then(st => st && st.on && chunk("voice").then(m => m.ready(voiceCtx)), () => {}), { timeout: 3000 });
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
   $("#btn-search").addEventListener("click", openPalette);

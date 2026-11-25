@@ -151,9 +151,10 @@ const api = (path, body) => fetch(path, { method: body ? "POST" : "GET", headers
 /** How voice stands, asked once and again whenever the sheet changes it. */
 let stood = null;
 const status = fresh => (fresh || !stood ? (stood = api("/api/voice").then(st => (mark(st.on), st), e => { stood = null; throw e; })) : stood);
-/** Whether voice is on, kept for the next time this window opens: first
- *  paint reads it and calls `ready` at idle (ui/app/09-answers.js). */
-const mark = on => { try { on ? localStorage.setItem("snyvi.voice.on", "1") : localStorage.removeItem("snyvi.voice.on"); } catch {} button(on); };
+/** Voice is on, or off: the button in the foot follows. Every answer to
+ *  "how does voice stand" passes here, so turning it off in the sheet takes
+ *  the button away at once. */
+const mark = on => button(on);
 
 /** The voice socket, allowed: the capability in the first frame, never the
  *  URL, as the desk's socket has it (ui/app/07-nav.js). */
@@ -198,7 +199,7 @@ async function microphone() {
     stop() { src.disconnect(); node.disconnect(); mute.disconnect(); node.port.onmessage = null; stream.getTracks().forEach(t => t.stop()); } };
 }
 
-/** Voice was on when this window last knew (`mark`), and the page is idle:
+/** Voice is on, the daemon said so (ui/app/09-answers.js), and the page is idle:
  *  everything a take needs but the microphone and the socket. The socket
  *  stays shut because opening it wakes the helper (src/server/api_voice.rs),
  *  and a helper kept awake by an idle window is 220 MB held for nothing. */
