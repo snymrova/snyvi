@@ -490,6 +490,11 @@ function entries(ctx, el, byKey = false) {
       dk && d.panes.length && (!vs.length || vs[0].on) && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       dk && { label: "Keys…", run: () => dk.keysHere() },
+      // 1.69: both sides away, and back as they were (ui/desk/34-rest.js).
+      dk && dk.restHere && { label: document.documentElement.dataset.rest ? "Wake the desk" : "Rest the desk", key: ctx.keyHint("ctrl+alt+s"), about: "both sides away, the panels the window", run: () => dk.restHere() },
+      // 1.69: Next up is not drawn until it has a goal or a note; this is
+      // the goal's way in (ui/desk/31-line.js).
+      dk && dk.goalHere && { label: dk.goalSet() ? "Change the goal…" : "Set a goal…", about: "one line: what this desk is for", run: () => dk.goalHere() },
       // 1.57: more panels on this desk, in its folder (#217): the head's + too.
       dk && dk.newTab && { label: "New tab", run: () => dk.newTab() },
       // 1.67: what a ✕ took from view here, after its six-second Undo.

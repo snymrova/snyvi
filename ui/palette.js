@@ -157,11 +157,37 @@ const COMMANDS = [
   { cmd: "about", t: "About snyvi", s: "The version, where it keeps things, and updates" },
   { cmd: "parts", get t() { return document.documentElement.dataset.parts ? "Hide section names" : "Show section names"; }, s: "Each part of the window with its name, to point at (docs/LAYOUT.md)" },
 ];
+/* 1.69: verbs for the desk that is open, in a window that holds the key
+ * (`desk`). One with `arg` takes the words after it: it is matched on its
+ * first word alone, and the row says what Enter will do with the rest, so
+ * `> note call the vet` is a note added without a visit to the rail. `run`
+ * names what the desk's chunk exports (ui/desk/35-verbs.js and beside). */
+const VERBS = [
+  { verb: "note", arg: "words", run: "noteSay", t: "Add a note", say: w => `Note · ${w}`, s: "On this desk's notes" },
+  { verb: "routine", arg: "optional", run: "routineSay", t: "New routine…", say: w => `Routine · ${w}`, s: "Opens the routines' field with your words: what should happen, and when" },
+  { verb: "goal", arg: "optional", run: "goalSay", t: "Set a goal…", say: w => `Goal · ${w}`, s: "One line: what this desk is for" },
+  { verb: "panel", run: "newHere", t: "New panel", s: "Any agent, or a shell", k: "new" },
+  { verb: "rest", run: "restHere", get t() { return document.documentElement.dataset.rest ? "Wake the desk" : "Rest the desk"; }, s: `Both sides away, and back as they were: ${/Mac/.test(navigator.platform) ? "⌃⌥S" : "Ctrl Alt S"}`, k: "rest focus zen sides" },
+  { verb: "desk keys", run: "keysHere", t: "Desk keys…", s: "The keys this desk's panels start with", k: "secrets env" },
+];
+const onDesk = () => !!d.capability && d.state.view === "desk" && !!d.desk?.();
+function verbItems(raw) {
+  if (!onDesk()) return [];
+  const l = raw.toLowerCase(), out = [];
+  for (const c of VERBS) {
+    const m = c.arg && l.startsWith(c.verb) && /^\s+\S/.test(raw.slice(c.verb.length)) ? raw.slice(c.verb.length).trim() : "";
+    if (m) out.push({ verb: c, words: m, t: c.say(m), s: c.s });
+    else if (!l || `${c.verb} ${c.t} ${c.k || ""}`.toLowerCase().includes(l)) out.push({ verb: c, words: "", t: c.t, s: c.arg ? `${c.s} · > ${c.verb} and your words` : c.s });
+  }
+  return out;
+}
 function commandItems(q) {
   const m = /^\s*>\s*(.*)$/.exec(q);
   if (!m) return null;
-  const l = m[1].trim().toLowerCase();
-  return COMMANDS.filter(c => (!c.window || d.capability) && (!l || `${c.t} ${c.k || ""}`.toLowerCase().includes(l)));
+  const raw = m[1].trim(), l = raw.toLowerCase(), verbs = verbItems(raw);
+  // Words after a verb are the reader's, not a search: only the verb's row.
+  if (verbs.some(v => v.words)) return verbs.filter(v => v.words);
+  return verbs.concat(COMMANDS.filter(c => (!c.window || d.capability) && (!l || `${c.t} ${c.k || ""}`.toLowerCase().includes(l))));
 }
 
 /** Pairing without the `>`: a search for a friend, a code or pairing finds
@@ -279,8 +305,11 @@ function pick(it) {
   if (it.cmd === "theme") { d.input.value = "theme"; search("theme"); return; }
   // New desk… is a way into the rows that say where, as the + asks.
   if (it.cmd === "desk") { d.input.value = "new desk"; search("new desk"); return; }
+  // Add a note, with no words yet, is a way into the words.
+  if (it.verb && it.verb.arg === "words" && !it.words) { d.input.value = `> ${it.verb.verb} `; search(d.input.value); return; }
   if (it.theme) previewing = false;
   close();
+  if (it.verb) { d.desk()?.[it.verb.run]?.(it.words); return; }
   if (it.cmd === "parts") { parts(); return; }
   if (it.cmd === "chime") { chimeFlip(d.peerCtx.toast); return; }
   if (it.friend) { d.peerCtx.friend(it.friend); return; }

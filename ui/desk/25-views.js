@@ -444,6 +444,7 @@ function folderHead() {
   groupsHead(d);
   leftOffSlot(d);
   keysSlot(d);
+  oyHead(d);
   viewsSlot(d);
 }
 
@@ -457,7 +458,7 @@ function folderHeadClick(e) {
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   const b = e.target.closest("[data-a]");
   if (b && b.dataset.a === "new") { const why = noNew(d); if (why) { ctx.toast("New panel", why); return; } Promise.resolve(ctx.go(d.id, true)).then(() => act({ dataset: { a: "new" } })); return; }
-  if (b && /^(left-|keys)/.test(b.dataset.a)) act(b, !e.detail);
+  if (b && /^(left-|keys|oy-open)/.test(b.dataset.a)) act(b, !e.detail);
 }
 
 /** The Folder view's dock, filled as the board's is (`dockFill`). Beside a

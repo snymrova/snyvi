@@ -531,10 +531,12 @@ function keys(e) {
     if (v) { e.preventDefault(); e.stopPropagation(); renamePanel(v); }
     return;
   }
-  if (backEsc(e)) return;
+  if (backEsc(e) || restEsc(e)) return;
   // Esc on a view, and ⌃⌥F for Folder (25-views.js).
   if (!altGr(e) && viewKey(e)) return;
   if (!(e.ctrlKey && e.altKey) || e.metaKey || altGr(e)) return;
+  // ⌃⌥S the desk at rest, and back; ⌃⌥⇧S the right side over it (34-rest.js).
+  if (restKey(e)) return;
   // ⌃⌥B the drawer; ⌃⌥⇧B the focused panel to the back, or forward.
   if (e.code === "KeyB") {
     if (reading != null) return;
@@ -607,6 +609,7 @@ function detach() {
   closeLightbox();
   document.removeEventListener("keydown", keys, true);
   hoverDetach();
+  restDetach();
   document.removeEventListener("mouseup", pickUp);
   document.removeEventListener("keyup", pickKey);
   removeEventListener("scroll", hidePick, true);
@@ -679,6 +682,7 @@ export function open(c) {
   ctx.metaEl.addEventListener("click", click);
   document.addEventListener("keydown", keys, true);
   hoverAttach();
+  restAttach();
   // A passage selected in a document read over the desk can be kept as a
   // point for the panel that sent it (`picked`).
   document.addEventListener("mouseup", pickUp);
@@ -906,6 +910,8 @@ export function actions(el) {
       { label: "Edit", run: does("note-edit") },
       { label: x.done ? "Untick" : "Tick", run: does("note-tick") },
       { label: "Add a picture…", run: () => pickImages(x.id) },
+      // Next up's way in, and out (1.69, 31-line.js).
+      ...lineItems(d, x),
       // A dated open line can go to a friend as a promise (1.48).
       ...(!x.done && x.due_at && !promisedTo.has(x.id) ? (friendsList || []).map(f => ({ label: `Promise to ${f.name}…`, run: () => promise(d, x, f) })) : []),
       // An undated open line of the reader's own can go to a friend as a line

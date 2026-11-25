@@ -127,6 +127,8 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/page.js` | 340 | lazy | the Page view: the page in its tone, edited in place, its chips, and the side with the press |
 | `ui/wall.js` | 150 | lazy | Home's *What people are building*: Everyone, Following, Friends, hearts |
 | `ui/desk/25-views.js` | 190 | lazy | 1.58: views over a desk -- in the ⋯ with the head's chip (1.60), the folder's head and dock, `open_view`, a board over the grid with one panel docked, focus told on open and close |
+| `ui/desk/34-rest.js` | 200 | lazy | 1.69: the desk at rest -- ⌃⌥S folds both sides by the two attributes `\` and `t` set and remembers what each was (`snyvi.rest`), `data-rest` on the root while both are away; the right side over the panels (`data-rest="over"`, fixed, no scrim, the grid's box unchanged) by the pointer resting on the right edge or ⌃⌥⇧S |
+| `ui/desk/35-verbs.js` | 65 | lazy | 1.69: what the palette's `> note`, `> routine`, `> goal` call (`noteSay`, `routineSay`, `goalSay`), each by the rail's own save |
 | `ui/board/01-canvas.js` … `06-style.js` | 30–90 each | lazy | `board.js` (1.58), imported by the desk's views part when a board opens: the world under a transform, frames as sandboxed iframes by `src`, the board's own bar of frames and tokens (03-list.js, 1.60), selection as the reader's focus, live redraw, style |
 | `ui/home.js` | 1330 | lazy | Home, with Friends |
 | `ui/peer.js` | 237 | lazy | pairing, Send to…, a line for a friend, an agent's offer |

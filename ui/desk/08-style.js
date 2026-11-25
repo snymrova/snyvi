@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS + BACK_CSS + CHANGE_CSS + GROUPS_CSS + CHECKS_CSS + VIEWS_CSS + PAGE_DESK_CSS + DECISIONS_CSS + CLOSED_CSS + LINE_CSS + WAYS_CSS + SWITCH_CSS;
+  s.textContent = RAIL_CSS + CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS + GALLERY_CSS + BACK_CSS + CHANGE_CSS + GROUPS_CSS + CHECKS_CSS + VIEWS_CSS + PAGE_DESK_CSS + DECISIONS_CSS + CLOSED_CSS + LINE_CSS + WAYS_CSS + SWITCH_CSS + REST_CSS;
   document.head.append(s);
 }
 
@@ -112,9 +112,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    panes. A key just kept lights its row and the button once, in the
    background only, so nothing moves. */
 .dk-keys { position: relative; flex: none; display: flex; align-items: center; }
-.dk-keys-b { display: flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
+.dk-keys-b { display: flex; align-items: center; justify-content: center; gap: 3px; width: 40px; padding: 2px 0; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
 .dk-keys-b:is(:hover, [aria-expanded="true"]) { background: var(--rule); color: var(--fg); }
-.dk-keys-b .n { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.dk-keys-b .n { width: 2ch; text-align: left; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.dk-ks-t b { color: var(--fg); font-weight: 600; }
 .dk-keys-b.none { color: var(--fg-3); }
 @keyframes dk-kept { 0%, 40% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
 .dk-keys-b.kept, .dk-key.new { animation: dk-kept calc(var(--dur-moment) * 2) ease-out; }
@@ -171,7 +172,6 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The account a desk runs as, leading its key button when it is not your login:
    "as Trapti" in the button's own quiet colour, never bold -- bold, beside the
    desk's name, it read as the desk's title. */
-.dk-keys-b .acc { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; margin-right: 2px; }
 :is(.dk-keys-say, .dk-key-m) code { font-family: var(--mono); }
 /* An agent's suggestion: a ghost row, quieter than a line of the reader's,
    with its two answers always shown. */
@@ -197,15 +197,16 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * widths where it is a column; under them it is a sheet, as before. The
  * strip's first mark brings it back, so the head's button is not needed and
  * its room in the head goes too, except in the window, whose own three
- * buttons still sit at the top right. */
+ * buttons still sit at the top right. Not at rest (34-rest.js): there the
+ * right side is away whole, and the head's button is the way back. */
 .dk-strip { display: none; }
 @media (min-width: 1101px) {
-  :root[data-view="desk"][data-rail="0"]:not([data-full]) #app:not(:has(#rail.empty)) { grid-template-columns: var(--side-c) minmax(0,1fr) 44px; }
-  :root[data-view="desk"][data-rail="0"]:not([data-full]) #rail:not(.empty) { display: flex; padding: 0; }
-  :root[data-view="desk"][data-rail="0"] #rail > :not(.dk-strip, .rail-grip) { display: none; }
-  :root[data-view="desk"][data-rail="0"] .dk-strip { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 52px; }
-  :root[data-view="desk"][data-rail="0"]:not([data-frame="page"]) #app:not(:has(#rail.empty)) .dk-head { padding-right: 0; }
-  :root[data-view="desk"][data-rail="0"] #app:not(:has(#rail.empty)) #chrome #btn-rail { display: none; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]):not([data-full]) #app:not(:has(#rail.empty)) { grid-template-columns: var(--side-c) minmax(0,1fr) 44px; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]):not([data-full]) #rail:not(.empty) { display: flex; padding: 0; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]) #rail > :not(.dk-strip, .rail-grip) { display: none; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]) .dk-strip { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 52px; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]):not([data-frame="page"]) #app:not(:has(#rail.empty)) .dk-head { padding-right: 0; }
+  :root[data-view="desk"][data-rail="0"]:not([data-rest]) #app:not(:has(#rail.empty)) #chrome #btn-rail { display: none; }
 }
 /* Over the window's drag grip, which keeps the strip's empty top. */
 .dk-strip { position: relative; z-index: 1; pointer-events: none; }
@@ -416,7 +417,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * as a desk is; a document and a note are Sub-rows. */
 .dk-foot { display: flex; gap: 10px; margin-top: 2px; min-width: 0; }
 .dk-foot .dk-new { flex: none; white-space: nowrap; }
-.dk-why { color: var(--fg-3); font-size: 12px; align-self: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A head's + at the cap: quiet, its tip saying why. */
+.sec-acts > button.dim { opacity: .45; cursor: default; }
+.sec-acts > button.dim:hover { background: none; color: var(--fg-3); }
 /* #toc styles an outline -- a rule down the left, entries clamped to two
  * lines -- and these are rows, so both are undone at #toc's own weight. */
 #toc .dk-rail ul { list-style: none; margin: 2px 0 0; padding: 0; border-left: 0; }
@@ -451,7 +454,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-tools button[data-armed] { width: auto; padding: 0 5px; font-size: 11px; font-weight: 600; color: var(--danger); }
 .dk-tools button[data-armed]:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
 .dk-panes .dot { width: 8px; flex: none; text-align: center; font-size: 8px; color: var(--fg-3); align-self: center; }
-.dk-panes .run .dot { color: var(--ok); }
+.dk-panes :is(.wk, .run) .dot { color: var(--ok); }
 .dk-panes .blk .dot { color: var(--warn); font-weight: 700; font-size: 11px; }
 .dk-panes .slot, .dk-docs .slot { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
 /* The rail's panel rows number as the panel heads do (#227): a small box. */
@@ -531,10 +534,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * the sidebar's does, and is opaque and in front: the cards rise from behind
  * it (15-cards.js). A document read over the desk keeps this rail, and the
  * page is no longer the desk view (08-desks.js behindDesk), so the foot is
- * known by On you's button in it too: keyed on the view alone, its icons
- * stacked into a column there. */
-:root[data-view="desk"] #rail, #rail:has(> #meta > .oy-foot) { padding-bottom: 0; }
-:root[data-view="desk"] #meta, :root[data-view="desk"] #meta:empty, #meta:has(> .oy-foot) { height: var(--foot-h); max-height: none; overflow: hidden; display: flex; align-items: center; gap: 4px;
+ * known by the repository's slot in it too, which a desk's foot always has:
+ * keyed on the view alone, its icons stacked into a column there. */
+:root[data-view="desk"] #rail, #rail:has(> #meta > .dk-repo) { padding-bottom: 0; }
+:root[data-view="desk"] #meta, :root[data-view="desk"] #meta:empty, #meta:has(> .dk-repo) { height: var(--foot-h); max-height: none; overflow: hidden; display: flex; align-items: center; gap: 4px;
   margin-left: -8px; padding: 0 8px; border-top: 1px solid var(--rule); background: var(--bg-side); line-height: 1; white-space: nowrap; position: relative; z-index: 2; }
 /* The desk's repository on the web: an icon in a slot that is there whether
  * or not the answer has come, quiet until pointed at. */
@@ -594,6 +597,13 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-tick[aria-checked="true"] { background: var(--fg-3); box-shadow: none; color: var(--bg); }
 /* A date caught while typing: over the field's right end, out of the flow. */
 .dk-note.new { position: relative; }
+/* The field asked for by a head's + on a list that has rows (1.69): over
+   what is under the list, where the line will land, taking no room. */
+.dk-notes > .sec-body { position: relative; }
+.dk-notes > .sec-body > .dk-note.new.over { position: absolute; z-index: var(--z-pop, 30); top: 100%; left: 0; right: 0; border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow-2, var(--shadow)); }
+.dk-note.new.over:hover { background: var(--bg-raise); }
+/* A head's + is the one standing way to a new line now: in view at rest. */
+.dk-sec > .sec-head > .sec-acts { opacity: 1; }
 .dk-due-guess { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); padding: 0 5px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 14%, var(--bg)); color: var(--fg-2); font-size: var(--fs-micro); line-height: 16px; pointer-events: none; }
 /* Pick a time, at the foot of the date menu. */
 .dk-due-in { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }

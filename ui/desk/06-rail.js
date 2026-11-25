@@ -185,11 +185,16 @@ function tabLines(d, esc) {
   }).join("");
 }
 
+/** A panel row's mark (1.69, B2): needs you, an agent working, finished and
+ *  not yet looked at. A shell merely running, or stopped, has none: its
+ *  place is kept, and the row's own Stop or Start says which. */
+const paneSt = v => v.status.agent || v.status.said;
+const paneDot = v => v.status.blocked ? "!" : paneSt(v) === "done" ? "✓" : paneSt(v) === "working" ? "●" : "";
+
 function rail() {
   const d = current();
   if (!d) return;
   const { esc } = ctx, j = ctx.desks;
-  const dot = v => v.status.blocked ? "!" : (v.status.agent || v.status.said) === "done" ? "✓" : v.status.running ? "●" : "○";
   const vs = d.panes.map(p => views.get(p.id)).filter(Boolean), blocked = vs.filter(v => v.status.blocked).length;
   // The grid's count against its cap; the back's beside it (18-back.js).
   const nGrid = gridPanes(d).length, nBack = d.panes.length - nGrid;
@@ -223,8 +228,8 @@ function rail() {
   const sent = sentFrom();
   const paneRow = v => {
     const n = v.pane.slot, run = v.status.running;
-    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v === sent ? " sent" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${v.closing ? " closing" : ""}">` +
-      `<button type="button" class="dk-focus" data-focus="${v.id}"${v === sent ? ' data-tip="Sent the page you are reading" data-tip-sub="the ✕ comes back here"' : ""}><span class="dot">${dot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) >= CTX_SHOWN ? `<span class="${ctxCls(ctxPct(v.status))}">ctx ${ctxPct(v.status)}%</span>` : ""}</button>` +
+    return `<li class="dk-pane${v.id === focused && reading == null ? " on" : ""}${v === sent ? " sent" : ""}${v.status.blocked ? " blk" : run ? " run" : ""}${!v.status.blocked && paneSt(v) === "working" ? " wk" : ""}${v.closing ? " closing" : ""}">` +
+      `<button type="button" class="dk-focus" data-focus="${v.id}"${v === sent ? ' data-tip="Sent the page you are reading" data-tip-sub="the ✕ comes back here"' : ""}><span class="dot">${paneDot(v)}</span><span class="slot">${n}</span><span class="nm"></span>${threadChip(d, v.id, esc)}${ctxPct(v.status) >= CTX_SHOWN ? `<span class="${ctxCls(ctxPct(v.status))}">ctx ${ctxPct(v.status)}%</span>` : ""}</button>` +
       `<span class="dk-tools">` +
       (run ? `<button type="button" data-a="stop" data-p="${v.id}" data-tip="Stop" aria-label="Stop panel ${n}">${ico("stop")}</button>`
         : `<button type="button" data-a="start" data-p="${v.id}" data-tip="Start" aria-label="Start panel ${n}">${ico("play")}</button>`) +
@@ -250,13 +255,19 @@ function rail() {
       open: closedRow && closedRow.desk === d.id, tip: "Panels", sub: `${here} · ${total}`,
       count: `${blocked ? `!${blocked} · ` : ""}${nGrid} of ${j.per_desk}${nBack ? ` · ${nBack} back` : ""}`, tone: blocked ? "warn" : "",
       countTip: blocked ? `${ctx.plural(blocked, "panel")} ${blocked === 1 ? "needs" : "need"} you` : "",
+      // Quiet rather than disabled at the cap, so the keyboard still reaches
+      // it and hears why, as the head's + panel does.
+      acts: `<button type="button"${why ? ` class="dim" aria-disabled="true" aria-describedby="dk-new-why"` : ""} data-a="new" data-tip="New panel" data-tip-sub="${esc(why || "any agent, or a shell")}" data-key="ctrl+alt+n" aria-label="New panel">${ico("plus")}</button>`,
     }, `<ul class="dk-panes">` + vs.filter(v => !isBack(v.pane)).map(paneRow).join("") +
       (nBack ? `<li class="dk-backline" role="presentation">In the back</li>` + vs.filter(v => isBack(v.pane)).map(paneRow).join("") : "") + tabLines(d, esc) + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
-    // One foot (1.68): New panel, then the back's quieter way in on the same
-    // line. Its field takes the line while it is open, so nothing is added.
-    `<div class="dk-foot">` + (backFieldOpen(d) ? backRow(d, esc) : `<button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
-    (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + backRow(d, esc)) + `</div>`),
+    // The foot (1.69, A5): New panel left it for a + on the head, where a
+    // new note's and a new routine's are, so the rail has one place for
+    // "another of these". What is left is the quieter pair: Start all,
+    // when more than one is stopped, and the back's way in, whose field
+    // takes the line while it is open, so nothing is added.
+    (why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : "") +
+    `<div class="dk-foot">` + (backFieldOpen(d) ? backRow(d, esc) : (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + backRow(d, esc)) + `</div>`),
     // The documents, waiting ones first, and the way to the rest. The count
     // is how many wait; the row's [n] says which panel sent it.
     docs: () => sec("docs", "rail.docs", "Documents", {
@@ -481,7 +492,8 @@ function repoName(url) {
  *  on its rule, so the two feet read as one band across the window, and
  *  never a line more (#163). The repository's icon has a slot kept for it,
  *  there or not, so its late answer fills the slot and moves nothing; the
- *  desk's links follow it (17-links.js). The focused panel's line that was
+ *  desk's links follow it (17-links.js). On you's button was at its right
+ *  end, and is the head's since 1.69. The focused panel's line that was
  *  here -- its model, its context, its clock -- is under Claude's own prompt
  *  now (`snyvi statusline`), and what only its tip said, the pid and the
  *  folder the shell moved to, is on the panel's number in its head. */
@@ -491,7 +503,7 @@ function meta() {
   const { esc } = ctx;
   const url = repoOf(d), rn = url && repoName(url), on = rn && rn.path ? `${esc(rn.path)} on ${esc(rn.host)}` : "";
   const repo = on ? `<a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="${on}" data-tip-sub="${esc(url)}" aria-label="${on}">${REPO}</a>` : `<span class="dk-repo"></span>`;
-  linksDraw(ctx.metaEl, d, repo, oyFoot(d));
+  linksDraw(ctx.metaEl, d, repo);
   ctx.rail.classList.remove("empty");
   cards();
 }
@@ -579,13 +591,15 @@ function noteSec(d) {
     // The changes first (1.56, 22-change.js): the rows above the lines they carry.
     changeRows(d, esc) +
     (rows ? `<ul class="dk-list">${rows}</ul>` : notesOff === d.id ? noReach("notes") : "") +
-    // The bar for a new line, always at the end of the list, where the line
-    // will land: a quiet field until it is clicked, or the head's + is, and
-    // then the live one, in the same room, so nothing under it moves as it
-    // opens and shuts. On an empty list it is the whole of the list.
+    // The field for a new line (1.69, A4). On an empty list it is the whole
+    // of the list: a quiet field, live once it is clicked, in the same room.
+    // Once the list has a row the field is not drawn until the head's + is
+    // pressed, and then it lies over what is under the list, at the place
+    // the line will land (`over`): a standing field under every list was a
+    // third of a short rail. Opening and shutting it moves nothing.
     (notesOff === d.id ? "" : !(noteField && noteField.kind === "new")
-      ? `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
-      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"><span class="dk-due-guess" aria-hidden="true" hidden></span>` +
+      ? rows ? "" : `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
+      : `<div class="dk-note new${rows ? " over" : ""}"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"><span class="dk-due-guess" aria-hidden="true" hidden></span>` +
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
         (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`));

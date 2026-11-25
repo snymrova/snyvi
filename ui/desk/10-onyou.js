@@ -1,6 +1,6 @@
 /* ui/desk/10-onyou.js: a part of desk.js, one module. build.rs joins ui/desk/*.js in name
  * order (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
-// ---------- on you: what only the reader can do, in the rail's corner ----------
+// ---------- on you: what only the reader can do, from the desk's head ----------
 /*
  * Your turn was a block of cards at the top of the rail: fixed, in the
  * accent, and it came and went above the panels, so every question an agent
@@ -40,6 +40,16 @@
  * mid-word, two rows of buttons. A pinned tray stays at the rail's width,
  * since the reader works beside it. An older ask is one line until it is
  * opened, and a card an agent removed says who and why, with Bring back.
+ *
+ * 1.69 (plan 520aa866b0, A2). The button is the head's: between the tabs
+ * and the keys, the hand and a count in one width, there with nothing on
+ * the reader as with twelve. In the rail's foot it went away with the rail,
+ * folded or put aside, and a pill in the window's corner stood in for it;
+ * the head is there whenever the desk is. The tray asked for opens under
+ * the button, over the panels' first rows. What rises unasked still rises
+ * in the rail's column, and a pinned tray stays there: both are beside the
+ * work, not over it. The pill is left for the one page with no head, a
+ * document read over the desk.
  */
 
 /** How long a risen card stays before it settles into the pill. */
@@ -49,7 +59,7 @@ const RISE_MS = 8000;
  *  has been drawn; the hover that holds a card; the turns this page has
  *  seen, for this desk, so only a new one rises; the tray pinned open
  *  (#115); and where the focus was when the tray opened, to give it back. */
-const oy = { empty: false, open: false, rise: 0, drawnRise: 0, timer: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, inRail: false, more: 0, rang: 0, quiet: false, lit: "" };
+const oy = { empty: false, open: false, rise: 0, drawnRise: 0, timer: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, inRail: false, inHead: false, more: 0, rang: 0, quiet: false, lit: "" };
 /** Whether the last thing the reader did was a key: the tray opened with
  *  the pointer takes the focus without a ring (app.css .ring-quiet). */
 let viaKey = false;
@@ -119,20 +129,40 @@ function oyCounts(d, f) {
   return { now, old: 0, todo, others: 0 };
 }
 
-/** On you in the rail's foot (1.44): the icon, and the count while anything
- *  waits -- amber while something is fresh. Its box is one width whatever
- *  the count, so the links beside it never move (#163). It opens the tray,
- *  and says so while the tray is open. */
-function oyFoot(d) {
+/** On you's button, for the head (`oyHead`): the hand, and the count while
+ *  anything waits -- amber while something is fresh. One width whatever
+ *  the count, two digits' worth, so nothing beside it ever moves (#163).
+ *  What waits on the other desks is the tip's and the tray's head's to
+ *  say: beside the hand it made the button as wide as its words. */
+function oyBtn(d) {
   const n = oyCounts(d, filedNow(d)), count = n.now + n.old;
-  // What waits on the other desks, said beside the hand (C6): only a tip
-  // said it. The button grows into the foot's free room, so nothing moves.
-  const away = n.others ? `<span class="oy-else">· ${n.others} elsewhere</span>` : "";
   const label = !count ? "No agent is waiting on you here" : `${count} agent${count === 1 ? "" : "s"} waiting on you here`;
   // What On you is, always, then how it stands: with nothing on the reader
   // the tip said only that, and a first hover never learned what it was for.
   const sub = `Agents waiting on you on this desk, and what only you can do · ${count ? `${count} waiting` : n.todo ? "none waiting, a thing to do" : "nothing right now"}${oyOthers(n)}${ctx.esc(ctx.corner?.()?.chimed(" · ") || "")}`;
-  return `<button type="button" class="oy-foot${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}${n.others ? `, ${n.others} on other desks` : ""}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span>${away}</button>`;
+  return `<button type="button" class="oy-btn${n.now ? " on" : ""}${count ? "" : " none"}" data-a="oy-open" aria-expanded="${oy.open}" aria-label="${label}${n.others ? `, ${n.others} on other desks` : ""}" data-tip="On you" data-tip-sub="${sub}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count > 99 ? "99" : count || ""}</span></button>`;
+}
+
+/** The button in the head, in a slot before the keys, made once and
+ *  written again only when it differs; the keyboard's focus stays on it
+ *  through a redraw. False where the page has no head: a document read
+ *  over the desk, which keeps the pill. */
+function oyHead(d) {
+  const hd = ctx.docEl.querySelector(".dk-head");
+  if (!hd) return false;
+  let el = hd.querySelector(":scope > .dk-oy");
+  if (!el) {
+    el = Object.assign(document.createElement("span"), { className: "dk-oy" });
+    el.dataset.part = "desk.onyou";
+    (hd.querySelector(":scope > .dk-keys") || hd.querySelector('[data-a="new"]')).before(el);
+  }
+  const html = oyBtn(d);
+  if (el.$html !== html) {
+    const had = el.contains(document.activeElement);
+    el.innerHTML = html; el.$html = html;
+    if (had) el.firstChild.focus({ preventScroll: true });
+  }
+  return true;
 }
 
 /** The tip's word on the other desks, so a desk at nought does not read as
@@ -206,21 +236,35 @@ function trayHtml(d, f, esc) {
   const n = oyCounts(d, f);
   oy.empty = false;
   const tabs = K?.tabs ? K.tabs({ waiting: n.now, todo: K.deskTodo(d.id) + f.turns.filter(w => shown(w) && !w.answered_at && shelfOf(w) === "todo").length + f.suggestions.length, news: 0 }) : "";
-  const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="Agents waiting on you on this desk, and what only you can do. Your answer is typed into the panel that asked when its Claude is at its prompt">On you</h3>`;
+  // The other desks' share, said here and in the button's tip (1.69): theirs, on Home.
+  const away = n.others ? `<span class="oy-else" data-tip="${n.others} waiting on other desks" data-tip-sub="Home holds every desk's">· ${n.others} elsewhere</span>` : "";
+  const title = `<span class="oy-hi" aria-hidden="true">${oyIco()}</span><h3 class="oy-h" data-tip="On you" data-tip-sub="Agents waiting on you on this desk, and what only you can do. Your answer is typed into the panel that asked when its Claude is at its prompt">On you</h3>${away}`;
   const close = `<button type="button" class="oy-x" data-a="oy-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${ico("x")}</button>`;
   const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${pinBtn()}${close}</div>`;
   return `<div class="oy-tray${oy.quiet ? " ring-quiet" : ""}" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${tabs}${body || `<p class="oy-none">${none[cur]}</p>`}${decLine(d, esc)}</div></div>`;
 }
 
-/** Where the corner sits: in the rail's column, at its width, its foot just
- *  above the rail's foot (its repository and links, `ctx.metaEl`),
- *  so it covers neither a panel nor the foot (U1, U2). With no rail in
- *  view -- folded to its strip, hidden, or a sheet on a narrow window -- the
- *  window's corner, and nothing rises there (`arrived`). */
+/** Where the corner sits. The tray asked for hangs under its button in
+ *  the head (1.69), its right edge on the button's, never past the window.
+ *  What rises unasked, and a tray pinned open, sit in the rail's column, at
+ *  its width, just above the rail's foot (its repository and links,
+ *  `ctx.metaEl`), so they cover neither a panel nor the foot (U1, U2). With
+ *  no rail in view -- folded to its strip, hidden, or a sheet on a narrow
+ *  window -- a card rises in the window's corner, and a pinned tray hangs
+ *  under the button like any other. */
 function oyPlace(el) {
   const r = ctx.rail, rr = r && r.offsetParent && r.getBoundingClientRect();
   oy.inRail = !!rr && rr.width >= 180 && getComputedStyle(r).position !== "fixed";
-  el.classList.toggle("in-rail", oy.inRail);
+  const b = ctx.docEl.querySelector(".dk-head .oy-btn"), br = b && b.offsetParent && b.getBoundingClientRect();
+  oy.inHead = !!br && oy.open && !(oy.pin && oy.inRail);
+  el.classList.toggle("in-head", oy.inHead);
+  el.classList.toggle("in-rail", oy.inRail && !oy.inHead);
+  if (oy.inHead) {
+    el.style.setProperty("--oy-t", `${Math.round(br.bottom + 6)}px`);
+    el.style.setProperty("--oy-hr", `${Math.max(8, Math.round(innerWidth - br.right))}px`);
+    el.style.setProperty("--oy-hmax", `${Math.max(120, Math.round(innerHeight - br.bottom - 6 - 60))}px`);
+    return;
+  }
   if (!oy.inRail) return;
   // It stands on the cards when there are any (15-cards.js), on the foot when not.
   const m = ctx.metaEl?.getBoundingClientRect(), foot = (m && m.height ? m.top : rr.bottom) - cardsLift();
@@ -238,14 +282,12 @@ function oyPlace(el) {
 }
 addEventListener("resize", () => { if (oyEl?.isConnected) oyPlace(oyEl); });
 
-/** The corner, drawn after the rail: the tray or the risen card, and the
- *  pill under them. Not there at all while nothing is on the reader. A desk
- *  whose tray was pinned opens with it open. */
+/** The corner, drawn after the rail: the head's button, then the tray or
+ *  the risen card. A desk whose tray was pinned opens with it open. */
 function onYou(d) {
   const f = filedNow(d), { esc } = ctx, n = oyCounts(d, f);
   if (oy.pinAt !== d.id) { oy.pinAt = d.id; oy.pin = pinned(d.id); oy.open ||= oy.pin; }
   const el = oyNode();
-  oyPlace(el);
   decWant(d);
   // Every draw asks what is new, not only a read of the list: a turn read
   // while the desk was out of view -- Home, a document -- rises when it is
@@ -253,6 +295,10 @@ function onYou(d) {
   // would learn an empty list and every waiting turn would rise.
   if (filedAt === d.id) arrived(d);
   if (oy.rise && oy.open) { oy.rise = 0; oy.more = 0; }
+  // The button first, since the tray is placed by it; then the place, now
+  // that open and pinned are what this draw will show.
+  const btn = oyHead(d);
+  oyPlace(el);
   const card = oy.rise ? riseHtml(d, f, esc) : "";
   if (oy.rise && !card) { oy.rise = 0; oy.more = 0; clearTimeout(oy.timer); }
   const tray = oy.open ? trayHtml(d, f, esc) : "";
@@ -260,12 +306,12 @@ function onYou(d) {
   el.classList.toggle("wide", oy.open && !oy.pin && !oy.empty);
   // What came from outside rises here too, over a turn's card never.
   const K = ctx.corner?.(), news = K && !tray && !card ? K.cardHtml(true) : "";
-  // In the rail it is the foot's button (`oyFoot`). With no rail in view
-  // it is the pill in the window's corner, as before, and not there at all
-  // while nothing is on the reader.
+  // The head's button is the way in (`oyHead`). A document read over the
+  // desk has no head: there it is the pill, in the corner the cards rise
+  // in, and not there at all while nothing is on the reader.
   const count = n.now + n.old;
   const label = count ? `${count} agent${count === 1 ? "" : "s"} waiting on you here` : "On you";
-  const pill = !tray && (count || n.todo) && !oy.inRail
+  const pill = !tray && (count || n.todo) && !btn
     ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="Agents waiting on you on this desk, and what only you can do${oyOthers(n)}${esc(K?.chimed(" · ") || "")}" data-key="ctrl+alt+y">${oyIco()}<span class="n">${count || ""}</span></button>` : "";
   // A redraw replaces every button: the one the keyboard was on gets the
   // focus back, by what it does and to which row, or a press on a card
@@ -282,7 +328,8 @@ function onYou(d) {
   // The corner's toasts sit above it while it shows, not on it (toast.js,
   // whose own foot is 20 px up from the window's); held while the pointer
   // is on one (corner.js `lift`).
-  const top = el.offsetHeight ? el.getBoundingClientRect().top : innerHeight, h = el.offsetHeight ? Math.max(0, Math.round(innerHeight - top - 20 + 8)) : 0;
+  // A tray under the head is not in their way.
+  const top = el.offsetHeight ? el.getBoundingClientRect().top : innerHeight, h = el.offsetHeight && !oy.inHead ? Math.max(0, Math.round(innerHeight - top - 20 + 8)) : 0;
   K ? K.lift(h) : document.documentElement.style.setProperty("--oy-h", `${h}px`);
   if (drew) { threadFocus(el); decFocus(el); }
 }
@@ -354,7 +401,7 @@ function settle() {
   if (current()) rail();
 }
 
-/** The pill: the tray opens over it, or closes. */
+/** The button: the tray opens under it, or closes. */
 function oyToggle() {
   if (oy.open) return oyClose(true);
   const at = document.activeElement;
@@ -390,7 +437,7 @@ function oyClose(back) {
 // is pinned; Esc closes the tray before the desk's own keys see it -- a
 // pinned one only from inside it, so Esc in a panel still reaches the panel.
 document.addEventListener("pointerdown", e => {
-  if (!oyEl?.isConnected || oyEl.contains(e.target) || e.target.closest?.(".oy-foot")) return;
+  if (!oyEl?.isConnected || oyEl.contains(e.target) || e.target.closest?.(".oy-btn")) return;
   if (oy.open) { if (!oy.pin) oyClose(false); }
   else if (oy.rise && !(thField && oyEl.querySelector(".th-in"))) settle();
 }, true);
@@ -436,18 +483,26 @@ const ONYOU_CSS = `
 .oy.in-rail.wide.from-r { left: auto; right: var(--oy-r); }
 /* As tall as what it holds, to a ceiling, then it scrolls. */
 .oy.in-rail.wide .oy-scroll { max-height: min(calc(70vh - 40px), 520px, calc(var(--oy-max) - 40px)); }
-/* On you in the rail's foot (oyFoot): one width whatever the count, so the
-   links beside it hold still. Amber while something is fresh, quiet ink
-   when only older asks wait, and with nothing the quiet ink alone: dimmed
-   below it, it read as switched off, and fell to 2.1:1. As tall as the
-   repository's button beside it. */
-#meta .oy-foot { flex: none; display: inline-flex; align-items: center; justify-content: flex-end; gap: 3px; min-width: 38px; height: 26px; margin-left: auto; padding: 0 6px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg-3); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; cursor: pointer; }
-#meta .oy-foot svg { width: 13px; height: 13px; }
-#meta .oy-foot .n { min-width: 2ch; text-align: left; font-weight: 600; color: var(--fg-2); }
-#meta .oy-foot.on, #meta .oy-foot.on .n { color: var(--warn); }
-/* The other desks' share, beside the count (C6), quiet: theirs, not here. */
-#meta .oy-foot .oy-else { margin-left: 2px; color: var(--fg-3); font-weight: 400; white-space: nowrap; }
-#meta .oy-foot:hover, #meta .oy-foot:focus-visible, #meta .oy-foot[aria-expanded="true"] { background: var(--rule); color: var(--fg); opacity: 1; }
+/* Under the head's button (oyPlace, 1.69): its right edge on the button's,
+   as wide as a command's line needs, as tall as what it holds up to the
+   window's foot, then it scrolls. */
+.oy.in-head { top: var(--oy-t); bottom: auto; right: var(--oy-hr); left: auto; }
+.oy.in-head > .oy-tray { width: min(360px, calc(100vw - 16px - var(--oy-hr))); }
+.oy.in-head .oy-scroll { max-height: min(70vh, 520px, var(--oy-hmax)); }
+/* The pill, where a document is read over the desk, keeps its own width. */
+.oy.in-rail > .oy-pill { align-self: flex-end; }
+/* On you in the head (oyBtn): one width whatever the count, so nothing
+   beside it moves. Amber while something is fresh, and with nothing the
+   quiet ink alone: dimmed below it, it read as switched off, and fell to
+   2.1:1. As tall as the head's other buttons. */
+.dk-oy { flex: none; display: flex; }
+.dk-head .oy-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 3px; width: 44px; height: 26px; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg-3); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; cursor: pointer; }
+.dk-head .oy-btn svg { flex: none; width: 13px; height: 13px; }
+.dk-head .oy-btn .n { width: 2ch; text-align: left; font-weight: 600; color: var(--fg-2); }
+.dk-head .oy-btn.on, .dk-head .oy-btn.on .n { color: var(--warn); }
+.dk-head .oy-btn:hover, .dk-head .oy-btn:focus-visible, .dk-head .oy-btn[aria-expanded="true"] { background: var(--rule); color: var(--fg); }
+/* The other desks' share, in the tray's head, quiet: theirs, not here. */
+.oy-head .oy-else { margin-left: 4px; color: var(--fg-3); font-size: var(--fs-micro); white-space: nowrap; }
 .oy-hi { display: grid; place-items: center; width: 14px; margin-right: 4px; color: var(--fg-3); }
 .oy-hi svg { width: 13px; height: 13px; }
 .oy.in-rail .oy-scroll { max-height: calc(var(--oy-max) - 40px); }

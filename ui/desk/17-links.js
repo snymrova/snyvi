@@ -60,9 +60,10 @@ function linksHtml(d) {
 /** What the fit depends on: the desk, its links' words, and the Undos. */
 const linksKey = d => `${d.id}|${linksOf(d).map(l => `${l.id}:${l.label}:${lkUndo.has(`${d.id}:${l.id}`) ? 1 : 0}`).join(",")}`;
 
-/** The foot drawn with `head`, as many chips as fit whole -- all of them,
- *  then one fewer with a +N, until the row does not overflow -- and `tail`,
- *  On you's button (1.44), whose width never changes. Measured only when
+/** The foot drawn with `head`, then as many chips as fit whole -- all of
+ *  them, then one fewer with a +N, until the row does not overflow; `tail`
+ *  is whatever stands after them, nothing since On you's button went to
+ *  the head (1.69). Measured only when
  *  the links or the rail's width change, not on a panel's every tick. */
 function linksDraw(el, d, head, tail = "") {
   const key = linksKey(d);

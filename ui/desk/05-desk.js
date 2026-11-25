@@ -183,15 +183,16 @@ function keysSlot(d) {
   const acc = d.account ? (ctx.desks.accounts || []).find(a => a.id === d.account) : null;
   b.classList.toggle("none", !n && !acc);
   b.setAttribute("aria-expanded", String(open));
-  // A key, always there, and how many beside it: a word that showed only
-  // under the cursor was a control nobody knew was there. The account the
-  // desk's Claude runs as leads it when it is not your login -- which one a
-  // desk is on was a tip's alone, and the thing most asked (note #113, audit
-  // 67d008cb6f). It changes when the reader picks, never on its own.
-  // Said "as Trapti", quiet, so the desk's name stays the one bold word in
-  // the head: in bold the account read as the desk's own title.
-  const html = (acc ? `<span class="acc">as ${ctx.esc(acc.label)}</span>` : "") + head("key") + (n ? `<span class="n">${n}</span>` : "");
+  // A key, always there, and how many beside it, in one width (1.69, A6):
+  // a word that showed only under the cursor was a control nobody knew was
+  // there, and a button that grew with an account's name moved the head
+  // each time the reader picked one. "as Trapti" led it since #113 (audit
+  // 67d008cb6f); it is the tip's first words now, and the sheet's first
+  // line, where the picking is done.
+  const html = head("key") + `<span class="n">${n > 99 ? 99 : n || ""}</span>`;
   if (b.$html !== html) { b.innerHTML = html; b.$html = html; }
+  const said = ctx.docEl.querySelector(".dk-keys-sheet .dk-ks-t"), line = acc ? `This desk's panels start as <b>${ctx.esc(acc.label)}</b>, with` : "This desk's panels start with";
+  if (said && said.$html !== line) { said.innerHTML = line; said.$html = line; }
   b.setAttribute("aria-label", [acc ? `Claude as ${acc.label}` : "", n ? `${n} key${n === 1 ? "" : "s"}` : "Keys"].filter(Boolean).join(", "));
   b.dataset.tip = (acc ? `Claude as ${acc.label}${n ? " · " : ""}` : "") + (n ? ks.map(k => k.name).join(", ") : acc ? "" : "What this desk's panels start with");
   b.dataset.tipSub = "the Claude account and the keys in this desk's panels · click to see or change";

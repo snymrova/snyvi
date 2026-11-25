@@ -1276,7 +1276,7 @@ const SHOW = {
     none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Agents</a>` },
   waiting: { at: () => q("#inbox-row .sec-n.accent") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#inbox-row .sec-n.accent")), none: "Nothing is waiting right now." },
   desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .sec-head")), none: "Desks live in the window: <code>snyvi app</code>." },
-  notes: { at: () => q("#cn:not([hidden]) .oy-pill, #meta .oy-foot:not(.none), #onyou .oy-pill"), none: "Nothing on you right now. Ctrl Alt Y opens On you." },
+  notes: { at: () => q("#cn:not([hidden]) .oy-pill, .dk-head .oy-btn:not(.none), #onyou .oy-pill"), none: "Nothing on you right now. Ctrl Alt Y opens On you." },
   keys: { at: () => q("#btn-help"), none: "" },
 };
 let startCap = false, startDocs = false;

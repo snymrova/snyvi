@@ -5,8 +5,8 @@
 /* A panel in the back keeps running out of the grid: the dev server nobody
  * reads until it breaks. Its slot is past the grid's (src/desk.rs `BACK`),
  * so the daemon's slot is all this page goes by. It is a chip in the head's
- * `.dk-tabs` span, which already comes and goes, and a drawer over the bottom
- * of the grid when the reader looks.
+ * `.dk-tabs` span, which already comes and goes -- one chip for all of them
+ * (1.69) -- and a drawer over the bottom of the grid when the reader looks.
  *
  * The drawer is always laid out, hidden: every panel in the back is mounted
  * in it, stacked in one box, so each has a real size from the first layout
@@ -54,34 +54,57 @@ function backState(v) {
   if (s.running) return ["running", " run"];
   return [s.exit != null ? ended : "stopped", ""];
 }
-const backSays = v => backState(v)[0];
 
-/** The head's chips, after the grid's tabs: one a panel in the back, each
- *  with what it is doing; amber when it asks or died, which is when it
- *  needs the reader. The words tick with the minute: `backHead` writes the
- *  chips again only when they differ, at a panel's status. */
+/** Whether the chip's list is open: the back's panels, each with its word,
+ *  laid over the head. Only with several in the back; one opens its drawer. */
+let backList = false;
+const BACK_ICO = `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="4" rx="1"/><rect x="2.5" y="9" width="11" height="4" rx="1"/></svg>`;
+
+/** The head's chip, after the grid's tabs (1.69, plan 520aa866b0): one for
+ *  the whole back, the mark and how many, one width whatever the count.
+ *  Amber when any panel there asks or died, which is when it needs the
+ *  reader. It was a chip a panel, each with its name and its word: three
+ *  in the back took a third of the head, and every minute's "working 6
+ *  min" redrew it. The words are the tip's now, and the list's: with one
+ *  panel a click opens its drawer; with several, a short list of them over
+ *  the head, each row opening its own. `backHead` writes it again only when
+ *  it differs, at a panel's status. */
 function backChips(d) {
   const vs = backViews(d), { esc } = ctx;
-  if (!vs.length) return "";
-  return `<span class="dk-back" data-part="desk.back" role="group" aria-label="In the back">` + vs.map(v => {
-    const [says, cls] = backState(v);
-    return `<button type="button" class="dk-chip${cls}${drawerOn === v.id ? " on" : ""}" data-drawer="${v.id}" aria-expanded="${drawerOn === v.id}" ` +
-      `data-tip="${esc(short(v))} · ${esc(says)}" data-tip-sub="${esc(lastLine(v) || "in the back")}" data-key="ctrl+alt+b">` +
-      `<i class="dot" aria-hidden="true"></i><span class="dk-chip-n">${esc(short(v))}</span><span class="dk-chip-s">· ${esc(says)}</span></button>`;
-  }).join("") + `</span>`;
+  if (!vs.length) { backList = false; return ""; }
+  const sts = vs.map(backState), blk = sts.some(s => s[1] === " blk"), many = vs.length > 1;
+  const open = many && backList, on = vs.some(v => v.id === drawerOn);
+  const tip = many ? `${vs.length} in the back` : `${short(vs[0])} · ${sts[0][0]}`;
+  const sub = many ? vs.map((v, i) => `${short(v)} · ${sts[i][0]}`).join(", ") : lastLine(vs[0]) || "in the back";
+  const rows = open ? `<span class="dk-back-list" role="menu" aria-label="In the back">` + vs.map((v, i) =>
+    `<button type="button" role="menuitem" class="dk-brow${sts[i][1]}${drawerOn === v.id ? " on" : ""}" data-drawer="${v.id}" data-tip="${esc(short(v))} · ${esc(sts[i][0])}" data-tip-sub="${esc(lastLine(v) || "in the back")}">` +
+    `<i class="dot" aria-hidden="true"></i><span class="dk-chip-n">${esc(short(v))}</span><span class="dk-chip-s">${esc(sts[i][0])}</span></button>`).join("") + `</span>` : "";
+  return `<span class="dk-back" data-part="desk.back" role="group" aria-label="In the back">` +
+    `<button type="button" class="dk-chip${blk ? " blk" : ""}${on || open ? " on" : ""}" data-back-all data-ids="${vs.map(v => v.id).join(" ")}" aria-expanded="${many ? open : on}"${many ? ` aria-haspopup="menu"` : ""} ` +
+    `aria-label="${vs.length} in the back${blk ? ", one needs you" : ""}" data-tip="${esc(tip)}" data-tip-sub="${esc(sub)}" data-key="ctrl+alt+b">${BACK_ICO}<span class="n">${vs.length}</span></button>${rows}</span>`;
 }
 
-/** The chips again, where they stand, when a panel's mark changed: the
- *  head is laid out only when the panes move, and a death moves nothing. */
+/** The chip again, where it stands, when a panel's mark changed: the
+ *  head is laid out only when the panes move, and a death moves nothing.
+ *  A row of the list the keyboard was on keeps the focus through it. */
 function backHead(d) {
   const t = ctx.docEl.querySelector(".dk-tabs");
   if (!t || !d) return;
   if (drawerOn) backLayout(d);
   const html = backChips(d), el = t.querySelector(".dk-back");
   if (el ? el.outerHTML === html : !html) return;
+  const at = el && el.contains(document.activeElement) ? document.activeElement : null;
+  const sel = at && (at.dataset.drawer ? `[data-drawer="${at.dataset.drawer}"]` : "[data-back-all]");
   if (el) el.remove();
   if (html) t.insertAdjacentHTML("beforeend", html);
+  if (sel) t.querySelector(`.dk-back ${sel}`)?.focus({ preventScroll: true });
 }
+// A press anywhere else shuts the list, as a menu is shut.
+document.addEventListener("pointerdown", e => {
+  if (!backList || !ctx || e.target.closest?.(".dk-back")) return;
+  backList = false;
+  const d = current(); if (d) backHead(d);
+}, true);
 
 /** The drawer, drawn once with the desk; `backLayout` fills it. */
 const DRAWER = `<div class="dk-drawer" data-part="desk.drawer" aria-hidden="true" role="region" aria-label="In the back"><div class="dk-dr-body"></div><p class="dk-dr-foot"></p></div>`;
@@ -157,15 +180,15 @@ async function sendBack(v, back) {
   }
 }
 
-/* "New panel in the back…": a command of its own, so its end is the
- * server's. A row under + New panel opens a one-line field in its place. */
+/* "Panel in the back…": a command of its own, so its end is the server's.
+ * The row at the Panels' foot opens a one-line field in its place. */
 let backField = false, backDraft = "", backCaret = 0;
 const backRow = (d, esc) => {
   const full = backViews(d).length >= ctx.desks.in_back;
   // The field says what it is for and where it runs (1.56, audit B7): a
   // bare `npm run dev` was a mini-language in a placeholder.
   if (backField && !full) return `<form class="dk-backnew"><input spellcheck="false" autocomplete="off" placeholder="npm run dev · runs in this desk's folder" aria-label="A command to run in the back, in this desk's folder with its keys" data-tip="A command, run in the back" data-tip-sub="in this desk's folder, with its keys, out of the grid: a dev server, a watcher" value="${esc(backDraft)}"><button type="submit" class="dk-new" data-tip="Start it in the back" data-tip-sub="a shell of its own, in this desk's folder">Start</button><button type="button" class="dk-new" data-a="back-new-x">Cancel</button></form>`;
-  return `<button type="button" class="dk-new dk-new-back${full ? ` dim" aria-disabled="true` : ""}" data-a="back-new" data-tip="New panel in the back" data-tip-sub="${esc(full ? `The back holds ${ctx.desks.in_back}` : "a dev server, a watcher: running, out of the grid")}">in the back…</button>`;
+  return `<button type="button" class="dk-new dk-new-back${full ? ` dim" aria-disabled="true` : ""}" data-a="back-new" data-tip="New panel in the back" data-tip-sub="${esc(full ? `The back holds ${ctx.desks.in_back}` : "a dev server, a watcher: running, out of the grid")}">+ Panel in the back…</button>`;
 };
 /** Whether the back's field has the foot's line (06-rail.js). */
 const backFieldOpen = d => backField && backViews(d).length < ctx.desks.in_back;
@@ -199,8 +222,17 @@ async function backNew(d, cmd) {
  *  field. True when it was the back's to handle. */
 function backClick(e) {
   const c = e.target.closest("[data-drawer]");
-  if (c) { drawer(drawerOn === c.dataset.drawer ? null : c.dataset.drawer); return true; }
-  return false;
+  if (c) { backList = false; drawer(drawerOn === c.dataset.drawer ? null : c.dataset.drawer); return true; }
+  if (!e.target.closest("[data-back-all]")) return false;
+  const d = current(), vs = d ? backViews(d) : [];
+  if (vs.length === 1) drawer(drawerOn ? null : vs[0].id);
+  else if (vs.length) {
+    backList = !backList;
+    backHead(d);
+    // A key's press lands in the list; a pointer's leaves the keyboard in its panel.
+    if (backList && !e.detail) ctx.docEl.querySelector(".dk-back-list button")?.focus();
+  }
+  return true;
 }
 
 function backAct(a, b, d) {
@@ -229,6 +261,13 @@ function backEsc(e) {
   if (e.key !== "Escape" || e.ctrlKey || e.altKey || e.metaKey) return false;
   const t = e.target;
   if (t.closest?.(".dk-backnew")) { e.preventDefault(); e.stopPropagation(); backField = false; backDraft = ""; rail(); return true; }
+  if (backList && !t.closest?.(".pn-body, input, textarea, [contenteditable]")) {
+    e.preventDefault(); e.stopPropagation();
+    backList = false;
+    const d = current(); if (d) backHead(d);
+    ctx.docEl.querySelector(".dk-back [data-back-all]")?.focus();
+    return true;
+  }
   if (!drawerOn || t.closest?.(".pn-body, input, textarea, [contenteditable]")) return false;
   e.preventDefault(); e.stopPropagation();
   drawer(null);
@@ -238,20 +277,28 @@ document.addEventListener("submit", e => { if (ctx && deskId != null) backSubmit
 
 const BACK_CSS = `
 /* ---------- the back ----------
- * Chips after the grid's tabs, in the head that is already there; the dot is
- * the rail's: green running, amber when it died and needs the reader. */
-.dk-back { display: flex; gap: 4px; margin-left: 6px; }
-.dk-tabs .dk-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 34ch; padding: 2px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); font-family: var(--mono); font-size: 11px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dk-chip .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--fg-3); }
-.dk-chip.run .dot { background: var(--ok); }
-.dk-chip.fin .dot { background: var(--rule-2); }
-.dk-chip-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.dk-chip-s { flex: none; font-family: var(--sans); color: var(--fg-3); }
-.dk-chip.blk .dk-chip-s { color: inherit; }
+ * One chip after the grid's tabs, in the head that is already there: the
+ * mark and a count, one width for one panel or nine. Amber when a panel in
+ * the back asks or died. Its list, with several, lies over the head and the
+ * grid's first rows: it takes no room of its own. */
+.dk-back { position: relative; display: flex; margin-left: 6px; }
+.dk-tabs .dk-chip { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: 40px; padding: 2px 0; border: 1px solid var(--rule-2); border-radius: var(--r-pill); font-family: var(--mono); font-size: 11px; color: var(--fg-2); white-space: nowrap; }
+.dk-chip svg { flex: none; }
+.dk-chip .n { min-width: 1ch; font-variant-numeric: tabular-nums; }
 .dk-tabs .dk-chip.blk { color: var(--warn); border-color: var(--warn); font-weight: 600; }
-.dk-chip.blk .dot { background: var(--warn); }
 .dk-tabs .dk-chip.on { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
 .dk-tabs .dk-back.pn-drop { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }
+.dk-back-list { position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-pop, 30); display: grid; gap: 1px; width: max-content; min-width: 200px; max-width: min(360px, calc(100vw - 32px)); padding: 4px; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow); }
+.dk-tabs .dk-brow { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 6px; border-radius: var(--r-xs); color: var(--fg-2); text-align: left; }
+.dk-tabs .dk-brow:is(:hover, :focus-visible) { background: var(--rule); color: var(--fg); }
+.dk-brow .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--fg-3); }
+.dk-brow.run .dot { background: var(--ok); }
+.dk-brow.fin .dot { background: var(--rule-2); }
+.dk-brow.blk .dot { background: var(--warn); }
+.dk-brow .dk-chip-n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.dk-brow .dk-chip-s { flex: none; font-family: var(--sans); color: var(--fg-3); }
+.dk-tabs .dk-brow.blk, .dk-brow.blk .dk-chip-s { color: var(--warn); }
+.dk-tabs .dk-brow.on { color: var(--accent); }
 /* The drawer: over the bottom of the grid, laid out always, seen only open. */
 .dk { position: relative; }
 .dk-drawer { position: absolute; left: 0; right: 0; bottom: 0; height: 42%; z-index: 5; display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow); visibility: hidden; pointer-events: none; }
@@ -269,10 +316,9 @@ const BACK_CSS = `
 .dk-dr-body .pn-full { display: none; }
 .dk-dr-foot { margin: 0; height: 16px; flex: none; color: var(--fg-3); font-size: var(--fs-micro); line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-backnew { display: flex; gap: 4px; align-items: center; }
-/* On New panel's own line (1.68), and quieter than it: the second way in. */
+/* At the Panels' foot, quiet: the second way to a panel (the first is the head's +). */
 .dk-foot .dk-backnew { flex: 1; min-width: 0; }
-.dk-foot .dk-new-back { padding-left: 0; font-size: var(--fs-micro); align-self: center; }
-.dk-foot .dk-new-back::before { content: "· "; }
+.dk-foot .dk-new-back { font-size: var(--fs-micro); align-self: center; }
 .dk-backnew input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-xs); background: var(--bg); color: var(--fg); }
 #toc .dk-backline { margin: 6px 0 2px; padding-left: 8px; color: var(--fg-3); font-size: var(--fs-micro); list-style: none; }
 `;

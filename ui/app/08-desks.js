@@ -118,12 +118,11 @@
     if (roots !== deskRoots) { deskRoots = roots; renderTree(); markActive(); } else renderDesks();
     if (desk && (state.view === "desk" || state.deskBehind != null)) desk.update(state.desks);
   }
-  /** A desk's mark, one meaning per colour (audit 67d008cb6f): amber while
-   *  a panel needs the reader, green while anything runs -- as on Home and
-   *  the panel's head -- ringed while an agent is working, and nothing when
-   *  idle. It was a hollow grey ring for running here and green everywhere
-   *  else (the audit of 1.46.2). */
-  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && (p.status.agent || p.status.said) === "working") ? "●" : ps.some(p => p.status && p.status.running) ? "◦" : "○";
+  /** A desk's mark (1.69, B1): amber while a panel needs the reader, the
+   *  green dot while an agent is working, and nothing else. A shell or a dev
+   *  server merely alive had a dot of its own: on most rows all day, so it
+   *  said nothing. Its place is kept, and the tip still says what runs. */
+  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && (p.status.agent || p.status.said) === "working") ? "●" : "○";
   const needYou = n => `${plural(n, "panel")} ${n === 1 ? "needs" : "need"} you`;
   /** The fullest context window among a desk's panels, as their status lines said. */
   const fullest = d => { const ps = d.panes.map(p => p.status && p.status.ctx_pct).filter(x => x != null); return ps.length ? Math.max(...ps) : null; };
@@ -158,7 +157,7 @@
     // Welcome's Got another project? asks for one now (about.js).
     const rows = shown.map(d => {
       const m = mark3(d.panes), n = d.panes.length, full = fullest(d);
-      const say = m === "!" ? needYou(d.panes.filter(p => p.status && p.status.blocked).length) : m === "●" ? "An agent is working" : m === "◦" ? "Running" : "Idle";
+      const say = m === "!" ? needYou(d.panes.filter(p => p.status && p.status.blocked).length) : m === "●" ? "An agent is working" : "Idle";
       // The row's end says only what is unusual: a panel that needs you, a
       // context window nearly full, documents waiting from its panels. A live
       // desk is a dot and an idle one is nothing; the tip carries the rest,
@@ -182,7 +181,7 @@
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" draggable="false" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
-        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${oyn ? `<span class="k oyn">${icon("hand", 12, "k-ico")}${oyn}</span>` : ""}${w ? `<span class="k">${icon("doc", 12, "k-ico")}${w}</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : `<span class="dot${m === "●" ? " on" : m === "◦" ? " run" : ""}"></span>`}<span class="vh">${say}</span></span>`,
+        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${oyn ? `<span class="k oyn">${icon("hand", 12, "k-ico")}${oyn}</span>` : ""}${w ? `<span class="k">${icon("doc", 12, "k-ico")}${w}</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : `<span class="dot${m === "●" ? " on" : ""}"></span>`}<span class="vh">${say}</span></span>`,
         `${capability ? `<button type="button" class="row-x row-f" data-deskdir="${d.id}" data-tip="Open its folder" data-tip-sub="${esc(tilde(d.root))}" aria-label="Folder of ${esc(d.name)}">${icon("folder", 13)}</button><button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
