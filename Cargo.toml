@@ -39,7 +39,7 @@ exclude = [
 # at 1.21.0 through four window changes, and every reader who updated in the
 # app kept a window without them until they quit it (#195).
 [package.metadata.snyvi]
-app_min = "1.54.0"
+app_min = "1.70.0"
 
 [dependencies]
 axum = { version = "0.8", features = ["json", "ws"] }

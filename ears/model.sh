@@ -24,7 +24,9 @@ fetch() {
   local archive="$1/$NAME.tar.bz2"
   [ -f "$archive" ] || curl -fsSL --retry 3 -o "$archive" "$URL"
   local got
-  got=$(sum "$archive" | cut -d' ' -f1)
+  # Read from stdin: given a path with a backslash (D:\a\_temp on a Windows
+  # runner), Git's sha256sum escapes its line and the sum starts with a \.
+  got=$(sum < "$archive" | cut -d' ' -f1)
   [ "$got" = "$SHA256" ] || { echo "model.sh: $archive is $got, not $SHA256" >&2; rm -f "$archive"; exit 1; }
   tar -xjf "$archive" -C "$1"
   rm -f "$archive"

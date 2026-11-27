@@ -730,8 +730,12 @@ fn wav_f32(b: &[u8]) -> Result<(u32, Vec<u8>)> {
 /// until 1.66.0: On you's three shelves and News (src/news.rs, its two
 /// routes), a routine's two hashes and health, the Stop's answers and a
 /// merge checked on GitHub took the musl build from 23.3 to just over
-/// 23.5 MB, with no crate added.
-const BINARY_MB: f64 = 24.0;
+/// 23.5 MB, with no crate added. 24 until 1.70.0: voice's daemon side (the
+/// helper fetched by the signed manifest, kept warm, its takes and its
+/// near misses), the quiet first desk and Codex connected from the window
+/// took the musl build from 23.8 to 24.0 MB, with no crate added to it
+/// (webkit2gtk, for the microphone, is the window's).
+const BINARY_MB: f64 = 24.5;
 
 /// Returns whether any row was over budget.
 ///

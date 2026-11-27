@@ -47,7 +47,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: The model
-        run: echo "SNYVI_EARS_MODEL=$(ears/model.sh "$RUNNER_TEMP/model")" >> "$GITHUB_ENV"
+        # An assignment first, so a fetch that fails stops the job here: a
+        # failure inside echo's own $(...) is lost, and the tests ran with
+        # no model and failed for it, far from the reason.
+        run: |
+          model=$(ears/model.sh "$RUNNER_TEMP/model")
+          echo "SNYVI_EARS_MODEL=$model" >> "$GITHUB_ENV"
       - name: Build, and hear the model's own clip
         # tests/takes.rs starts the built helper, sends it a voice, silence
         # and a voice too faint to be one, as frames on stdin, and reads the
