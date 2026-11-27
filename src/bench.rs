@@ -1330,8 +1330,10 @@ mod tests {
         let (rate, sound) = wav_f32(&w).unwrap();
         assert_eq!(rate, 16_000);
         let heard: Vec<f32> = sound
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
             .collect();
         assert_eq!(heard, [-1.0, 0.5]);
         assert!(wav_f32(b"not a wav at all").is_err());

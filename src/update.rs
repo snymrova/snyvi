@@ -1575,11 +1575,6 @@ pub fn jitter_d(max: Duration) -> Duration {
     Duration::from_secs(jitter(max.as_secs() as i64) as u64)
 }
 
-// ---------- verifying ----------
-
-/// The key compiled in. Read with carriage returns taken out: a checkout on
-/// Windows may write the file with CRLF line endings, and the line it is
-/// read from must be the key and nothing else.
 // ---------- what a release carries beside snyvi ----------
 
 /// For `crate::voice`: the speech helper and its model are a release's
@@ -1658,6 +1653,11 @@ impl Manifest {
     }
 }
 
+// ---------- verifying ----------
+
+/// The key compiled in. Read with carriage returns taken out: a checkout on
+/// Windows may write the file with CRLF line endings, and the line it is
+/// read from must be the key and nothing else.
 fn release_key() -> Option<minisign_verify::PublicKey> {
     minisign_verify::PublicKey::decode(&PUBLIC_KEY.replace('\r', "")).ok()
 }
