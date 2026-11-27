@@ -79,7 +79,10 @@ jobs:
         # lacks, in the helper or in the runtime linked into it.
         if: matrix.key == 'linux-x64'
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+          # No apt-get update, as release.yml's own Nehalem check: the image's
+          # index has qemu, and an update fails the job whenever any one of
+          # the runner's mirrors does (packages.microsoft.com, a 403).
+          sudo apt-get install -y -qq qemu-user-static
           qemu-x86_64-static -cpu Nehalem ears/target/release/snyvi-ears \
             --model "$SNYVI_EARS_MODEL" --wav "$SNYVI_EARS_MODEL/test_wavs/0.wav" | tee "$RUNNER_TEMP/heard"
           grep -qi "ask not what your country can do for you" "$RUNNER_TEMP/heard"

@@ -28,8 +28,9 @@ fetch() {
   # runner), Git's sha256sum escapes its line and the sum starts with a \.
   got=$(sum < "$archive" | cut -d' ' -f1)
   [ "$got" = "$SHA256" ] || { echo "model.sh: $archive is $got, not $SHA256" >&2; rm -f "$archive"; exit 1; }
-  tar -xjf "$archive" -C "$1"
-  rm -f "$archive"
+  # From inside the folder, by its name alone: GNU tar reads the D: of a
+  # Windows runner's D:\a\_temp as a host to fetch the archive from.
+  (cd "$1" && tar -xjf "$NAME.tar.bz2" && rm -f "$NAME.tar.bz2")
 }
 
 case "${1:-}" in
