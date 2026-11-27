@@ -541,6 +541,10 @@
       if (mmd) mmd.escape();
       closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closePop(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
       if (!over && !inField && !e.target.closest(".pn") && !overEl.hidden) { e.preventDefault(); goBack(); }
+      // The press that took something down is spent: the desk's own Esc
+      // (ui/desk/25-views.js, 1.70), heard after this, must not step out of
+      // the desk on it too, now that nothing is over the page.
+      else if (over) e.preventDefault();
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop

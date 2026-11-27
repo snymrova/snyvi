@@ -218,7 +218,8 @@ function rail() {
   // no hint, no sentence to copy -- until one starts.
   const fresh = vs.length > 0 && vs.every(x => x.pane.held && !x.status.running);
   // The card's question is already Claude's: the rail doesn't offer it again.
-  const asked = vs.some(x => [ASK_NEW, ASK_LEFT].some(a => (x.status.cmd || "").includes(a)));
+  const asked = vs.some(x => [ASK_NEW, ASK_LEFT, ASK_BEGIN].some(a => (x.status.cmd || "").includes(a))) || quietAsked(d);
+  const quiet = quietRail(d, live.length);   // the first desk, quiet (20-first.js)
   // A pane's row: the mark, the slot, the name -- and under the cursor, what
   // can be done to that pane: stopped or started, and closed. On the row
   // itself, so a control acts on the pane it sits beside and never on
@@ -288,7 +289,7 @@ function rail() {
   const order = (lay && lay.right.length ? lay.right : Object.keys(secs)).filter(id => secs[id] && !off.has(id) && !(id === "widgets" && off.has("right:widgets")));
   const backHad = backHeld();
   // A board open over the desk puts its section first (25-views.js).
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + order.map(id => secs[id]()).join("") + `</div>`);
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail${quiet ? " dk-quiet" : ""}">${quiet ? quietBody(d, secs.docs()) : order.map(id => secs[id]()).join("")}</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a
@@ -305,7 +306,7 @@ function rail() {
   // and a tab its `!`, for a panel out of sight that needs the reader.
   backHead(d);
   groupsHead(d);
-  fromBar();
+  fromBar(); turnAgain();   // and a page read over the desk, the question asked under it
 }
 
 /** A page lands far from where the reader is looking: they are on the panel
@@ -1234,6 +1235,13 @@ const GET_CLAUDE = "https://claude.com/claude-code";
 const waitSince = new Map();
 function waitingFirst(d, fresh, asked) {
   claudeNow();
+  // The quiet first desk: its panel's strip says what is in the way, once,
+  // and after the press the wait is said in stages, where the page will land.
+  if (isQuiet(d)) {
+    if (!asked) return `<div class="dk-wait dk-land"><p>${agentName()}'s first page lands here, and stays.</p><p>About two minutes from the press.</p></div>`;
+    if (!waitSince.has(d.id)) waitSince.set(d.id, Date.now());
+    return stageCard(d, d.panes.map(p => views.get(p.id)).filter(Boolean), waitSince.get(d.id));
+  }
   if (claudeIs === "missing") return `<div class="dk-wait"><p class="dk-empty">What an agent writes for this desk lands here, and stays. Claude Code isn't installed here yet.</p>` +
     `<p class="dk-ask"><button type="button" class="dk-link" data-a="note-ev" data-u="${GET_CLAUDE}">Get Claude Code ↗</button> · <a class="dk-link" href="/connect">Using a different agent?</a></p></div>`;
   if (claudeIs === "unconnected") return `<div class="dk-wait"><p class="dk-empty">Connect Claude Code, and what it writes here lands here, and stays.</p>` +

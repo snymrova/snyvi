@@ -44,6 +44,9 @@ const CSS = `
 .hm-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 4px; }
 .hm-head h1 { margin: 0; font-size: var(--fs-h2); font-weight: 650; letter-spacing: -.02em; }
 .hm-head .hm-v { color: var(--fg-3); font-size: var(--fs-small); }
+.hm-pill { display: inline-flex; align-items: baseline; gap: 8px; margin: 0 0 0 -10px; padding: 0 10px 2px; border: 0; border-radius: var(--r-pill); background: none; font: inherit; color: inherit; letter-spacing: inherit; cursor: pointer; }
+.hm-pill:hover, .hm-pill[aria-expanded="true"] { background: var(--wash); }
+.hm-pill i { font-style: normal; font-size: var(--fs-small); color: var(--fg-3); }
 /* This week, in the head (1.56, audit B8): the only evidence log was a
    fold at the foot of a long page. One line after the date opens it. */
 .hm-wkl { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
@@ -145,6 +148,18 @@ const CSS = `
 .hm-fl-a { flex: none; color: var(--fg-3); }
 .hm-fl-b { flex: none; padding: 1px 10px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); color: var(--fg-2); font-size: var(--fs-micro); text-decoration: none; }
 .hm-fl-b:hover { color: var(--fg); border-color: var(--accent); }
+.hm-pk-n { margin: 0; font-size: var(--fs-h3); font-weight: 600; }
+.hm-pk-g { margin: 2px 0 0; font-style: italic; color: var(--fg-2); font-size: var(--fs-ui); }
+.hm-pk-f { list-style: none; margin: 12px 0 0; padding: 0; font-size: var(--fs-small); color: var(--fg); }
+.hm-pk-f li { display: flex; gap: 8px; padding: 2px 0; }
+.hm-pk-nx { margin: 12px 0 0; padding: 9px 12px; border-radius: var(--r-sm); background: var(--bg); font-size: var(--fs-ui); line-height: 1.45; }
+.hm-pk-nx small { display: block; color: var(--fg-3); font-size: var(--fs-micro); }
+.hm-pk-go { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 8px; }
+.hm-pk-go a { text-decoration: none; }
+.hm-nb.low { position: static; margin: 14px 0 0; padding: 0; background: none; }
+.hm-pk-more { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; margin: 14px 0 0; padding: 10px 14px; border: 1.5px dashed var(--rule-2); border-radius: var(--r-md); font-size: var(--fs-small); color: var(--fg-2); }
+.hm-pk-more b { color: var(--fg); }
+.hm-foot-more { margin-top: 20px; }
 .hm-fl-none, .hm-fl-idle { margin: 0; font-size: var(--fs-small); color: var(--fg-3); }
 .hm-fl-idle a { color: var(--fg-2); text-decoration: none; }
 .hm-fl-idle a:hover { color: var(--fg); text-decoration: underline; }
@@ -430,6 +445,16 @@ function style() {
 }
 
 const KNOWN = WIDGETS.map(w => w[0]);
+/** Home's own pill (1.70, plan 94e0a0f735 P5): the path's first part, as
+ *  it stands on a desk, its menu the desks. Only with two or more desks and
+ *  in the window: with one, Home is that desk's card. */
+const homePill = j => c.capability && j.desks && j.desks.filter(d => !d.parked).length > 1
+  ? `<button type="button" class="hm-pill" data-path="home-desks" aria-haspopup="menu" aria-expanded="false" data-tip="Every desk" data-tip-sub="the one asking first · ⌃⌥H comes back here">Home<i aria-hidden="true">▾</i></button>` : "Home";
+/** Whether a one-desk Home shows every block (the foot's Show): this
+ *  viewer's, as the hidden widgets are. */
+const MORE = "snyvi.home.more";
+const moreShown = () => { try { return localStorage.getItem(MORE) === "1"; } catch { return false; } };
+const oneDesk = j => !!j.desks && j.desks.length === 1 && !j.desks[0].parked;
 const hidden = () => { try { return JSON.parse(localStorage.getItem("snyvi.home.hidden") || "[]").filter(k => KNOWN.includes(k)); } catch { return []; } };
 const setHidden = xs => { try { localStorage.setItem("snyvi.home.hidden", JSON.stringify(xs)); } catch {} };
 const weekOpen = () => { try { return localStorage.getItem("snyvi.home.week") === "1"; } catch { return false; } };
@@ -628,7 +653,11 @@ function draw(j) {
   // On you is the corner's tray, from the status line, a thread is a line on
   // its desk, the update card is under the foot, and keys are the desks' own.
   // 1.67: On you is the floor's first group, in the main column.
-  const side = arrived(j) + w("claude", "Claude", claude(j)) +
+  // One desk (1.70): the pick-up card is the page, and what a floor of
+  // agents needs -- the quota, the week, the wall -- waits behind one line
+  // at the foot until the reader asks for it or a second desk comes.
+  const one = !!j.desks && j.desks.length === 1 && !j.desks[0].parked && !moreShown();
+  const side = one ? arrived(j) : arrived(j) + w("claude", "Claude", claude(j)) +
     (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "");
   const desks = parkedShelf(j);
   // Last in the main column, and one height whatever it holds (ui/wall.js's
@@ -636,9 +665,10 @@ function draw(j) {
   // side column under it at one column.
   const wall = w("wall", "What people are building", wallMod ? wallMod.html(c) : `<div class="wl" data-wall style="height:178px"></div>`);
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
-  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span>${weekLine(j)}</header>` +
+  const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>${homePill(j)}</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span>${weekLine(j)}</header>` +
     `<div class="hm-st">${status(j)}${rsSheet()}</div>` +
-    `<div class="hm-grid"><div class="hm-main">${bar(j)}${yourWeek(j)}${floor(j)}${desks}${week(j)}${wall}</div><div class="hm-side">${side}</div></div>` +
+    `<div class="hm-grid"><div class="hm-main">${one || oneDesk(j) ? "" : bar(j)}${one ? "" : yourWeek(j)}${floor(j)}${desks}${one ? "" : week(j) + wall}</div><div class="hm-side">${side}</div></div>` +
+    (one ? `<p class="hm-foot hm-foot-more">More on Home: Claude's quota · This week · What people are building · <button type="button" data-hm="more-home">Show</button></p>` : "") +
     `<p class="hm-foot" data-part="home.foot"><button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
     (n ? ` · ${plural(n, "section")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p>` +
@@ -873,6 +903,9 @@ function floor(j) {
   if (!j.desks.length) return box(`<div class="welcome hm-ask"><h2 class="w-q">What are you working on?</h2><div class="w-ask"><div class="w-btns"><button type="button" class="w-btn w-pick" data-w="pick">Choose its folder…</button><button type="button" class="btn" data-w="w-new">Start something new</button></div></div></div>`);
   const live = byOrder(j.desks.filter(d => !d.parked || d.id === justParked));
   if (!live.length) return box(`<p class="hm-quiet">Every desk is parked. Unpark one below when you are ready for it.</p>`);
+  // One desk (1.70, plan 980648bb8b): Home is that desk -- where it stands,
+  // and one press to carry on. What is on the reader stays first, in its box.
+  if (live.length === 1 && j.desks.length === 1) return box((waitBox(j) || "") + pickCard(j, live[0]));
   const foc = focusIds(j), shown = live.filter(d => !foc.length || foc.includes(d.id));
   const all = shown.flatMap(d => d.panes.map(p => ({ d, p, s: paneState(p) })));
   const of = s => all.filter(x => x.s === s);
@@ -895,16 +928,53 @@ function floor(j) {
   // A shell that rang is not an agent and not on that list, so it is a row.
   const rang = of("need").filter(x => x.p.agent !== "needs_you");
   const onyou = waitBox(j) || `<h3 class="hm-fl-g">On you · 0</h3><p class="hm-fl-none">No agent is waiting on you.</p>`;
-  const newest = (a, b) => (b.p.agent_since || 0) - (a.p.agent_since || 0);
-  const idle = [...of("idle").map(x => `<a href="/desk/${x.d.id}" data-desk="${x.d.id}" data-slot="${x.p.slot}"${x.p.grp ? ` data-grp="${x.p.grp}"` : ""}>${esc(x.d.name)} · ${esc(x.p.name || `panel ${x.p.slot}`)}</a>${x.p.running ? "" : " (stopped)"}`),
-    ...shown.filter(d => !d.panes.length).map(d => `<a href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a> (no panels)`)];
+  // Where you left off (1.70): a row for every desk no agent is working on
+  // and none is asking from, with its next step in the agent's own words.
+  // Finished and Idle were groups of panels, where the reader opened each to
+  // find what it had stopped on; a desk says that itself, in one line.
+  const busy = new Set([...of("work"), ...of("need")].map(x => x.d.id));
+  const rest = shown.filter(d => !busy.has(d.id)).sort((a, b) => (b.touched || 0) - (a.touched || 0));
+  const restRow = d => {
+    const p = carryPane(d), at = d.left_off ? d.left_off.at : d.touched;
+    return `<li class="hm-fl-r"><a class="hm-fl-n" href="/desk/${d.id}" data-desk="${d.id}" data-tip="Open its desk"><b>${esc(d.name)}</b></a>` +
+      `<span class="hm-fl-x"${d.left_off ? ` data-tip="${esc(d.left_off.text)}" data-tip-overflow` : ""}>${d.left_off ? esc(d.left_off.text) : d.panes.length ? "" : "No panels yet"}</span>` +
+      (at ? `<span class="hm-fl-a fact">${age(at)}</span>` : "") +
+      `<a class="hm-fl-b" href="/desk/${d.id}" data-desk="${d.id}"${p ? ` data-slot="${p.slot}"${p.grp ? ` data-grp="${p.grp}"` : ""} data-carry="${esc(p.id)}"` : ""} data-tip="Carry on" data-tip-sub="opens the desk${p ? ", and brings its last conversation back" : ""}">Carry on</a></li>`;
+  };
   return box(head + onyou +
     (rang.length ? `<ul class="hm-fl-l">${rang.map(x => row(x, "rang for you", `<a class="hm-fl-b" href="/desk/${x.d.id}" data-desk="${x.d.id}" data-slot="${x.p.slot}"${x.p.grp ? ` data-grp="${x.p.grp}"` : ""}>Go to panel</a>`)).join("")}</ul>` : "") +
-    group("work", "Working", of("work"), x => row(x, [esc((x.p.title || "").trim()) || "working", threadFact(j, x.d)].filter(Boolean).join(" · "), since(x))) +
-    group("done", "Finished", of("done").sort(newest), x => row(x, [x.p.agent_since ? `finished ${new Date(x.p.agent_since * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "finished", threadFact(j, x.d)].filter(Boolean).join(" · "),
-      `<a class="hm-fl-b" href="/desk/${x.d.id}" data-desk="${x.d.id}" data-slot="${x.p.slot}"${x.p.grp ? ` data-grp="${x.p.grp}"` : ""}>Look</a>`)) +
-    (idle.length ? `<h3 class="hm-fl-g">Idle · ${idle.length}</h3><p class="hm-fl-idle">${idle.join(" &nbsp;·&nbsp; ")}</p>` : ""));
+    (rest.length ? group("rest", "Where you left off", rest, restRow) : "") +
+    group("work", "Working", of("work"), x => row(x, [esc((x.p.title || "").trim()) || "working", threadFact(j, x.d)].filter(Boolean).join(" · "), since(x))));
 }
+
+/** The panel Carry on goes back to: the one an agent was in last. */
+const carryPane = d => [...d.panes].filter(p => p.agent || p.agent_since).sort((a, b) => (b.agent_since || 0) - (a.agent_since || 0))[0] || d.panes[0] || null;
+
+/** Home with one desk: the desk itself, as a card. Its goal, the last page
+ *  its agent sent and the last answer given, the agent's own next step, and
+ *  Carry on. Built from what `/api/home` already says of the desk. */
+function pickCard(j, d) {
+  const { esc } = c, p = carryPane(d), l = d.left_off;
+  const state = d.panes.map(paneState), need = state.includes("need"), work = state.includes("work");
+  const to = `href="/desk/${d.id}" data-desk="${d.id}"${p ? ` data-slot="${p.slot}"${p.grp ? ` data-grp="${p.grp}"` : ""}` : ""}`;
+  const facts = [
+    d.last && d.last.kind === "doc" && !d.last.from ? `<li><span class="hm-g ok">✓</span><span>Its last page: <a href="/d/${esc(d.last.id)}" data-id="${esc(d.last.id)}">${esc(d.last.text)}</a> <span class="fact">· ${age(d.last.at)}</span></span></li>` : "",
+    d.answered ? `<li><span class="hm-g ok">✓</span><span>You answered: ${esc(d.answered.answer)}</span></li>` : "",
+  ].join("");
+  const next = work ? `<p class="hm-pk-nx"><small>Now</small>An agent is working on this desk.</p>`
+    : need ? `<p class="hm-pk-nx"><small>Now</small>An agent on this desk is waiting for you.</p>`
+    : l ? `<p class="hm-pk-nx"><small>${l.by ? "Its agent" : "You"} left off, ${ago(l.at)}</small>${esc(l.text)}</p>` : "";
+  const go = work || need ? `<a class="btn btn-primary" ${to}>Go to its desk →</a>`
+    : `<a class="btn btn-primary" ${to}${p ? ` data-carry="${esc(p.id)}"` : ""}>Carry on →</a><a class="btn" href="/desk/${d.id}" data-desk="${d.id}">Just open the desk</a>`;
+  return `<div class="hm-pk" data-part="home.pick"><h2 class="hm-pk-n">${esc(d.name)}</h2>` +
+    (d.goal ? `<p class="hm-pk-g">${esc(d.goal)}</p>` : "") +
+    (facts ? `<ul class="hm-pk-f">${facts}</ul>` : "") + next +
+    `<p class="hm-pk-go">${go}</p>` +
+    (work || need || !p ? "" : `<p class="hm-quiet">Carry on opens the desk and brings its last conversation back in its panel.</p>`) + `</div>` +
+    bar(j).replace('class="hm-nb"', 'class="hm-nb low"') +
+    `<div class="hm-pk-more"><span><b>Another project?</b> It gets its own desk.</span><div class="welcome hm-ask"><div class="w-ask"><div class="w-btns"><button type="button" class="btn w-pick" data-w="pick" data-another="1">Choose its folder…</button><button type="button" class="btn" data-w="w-new">Start something new</button></div></div></div></div>`;
+}
+
 /** How long an agent has been at it: "18 min", kept current by the minute's pass. */
 const live2 = t => `<span class="hm-live" data-t="${t}">${ago(t)}</span>`;
 
@@ -1670,6 +1740,8 @@ function wire() {
   if (!el || el.dataset.wired) return;
   el.dataset.wired = "1"; tabLinks(el); rsKeys(el);
   el.addEventListener("click", async e => {
+    // Home's pill: every desk, in the desk menu's one order (menu.js).
+    if (e.target.closest('[data-path="home-desks"]')) { e.preventDefault(); c.newDesk(e.target.closest('[data-path="home-desks"]')); return; }
     // Lately's rows are the corner's, and so are their buttons.
     const cn = e.target.closest("button[data-a^='cn-'], [data-a^='cn-tn-']");
     if (cn && cornerMod?.act(cn.dataset.a, cn)) return;
@@ -1677,12 +1749,17 @@ function wire() {
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     // And the focus list, which stays open while its desks are checked.
     if (focusOpen && !e.target.closest(".hm-fz, [data-hm=focus]")) { focusOpen = false; draw(last); }
+    // Carry on: the desk opens by the link's own address, and is told which
+    // panel's conversation to bring back (ui/desk/20-first.js `carryOn`).
+    const ca = e.target.closest("a[data-carry]");
+    if (ca) try { sessionStorage.setItem("snyvi.carry", ca.dataset.carry); } catch { /* it opens the desk all the same */ }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
     const k = b.dataset.hm, id = +b.dataset.k || 0; if (k.startsWith("rs-")) return void rsClick(k, b);
     // The ✕ in a folded widget's head hides it; it does not fold it.
     if (k === "hide") { e.preventDefault(); setHidden([...new Set([...hidden(), b.dataset.k])]); draw(last); c.docEl.querySelector("[data-hm=unhide]")?.focus({ preventScroll: true }); }
     else if (k === "unhide") { setHidden([]); draw(last); }
+    else if (k === "more-home") { try { localStorage.setItem(MORE, "1"); } catch {} draw(last); }
     else if (k === "turns") c.corner().then(m => m.open(), () => {});
     else if (k === "check") c.checkUpdates(b);
     else if (k === "newdesk") c.newDesk(b);

@@ -829,8 +829,9 @@ the rail; Esc, a click outside, or following a link closes it. The inbox
 icon counts what waits, the desks icon the panels that need you. A window
 narrower than 760 px always shows the sidebar this way.
 
-**On a desk**, with any key going to the panel otherwise: `⌃⌥1`–`⌃⌥4` a
-panel, `⌃⌥]` / `⌃⌥[` the next and the previous, `⌃⌥N` a new panel, `⌃⌥W`
+**On a desk**, with any key going to the panel otherwise: `⌃⌥1`–`⌃⌥4`
+focus a panel, `⌃⌥]` / `⌃⌥[` the next and the previous,
+`⌃⌥H` goes Home from any desk, `⌃⌥N` a new panel, `⌃⌥W`
 close it (its row keeps Undo for 8 s), `⌃⌥R` stop or start it, `⌃⌥Z` it
 alone, and `⌃⌥⇧` with an arrow moves it. `⌃⌥S` rests the desk: both sides
 away, and the same key brings them back as they were; at rest the right
@@ -1904,19 +1905,52 @@ files as you click them. Nothing of it is stored, nothing joins the
 library, and nothing appears in the inbox. It is a reader for code and
 notes you already have, not an import.
 
+### Where you are on a desk, and getting around
+
+A desk's head says where you are in one pill: `Home › breeds-of-dogs ▾ ›
+Tab 2 ▾ › photos ▾`. A part shows only once there is a second thing at
+its level -- Home with two desks open, the tab with two tabs, the panel
+with two panels -- and the desk's name is always there. Each part with a
+▾ is a menu. The desk's lists its views (Panels, Folder, its boards, New
+board…), then every desk in one order -- the one asking for you first,
+then the ones an agent is working on, then where you left off, newest
+first -- the parked folded into one row, and Another project…: a sheet
+over the page for its folder (one you choose, or a new one in
+~/Projects), its one sentence, and Open its desk, the desk you were on
+running on underneath. The tab's lists the
+tabs; the panel's lists the panels with what each is doing.
+
+`⌃⌥H` goes Home from any desk, and Esc steps out -- a board or the page
+back to the panels, full view back to the grid, the panels out to Home
+-- whenever no panel and no field has the keyboard (in a panel, Esc is
+its program's). Home's own pill lists the desks the same way, and Ctrl K
+with nothing typed lists them first. When an agent on another desk asks
+you something, its question takes the head's line, where left off is,
+with Go; hover it to answer from where you are.
+
+The head's `+` makes a panel or a tab; the desk's keys and account and its
+public page are in its ⋯.
+
+### Back and Forward on a desk
+
+Back and Forward know the moves on a desk too. Another tab, or a panel
+brought into sight from its `[n]` chip, is a step: Back puts the tab and
+the panel you had back, and its tip says where it goes, "Back to
+breeds-of-dogs · 2 · photos". Presses a moment apart are one step, so
+stepping through the panels with `⌃⌥]` in full view is one Back.
+
 ### Tabs in a desk
 
 A project with parts running at once -- a website, a bot, the automation
-that posts for it -- can keep them on one desk as tabs. The `+` after the
-desk's name makes one at once, in the desk's folder, with a shell started;
-the first press on a desk makes two, "Tab 1" for the panels you had and
-"Tab 2" for the new one. Click a tab's name to show it, double-click the
-shown one to rename it, and press Ctrl Alt Shift ] or [ for the next or
-the one before. The panels of the tabs you are not looking at keep
-running, and a tab whose panel needs you shows a `!` on its name. A tab's
-✕ closes it with its panels, kept and stopped, and Undo brings it back;
-right-click a tab for Move left and right and to move the focused panel
-there. Notes, documents and threads stay the desk's, one list for every
+that posts for it -- can keep them on one desk as tabs. The head's `+`
+makes one, New tab, in the desk's folder, with a shell started; the first
+press on a desk makes two, "Tab 1" for the panels you had and "Tab 2" for
+the new one. The tab shown is a part of the path; its menu shows another,
+renames it, moves the focused panel to another tab or closes it, and
+Ctrl Alt Shift ] or [ steps to the next or the one before. The panels of
+the tabs you are not looking at keep running, and the tab part shows a
+`!` when a panel on another tab needs you. Closing a tab keeps its panels,
+stopped, and its Undo stands in the path for a few seconds. Notes, documents and threads stay the desk's, one list for every
 tab. On Home, a desk with tabs has a chip for each, and a chip opens the
 desk on that tab.
 

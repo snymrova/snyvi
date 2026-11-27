@@ -43,7 +43,7 @@
   const overDesk = () => (state.view === "desk" || state.deskBehind != null) && !!desk;
   const cornerUse = () => (cornerLoading ||= chunk("corner")
     .then(m => (cornerMod ||= m.init({ root, store, esc, relShort, capability, deskApi, sayErr, toast, who: whoIco, glyph, peek: mascotPeek, showDoc: id => showDoc(id, true, false, overDesk()), showDesk, showHome, showStart,
-      view: () => state.view, onDesk: overDesk, friends: () => state.friends, lately: LATELY_SHOWN,
+      view: () => state.view, onDesk: overDesk, deskOn: () => state.deskId, friends: () => state.friends, lately: LATELY_SHOWN,
       deskRedraw: () => desk?.arranged?.(), deskTray: () => desk?.openTray?.(), homeRedraw: () => homeMod?.redraw?.(),
       openLately: () => openLately($(root.dataset.side === "0" ? "#rail-lately" : "#btn-lately")), unpop: () => closePop(false),
       hop: () => { const m = $(".brand-mark"); if (m && !quiet()) { m.classList.remove("hop"); void m.offsetWidth; m.classList.add("hop"); } } })))

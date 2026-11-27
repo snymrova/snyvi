@@ -56,6 +56,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Desk,
         false,
     ),
+    ("POST", "/api/agents/codex/connect", None, Gate::Desk, false),
     ("GET", "/api/tree", None, Gate::Open, true),
     ("GET", "/api/projects/1/tree", None, Gate::Open, true),
     ("GET", "/api/workflows/1/tree", None, Gate::Open, true),

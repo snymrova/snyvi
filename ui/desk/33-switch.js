@@ -35,40 +35,19 @@ const swBy = new Map();
 let swTip = null;
 const POINT_KEY = "snyvi.board.pointed";
 
-/** The switcher, drawn in place on every layout (`viewsSlot`). */
+/** The card under the pill (1.70: the segments went into the path's desk
+ *  menu, 36-path.js), drawn in place on every layout (`viewsSlot`). */
 function switchSlot(d) {
-  const hd = ctx.docEl.querySelector(".dk-head"), { esc, glyph } = ctx;
-  if (!hd) return;
-  let el = hd.querySelector(":scope > .dk-sw");
-  if (!el) {
-    el = Object.assign(document.createElement("span"), { className: "dk-sw" });
-    el.setAttribute("role", "group");
-    el.setAttribute("aria-label", "Views of this desk");
-    hd.querySelector(".dk-groups").after(el);
-  }
-  const on = viewNow(d), heads = boardHeads(d), bid = on.startsWith("board:") ? on.slice(6) : "";
-  // The board on screen by the name its board.json gives once read (V3).
-  const bName = bid ? (boardMod && boardMod.name()) || (heads.find(b => b.id === bid) || {}).name || bid : "";
-  const fresh = heads.filter(b => b.id !== bid && boardNew(d, b) > 0);
-  const seg = (v, label, ico, sub, key) => `<button type="button" class="dk-sw-b${on === v ? " on" : ""}" data-sw="${v}" aria-pressed="${on === v}" aria-label="${label}" ` +
-    `data-tip="${label}" data-tip-sub="${esc(sub)}"${key ? ` data-key="${key}"` : ""}>${glyph(ico, 14)}${on === v ? `<span>${label}</span>` : ""}</button>`;
-  const back = viewBy && on !== "panels" ? `${on === "folder" ? "Folder" : on === "page" ? "Page" : "this board"} was opened by ${viewBy} · ` : "";
-  const bLabel = bid ? bName : heads.length ? "Boards" : "+ Board";
-  const bSub = !heads.length ? "an empty canvas Claude draws on" : fresh.length ? `${fresh.map(b => `${b.name || b.id}: ${boardNew(d, b)} new`).join(" · ")}` : "switch, make, rename, order, remove";
-  const html = seg("panels", "Panels", "desk", `${back}your shells and Claude · Esc goes back too`, "") +
-    seg("folder", "Folder", "folder", "this desk's files, a panel with them", "ctrl+alt+f") +
-    seg("page", "Page", "page", "the desk's landing page, to show people", "") +
-    `<button type="button" class="dk-sw-b dk-sw-bd${bid ? " on" : ""}" data-sw="boards" aria-haspopup="true" ` +
-    `aria-label="${esc(bid ? `Board ${bName}` : bLabel)}: the boards list${fresh.length ? ", something new" : ""}" data-tip="${bid ? "This desk's boards" : esc(bLabel)}" data-tip-sub="${esc(bSub)}"${heads.length ? ` data-key="ctrl+alt+d"` : ""}>` +
-    `${glyph("board", 14)}<span>${esc(bLabel)}</span><i class="dk-sw-dot${fresh.length ? " on" : ""}" aria-hidden="true"></i><i class="dk-sw-v" aria-hidden="true">▾</i></button>` +
-    swTipHtml(d, heads, bid);
+  const el = ctx.docEl.querySelector(".dk-head .dk-path > .dk-sw");
+  if (!el) return;
+  const on = viewNow(d), bid = on.startsWith("board:") ? on.slice(6) : "";
+  const html = swTipHtml(d, boardHeads(d), bid);
   if (el.$html !== html) {
-    const k = document.activeElement && el.contains(document.activeElement) ? document.activeElement.dataset.sw || document.activeElement.dataset.swTip : null;
+    const k = document.activeElement && el.contains(document.activeElement) ? document.activeElement.dataset.swTip : null;
     el.innerHTML = html; el.$html = html;
-    if (k) [...el.querySelectorAll("[data-sw], [data-sw-tip]")].find(b => (b.dataset.sw || b.dataset.swTip) === k)?.focus();
+    if (k) el.querySelector(`[data-sw-tip="${k}"]`)?.focus();
   }
-  // Set on the button, not drawn: opening the list must not redraw its anchor.
-  el.querySelector(".dk-sw-bd").setAttribute("aria-expanded", String(!!bl && bl.kind === "sw"));
+  ctx.docEl.querySelector(".dk-head .dk-pp-d")?.setAttribute("aria-expanded", String(!!bl && bl.kind === "sw"));
 }
 
 /** The card under Boards: the new board an agent made, once, or the Undo of
@@ -129,11 +108,11 @@ function swClick(e) {
 let bl = null;
 
 /** Which anchor a list hangs from: the switcher's Boards, or a board's title. */
-const blKind = a => (a.closest(".dk-sw") ? "sw" : "title");
+const blKind = a => (a.closest(".dk-path") ? "sw" : "title");
 /** The anchor now: a redraw of the head or the board's bar replaces it. */
 function blAnchor() {
   if (!bl) return null;
-  if (!bl.anchor.isConnected) bl.anchor = document.querySelector(bl.kind === "sw" ? "#doc .dk-head .dk-sw-bd" : ".dk-view .bd-title") || bl.anchor;
+  if (!bl.anchor.isConnected) bl.anchor = document.querySelector(bl.kind === "sw" ? "#doc .dk-head .dk-pp-d" : ".dk-view .bd-title") || bl.anchor;
   return bl.anchor;
 }
 
@@ -363,24 +342,6 @@ async function boardBack(d, id) {
 }
 
 const SWITCH_CSS = `
-/* The switcher: four segments in one pill, its width fixed -- Boards takes
-   what the others leave -- so a view opening or closing moves nothing. */
-.dk-sw { position: relative; flex: none; display: flex; align-items: stretch; width: 252px; height: 24px; padding: 1px; gap: 1px; box-sizing: border-box;
-  border-radius: var(--r-pill); background: var(--wash); box-shadow: inset 0 0 0 1px var(--rule); }
-@media (max-width: 1100px) { .dk-sw { width: 208px; } }
-.dk-sw-b { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; width: 30px; padding: 0; border: 0; border-radius: var(--r-pill);
-  background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; cursor: pointer; }
-.dk-sw-b:hover { color: var(--fg); background: var(--rule); }
-.dk-sw-b.on { width: 76px; color: var(--fg); background: var(--bg); box-shadow: 0 0 0 1px var(--rule-2); }
-@media (max-width: 1100px) { .dk-sw-b.on { width: 30px; } .dk-sw-b.on:not(.dk-sw-bd) > span { display: none; } }
-.dk-sw-b > svg { flex: none; }
-.dk-sw-bd, .dk-sw-bd.on { flex: 1 1 0; width: auto; justify-content: flex-start; padding: 0 8px 0 9px; }
-.dk-sw-bd > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.dk-sw-v { flex: none; margin-left: auto; font-style: normal; font-size: var(--fs-micro); color: var(--fg-3); }
-/* The dot: always there, clear until a board has something new, so its
-   coming moves nothing. */
-.dk-sw-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); visibility: hidden; }
-.dk-sw-dot.on { visibility: visible; }
 /* The card under Boards: over the grid, pushing nothing. */
 .dk-sw-tip { position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-pop, 30); display: flex; align-items: center; gap: 8px; max-width: 420px; padding: 6px 6px 6px 12px;
   border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: inset 0 0 0 1px var(--accent), var(--shadow); font-size: var(--fs-small); color: var(--fg); white-space: nowrap; }
@@ -390,9 +351,6 @@ const SWITCH_CSS = `
 .dk-sw-tb { flex: none; height: 22px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 500; cursor: pointer; }
 .dk-sw-tx { flex: none; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg-3); cursor: pointer; }
 .dk-sw-tx:hover { background: var(--rule); color: var(--fg); }
-/* Over the folder, the tabs' + and ✕ keep their room, unseen: the switcher
-   after them stands where it stands on the panels (audit F9). */
-.dk-fhead .dk-group-new, .dk-fhead .dk-group-x { display: revert; visibility: hidden; }
 /* ---------- the boards list ---------- */
 .dk-bl { position: fixed; z-index: var(--z-pop, 30); width: 300px; max-height: min(70vh, 560px); overflow-y: auto; padding: 6px; box-sizing: border-box;
   border-radius: var(--r-md); background: var(--bg-raise); box-shadow: inset 0 0 0 1px var(--rule-2), var(--shadow); font-size: var(--fs-small); color: var(--fg); }

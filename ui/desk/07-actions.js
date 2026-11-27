@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await checksAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d) || await decAct(a, b, d) || await lineAct(a, b, d))) return;
+    if (d && (firstAct(a) || changeAct(a, b, d) || await filedAct(a, b, d) || keysAct(a, b, d) || backAct(a, b, d) || await dueAct(a, b, d) || await checksAct(a, b, d) || await gateAct(a, b, d) || await routineAct(a, b, d) || await decAct(a, b, d) || await lineAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -418,7 +418,7 @@ function renamePanel(v, typed, why) {
 /** The desk's name, rewritten where it is: in the desk's head. The meta
  *  pane no longer says it twice. */
 function renameDesk(d, typed, why) {
-  const nm = ctx.docEl.querySelector(".dk-head .dk-name");
+  const nm = ctx.docEl.querySelector(".dk-head .dk-pp-d");
   if (!nm) return;
   const input = Object.assign(document.createElement("input"), { className: "ren-in", value: typed ?? d.name, spellcheck: false });
   input.setAttribute("aria-label", "Name of this desk");
@@ -435,7 +435,8 @@ function renameDesk(d, typed, why) {
       // Refused: the field stays as typed, says why, and Enter asks again.
       catch (e) { if (input.isConnected) { done = false; fieldErr(input, `Could not rename · ${ctx.sayErr(e).why}`); input.focus(); return; } return renameDesk(d, name, `Could not rename · ${ctx.sayErr(e).why}`); }
     }
-    if (input.isConnected) input.replaceWith(Object.assign(document.createElement("b"), { className: "dk-name", textContent: (current() || d).name }));
+    // The pill's desk part comes back whole, drawn as it always is.
+    if (input.isConnected) { const box = input.parentElement; input.remove(); if (box) box.$html = null; const c = current(); if (c) pathSlot(c); }
     rail();
   };
   input.addEventListener("keydown", e => {
@@ -454,6 +455,9 @@ function focusPane(id) {
   // One in the back is the drawer's: opened on it, it has the keys.
   toGroupOf(v);
   if (isBack(v.pane)) { drawer(id); return; }
+  // A panel brought into sight -- a chip, full view's next -- is a step
+  // Back undoes (38-places.js).
+  if (focused !== id && !ctx.docEl.querySelector(`.dk-grid > .pn[data-id="${id}"]`)) placeNext = true;
   focused = id;
   if (full) saveFull();
   layout();
@@ -463,6 +467,8 @@ function focusPane(id) {
 function click(e) {
   // The views switcher, the dock, a board's rail rows (25-views.js).
   if (viewClick(e)) return;
+  // Another desk's ask in the head's line, put away (10-onyou.js).
+  if (elseClick(e)) return;
   // The foot's links: a ✕, an Undo, the +N (17-links.js).
   if (linkClick(e)) return;
   // A section's head, folded or opened where it is: no draw.
@@ -482,7 +488,7 @@ function click(e) {
   // has opened where it stands, which the field then takes the place of.
   const nn = e.detail === 2 && e.target.closest('.dk-note > .nm[data-a="note-gate"]');
   if (nn) { e.preventDefault(); act({ dataset: { a: "note-edit", n: nn.dataset.n } }); return; }
-  const m = e.target.closest("[data-desk-menu]");
+  const m = e.target.closest("[data-desk-menu], [data-plus]");
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   if (backClick(e)) return;
   const f = e.target.closest("[data-focus]");
@@ -537,6 +543,9 @@ function keys(e) {
   if (!(e.ctrlKey && e.altKey) || e.metaKey || altGr(e)) return;
   // ⌃⌥S the desk at rest, and back; ⌃⌥⇧S the right side over it (34-rest.js).
   if (restKey(e)) return;
+  // ⌃⌥H: Home, from any desk (1.70, plan 94e0a0f735 D1). Not ⌃⌥↑, which
+  // Intel's Windows driver turns the screen with and GNOME switches on.
+  if (e.code === "KeyH" && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); ctx.home?.(); return; }
   // ⌃⌥B the drawer; ⌃⌥⇧B the focused panel to the back, or forward.
   if (e.code === "KeyB") {
     if (reading != null) return;
@@ -643,7 +652,10 @@ export function open(c) {
   // second click. History's way back (alt+←) pushes nothing, and lands on
   // the panels as the reader left them.
   const from = !c.slot && c.push && c.id === deskId && sentFrom();
-  const slot = from ? from.pane.slot : c.slot, grp = from ? from.pane.grp : c.grp;
+  // Back or Forward onto a step of this desk: the tab and the panel it kept
+  // (38-places.js).
+  const back = !from && !c.slot && placeBack(c);
+  const slot = from ? from.pane.slot : back ? back.slot : c.slot, grp = from ? from.pane.grp : back ? back.grp : c.grp;
   const first = !ctx;
   // Back to the panels: the Folder view's dock is over (25-views.js).
   if (ctx) folderOff();
@@ -694,6 +706,7 @@ export function open(c) {
   const v = views.get(drawerOn || focused);
   if (v) setTimeout(() => v.body.focus(), 0);
   firstSteps();
+  carryOn();
 }
 
 /** The desk opened on a panel by its slot: one in the grid takes the focus,
@@ -832,8 +845,19 @@ export function actions(el) {
   // The chip on a panel's row, or the change's own row (22-change.js).
   const card = el.closest(".dk-pth, .dk-change");
   if (card) return threadMenu(card);
+  // The pill's tab and panel parts (36-path.js); the desk part is menu.js's.
+  const pp = el.closest(".dk-path [data-path]");
+  if (pp) return pathMenu(pp);
   const tab = el.closest(".dk-group[data-grp]");
   if (tab) return groupMenu(+tab.dataset.grp);
+  // The head's +: a panel in the tab on screen, or a tab.
+  if (el.closest("[data-plus]")) {
+    const why = noNew(d);
+    return { head: "New", items: [
+      { label: "New panel", key: why ? "" : ctx.keyHint("ctrl+alt+n"), hint: why, run: () => why ? ctx.toast("New panel", why) : act({ dataset: { a: "new" } }) },
+      { label: "New tab", about: "more panels, in this desk's folder", run: () => newGroup() },
+    ] };
+  }
   const lk = el.closest(".dk-lk-more, .dk-lk");
   if (lk) return linksMenu(lk);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
@@ -964,7 +988,6 @@ export function update(desks) {
   // Behind a document, the page is not the desk's to draw: the rail is.
   if (reading != null) { if (d) { sync(d); rail(); folderHead(); } else { ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = ""; } return; }
   if (!d || !ctx.docEl.querySelector(".dk")) { draw(); return; }
-  ctx.docEl.querySelector(".dk-name").textContent = d.name;
   sync(d);
   rail();
 }
@@ -989,7 +1012,7 @@ export function close() {
   if (!ctx) return;
   firstStop();
   say({ t: "watch", panes: [] });
-  delete ctx.root.dataset.full;
+  delete ctx.root.dataset.full; delete ctx.root.dataset.quiet;
   deskId = null; reading = null; readFrom = null;
   viewsReset();
   fromBar();

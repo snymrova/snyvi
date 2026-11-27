@@ -107,6 +107,8 @@ function deskItems(q) {
   const { state, browsing } = d;
   if (!d.capability || !state.desks) return [];
   const l = q.trim().toLowerCase(), out = [];
+  // The parked row of the empty box, unfolded: those desks alone.
+  if (l === "parked") return state.desks.desks.filter(k => k.parked).map(k => ({ desk: k.id, t: `Desk · ${k.name}`, s: "parked" }));
   if (browsing() && "new desk here".startsWith(l || "n")) {
     const p = state.browsePath, dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
     out.push({ newdesk: { root: state.browseRoot.id, path: dir }, t: "New desk here", s: state.browseRoot.path + (dir ? "/" + dir : "") });
@@ -118,6 +120,9 @@ function deskItems(q) {
     const w = l.slice(9).trim();
     if (l.length < 5) out.push({ cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell" });
     else {
+      // Welcome's form, as a sheet (menu.js `anotherSheet`): a folder, and
+      // the sentence the agent reads first. The places snyvi knows follow.
+      if (!w) out.push({ cmd: "another", t: "Another project…", s: "choose or make its folder, and say what it is" });
       for (const f of d.places()) if (!w || f.name.toLowerCase().includes(w)) out.push({ newdesk: f, t: `New desk · ${f.name}`, s: f.abs });
       if (!w) out.push({ newdesk: "home", t: "New desk · a shell", s: state.desks.home || "~" });
     }
@@ -125,6 +130,19 @@ function deskItems(q) {
   for (const k of state.desks.desks) if (!l || k.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: k.id, t: `Desk · ${k.name}`, s: k.root });
   return out;
 }
+/** The empty box (1.70, plan 94e0a0f735 P7): the desks first, in the one
+ *  order menu.js keeps -- asking, working, where you left off -- each with
+ *  its word, the parked in one row, and Another project… after them. */
+async function emptyDesks() {
+  if (!d.capability || !d.state.desks || browsing()) return deskItems("");
+  const o = await Promise.resolve(d.act("deskList")).catch(() => null);
+  if (!o || !o.live) return deskItems("");
+  const out = o.live.map(x => ({ desk: x.d.id, t: `Desk · ${x.d.name}`, s: x.word || x.d.root }));
+  if (o.parked.length) out.push({ cmd: "parked", t: `Parked · ${o.parked.length}`, s: o.parked.map(x => x.d.name).join(", ") });
+  out.push({ cmd: "another", t: "Another project…", s: "a folder, and a desk for it" });
+  return out;
+}
+const browsing = () => d.browsing();
 /** `>` and a word: what snyvi can do, rather than what it holds. A static
  *  list; the menus' registry (CONTEXT-MENU.md, phase 5) is per element and
  *  has no list of its own to read yet. */
@@ -292,7 +310,9 @@ async function search(q) {
   if (themeItems(q).length) await d.loadThemes();
   const friends = fm ? [] : await friendItems(q);
   if (mine !== seq || pal.hidden) return;
-  items = fm ? [] : themeItems(q).concat(deskItems(q), friends, pairItems(q), found); sel = 0;
+  const desks = q.trim() ? deskItems(q) : await emptyDesks();
+  if (mine !== seq || pal.hidden) return;
+  items = fm ? [] : themeItems(q).concat(desks, friends, pairItems(q), found); sel = 0;
   const reach = off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : "";
   // While files are still coming, an empty list says nothing yet: "Nothing
   // for" and then a file in its place would be a line that came and went.
@@ -319,6 +339,8 @@ function pick(it) {
   if (it.cmd === "theme") { d.input.value = "theme"; search("theme"); return; }
   // New desk… is a way into the rows that say where, as the + asks.
   if (it.cmd === "desk") { d.input.value = "new desk"; search("new desk"); return; }
+  if (it.cmd === "parked") { d.input.value = "parked"; search("parked"); return; }
+  if (it.cmd === "another") { close(); d.act("anotherSheet"); return; }
   // Add a note, with no words yet, is a way into the words.
   if (it.verb && it.verb.arg === "words" && !it.words) { d.input.value = `> ${it.verb.verb} `; search(d.input.value); return; }
   if (it.theme) previewing = false;

@@ -787,6 +787,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/about", get(about))
         .route("/api/agents", get(agents))
         .route("/api/agents/claude/connect", post(connect_claude))
+        .route("/api/agents/codex/connect", post(connect_codex))
         .route("/api/tree", get(tree))
         .route("/api/projects/{id}/tree", get(project_tree))
         .route("/api/workflows/{id}/tree", get(workflow_tree))

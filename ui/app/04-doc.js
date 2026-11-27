@@ -417,7 +417,8 @@
     const b = e.target.closest("[data-w]");
     if (!b || !docEl.contains(b)) return;
     const w = b.dataset.w;
-    if (w === "pick") act("pick", b.closest(".welcome") ? "welcome" : true);
+    // Home's Another project? is the sheet (menu.js `anotherSheet`), over Home.
+    if (w === "pick") b.dataset.another ? act("anotherSheet") : act("pick", b.closest(".welcome") ? "welcome" : true);
     else if (w === "place") { const f = pagesMod && pagesMod.place(+b.dataset.i); if (f) act("make", f, true); }
     else if (w.startsWith("w-")) pages().then(m => m.welcomeAct(b), () => {});
     else if (w === "connect") connectClaude(b);

@@ -1,7 +1,7 @@
 # Desks: real shells in the window, and what keeps them there
 
 A **desk** is a named workspace rooted at a folder, holding up to four panes
-in a fixed two-column grid, and up to four more in the back (1.49). Several desks can exist, and two can share a
+a tab and up to four more in the back (1.49). Several desks can exist, and two can share a
 root. A desk takes the whole of `#main`: it is a view, not a band under a
 document, and it is not a document. It has its own tables and its own id
 space, and it never appears in search, the inbox or the queue.
@@ -212,9 +212,33 @@ ever; until a window has, an update's restart or a second crash keep it. A
 panel whose agent never reported -- `claude` started and gone before its
 first hook -- has nothing to bring back.
 
+**The path (1.70, plan 94e0a0f735).** The head is head A from
+the audit e6364ec354: `‹ ›`, one **path pill** (`ui/desk/36-path.js`), the
+line, ✋, one `+` (New panel, New tab) and ⋯. The pill is Home › desk › tab
+› panel-or-view, a part drawn only when its level holds two or more; the
+desk part's menu is menu.js's (`pathEntries`), so Home's pill and Ctrl K's
+empty box list desks in the same order (`deskOrder`: asking, working, left
+off by date, parked folded). The tab part is the shown tab's `.dk-group`,
+so its rename and its right-click menu are the tab's own. Keys and Public
+page moved to ⋯. The panels keep the 2×2 grid and its `[n]` chips for
+the ones out of sight: a stage of one or two with live tiles at its edge
+was built for 1.70 and taken out in review, as harder to read than the
+grid. ⌃⌥H goes Home; Esc steps out (view → panels, full → grid, panels →
+Home) only when no panel or field has the keyboard, and an Esc that took
+something down (a menu, a sheet) is spent on it (`app/09-answers.js`). Another desk's open ask takes the head's line (`elseLine` in
+10-onyou.js, from the corner's `asks`), with its answers on hover through
+the tray's own `cn-tn-pick`. A desk's place -- the tab and the focused
+panel -- rides on its history entry (`ui/desk/38-places.js`): a press that
+moves the reader (another tab, a panel out of sight brought in) pushes a step, presses within 1.5 s fold into one, Back
+reopens the desk at the entry's place, and the title names it for Back's
+tip. Another project… is a sheet (menu.js `anotherSheet`) that makes the
+desk through `make` with the sentence as its goal; it replaced first-run's
+picker-then-page route for a second project.
+
 **Views over a desk (1.58, plan 6ff79c55a7).** A desk has views, not kinds:
 Panels, Folder, Page, and a Board for each `design/<board>/` its folder
-holds. Since 1.68 (plan d2db60758c) they are a **switcher** in the head,
+holds. Since 1.70 they are the first rows of the path's desk menu; from
+1.68 to 1.69 (plan d2db60758c) they were a **switcher** in the head,
 after the tabs (`ui/desk/33-switch.js`): four segments, always there, always
 in this order -- Panels, Folder, Page, Boards ▾. The one on screen says its
 name, the others are icons with a tip and their key, and the switcher's

@@ -25,6 +25,27 @@ pub(crate) async fn connect_claude(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
+    run_init(&app, &["init-claude", "--auto"]).await
+}
+
+/// Connect Codex from the window (1.70): what `snyvi init codex` does in a
+/// terminal -- its servers file and its hooks -- run by this binary for this
+/// binary, on the reader's press on a desk's strip. The window's gate, as
+/// Claude's is. Codex alone: the one other agent a first desk can start
+/// with a question, and the only id this ever passes to init.
+pub(crate) async fn connect_codex(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    run_init(&app, &["init", "codex"]).await
+}
+
+/// This binary's own init, with fixed arguments, and what it said.
+async fn run_init(app: &App, args: &'static [&'static str]) -> Response {
     // The path this daemon was started from, as the updater keeps it: once an
     // update has renamed a new file over it, `current_exe` names the old one,
     // gone (`… (deleted)` on Linux), and the same program is at the path.
@@ -35,7 +56,7 @@ pub(crate) async fn connect_claude(
             None => std::env::current_exe()?,
         };
         std::process::Command::new(exe)
-            .args(["init-claude", "--auto"])
+            .args(args)
             .stdin(std::process::Stdio::null())
             .output()
     })
@@ -47,12 +68,29 @@ pub(crate) async fn connect_claude(
                 String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
             );
-            Json(json!({ "ok": out.status.success(), "said": said.trim(), "agents": agents_json(&app) }))
+            Json(json!({ "ok": out.status.success(), "said": said.trim(), "agents": agents_json(app) }))
                 .into_response()
         }
         Ok(Err(e)) => err(e.into()),
         Err(e) => err(anyhow::anyhow!(e)),
     }
+}
+
+/// Where `claude` is: the name alone when PATH finds it, else the file
+/// Claude's own installer writes (`~/.local/bin/claude`, by its setup page),
+/// which a shell opened before the install does not have on its PATH yet.
+/// None when it is in neither place.
+fn claude_at() -> Option<String> {
+    if crate::platform::find_on_path("claude").is_some() {
+        return Some("claude".into());
+    }
+    let name = if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    };
+    let p = dirs::home_dir()?.join(".local").join("bin").join(name);
+    p.is_file().then(|| p.to_string_lossy().into_owned())
 }
 
 pub(crate) fn agents_json(app: &App) -> serde_json::Value {
@@ -63,6 +101,12 @@ pub(crate) fn agents_json(app: &App) -> serde_json::Value {
         // Whether a new desk's first panel can offer `claude`: on the
         // daemon's PATH, or registered (which it would not be without it).
         "claude_on_path": crate::platform::find_on_path("claude").is_some(),
+        // For a first desk's strip (1.70): where Claude is once its installer
+        // has run, whether Codex is here instead, and which installer line
+        // this system takes.
+        "claude_at": claude_at(),
+        "codex_on_path": crate::platform::find_on_path("codex").is_some(),
+        "os": std::env::consts::OS,
         "rows": crate::agents::rows(&senders, &online),
         "online": online,
         "now": crate::store::now(),
@@ -496,7 +540,9 @@ pub(crate) async fn pane_mark_note(
     let (stage, doc) = (b.stage.trim(), b.about.trim());
     let say = |why: &str| (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response();
     if !crate::desk::STAGES.contains(&stage) {
-        return say("stage must be read, planned or working here; done is the tick (mark_desk_note with stage done)");
+        return say(
+            "stage must be read, planned or working here; done is the tick (mark_desk_note with stage done)",
+        );
     }
     if !doc.is_empty() && !crate::desk::doc_ok(doc) {
         return say("about must be a document id from send_document: 10 hex digits");
@@ -512,7 +558,7 @@ pub(crate) async fn pane_mark_note(
             .clocked(|c, _| crate::desk::unapproved(c, placed.desk_id, note))
         {
             Ok(Some(why)) => {
-                return (StatusCode::CONFLICT, Json(json!({ "error": why }))).into_response()
+                return (StatusCode::CONFLICT, Json(json!({ "error": why }))).into_response();
             }
             Ok(None) => {}
             Err(e) => return err(e),
@@ -586,7 +632,7 @@ pub(crate) async fn pane_card(
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": why })),
             )
-                .into_response()
+                .into_response();
         }
     };
     // A card the reader closed stays closed, put again or not: the agent is
@@ -617,7 +663,7 @@ pub(crate) async fn pane_pin_link(
     let (label, url, host) = match crate::links::parse(&b) {
         Ok(l) => l,
         Err(why) => {
-            return (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response()
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response();
         }
     };
     let by = b
@@ -1300,7 +1346,12 @@ fn suggest_routine(
     let text = b.text.trim().trim_start_matches('/');
     let line = crate::routine::from_line(&format!("/{text}")).filter(|l| l.every.is_none());
     let Some(line) = line else {
-        return no(StatusCode::BAD_REQUEST, format!("\"{text}\" is not a routine: `command` is a slash command's or skill's name and its words, and `every` says when, like `every day 07:30`"));
+        return no(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "\"{text}\" is not a routine: `command` is a slash command's or skill's name and its words, and `every` says when, like `every day 07:30`"
+            ),
+        );
     };
     let mut sent: Vec<super::api_routine::TimeBody> = b.times.clone().unwrap_or_default();
     if let Some(every) = b.every.as_deref().filter(|e| !e.trim().is_empty()) {
@@ -1338,8 +1389,11 @@ fn suggest_routine(
         crate::routine::Made::Two(a, b) => {
             return no(
                 StatusCode::CONFLICT,
-                format!("/{} is both {a} and {b}, and Claude Code's docs don't say which runs: rename one first", line.cmd),
-            )
+                format!(
+                    "/{} is both {a} and {b}, and Claude Code's docs don't say which runs: rename one first",
+                    line.cmd
+                ),
+            );
         }
         _ => {
             return no(
@@ -1348,7 +1402,7 @@ fn suggest_routine(
                     "there is no /{} here: write it first as .claude/commands/{}.md or .claude/skills/{}/SKILL.md in this project",
                     line.cmd, line.cmd, line.cmd
                 ),
-            )
+            );
         }
     };
     let waits = b.waits.clone().unwrap_or_default().join("\n");
@@ -1573,19 +1627,37 @@ pub(crate) async fn suggest_to_desk(
             if !b.due.trim().is_empty() && note.due_at == 0 {
                 match crate::due::parse(&b.due, crate::store::now()) {
                     Some(at) => {
-                        let _ = app.store.clocked(|c, now| crate::due::set(c, desk.id, note.id, at, now));
+                        let _ = app
+                            .store
+                            .clocked(|c, now| crate::due::set(c, desk.id, note.id, at, now));
                         note.due_at = at;
                     }
-                    None => said = json!(format!("\"{}\" is not a date snyvi reads (try `fri 10`, `tomorrow`, `in 3 days`); the line has none", b.due.trim())),
+                    None => {
+                        said = json!(format!(
+                            "\"{}\" is not a date snyvi reads (try `fri 10`, `tomorrow`, `in 3 days`); the line has none",
+                            b.due.trim()
+                        ))
+                    }
                 }
             }
             notes_moved(&app, desk.id);
-            (StatusCode::CREATED, Json(json!({ "note": note, "desk": desk.name, "due_error": said }))).into_response()
+            (
+                StatusCode::CREATED,
+                Json(json!({ "note": note, "desk": desk.name, "due_error": said })),
+            )
+                .into_response()
         }
-        Ok(crate::desk::Suggested::Empty) => no(StatusCode::BAD_REQUEST, "a suggestion needs a line of text".into()),
+        Ok(crate::desk::Suggested::Empty) => no(
+            StatusCode::BAD_REQUEST,
+            "a suggestion needs a line of text".into(),
+        ),
         Ok(crate::desk::Suggested::Full) => no(
             StatusCode::CONFLICT,
-            format!("{} already has {} suggestions waiting for the user (or its list is full); wait until they keep or remove one", desk.name, crate::desk::SUGGESTIONS_PER_DESK),
+            format!(
+                "{} already has {} suggestions waiting for the user (or its list is full); wait until they keep or remove one",
+                desk.name,
+                crate::desk::SUGGESTIONS_PER_DESK
+            ),
         ),
         Ok(crate::desk::Suggested::NoSuchDesk) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => err(e),
