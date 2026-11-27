@@ -107,6 +107,8 @@ function deskItems(q) {
   const { state, browsing } = d;
   if (!d.capability || !state.desks) return [];
   const l = q.trim().toLowerCase(), out = [];
+  // The parked row of the empty box, unfolded: those desks alone.
+  if (l === "parked") return state.desks.desks.filter(k => k.parked).map(k => ({ desk: k.id, t: `Desk · ${k.name}`, s: "parked" }));
   if (browsing() && "new desk here".startsWith(l || "n")) {
     const p = state.browsePath, dir = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
     out.push({ newdesk: { root: state.browseRoot.id, path: dir }, t: "New desk here", s: state.browseRoot.path + (dir ? "/" + dir : "") });
@@ -118,6 +120,9 @@ function deskItems(q) {
     const w = l.slice(9).trim();
     if (l.length < 5) out.push({ cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell" });
     else {
+      // Welcome's form, as a sheet (menu.js `anotherSheet`): a folder, and
+      // the sentence the agent reads first. The places snyvi knows follow.
+      if (!w) out.push({ cmd: "another", t: "Another project…", s: "choose or make its folder, and say what it is" });
       for (const f of d.places()) if (!w || f.name.toLowerCase().includes(w)) out.push({ newdesk: f, t: `New desk · ${f.name}`, s: f.abs });
       if (!w) out.push({ newdesk: "home", t: "New desk · a shell", s: state.desks.home || "~" });
     }
@@ -125,6 +130,19 @@ function deskItems(q) {
   for (const k of state.desks.desks) if (!l || k.name.toLowerCase().includes(l.replace(/^desk\s*/, ""))) out.push({ desk: k.id, t: `Desk · ${k.name}`, s: k.root });
   return out;
 }
+/** The empty box (1.70, plan 94e0a0f735 P7): the desks first, in the one
+ *  order menu.js keeps -- asking, working, where you left off -- each with
+ *  its word, the parked in one row, and Another project… after them. */
+async function emptyDesks() {
+  if (!d.capability || !d.state.desks || browsing()) return deskItems("");
+  const o = await Promise.resolve(d.act("deskList")).catch(() => null);
+  if (!o || !o.live) return deskItems("");
+  const out = o.live.map(x => ({ desk: x.d.id, t: `Desk · ${x.d.name}`, s: x.word || x.d.root }));
+  if (o.parked.length) out.push({ cmd: "parked", t: `Parked · ${o.parked.length}`, s: o.parked.map(x => x.d.name).join(", ") });
+  out.push({ cmd: "another", t: "Another project…", s: "a folder, and a desk for it" });
+  return out;
+}
+const browsing = () => d.browsing();
 /** `>` and a word: what snyvi can do, rather than what it holds. A static
  *  list; the menus' registry (CONTEXT-MENU.md, phase 5) is per element and
  *  has no list of its own to read yet. */
@@ -152,6 +170,7 @@ const COMMANDS = [
   { cmd: "start", t: "How snyvi works", s: "Desks, notes, documents, keys: a paragraph each" },
   { cmd: "chime", get t() { return chimeOn() ? "Silence the chime" : "Chime when something waits on you"; }, get s() { return chimeOn() ? "Two soft notes when an agent asks or hands you something, a note comes due, or an offer waits" : "Off: what waits on you rises without a sound"; }, k: "sound mute notification" },
   { cmd: "quiet", get t() { return document.documentElement.dataset.mascot === "quiet" ? "Lively mascot" : "Quiet mascot"; }, s: "snyvi's face at rest, nothing of it moving" },
+  { cmd: "voice", t: "Voice…", s: `Hold ${/Mac/.test(navigator.platform) ? "⌃⌥M" : "Ctrl Alt M"} and say a command: turn it on, pick a microphone, try a phrase`, k: "microphone speech speak say talk", window: true, voice: true },
   { cmd: "keys", t: "Keys", key: "?", s: `Every key, and ${/Mac/.test(navigator.platform) ? "⌃B" : "Ctrl B"} for the letters` },
   { cmd: "updates", t: "Check for updates", s: "Ask now, rather than at the next check" },
   { cmd: "about", t: "About snyvi", s: "The version, where it keeps things, and updates" },
@@ -187,7 +206,20 @@ function commandItems(q) {
   const raw = m[1].trim(), l = raw.toLowerCase(), verbs = verbItems(raw);
   // Words after a verb are the reader's, not a search: only the verb's row.
   if (verbs.some(v => v.words)) return verbs.filter(v => v.words);
-  return verbs.concat(COMMANDS.filter(c => (!c.window || d.capability) && (!l || `${c.t} ${c.k || ""}`.toLowerCase().includes(l))));
+  return verbs.concat(offered().filter(c => !l || `${c.t} ${c.k || ""}`.toLowerCase().includes(l)));
+}
+/** The commands this window has. Voice is offered on Linux only, until its
+ *  microphone has been tried on a Mac and on Windows (src/voice.rs `offered`);
+ *  `snyvi.voice` set to 1 offers it anywhere, which is how it is tried there. */
+const voiceHere = () => { try { return /Linux/.test(navigator.userAgent) || localStorage.getItem("snyvi.voice") === "1"; } catch { return false; } };
+const offered = () => COMMANDS.filter(c => (!c.window || d.capability) && (!c.voice || voiceHere()));
+
+/** For voice (ui/voice.js): the commands that can be said, and the pick that
+ *  Enter makes. Theme… and New desk… are ways into rows of the box, so the
+ *  box goes up for them first. */
+export function spoken(deps) {
+  if (!d) { d = deps; wire(); }
+  return { commands: offered().filter(c => c.cmd !== "parts"), pick(it) { if (it.cmd === "theme" || it.cmd === "desk") d.openDialog(d.pal, d.input); pick(it); } };
 }
 
 /** Pairing without the `>`: a search for a friend, a code or pairing finds
@@ -278,7 +310,9 @@ async function search(q) {
   if (themeItems(q).length) await d.loadThemes();
   const friends = fm ? [] : await friendItems(q);
   if (mine !== seq || pal.hidden) return;
-  items = fm ? [] : themeItems(q).concat(deskItems(q), friends, pairItems(q), found); sel = 0;
+  const desks = q.trim() ? deskItems(q) : await emptyDesks();
+  if (mine !== seq || pal.hidden) return;
+  items = fm ? [] : themeItems(q).concat(desks, friends, pairItems(q), found); sel = 0;
   const reach = off ? `<li class="no-reach" role="alert">Could not reach snyvi<button type="button" data-retry>Retry</button></li>` : "";
   // While files are still coming, an empty list says nothing yet: "Nothing
   // for" and then a file in its place would be a line that came and went.
@@ -305,6 +339,8 @@ function pick(it) {
   if (it.cmd === "theme") { d.input.value = "theme"; search("theme"); return; }
   // New desk… is a way into the rows that say where, as the + asks.
   if (it.cmd === "desk") { d.input.value = "new desk"; search("new desk"); return; }
+  if (it.cmd === "parked") { d.input.value = "parked"; search("parked"); return; }
+  if (it.cmd === "another") { close(); d.act("anotherSheet"); return; }
   // Add a note, with no words yet, is a way into the words.
   if (it.verb && it.verb.arg === "words" && !it.words) { d.input.value = `> ${it.verb.verb} `; search(d.input.value); return; }
   if (it.theme) previewing = false;
@@ -312,6 +348,7 @@ function pick(it) {
   if (it.verb) { d.desk()?.[it.verb.run]?.(it.words); return; }
   if (it.cmd === "parts") { parts(); return; }
   if (it.cmd === "chime") { chimeFlip(d.peerCtx.toast); return; }
+  if (it.cmd === "voice") { d.voice(); return; }
   if (it.friend) { d.peerCtx.friend(it.friend); return; }
   if (it.cmd === "pair" || it.cmd === "join") { const p = d.peerCtx, m = it.cmd === "join" ? "join" : ""; p.peer().then(x => x.pair(p, "", m), () => p.toast("Could not open the pairing sheet")); return; }
   if (it.cmd) {

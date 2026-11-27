@@ -37,7 +37,7 @@
   let acts = null, actsLoading = null;
   const useActs = () => (actsLoading ||= chunk("menu").then(m => (acts = m)));
   const actsCtx = {
-    state, esc, toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, peerCtx, keepCurInView, showSidebars,
+    state, esc, relShort: t => relShort(t), tilde: p => tilde(p), toast, sayErr, copied, keyHint, armed, toggleQuiet, checkUpdates, peerCtx, keepCurInView, showSidebars,
     navList: () => navMod ? navMod.list() : [],
     get capability() { return capability; },
     api: (path, body, type) => deskApi(path, body, type),
@@ -238,7 +238,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, grp, push, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), browse: (r, p, o) => showBrowse(r, p, true, false, o), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod, peer: peerCtx });
+    desk.open({ id, slot, grp, push, was, icons: ICONS, who: whoIco, mascot: mascotHead, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), browse: (r, p, o) => showBrowse(r, p, true, false, o), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, home: () => showHome(true), swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod, peer: peerCtx });
     cornerMod?.draw();
   }
   /** Out of the desk view, to wherever the page is going next. */

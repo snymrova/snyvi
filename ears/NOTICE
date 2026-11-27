@@ -1,0 +1,17 @@
+snyvi-ears is part of snyvi (MIT, https://github.com/snymrova/snyvi).
+
+It is linked with, and this download therefore contains, the work of others:
+
+  sherpa-onnx           Apache-2.0   https://github.com/k2-fsa/sherpa-onnx
+  ONNX Runtime          MIT          https://github.com/microsoft/onnxruntime
+  kaldi-native-fbank    Apache-2.0   https://github.com/csukuangfj/kaldi-native-fbank
+  kaldi-decoder         Apache-2.0   https://github.com/k2-fsa/kaldi-decoder
+  kaldifst, OpenFst     Apache-2.0   https://github.com/k2-fsa/kaldifst
+  simple-sentencepiece  Apache-2.0   https://github.com/pkufool/simple-sentencepiece
+  KISS FFT              BSD-3-Clause https://github.com/mborgerding/kissfft
+  utf8proc              MIT          https://github.com/JuliaStrings/utf8proc
+
+The Apache License 2.0 is beside this file as LICENSE-sherpa-onnx.
+
+The speech model is a separate download, Moonshine base (English), MIT,
+https://github.com/moonshine-ai/moonshine, with its licence inside it.

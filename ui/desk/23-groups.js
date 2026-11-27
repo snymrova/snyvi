@@ -74,29 +74,14 @@ const needsYou = v => v && (v.status.blocked || v.status.agent === "needs_you");
 function groupsHead(d) {
   const el = ctx.docEl.querySelector(".dk-groups");
   if (!el) return;
-  const gs = d && d.groups || [], { esc } = ctx, at = gs.findIndex(x => x.id === d.grp);
-  // The key that reaches a tab from the one shown: the next ], the one before [.
-  const key = i => i === (at + 1) % gs.length ? "ctrl+alt+shift+]" : i === (at + gs.length - 1) % gs.length ? "ctrl+alt+shift+[" : "";
-  // A tab just closed keeps its place for BACK_MS, in its own width, with
-  // Undo where its ✕ was: the eye stays where the click was, and nothing
-  // after it in the row moves until the offer is gone.
-  const gone = tabGone && tabGone.desk === d.id ? tabGone : null, many = gs.length + (gone ? 1 : 0) > 1;
-  // One tab left reads as none: the + alone, as on a desk that never had two.
-  const tabs = (many ? gs : []).map((g, i) => {
-    const on = g.id === d.grp, need = !on && allPanes(d).some(p => p.grp === g.id && needsYou(views.get(p.id)));
-    return `<span class="dk-gt${on ? " on" : ""}"><button type="button" class="dk-group${on ? " on" : ""}${need ? " blk" : ""}" data-grp="${g.id}" role="tab" aria-selected="${on}" ` +
-      `data-tip="${esc(g.name)}${need ? " · needs you" : ""}" data-tip-sub="${on ? "double-click to rename" : "show it"}"${on ? "" : ` data-key="${key(i)}"`}>` +
-      `${esc(g.name)}<i class="dk-group-mark" aria-hidden="true">${need ? "!" : ""}</i></button>` +
-      (gs.length > 1 ? `<button type="button" class="dk-group-x" data-grp-x="${g.id}" data-tip="Close ${esc(g.name)}" data-tip-sub="its panels are kept, stopped" aria-label="Close tab ${esc(g.name)}">×</button>` : many ? `<i class="dk-group-x" aria-hidden="true"></i>` : "") + `</span>`;
-  });
-  if (gone) tabs.splice(Math.min(gone.at, tabs.length), 0,
-    `<span class="dk-gt gone"><button type="button" class="dk-group" data-grp-back data-tip="Closed · its panels are kept, stopped" data-tip-sub="Undo brings it back" aria-label="Undo closing tab ${esc(gone.name)}">${esc(gone.name)}<i class="dk-group-mark" aria-hidden="true"></i></button>` +
-    `<button type="button" class="dk-group-x" data-grp-back data-tip="Undo" aria-label="Undo closing tab ${esc(gone.name)}">↶</button></span>`);
-  const html = tabs.join("") + `<button type="button" class="dk-group-new" data-tip="New tab" data-tip-sub="more panels, in this desk's folder" aria-label="New tab">+ tab</button>`;
+  // 1.70 (plan 94e0a0f735): the tab shown is a part of the path pill, its
+  // menu the other tabs (36-path.js). A tab just closed keeps the part for
+  // BACK_MS, as its Undo, where the eye was.
+  const gone = tabGone && tabGone.desk === d.id ? tabGone : null;
+  const html = pathTab(d, (d && d.groups) || [], gone);
   if (el.dataset.drawn === html) return;
   el.dataset.drawn = html;
   el.innerHTML = html;
-  el.setAttribute("role", gs.length > 1 ? "tablist" : "presentation");
 }
 
 /** The panes of the tabs out of sight, each tab in a box of its own laid out
@@ -146,6 +131,8 @@ function showGroup(grp, focus = true) {
   const was = current();
   if (was && was.group && focused && was.panes.some(p => p.id === focused)) was.group.focused = focused;
   if (was && was.grp && was.grp !== grp && focused) ctx.api(`/api/desks/${deskId}/layout`, layoutBody(was, { focused })).catch(() => {});
+  // Another tab is a step Back undoes (38-places.js).
+  if (was && was.grp !== grp) placeNext = true;
   shownBy.set(deskId, grp);
   drawerOn = null;
   const d = current();
@@ -324,30 +311,10 @@ async function closeGroup(g) {
 }
 
 const GROUPS_CSS = `
-/* ---------- tabs (1.57) ----------
- * Named tabs after the desk's name, the navigation kind: a word each, the
- * one shown underlined in the accent. The [n] panel tabs stay where they
- * are, further right, so the two are never one control. A tab's ! has its
- * room whether or not it is drawn, so a mark coming moves nothing. */
-.dk-groups { display: flex; align-items: center; gap: 2px; min-width: 0; flex: none; max-width: 40%; overflow: hidden; }
-.dk-gt { display: inline-flex; align-items: center; flex: none; border-radius: var(--r-xs) var(--r-xs) 0 0; }
-.dk-gt:hover { background: var(--rule); }
-.dk-gt.on { box-shadow: inset 0 -2px 0 var(--accent); }
-.dk-group-x { flex: none; width: 16px; height: 16px; margin-right: 3px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); font-size: 13px; line-height: 1; cursor: pointer; visibility: hidden; }
-.dk-gt:hover .dk-group-x, .dk-gt.on .dk-group-x, .dk-group-x:focus-visible { visibility: visible; }
-.dk-group-x:hover { color: var(--fg); background: var(--rule-2); }
-/* A tab just closed: its name struck, dimmed, and ↶ in its ✕'s room, so the
- * row keeps its width while the Undo stands. */
-.dk-gt.gone .dk-group { color: var(--fg-3); text-decoration: line-through; opacity: .7; }
-.dk-gt.gone .dk-group-x { visibility: visible; color: var(--accent); }
-.dk-gt.gone:hover .dk-group { opacity: 1; }
-.dk-groups .dk-group { flex: none; padding: 2px 6px 3px 8px; border-radius: var(--r-xs) var(--r-xs) 0 0; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; }
-.dk-groups .dk-group:hover { color: var(--fg); }
-.dk-groups .dk-group.on { color: var(--fg); }
-.dk-groups .dk-group.blk { color: var(--warn); font-weight: 600; }
+/* ---------- tabs (1.57; the path pill's tab part since 1.70) ----------
+ * A tab's ! has its room whether or not it is drawn, so a mark coming moves
+ * nothing. The rest of its look is the pill's part (36-path.js). */
 .dk-group-mark { display: inline-block; width: 1ch; font-style: normal; text-align: center; }
-.dk-group-new { flex: none; white-space: nowrap; font-size: var(--fs-small); padding: 2px 6px; border-radius: var(--r-xs); color: var(--fg-3); }
-.dk-group-new:hover { color: var(--fg); background: var(--rule); }
 .dk-group.pn-drop { outline: 2px solid var(--accent); outline-offset: -2px; }
 .dk-group-in { width: 14ch; }
 /* The tabs out of sight: each laid out as the grid is, over it, unseen,

@@ -1,0 +1,28 @@
+# snyvi's ears: the helper that turns a held key's sound into words.
+#
+# It is a package of its own, outside the daemon's tree, on purpose. The
+# daemon is a static binary with a size budget and nothing native in it but
+# SQLite; this links a speech runtime of tens of megabytes. A reader who never
+# turns voice on never downloads it, and a build of snyvi never compiles it.
+[package]
+name = "snyvi-ears"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Sound in, level and words out: the speech helper snyvi fetches when voice is turned on"
+
+# An empty table: this package is its own root, whatever sits above it.
+[workspace]
+
+[dependencies]
+# Pinned, because its build script fetches the native libraries of exactly
+# this version from the sherpa-onnx release: a float here would change what
+# is linked without a line changing in this file.
+sherpa-onnx = "=2.0.3"
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+strip = true
+panic = "abort"

@@ -168,10 +168,24 @@
     let lk;
     try { [palMod, lk] = await Promise.all([palLoading ||= chunk("palette"), useLook()]); }
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", { sub: e }); return; }
-    const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
-    palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
-      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, toggleQuiet, checkUpdates, panel, showHome, showInbox, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, showSidebars, openHelp, peerCtx, places: deskPlaces, openCorner: () => corner(m => m.open()), desk: () => desk });
+    palMod.open(palDeps(lk));
   }
+  const palDeps = ({ THEMES, slot, previewTheme, setTheme, loadThemes }) => ({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
+    openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, toggleQuiet, checkUpdates, panel, showHome, showInbox, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, showSidebars, openHelp, peerCtx, places: deskPlaces, openCorner: () => corner(m => m.open()), desk: () => desk,
+    voice: () => chunk("voice").then(m => m.sheet(voiceCtx)) });
+  /* Voice (1.70) is ui/voice.js, fetched on the first hold of ⌃⌥M or the
+   * first Voice… in the palette. It is handed the palette's own pick, so a
+   * spoken command runs as a picked one does. */
+  const voiceCtx = { capability, state, toast, sayErr, showDesk, v: boot.v, desk: () => desk,
+    pal: async () => { const [m, lk] = await Promise.all([palLoading ||= chunk("palette"), useLook()]); return (palMod = m).spoken(palDeps(lk)); } };
+  /* Voice that is on is made ready once the page is idle: its code, its
+   * audio path, its button in the foot. Not the microphone, which opens on
+   * the key and no sooner. The daemon is asked, not this window's own memory
+   * of it: a window that has never taken a take -- a new one, or one whose
+   * storage was cleared -- has voice as much as any, and showed no button.
+   * A window where voice is off fetches nothing more than the answer. */
+  if (capability) (window.requestIdleCallback || setTimeout)(() => fetch("/api/voice", { headers: { "x-snyvi-capability": capability } })
+    .then(r => r.ok && r.json()).then(st => st && st.on && chunk("voice").then(m => m.ready(voiceCtx)), () => {}), { timeout: 3000 });
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
   $("#btn-search").addEventListener("click", openPalette);
@@ -495,6 +509,14 @@
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
+    // Voice: held, from anywhere, a panel included (its keys hand ⌃⌥M back).
+    // The take ends when any of the three keys comes up. Not AltGr, which
+    // Windows reports as Ctrl+Alt: AltGr M is a µ on its way, not a take.
+    if (e.ctrlKey && e.altKey && !e.metaKey && e.code === "KeyM" && capability && !e.getModifierState?.("AltGraph")) {
+      e.preventDefault();
+      if (!e.repeat) chunk("voice").then(m => m.hold(voiceCtx, new Promise(up => addEventListener("keyup", up, { once: true }))), () => {});
+      return;
+    }
     // Find, on the key every other app has it on (#156), letters awake or
     // not, and over the browser's own bar, which searched the sidebar and the
     // rail with the page. Not from a panel, where Ctrl+F, F3 and Ctrl+G are
@@ -519,6 +541,10 @@
       if (mmd) mmd.escape();
       closePalette(); closeDialog(help); closeDialog(aboutDlg); closeDialog(resetDlg); closeSheet(); closePop(); acts?.shut(); if (!findBar.hidden) { if (find) find.close(); else findBar.hidden = true; }
       if (!over && !inField && !e.target.closest(".pn") && !overEl.hidden) { e.preventDefault(); goBack(); }
+      // The press that took something down is spent: the desk's own Esc
+      // (ui/desk/25-views.js, 1.70), heard after this, must not step out of
+      // the desk on it too, now that nothing is over the page.
+      else if (over) e.preventDefault();
       return;
     }
     // Back and forward, where the browser does not do it itself: the desktop

@@ -32,3 +32,6 @@ __pycache__/
 /site/out
 # wrangler's own cache and local state, wherever it runs
 .wrangler/
+
+# The ears helper is a package of its own, with a target of its own
+/ears/target

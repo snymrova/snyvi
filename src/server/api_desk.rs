@@ -232,8 +232,10 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                     })
                 })
                 .collect();
+            let (goal, answered) = goal_and_answer(app, d.id);
             json!({
                 "id": d.id, "name": d.name, "root": d.root, "left_off": d.left_off,
+                "goal": goal, "answered": answered,
                 "visited_at": d.visited_at, "parked": d.parked, "touched": touched,
                 "panes": panes, "open": open, "done": notes_done, "suggested": suggested, "next": next,
                 "last": last, "git": git.as_deref(), "pulse": pulse,
@@ -246,6 +248,29 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
         .collect();
     days.sort_by_key(|r| r["at"].as_i64().unwrap_or(0));
     (json!(cards), json!(days))
+}
+
+/// For Home's pick-up card and its Where you left off rows (1.70): the goal
+/// the reader gave the desk, and the last question they answered on it, as
+/// `{ text, answer }` or null. One read of each, by the desk's id.
+fn goal_and_answer(app: &App, id: i64) -> (String, serde_json::Value) {
+    app.store
+        .clocked(|c, _| {
+            let goal: String = c
+                .query_row("SELECT goal FROM desks WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap_or_default();
+            let answered = c
+                .query_row(
+                    "SELECT text, answer FROM turns WHERE desk_id = ?1 AND removed_at = 0
+                     AND kind = 'decide' AND answered_at != 0 AND answer != ''
+                     ORDER BY answered_at DESC, id DESC LIMIT 1",
+                    [id],
+                    |r| Ok(json!({ "text": r.get::<_, String>(0)?, "answer": r.get::<_, String>(1)? })),
+                )
+                .unwrap_or(serde_json::Value::Null);
+            Ok((goal, answered))
+        })
+        .unwrap_or_default()
 }
 
 /// What git says about a desk's folder, for its rail: the repository's page

@@ -154,7 +154,7 @@ function oyHead(d) {
   if (!el) {
     el = Object.assign(document.createElement("span"), { className: "dk-oy" });
     el.dataset.part = "desk.onyou";
-    (hd.querySelector(":scope > .dk-keys") || hd.querySelector('[data-a="new"]')).before(el);
+    (hd.querySelector(":scope > .dk-keys") || hd.querySelector(".dk-plus")).before(el);
   }
   const html = oyBtn(d);
   if (el.$html !== html) {
@@ -544,3 +544,39 @@ const ONYOU_CSS = `
 .oy-away .cn-tl > .tn-opt { flex: none; }
 .oy .dk-note.gone { list-style: none; display: flex; align-items: center; gap: 6px; border: 1px dashed var(--rule-2); background: var(--bg-raise); }
 `;
+
+/* ---------- another desk asks, in the head's line (plan 94e0a0f735, P9) ----------
+ * On a desk, a question from another desk used to rise as a card in the
+ * corner, over the panels, or (since 1.66) only count in the tray's head as
+ * "elsewhere". It goes in the head's line now, where left off is, in the
+ * same box, so nothing moves: "↳ GARDEN-SITE ASKS Which host? Go". Hovering
+ * it shows the ask card's own answers under the line, and one press answers
+ * through the tray's route (the corner's `cn-tn-pick`); Go opens that desk
+ * with that panel focused, and ‹ comes back. "Not now" gives the line
+ * back to left off for this window; the ask still waits on Home and ✋.
+ * Documents, asides and a friend's line still rise in the corner: they are
+ * not asks. */
+const elseOff = new Set();
+function elseLine(d) {
+  const k = ctx.corner?.(), xs = ((k && k.asks && k.asks(d.id)) || []).filter(w => !elseOff.has(w.id));
+  if (!xs.length) return "";
+  const { esc } = ctx, w = xs[0], more = xs.length - 1, who = w.desk_name || "Another desk";
+  const opts = (w.options || []).slice(0, 4).map(o => `<button type="button" class="tn-opt" data-a="cn-tn-pick" data-w="${w.id}" data-v="${esc(o)}">${esc(o)}</button>`).join("");
+  return `<span class="dk-left-b dk-ask" role="status" tabindex="0" data-tip="${esc(w.text)}" data-tip-sub="${esc(who)}${w.panel ? ` · ${esc(w.panel)}` : ""}${more ? ` · and ${more} more on ✋` : ""}" data-tip-overflow>` +
+    `<span class="dk-left-k" aria-hidden="true">↳</span><span class="dk-ask-w">${esc(who)} asks</span><span class="dk-left-t">${esc(w.text)}</span>${more ? `<span class="dk-ask-m">and ${more} more</span>` : ""}</span>` +
+    `<button type="button" class="dk-ask-go" data-a="cn-tn-desk" data-w="${w.id}" data-tip="Go to ${esc(who)}" data-tip-sub="that panel focused · ‹ comes back">Go</button>` +
+    `<button type="button" class="dk-ask-x" data-ask-later="${w.id}" aria-label="Not now" data-tip="Not now" data-tip-sub="the line goes back to left off · it still waits on Home and ✋">×</button>` +
+    (opts ? `<span class="dk-ask-opts" role="group" aria-label="Answer from here">${opts}</span>` : "");
+}
+/** "Not now" on the line. True when it was. */
+function elseClick(e) {
+  const b = e.target.closest("[data-ask-later]");
+  if (!b) return false;
+  elseOff.add(+b.dataset.askLater);
+  const d = current();
+  if (d) { leftOffSlot(d); pathSlot(d); }
+  return true;
+}
+// The corner read the turns again: the line and Home's dot follow.
+addEventListener("snyvi:asks", () => { const d = ctx && deskId != null && current(); if (d && reading == null && ctx.docEl.querySelector(".dk-head")) { leftOffSlot(d); pathSlot(d); } });
+

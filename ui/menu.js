@@ -55,9 +55,61 @@ export async function pick(ctx, forDesk = true) {
     const trim = p => p && p.replace(/(.)\/+$/, "$1");
     const had = state.desks && state.desks.desks.find(d => trim(d.root) === trim(j.root.path));
     if (had) ctx.show(had.id, true);
-    else await make(ctx, { root: j.root.id, path: "" }, forDesk === "welcome");
+    else await make(ctx, { root: j.root.id, path: "" }, forDesk === "welcome" ? "welcome" : false);
   } catch (e) { if (!ac.signal.aborted) toast("Could not open a folder", { sub: e }); }
   finally { picking = false; removeEventListener("pagehide", gone); }
+}
+
+/* ---------- one order for the desks (plan 94e0a0f735, P8) ----------
+ * Wherever desks are listed to go to -- the path's desk menu, Home's pill,
+ * ⌘K's empty box -- in one order: the ones asking for you, then the ones
+ * an agent is working on, then where you left off, newest first. Parked
+ * desks (Home's shelf) fold into one row at the foot. The sidebar keeps its
+ * own order: its layout is the reader's and does not move. */
+const asks = p => p.status && (p.status.agent === "needs_you" || p.status.blocked);
+/** Where a desk stands, as a word for its row, and its rank in the order. */
+export function deskState(d, relShort) {
+  const ps = d.panes || [];
+  if (ps.some(asks)) return { rank: 0, word: "asks you" };
+  if (ps.some(p => p.status && p.status.agent === "working")) return { rank: 1, word: "working" };
+  const at = (d.left_off && d.left_off.at) || d.visited_at || 0;
+  return { rank: 2, word: at && relShort ? relShort(at) : "", at };
+}
+export function deskOrder(ds, relShort) {
+  const at = d => (d.left_off && d.left_off.at) || d.visited_at || 0;
+  const live = ds.filter(d => !d.parked).map(d => ({ d, s: deskState(d, relShort) }))
+    .sort((a, b) => a.s.rank - b.s.rank || at(b.d) - at(a.d)).map(x => x.d);
+  return { live, parked: ds.filter(d => d.parked).sort((a, b) => at(b) - at(a)) };
+}
+/** The desk part's menu: this desk's views first, when there is a desk,
+ *  then every desk in one order, the parked folded, and Another project…. */
+function pathEntries(ctx, el) {
+  const dk = el.closest(".dk-path") && ctx.desk, here = dk ? ctx.state.deskId : null;
+  const vs = (dk && dk.pathViews && dk.pathViews()) || [];
+  return { head: dk ? (ctx.state.desks.desks.find(x => x.id === here) || {}).name || "This desk" : "Desks", items: [
+    ...(vs.length ? [{ section: "This desk" }, ...vs, RULE] : []),
+    ...deskItems(ctx, here, vs.length ? vs.length + 2 : 0),
+  ] };
+}
+/** For ⌘K's empty box (palette.js), through the page's `act`: the order
+ *  and each desk's word, so the box and the menus never disagree. */
+export function deskList(ctx) {
+  const o = deskOrder(ctx.state.desks.desks, ctx.relShort);
+  return { live: o.live.map(d => ({ d, word: deskState(d, ctx.relShort).word })), parked: o.parked.map(d => ({ d })) };
+}
+/** Whether the menu on screen has its parked desks unfolded. */
+let parkedOpen = false;
+function deskItems(ctx, here, off = 0) {
+  const { live, parked } = deskOrder(ctx.state.desks.desks, ctx.relShort), open = parkedOpen;
+  parkedOpen = false;
+  const row = d => ({ label: d.name, on: d.id === here, hint: d.parked ? "parked" : deskState(d, ctx.relShort).word, run: () => ctx.show(d.id, true) });
+  const items = [{ section: "Desks" }, ...live.map(row)];
+  // Unfolded, the first parked desk takes the row's place, and the focus.
+  const at = off + items.length;
+  if (parked.length && !open) items.push({ label: `Parked · ${parked.length}`, hint: "▸", moves: 1, run: () => { parkedOpen = true; reopen(ctx, at); } });
+  if (open) items.push(...parked.map(row));
+  items.push(RULE, { label: "Another project…", about: "a folder, and a desk for it", run: () => anotherSheet(ctx) });
+  return items;
 }
 
 /** Never a click that does nothing: the dialog asked for first may be behind
@@ -100,12 +152,15 @@ async function closedDeskOn(ctx, f) {
  *  New desk here does: a second desk on a folder is a workflow. */
 export async function make(ctx, f, welcome, fresh) {
   const { toast, api } = ctx;
+  // Where the desk lands once made: Another project…'s sheet says itself
+  // (`welcome.done`); Welcome's goes on to its next page; the rest open it.
+  const landed = id => typeof welcome === "object" && welcome ? welcome.done(id) : welcome && ctx.welcomed ? ctx.welcomed(id) : ctx.show(id, true);
   const shut = f && !fresh ? await closedDeskOn(ctx, f) : null;
   if (shut) {
     try {
       await api(shut.restore, {});
       await ctx.load();
-      if (welcome && ctx.welcomed) ctx.welcomed(shut.desk); else ctx.show(shut.desk, true);
+      await landed(shut.desk);
       toast(`Reopened ${shut.title}`, { sub: "Its documents, notes and panels are back", action: { label: "New desk instead", run: async () => {
         try { await api(`/api/desks/${shut.desk}/delete`, {}); } catch (e) { toast("Could not close it again", { sub: e }); return; }
         await make(ctx, f, welcome, true);
@@ -126,8 +181,7 @@ export async function make(ctx, f, welcome, fresh) {
     } catch (e) { toast(claude ? "Could not open Claude's panel" : "Could not start the new desk's shell", { sub: e }); }
     await ctx.load();
     // Made from Welcome: Got another one? first, the desk one click on.
-    if (welcome && ctx.welcomed) ctx.welcomed(j.desk.id);
-    else ctx.show(j.desk.id, true);
+    await landed(j.desk.id);
   } catch (e) { toast("Could not make a desk", { sub: e }); }
 }
 
@@ -470,8 +524,10 @@ function entries(ctx, el, byKey = false) {
       { label: "Remove", key: "Del", danger: true, run: () => remove(ctx, id, el) },
     ] };
   }
+  // The path pill's desk part (ui/desk/36-path.js), and Home's own pill.
+  if (el.matches('.dk-path [data-path="desk"], [data-path="home-desks"]')) return capability ? pathEntries(ctx, el) : null;
   // A desk's row in the sidebar, and the ⋯ at the end of the desk's own
-  // head: one menu, less Show on the desk that is already the page, with
+  // head (with the keys and the public page since 1.70, head A): one menu, less Show on the desk that is already the page, with
   // what the head's desk can do besides -- start what is stopped, and full view.
   if (el.matches("a[data-desk], [data-desk-menu]")) {
     const here = el.matches("[data-desk-menu]"), dk = here && ctx.desk;
@@ -489,7 +545,7 @@ function entries(ctx, el, byKey = false) {
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && (!vs.length || vs[0].on) && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
-      dk && { label: "Keys…", run: () => dk.keysHere() },
+      dk && { label: "Keys and account…", about: document.querySelector("#doc .dk-keys-b")?.dataset.tip || "what this desk's panels start with", run: () => dk.keysHere() }, dk && dk.viewHere && { label: "Public page…", about: "a page to show people what this is", run: () => dk.viewHere("page") },
       // 1.69: both sides away, and back as they were (ui/desk/34-rest.js).
       dk && dk.restHere && { label: document.documentElement.dataset.rest ? "Wake the desk" : "Rest the desk", key: ctx.keyHint("ctrl+alt+s"), about: "both sides away, the panels the window", run: () => dk.restHere() },
       // 1.69: Next up is not drawn until it has a goal or a note; this is
@@ -829,6 +885,23 @@ const CSS = `
 #ctx button .ctx-about { order: 2; flex: 1 0 100%; font-style: normal; font-size: var(--fs-small); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ctx button:focus .ctx-about { color: inherit; opacity: .75; }
 #ctx hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 2px; }
+/* Another project…'s sheet: over the page, which keeps running under it. */
+#another { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: start center; padding-top: 12vh; background: var(--scrim); }
+#another .an-box { width: min(92vw, 480px); box-sizing: border-box; padding: 20px 22px 18px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-md, var(--r-sm)); box-shadow: var(--shadow); outline: none;
+  animation: ctx-in var(--dur-quick) var(--ease-out); }
+#another h2 { margin: 0 0 16px; font-size: var(--fs-h3); }
+#another .an-row { margin: 0 0 16px; }
+#another .an-l { display: block; margin: 0 0 6px; font-size: var(--fs-ui); font-weight: 600; }
+#another .an-l i { font-style: normal; font-weight: 400; color: var(--fg-3); }
+#another .an-where { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-height: 32px; }
+#another .an-path { font-family: var(--mono); font-size: var(--fs-small); font-weight: 500; }
+#another .an-had, #another .an-under { font-size: var(--fs-small); color: var(--fg-3); }
+#another input { width: 100%; box-sizing: border-box; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--rule-2); border-radius: var(--r-sm); padding: 7px 10px; }
+#another .an-where input { width: auto; flex: 1 1 180px; }
+#another .an-fine { margin: 8px 0 14px; font-size: var(--fs-small); color: var(--fg-3); }
+#another .an-err { margin: 0 0 12px; font-size: var(--fs-small); color: var(--danger); }
+#another .an-go { display: flex; justify-content: flex-end; align-items: center; gap: 14px; }
+@media (prefers-reduced-motion: reduce) { #another .an-box { animation: none; } }
 `;
 
 /** The look goes in with whichever comes first, a menu or a popover: the
@@ -1015,3 +1088,96 @@ function wirePop(popEl) {
  *  the page. A page that has never opened one has never fetched this file, so
  *  app.js asks only when it holds the module. */
 export { close as shut };
+
+/* ---------- Another project… (plan 94e0a0f735, P6, frame 3) ----------
+ * Welcome's form, as a sheet over whatever is on screen: the folder (one
+ * the reader chooses, or one snyvi makes under ~/Projects), the one
+ * sentence the agent reads first, and Open its desk. The desk the reader
+ * was on keeps running underneath, and Esc or Cancel leaves it as it was.
+ * The folder comes only from the dialog or a name typed here: snyvi never
+ * looks for one. A folder that has a desk already goes to that desk. */
+let anOpen = null;
+export function anotherSheet(ctx) {
+  const { capability, toast, esc } = ctx;
+  if (!capability) { toast("Desks open in the snyvi window", { sub: "a browser tab has none", face: null }); return; }
+  if (anOpen) { anOpen.querySelector("input, button")?.focus(); return; }
+  sheet();
+  const back = document.activeElement;
+  const box = Object.assign(document.createElement("div"), { id: "another" });
+  box.innerHTML = `<form class="an-box" role="dialog" aria-modal="true" aria-labelledby="an-title" tabindex="-1" novalidate>` +
+    `<h2 id="an-title">Another project</h2>` +
+    `<div class="an-row"><span class="an-l">Its folder</span><div class="an-where" data-an-where><button type="button" class="w-btn" data-an="pick">Choose its folder…</button><button type="button" class="text" data-an="new">Start something new</button></div></div>` +
+    `<label class="an-l" for="an-goal">What is it, in a sentence? <i>optional</i></label>` +
+    `<input id="an-goal" name="goal" maxlength="120" autocomplete="off" placeholder="A site for the garden club, with the spring dates">` +
+    `<p class="an-fine">Your agent reads this first. The desk you are on keeps running.</p>` +
+    `<p class="an-err" role="alert" hidden></p>` +
+    `<div class="an-go"><button type="button" class="text" data-an="cancel">Cancel</button><button type="submit" class="w-btn" disabled>Open its desk →</button></div></form>`;
+  document.body.append(box);
+  anOpen = box;
+  const f = box.querySelector("form"), go = f.querySelector('[type="submit"]'), where = f.querySelector("[data-an-where]");
+  // What the folder is: a root the dialog opened, or a name to make one.
+  let root = null, had = null, name = null;
+  const say = why => { const e = f.querySelector(".an-err"); e.textContent = why || ""; e.hidden = !why; };
+  const ready = () => { go.disabled = !(root || (name != null && name.trim())); go.textContent = had ? `Go to ${had.name} →` : "Open its desk →"; };
+  const shut = () => { box.remove(); anOpen = null; removeEventListener("keydown", onKey, true); document.removeEventListener("focusin", inside); back?.focus?.({ preventScroll: true }); };
+  // Esc is the sheet's while it is up, before the desk's or the page's.
+  const onKey = e => { if (e.key === "Escape" && anOpen) { e.preventDefault(); e.stopPropagation(); shut(); } };
+  // A modal keeps the keyboard: Tab past either end comes back in.
+  const inside = e => { if (anOpen && !box.contains(e.target)) f.querySelector("button, input")?.focus(); };
+  addEventListener("keydown", onKey, true);
+  document.addEventListener("focusin", inside);
+  box.addEventListener("pointerdown", e => { if (e.target === box) shut(); });
+  const trim = p => p && p.replace(/(.)\/+$/, "$1");
+  const chose = r => {
+    root = r; name = null;
+    had = (ctx.state.desks?.desks || []).find(d => trim(d.root) === trim(r.path)) || null;
+    where.innerHTML = `<b class="an-path">${esc(ctx.tilde ? ctx.tilde(r.path) : r.path)}</b>${had ? `<span class="an-had">has a desk already</span>` : ""}<button type="button" class="text" data-an="pick">Change…</button>`;
+    ready(); (had ? go : f.querySelector("#an-goal")).focus();
+  };
+  f.addEventListener("click", async e => {
+    const b = e.target.closest("[data-an]");
+    if (!b) return;
+    const a = b.dataset.an;
+    say("");
+    if (a === "cancel") return shut();
+    if (a === "new") {
+      root = had = null; name = "";
+      where.innerHTML = `<input class="an-name" aria-label="What's it called?" placeholder="What's it called?" maxlength="80" spellcheck="false" autocomplete="off"><span class="an-under">in ~/Projects</span><button type="button" class="text" data-an="pick">Choose a folder instead…</button>`;
+      const n = where.querySelector("input");
+      n.addEventListener("input", () => { name = n.value; ready(); });
+      n.focus(); ready();
+      return;
+    }
+    if (a === "pick") {
+      // The desktop's own dialog, as Choose its folder… opens everywhere.
+      await window.__TAURI_INTERNALS__?.invoke("allow_foreground").catch(() => {});
+      const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": capability } }).catch(() => null);
+      if (!r || r.status === 204) return;
+      if (r.status === 409) { alreadyOpen(ctx); return; }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { say(`Could not open a folder · ${j.error || r.status}`); return; }
+      if (!ctx.state.browse.some(x => x.id === j.root.id)) ctx.state.browse = ctx.state.browse.concat(j.root);
+      chose(j.root);
+    }
+  });
+  f.addEventListener("submit", async e => {
+    e.preventDefault();
+    if (go.disabled) return;
+    const goal = f.querySelector("#an-goal").value.trim();
+    if (had) { shut(); ctx.show(had.id, true); return; }
+    go.disabled = true;
+    let r = root;
+    if (!r) {
+      try { r = (await ctx.api("/api/browse/new", { name: name.trim() })).root; }
+      catch (err) { say(ctx.sayErr(err).why); go.disabled = false; return; }
+    }
+    await make(ctx, { root: r.id, path: "" }, { done: async id => {
+      if (goal) try { await ctx.api(`/api/desks/${id}/line`, { goal }); } catch (err) { toast("Could not keep that sentence", { sub: err }); }
+      shut();
+      ctx.show(id, true);
+    } });
+    // A desk that could not be made said so in a toast; the sheet stays.
+    if (anOpen) go.disabled = false;
+  });
+  f.querySelector('[data-an="pick"]').focus();
+}

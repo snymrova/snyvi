@@ -59,6 +59,7 @@ mod thread;
 mod told;
 mod update;
 mod version;
+mod voice;
 mod waiting;
 mod wall;
 mod watch;

@@ -297,6 +297,8 @@ export function init(ctx) {
     /** A desk's own News (1.66), for its tray, seen as it is shown. */
     deskNews: desk => { const xs = (L.onyou?.news || []).filter(i => i.desk_id === desk); if (xs.length) newsSeen(xs); return newsHtml(xs); },
     here: desk => oyPart(desk, "here", L.onyou?.rows).filter(r => !r.quiet).length,
+    /** The asks waiting on the other desks, newest first, for a desk's head line. */
+    asks: desk => (L.turns || []).filter(w => w.desk_id !== desk && !w.stale && !w.answered_at && !w.quiet_at).sort((a, b) => b.id - a.id),
     others: desk => oyPart(desk, "others", L.onyou?.rows).filter(r => !r.quiet).length,
     /** The desk's first page while its card is up: its row in the rail is ringed. */
     rising: id => L.card?.kind === "first" && L.card.key === `d${id}` };
@@ -378,6 +380,11 @@ function turnsIn(turns) {
   if (!L.turnsSeen) { L.turnsSeen = new Set(fresh.map(w => w.id)); return; }
   const novel = fresh.filter(w => !L.turnsSeen.has(w.id));
   for (const w of fresh) L.turnsSeen.add(w.id);
+  // A desk hears its own in its tray; another desk's ask goes to the desk's
+  // head line (1.70, ui/desk/10-onyou.js `elseLine`), with the chime, and
+  // nothing rises over the panels.
+  dispatchEvent(new CustomEvent("snyvi:asks"));
+  if (novel.length && c.onDesk()) { const at = c.deskOn?.(); if (novel.some(w => w.desk_id !== at)) chime(); }
   if (!novel.length || c.onDesk()) return;
   const w = novel[novel.length - 1];
   rise({ kind: "turn", key: `t${w.id}`, turn: w, more: novel.length - 1, ring: true });

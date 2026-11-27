@@ -60,6 +60,7 @@ let viewBy = "";
 function viewsSlot(d) {
   const hd = ctx.docEl.querySelector(".dk-head");
   if (!hd) return;
+  pathSlot(d);
   switchSlot(d);
   boardHint(d, hd, viewNow(d));
   blPaint();
@@ -93,6 +94,7 @@ function folderPath() {
 /** A click in the switcher, its card, or the dock's controls. True when it was one of theirs. */
 function viewClick(e) {
   if (pageClick(e)) return true;
+  if (pathClick(e)) return true;
   if (swClick(e)) return true;
   const vo = e.target.closest("[data-view-open]");
   if (vo) { e.preventDefault(); openView(vo.dataset.viewOpen); return true; }
@@ -110,19 +112,25 @@ function viewKey(e) {
   return true;
 }
 
-/* Esc on a board or the page: back to the panels. Heard as it bubbles, after
- * the board has had it (Esc there drops the frames picked first) and only
- * with nothing over the page -- a menu, a sheet, a dialog. A panel's Esc is
- * its shell's and a field's is its own. Over the folder the page's own Esc
+/* Esc steps out (1.70, plan 94e0a0f735 D3): a board or the page back to
+ * the panels, full view back to the grid, and the panels out to Home. Heard
+ * as it bubbles, after the board has had it (Esc there drops the frames
+ * picked first), after the desk's own keys (the drawer, rest, a list), and
+ * only with nothing over the page -- a menu, a sheet, a dialog, the tray.
+ * A panel's Esc is its program's and a field's is its own, so with the
+ * keyboard in either Esc never leaves. Over the folder the page's own Esc
  * already goes back, as its ✕ did (app.js). */
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape" || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
-  if (!ctx || !viewOn || viewOn.desk !== deskId || reading != null) return;
-  if (e.target.closest?.(".pn, .dk-dock, input, textarea, select, [contenteditable]")) return;
+  if (!ctx || deskId == null || reading != null || fdock || document.documentElement.dataset.view !== "desk") return;
+  if (e.target.closest?.(".pn, .dk-dock, .dk-drawer, input, textarea, select, [contenteditable]")) return;
   const r = document.documentElement;
-  if (r.dataset.sheet || r.dataset.pop || document.querySelector("#ctx:not([hidden]), dialog[open]")) return;
+  if (r.dataset.sheet || r.dataset.pop || document.querySelector("#ctx:not([hidden]), dialog[open], .dk-bl, #pal:not([hidden])")) return;
+  if (drawerOn || keysOpen || oy.open) return;
   e.preventDefault();
-  openView("panels");
+  if (viewOn && viewOn.desk === deskId) openView("panels");
+  else if (full) zoom();
+  else ctx.home?.();
 });
 
 /** For the ⋯ menu (menu.js): the desk's views, the one on screen marked --
@@ -434,13 +442,12 @@ function folderHead() {
   let hd = doc.querySelector(":scope > .dk-head");
   if (!hd) {
     hd = Object.assign(document.createElement("header"), { className: "dk-head dk-fhead" });
-    hd.innerHTML = `${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-groups"></span>` +
-      `<button type="button" class="icon dk-plus" data-a="new" data-tip="New panel" data-tip-sub="back to the panels, with one more" aria-label="New panel">+ panel</button>` +
+    hd.innerHTML = `${document.querySelector("#chrome .nv")?.outerHTML || ""}${pathHtml()}` +
+      `<button type="button" class="icon dk-plus" data-a="new" data-tip="New panel" data-tip-sub="back to the panels, with one more" aria-label="New panel">+</button>` +
       `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button>`;
     hd.addEventListener("click", folderHeadClick);
     doc.prepend(hd);
   }
-  hd.querySelector(".dk-name").textContent = d.name;
   groupsHead(d);
   leftOffSlot(d);
   keysSlot(d);
@@ -458,7 +465,8 @@ function folderHeadClick(e) {
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   const b = e.target.closest("[data-a]");
   if (b && b.dataset.a === "new") { const why = noNew(d); if (why) { ctx.toast("New panel", why); return; } Promise.resolve(ctx.go(d.id, true)).then(() => act({ dataset: { a: "new" } })); return; }
-  if (b && /^(left-|keys|oy-open)/.test(b.dataset.a)) act(b, !e.detail);
+  if (elseClick(e)) return;
+  if (b && /^(left-|keys|oy-open|cn-)/.test(b.dataset.a)) act(b, !e.detail);
 }
 
 /** The Folder view's dock, filled as the board's is (`dockFill`). Beside a

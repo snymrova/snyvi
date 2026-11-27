@@ -76,6 +76,8 @@ function layout() {
   keysSlot(d);
   viewsSlot(d);
   viewsMount(d);
+  // The place on the history entry, and the title that names it (38-places.js).
+  placeKeep(d);
 }
 
 /* Where the work on this desk was left: one quiet line in the head, in a slot
@@ -94,6 +96,10 @@ function leftOffSlot(d) {
     el.innerHTML = `<span class="dk-left-b" role="status">Left off cleared</span><button type="button" class="dk-undo" data-a="left-back">Undo</button>`;
     return;
   }
+  // Another desk asking takes the line while it waits (10-onyou.js).
+  const ask = elseLine(d);
+  if (ask) { if (el.$ask !== ask) { el.innerHTML = ask; el.$ask = ask; } leftCut(el); return; }
+  el.$ask = null;
   el.innerHTML = launchMark(d, esc) + (l
     ? `<button type="button" class="dk-left-b" data-a="left-edit" data-tip="${esc(l.text)}" data-tip-sub="left off · ${esc(l.by || "you")} · ${ctx.relShort(l.at)} · click to rewrite" data-tip-overflow><span class="dk-left-k" aria-hidden="true">↳</span><span class="vh">Left off:</span>${needsWord(l.needs)}<span class="dk-left-t">${esc(l.text)}</span></button>`
     : `<button type="button" class="dk-left-b none" data-a="left-edit" data-tip="Where did you leave off?" data-tip-sub="one line, for the next session on this desk">Left off…</button>`);
@@ -111,7 +117,7 @@ function leftBox(head) {
   if (!el) {
     el = Object.assign(document.createElement("span"), { className: "dk-left" });
     el.innerHTML = `<span class="dk-lbox"><span class="dk-left-c"></span></span>`;
-    head.querySelector(".dk-groups").after(el);
+    head.querySelector(".dk-path").after(el);
     leftSeen.observe(el.firstChild);
   }
   return el.querySelector(".dk-left-c");
@@ -174,7 +180,7 @@ function keysSlot(d) {
   const hd = ctx.docEl.querySelector(".dk-head");
   if (!hd) return;
   let el = hd.querySelector(".dk-keys");
-  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-keys" }); hd.querySelector('[data-a="new"]').before(el); }
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-keys" }); hd.querySelector(".dk-plus").before(el); }
   // The button is redrawn in place; the sheet beside it is left alone, with
   // whatever is typed in it.
   let b = el.querySelector(".dk-keys-b");
@@ -531,20 +537,11 @@ function tabs(d, all, shown) {
   const tip = v => shown.includes(v) ? `data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}"`
     : `data-tip="${need(v) ? "Needs you" : `Panel ${v.pane.slot}`}" data-tip-sub="${full ? "full view shows one" : "not enough room"}" data-key="ctrl+alt+${v.pane.slot}"`;
   t.innerHTML = (all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}" ${tip(v)}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "") + backChips(d);
-  // The + goes quiet when there is no pane to add, and says why under the
-  // cursor: "A desk holds 4". The rail's Panels head says the count, 4 of 4,
-  // so the head does not say it again (the audit of 1.46.2 found it twice).
-  const plus = ctx.docEl.querySelector(".dk-head .icon[data-a=\"new\"]"), why = noNew(d);
-  if (plus) {
-    // Quiet rather than disabled, so the keyboard still reaches it and can
-    // hear why: the reason is a hidden line it points to (A4 draws it).
-    plus.classList.toggle("dim", !!why);
-    why ? plus.setAttribute("aria-disabled", "true") : plus.removeAttribute("aria-disabled");
-    plus.dataset.tip = "New panel"; why ? (plus.dataset.tipSub = why) : delete plus.dataset.tipSub;
-    let say = plus.nextElementSibling?.id === "dk-plus-why" ? plus.nextElementSibling : null;
-    if (!say) { say = Object.assign(document.createElement("span"), { id: "dk-plus-why", className: "vh" }); plus.after(say); plus.setAttribute("aria-describedby", say.id); }
-    say.textContent = why || "";
-  }
+  // One +, its menu New panel and New tab (head A). It is never quiet: a
+  // tab can always be made, and the menu's New panel row says why when the
+  // tab holds as many as a tab can.
+  const plus = ctx.docEl.querySelector(".dk-head .dk-plus"), why = noNew(d);
+  if (plus) plus.dataset.tipSub = why ? `a tab · ${why}` : "a panel, or a tab";
 }
 
 /** The desk's folder in its head, as the door to it (#214): the folder
@@ -565,11 +562,12 @@ function draw() {
     return;
   }
   document.title = `${d.name} · desk`;
-  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}<b class="dk-name"></b><span class="dk-groups" data-part="desk.groups"></span><span class="dk-tabs"></span>` +
-    `<button type="button" class="icon dk-plus" data-a="new" data-tip="New panel" data-key="ctrl+alt+n" aria-label="New panel">+ panel</button>` +
+  docEl.innerHTML = `<div class="dk"><header class="dk-head" data-tauri-drag-region="deep">${document.querySelector("#chrome .nv")?.outerHTML || ""}${pathHtml()}<span class="dk-root"></span><span class="dk-tabs"></span>` +
+    `<button type="button" class="icon dk-plus" data-plus data-tip="New" data-tip-sub="a panel, or a tab" data-key="ctrl+alt+n" aria-label="New panel or tab" aria-haspopup="menu">+</button>` +
     `<button type="button" class="icon dk-menu" data-desk-menu="${d.id}" data-tip="What this desk can do" aria-label="Desk actions" aria-haspopup="menu">⋯</button></header>` +
     `<div class="dk-grid"><div class="dk-div dk-v" role="separator" aria-orientation="vertical" tabindex="0" data-tip="Drag to resize"></div><div class="dk-div dk-h" role="separator" aria-orientation="horizontal" tabindex="0" data-tip="Drag to resize"></div></div>${DRAWER}<div class="dk-live vh" aria-live="polite"></div></div>`;
-  docEl.querySelector(".dk-name").textContent = d.name;
+  // The folder, said in the head only while the desk is quiet (20-first.js).
+  docEl.querySelector(".dk-root").textContent = tilde(d.root);
   gridWatch?.disconnect();
   let seen = 0;
   gridWatch = new ResizeObserver(([en]) => { const w = Math.round(en.contentRect.width); if (w !== seen) { seen = w; if (current()) layout(); } });

@@ -983,3 +983,87 @@ fn tempdir() -> PathBuf {
     fs::create_dir_all(&d).unwrap();
     d
 }
+
+// ----- what a release carries beside snyvi (voice) -----
+
+/// An updater on 1.0.0 against a fake that serves the signed fixture.
+fn beside(fake: Arc<Fake>) -> (PathBuf, Updater) {
+    let tmp = tempdir();
+    let exe = tmp.join("bin/snyvi");
+    fs::create_dir_all(exe.parent().unwrap()).unwrap();
+    fs::write(&exe, b"daemon").unwrap();
+    fake.put("latest.json", SIGNED.to_vec());
+    fake.put("latest.json.minisig", SIGNATURE.to_vec());
+    let mut u = updater(&tmp, &exe, fake);
+    u.key = Some(minisign_verify::PublicKey::decode(TEST_PUB).unwrap());
+    u.running = semver::Version::parse("1.0.0").unwrap();
+    u.forget_current();
+    (tmp, u)
+}
+
+#[test]
+fn a_download_by_role_is_taken_only_under_the_signed_manifests_sum() {
+    let fake = Arc::new(Fake::new());
+    fake.put("snyvi-linux-x64.tar.gz", TARBALL.to_vec());
+    let (tmp, u) = beside(fake.clone());
+    let m = u.manifest_beside().unwrap();
+    assert_eq!(m.version, "1.9.9");
+    // Asked for the release this daemon is first, and the newest after.
+    let asked = fake.asked.lock().unwrap().clone();
+    assert!(asked[0].ends_with("v1.0.0/latest.json"), "{asked:?}");
+
+    let to = tmp.join("got.tar.gz");
+    let a = u.fetch_role(&m, "snyvi", &to).unwrap();
+    assert_eq!(
+        (a.name.as_str(), fs::read(&to).unwrap()),
+        ("snyvi-linux-x64.tar.gz", TARBALL.to_vec())
+    );
+
+    // The same file cut short is not the file the manifest names: refused,
+    // and not left on disk for anything to unpack.
+    *fake.truncate.lock().unwrap() = Some("snyvi-linux-x64.tar.gz".into());
+    let why = u.fetch_role(&m, "snyvi", &to).unwrap_err().to_string();
+    assert!(why.contains("checksum"), "{why}");
+    assert!(!to.exists());
+
+    // A role the manifest does not name for this machine is an error that
+    // says so, which is what a release older than voice answers.
+    let why = u.fetch_role(&m, "ears", &to).unwrap_err().to_string();
+    assert!(why.contains("no ears download for linux-x64"), "{why}");
+}
+
+#[test]
+fn a_manifest_nobody_signed_fetches_nothing() {
+    let fake = Arc::new(Fake::new());
+    let (_tmp, u) = beside(fake.clone());
+    let mut forged = SIGNED.to_vec();
+    forged.extend_from_slice(b" ");
+    fake.put("latest.json", forged);
+    assert!(u.manifest_beside().is_err());
+}
+
+#[test]
+fn a_role_goes_by_the_machine_whatever_channel_snyvi_came_by() {
+    let m = Manifest::parse(
+        br#"{ "version": "1.70.0", "assets": {
+            "linux-x64": { "ears": ["snyvi-ears-linux-x64.tar.gz", "AA00000000000000000000000000000000000000000000000000000000000000"] },
+            "deb-x64": { "snyvi": ["snyvi-linux-x64.deb", "zz"] } } }"#,
+    )
+    .unwrap();
+    let here = Platform {
+        os: "linux",
+        arch: "x64",
+    };
+    let a = m.role(&here, "ears").unwrap();
+    assert_eq!(a.name, "snyvi-ears-linux-x64.tar.gz");
+    assert!(a.sha256.starts_with("aa"), "sums are compared in one case");
+    assert!(m
+        .role(
+            &Platform {
+                os: "macos",
+                arch: "arm64"
+            },
+            "ears"
+        )
+        .is_err());
+}

@@ -83,6 +83,14 @@ pub(crate) const MENU_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/menu.js
 /// rather than meets, so first paint does not carry it.
 pub(crate) const PALETTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/palette.js"));
 
+/// Voice (1.70), fetched on the first hold of its key or the first Voice… in
+/// the palette: the take, the bar, the match and the sheet. And the few lines
+/// that hand it the microphone's samples, which the engine loads into its
+/// audio thread by their own URL.
+pub(crate) const VOICE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/voice.js"));
+pub(crate) const VOICE_WORKLET_JS: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/voice-worklet.js"));
+
 /// The theme, accent and font steppers, fetched once the page is idle or the
 /// foot column is reached: nothing on screen needs them until a click there.
 pub(crate) const LOOK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/look.js"));
@@ -1123,6 +1131,8 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("menu.js", MENU_JS, JS),
     ("themes.css", THEMES_CSS, CSS),
     ("palette.js", PALETTE_JS, JS),
+    ("voice.js", VOICE_JS, JS),
+    ("voice-worklet.js", VOICE_WORKLET_JS, JS),
     ("look.js", LOOK_JS, JS),
     ("nav.js", NAV_JS, JS),
     ("copy.js", COPY_JS, JS),

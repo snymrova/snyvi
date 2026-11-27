@@ -78,6 +78,16 @@ function wheel(v, e) {
 
 // ---------- a pane ----------
 
+/** A panel's text taking the keyboard: it is the focused panel, and the
+ *  path's panel part and the window's title say so (36-path.js,
+ *  38-places.js) -- a click into another panel in sight moves nothing
+ *  else, so no layout runs to redraw them. */
+function paneFocused(v, el) {
+  focused = v.id; el.classList.add("on"); rail();
+  const d = current();
+  if (d && reading == null) { pathSlot(d); placeKeep(d); }
+}
+
 function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
@@ -120,7 +130,7 @@ function makeView(p) {
   // Read where the reader is when they scroll, not on every frame: a read
   // there is a layout forced once per frame per pane (docs/DESK-PAINT.md).
   body.addEventListener("scroll", () => { v.pinned = body.scrollTop + body.clientHeight >= body.scrollHeight - 4; }, { passive: true });
-  body.addEventListener("focus", () => { focused = v.id; el.classList.add("on"); rail(); });
+  body.addEventListener("focus", () => paneFocused(v, el));
   body.addEventListener("blur", () => el.classList.remove("on"));
   const hd = el.querySelector(".pn-head");
   hd.addEventListener("click", e => {
@@ -141,7 +151,7 @@ function makeView(p) {
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
     // and the zoom.
-    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWRBF]|Bracket(Left|Right))$/.test(e.code))) return;
+    if (e.metaKey || (e.ctrlKey && e.key === "`") || (e.ctrlKey && e.altKey && !altGr(e) && /^(Digit[1-4]|Key[ZNWRBFMH]|Bracket(Left|Right))$/.test(e.code))) return;
     // Ctrl+Shift+C and V are copy and paste in a Linux terminal; V lets the
     // browser's own paste event through.
     if (e.ctrlKey && e.shiftKey && /^[cv]$/i.test(e.key)) { if (/c/i.test(e.key)) copy(v, true); return; }
@@ -784,13 +794,17 @@ function switchClick(v, e) {
  *  missing where the work is (R2): "missing" -- no `claude` on the daemon's
  *  PATH -- "unconnected", or "connected". Asked once a desk view, and again
  *  after a Connect; null until the first answer, when nothing is said. */
-let claudeIs = null, claudeAsk = null;
+let claudeIs = null, claudeAsk = null, agentsNow = null;
 function claudeNow(again) {
   if (claudeAsk && !again) return claudeAsk;
   claudeAsk = fetch("/api/agents").then(r => r.json()).then(a => {
     const row = a.rows.find(r => r.id === "claude"), was = claudeIs;
-    claudeIs = row && row.state === "connected" ? "connected" : a.claude_on_path ? "unconnected" : "missing";
-    if (claudeIs !== was) { rail(); for (const v of views.values()) claudeStrip(v, !!v.pane.held); }
+    // `claude_at` (1.70): Claude's installer has run, though a shell opened
+    // before it has no `claude` on its PATH yet.
+    claudeIs = row && row.state === "connected" ? "connected" : a.claude_on_path || a.claude_at ? "unconnected" : "missing";
+    const codexWas = agentsNow && codexState(agentsNow);
+    agentsNow = a;
+    if (claudeIs !== was || codexWas !== codexState(a)) { rail(); for (const v of views.values()) claudeStrip(v, !!v.pane.held); }
     return claudeIs;
   }).catch(() => { claudeAsk = null; return claudeIs; });
   return claudeAsk;
@@ -813,6 +827,12 @@ const ASK_LEFT = "Where did I leave off? Read this folder and its history, then 
 // to finish, then asks what the reader wants to make -- the first page and
 // the first conversation at once.
 const ASK_NEW = "In plain words for someone new to snyvi, tell me how you and snyvi can help me start this project and see it through. Send it to snyvi as a short page, then ask me what I want to make here.";
+// The quiet first desk's (1.70, 20-first.js): one question for either kind
+// of folder, since the goal typed on Welcome says which it is. Claude reads
+// that goal from the desk itself -- the sentence is the reader's, and never
+// part of a command -- sends one short page, and ends it with a question
+// whose three answers are buttons under the page.
+const ASK_BEGIN = "Help me begin this project. Read this desk's goal with snyvi's read desk tool, and look through this folder. Send me one short page to snyvi that says where to begin. Then, with snyvi's ask tool and about that page, ask me which of three first steps to take.";
 /** Folders snyvi made with Start something new (about.js): their desk asks
  *  about snyvi, there being nothing to have left off. */
 const madeNew = root => { try { return (JSON.parse(localStorage.getItem("snyvi.own.made") || "[]")).includes(root); } catch { return false; } };
@@ -828,6 +848,7 @@ const madeNew = root => { try { return (JSON.parse(localStorage.getItem("snyvi.o
  *  nothing under it moves. */
 function claudeStrip(v, held) {
   const strip = v.el.querySelector(".pn-connect"), cmd = (v.pane.cmd || "").trim();
+  if (strip && quietStrip(v, strip)) return;
   if (!strip || !(held || /^claude\b/.test(cmd))) return;
   claudeNow();
   if (claudeIs == null) return;

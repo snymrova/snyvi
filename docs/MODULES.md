@@ -129,6 +129,8 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/desk/25-views.js` | 190 | lazy | 1.58: views over a desk -- in the ⋯ with the head's chip (1.60), the folder's head and dock, `open_view`, a board over the grid with one panel docked, focus told on open and close |
 | `ui/desk/34-rest.js` | 200 | lazy | 1.69: the desk at rest -- ⌃⌥S folds both sides by the two attributes `\` and `t` set and remembers what each was (`snyvi.rest`), `data-rest` on the root while both are away; the right side over the panels (`data-rest="over"`, fixed, no scrim, the grid's box unchanged) by the pointer resting on the right edge or ⌃⌥⇧S |
 | `ui/desk/35-verbs.js` | 65 | lazy | 1.69: what the palette's `> note`, `> routine`, `> goal` call (`noteSay`, `routineSay`, `goalSay`), each by the rail's own save |
+| `ui/desk/36-path.js` | 190 | lazy | 1.70: the path pill, Home › desk › tab › panel-or-view, each part drawn only with a second thing at its level (`pathSlot`, `pathTab` for 23-groups, `pathMenu` for the tab and panel menus, `pathViews` for menu.js's desk menu); the board dot and the "Claude made a board" card under it |
+| `ui/desk/38-places.js` | 65 | lazy | 1.70: a desk's place on its history entry -- the tab and the focused panel (`placeKeep`, from `layout`), a press that moves the reader pushed as a step and presses a moment apart folded (`placeNext`), Back's place for `open` (`placeBack`), and the title that names it, which ui/nav.js reads for Back's tip |
 | `ui/board/01-canvas.js` … `06-style.js` | 30–90 each | lazy | `board.js` (1.58), imported by the desk's views part when a board opens: the world under a transform, frames as sandboxed iframes by `src`, the board's own bar of frames and tokens (03-list.js, 1.60), selection as the reader's focus, live redraw, style |
 | `ui/home.js` | 1330 | lazy | Home, with Friends |
 | `ui/peer.js` | 237 | lazy | pairing, Send to…, a line for a friend, an agent's offer |
@@ -140,6 +142,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/look.js` | 358 | lazy | theme, accent, Aa |
 | `ui/corner.js` | 743 | lazy | the corner on every page: the card that rises, the pill, the tray (On you and Lately), snyvi's own lines, the chime; a desk's corner draws its parts (`docs/DESIGN.md` §4.5) |
 | `ui/palette.js` | 304 | lazy | ⌘K |
+| `ui/voice.js`, `ui/voice-worklet.js` | 610 | lazy | voice (1.70): the take, the bar and its hints, the match by sound and the near miss, the microphone button, the sheet; fetched on the first hold of ⌃⌥M, or at idle where voice is on (`docs/VOICE.md`) |
 | `ui/player.js` | 114 | lazy | a song's own controls, and one player sounding at a time; fetched on the first press |
 | `ui/music.js` | 357 | lazy | ♪: the stations, a stream of your own, your folder, one `<audio>` that plays on across pages; fetched on the first press |
 | `ui/plan.js` | 34 | lazy | Approve on a plan's head (1.47); fetched on the first press |

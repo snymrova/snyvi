@@ -528,6 +528,13 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .w-tnav .btn { border-color: var(--rule-2); }
 .w-tcount { flex: 1; font-size: var(--fs-small); color: var(--fg-3); }
 .w-tall { font-size: var(--fs-ui); }
+.w-root { margin: -4px 0 18px; font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-3); }
+.w-goal { max-width: 440px; }
+.w-goal label { display: block; margin: 0 0 6px; font-size: var(--fs-ui); font-weight: 600; }
+.w-goal label i { font-style: normal; font-weight: 400; color: var(--fg-3); }
+.w-goal input { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; color: var(--fg); background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: var(--r-sm); padding: 8px 10px; }
+.w-go { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 12px 0 22px; }
+.w-go .w-fine { margin: 0; }
 .w-new { padding: 14px 16px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise); max-width: 440px; }
 .w-new h3 { margin: 0 0 10px; font-size: 15px; }
 .w-new label { display: block; font-size: var(--fs-ui); color: var(--fg-2); margin: 10px 0 4px; }
@@ -1239,8 +1246,9 @@ async function makeNew(c, f, name) {
   }
   keep(MADE, [...kept(MADE, []), j.root.path].slice(-20));
   // Straight to its desk: a folder made just now is the reader starting
-  // on it, not one of several to bring in.
-  await c.make({ root: j.root.id, path: "" }, false);
+  // on it, not one of several to bring in. The first desk of all stops at
+  // Welcome's one sentence on the way (`another`).
+  await c.make({ root: j.root.id, path: "" }, !(c.state.desks && c.state.desks.desks.length));
 }
 
 /** Got another project? (R10 C): shown after a desk made from Welcome's
@@ -1248,11 +1256,40 @@ async function makeNew(c, f, name) {
  *  desk). The desk just made leads, as a card with the page's one accent
  *  button, and Enter opens it; each one added after is a row on the card,
  *  newest first, and the sidebar has it already. */
-export function another(made, { esc, tilde }) {
+export function another(made, { esc, tilde, first, mascot }) {
   const last = made.length - 1;
+  // The first desk of all (1.70, plan 980648bb8b): one optional sentence
+  // before it opens, kept as the desk's goal, which is what the agent reads
+  // first. Still Welcome's page, so still no sidebar (`.w-first`), and no
+  // second project asked for before the first has begun.
+  if (first) return `<div class="connect welcome w-first"><div class="w-mark">${mascot}</div><h1 class="w-done">✓ ${esc(made[0].name)} has a desk.</h1>` +
+    `<p class="w-root">${esc(tilde(made[0].root))}</p>` +
+    `<form class="w-goal" data-w-goal><label for="w-goal-in">What is it, in a sentence? <i>optional</i></label>` +
+    `<input id="w-goal-in" maxlength="120" autocomplete="off" placeholder="A book about dog breeds, one chapter per breed">` +
+    `<div class="w-go"><span class="w-fine">Your agent reads this first. You can change it later.</span><button type="submit" class="w-btn">Open its desk →</button></div></form>` +
+    `<p class="w-priv">No account. Nothing leaves this machine. Nothing is ever deleted.</p></div>`;
   return `<div class="connect welcome"><h1 class="w-done">✓ ${esc(made.map(d => d.name).join(", "))} ${made.length === 1 ? "has a desk" : "have desks"}.</h1>` +
     `<ul class="w-added">${made.map((d, i) => `<li><div><b>${esc(d.name)}</b><span>${esc(tilde(d.root))}</span></div><button type="button" class="${i === last ? "w-btn" : "text"}" data-w="w-open" data-i="${i}">Open desk →</button></li>`).reverse().join("")}</ul>` +
     `<h2 class="w-again-q">Got another project?</h2><div class="w-ask w-again">${askBtns(true)}</div></div>`;
+}
+
+/** The first desk's one sentence, wired: Enter or the button keeps it as the
+ *  desk's goal -- the reader's own line -- and opens the desk. A desk that
+ *  could not keep it still opens, and its rail can take the goal later. */
+function firstGoal(c, id) {
+  const f = c.docEl.querySelector("[data-w-goal]");
+  if (!f) return;
+  // This desk opens quiet (ui/desk/20-first.js): this window's to know,
+  // and this visit's, so a later one finds the whole desk.
+  try { localStorage.setItem("snyvi.quiet", `${id}`); localStorage.removeItem("snyvi.quiet.got"); sessionStorage.setItem("snyvi.quiet.here", `${id}`); } catch { /* private mode: the full desk */ }
+  f.addEventListener("submit", async e => {
+    e.preventDefault();
+    const goal = f.querySelector("input").value.trim();
+    f.querySelector("button").disabled = true;
+    if (goal) try { await c.deskApi(`/api/desks/${id}/line`, { goal }); } catch (err) { c.toast("Could not keep that sentence", { sub: err }); }
+    c.go(id);
+  });
+  f.querySelector("input").focus();
 }
 
 // ---------- /start: how snyvi works ----------
@@ -1559,12 +1596,13 @@ export function pages(c) {
   function welcomed(id) {
     const d = state.desks && state.desks.desks.find(x => x.id === id);
     if (!d) return c.go(id);
+    const first = !made.length && state.desks.desks.length === 1;
     made.push({ id, name: d.name, root: d.root });
     if (state.view !== "welcome") { open("welcome", "Welcome · snyvi"); history.pushState({ welcome: true }, "", "/welcome"); }
-    docEl.innerHTML = another(made, { esc, tilde: c.tilde });
+    docEl.innerHTML = another(made, { esc, tilde: c.tilde, first, mascot: c.mascotHead("glad") });
     main.scrollTo({ top: 0, behavior: "instant" });
     c.afterRender();
-    docEl.querySelector('[data-w="w-open"]')?.focus();
+    if (first) firstGoal(c, id); else docEl.querySelector('[data-w="w-open"]')?.focus();
   }
   return { showConnect, showStart, showWelcome, welcomePage, connectClaude, refreshAgents, welcomed, welcomeAct: b => welcomeAct(c, b, made), place: i => welcomePlaces[i] };
 }

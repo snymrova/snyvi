@@ -101,10 +101,44 @@ function draw() {
   const folds = [...o.host.querySelectorAll("details[data-fold]")].filter(d => d.open).map(d => d.dataset.fold);
   o.host.innerHTML = read.page
     ? `<div class="pg">${pageHtml(p, false)}${sideHtml(p, folds)}</div>`
+    : !mine(o.desk) ? hiHtml()
     : `<div class="pg pg-new">${pageHtml(p, true)}</div>`;
   const left = o.host.querySelector(".pg-left");
   if (left) left.scrollTop = scroll;
   wire();
+}
+
+/* Page's first open (1.70, head board's page-onboard; plan 94e0a0f735 P3).
+ * The reader asked for "an onboarding explanation which can show the user a
+ * dummy well built page", rather than a draft of their own as the first
+ * thing seen. So a desk with no page opens on three points beside a
+ * finished page that is plainly an example -- a made-up project, never a
+ * real person's -- and Make mine goes to today's draft. Kept per desk in
+ * this window, so the draft is where the reader comes back to. */
+const MINE = "snyvi.page.mine";
+function mine(desk) { try { return (JSON.parse(localStorage.getItem(MINE) || "[]") || []).includes(desk); } catch { return true; } }
+function makeMine(desk) { try { const xs = JSON.parse(localStorage.getItem(MINE) || "[]") || []; if (!xs.includes(desk)) localStorage.setItem(MINE, JSON.stringify([...xs, desk].slice(-200))); } catch { /* this visit's only */ } }
+function hiHtml() {
+  const ex = { tone: "software", accent: "passion", wash: "" };
+  const page = T.layout({
+    tone: ex.tone, style: T.vars(ex),
+    mark: `<span class="pt-mark pt-mark-i" aria-hidden="true">T</span>`,
+    heart: `<span class="pt-heart">♥ ${T.HEART.software} <small>214</small></span>`,
+    title: `<h1 class="pt-title">Tidepool</h1>`,
+    lede: `<p class="pt-lede">Tide charts for people who fish from the shore: the next low tide, the next good one, and a buzz an hour before.</p>`,
+    cta: `<span class="pt-btn">Try the beta →</span>`, cover: "",
+    story: `<p>I lost a morning's fishing to a tide table I read wrong. Every tide app I tried was built for sailors. This one is built for standing on rocks.</p>`,
+    moments: `<p class="pt-quiet"><b>Alerts an hour before</b> · 3 days ago</p><p class="pt-quiet"><b>First 50 testers</b> · last week</p>`,
+    links: `<ul><li><a>github.com/example/tidepool</a></li></ul>`,
+    foot: `Made on <u>snyvi</u> · build yours →`,
+  });
+  return `<div class="pg pg-hi"><div class="pg-left"><section class="pg-hi-l" aria-label="A page for what you're making">` +
+    `<h2>A page for what you're making</h2><ol>` +
+    `<li><b>Say what it is.</b> A name and a line or two, drafted from this desk's README, logo and git remote. You change any of it in place.</li>` +
+    `<li><b>Add moments as you ship.</b> Each thing you finish can be a moment on it, with an address of its own to post where your people are.</li>` +
+    `<li><b>Share one link.</b> snyvi.page/${o.esc(read.slug || "your-project")}. People press ♥ or follow it, and once a day you hear who. Nothing leaves until you press Publish.</li></ol>` +
+    `<button type="button" class="pg-press" data-pg-mine>Make mine →</button><p class="pg-hi-f">The page beside this is an example. Tidepool is made up.</p></section>` +
+    `<div class="pg-hi-ex"><span class="pg-hi-tag">Example</span><div class="pg-sheet" inert>${page}</div></div></div></div>`;
 }
 
 /** A draft, shaped as a page, for the view before anything is kept. */
@@ -365,6 +399,7 @@ function click(e) {
   const t = e.target.closest("button");
   if (!t || !o.host.contains(t)) return;
   const d = t.dataset, p = read.page;
+  if ("pgMine" in d) { makeMine(o.desk); draw(); return; }
   if ("askBuild" in d) return void askClaude("");
   if (d.copy) return void copy(t, d.copy);
   if ("start" in d) return void save({ start: true });
@@ -434,7 +469,17 @@ function style() {
  * it. 16 px gutters on a phone, no horizontal scroll. */
 const PAGE_CSS = `
 .pg { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 260px; background: var(--bg-side); container-type: inline-size; overflow: auto; }
-.pg.pg-new { grid-template-columns: minmax(0, 1fr); }
+.pg.pg-new, .pg.pg-hi { grid-template-columns: minmax(0, 1fr); }
+.pg-hi .pg-left { display: grid; grid-template-columns: minmax(240px, 340px) minmax(0, 1fr); gap: 28px; align-items: start; }
+.pg-hi-l { padding: 28px 0 0 28px; }
+.pg-hi-l h2 { margin: 0 0 14px; font-size: var(--fs-h3); }
+.pg-hi-l ol { margin: 0 0 20px; padding-left: 20px; line-height: 1.5; color: var(--fg-2); }
+.pg-hi-l li { margin: 0 0 10px; }
+.pg-hi-l b { color: var(--fg); }
+.pg-hi-f { margin: 10px 0 0; color: var(--fg-3); font-size: var(--fs-small); }
+.pg-hi-ex { position: relative; padding-top: 20px; }
+.pg-hi-tag { position: absolute; top: 0; left: 0; padding: 0 8px; border-radius: var(--r-pill); background: var(--wash); color: var(--fg-3); font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; line-height: 18px; }
+@container (max-width: 760px) { .pg-hi .pg-left { grid-template-columns: 1fr; } .pg-hi-l { padding-right: 28px; } }
 .pg-left { overflow: auto; padding: var(--sp-6) 16px; }
 .pg-sheet { max-width: 1040px; margin: 0 auto; border: 1px solid var(--rule); border-radius: var(--r-md); overflow: hidden; }
 .pg .pt { color-scheme: inherit; }

@@ -25,6 +25,33 @@
 # A fix needs no entry. Newest first.
 
 [[feature]]
+id = "path"
+since = "1.70.0"
+title = "One pill says where you are"
+line = "A desk's head is one pill now: Home, the desk, its tab, the panel you are in, each part there only once there is a second thing to choose, each a menu. The desk's part lists its views and every other desk, the one asking first. Ctrl Alt H goes Home from anywhere, Esc steps out when no panel has the keyboard, and Back undoes a move to another tab or panel. The keys and the public page are in the desk's ⋯."
+show = "desk .dk-path"
+
+[[feature]]
+id = "elseask"
+since = "1.70.0"
+title = "Another desk asks in the head"
+line = "When an agent on another desk asks you something, the question takes the head's line, where left off is, with Go. Hover it for its answers and answer from where you are. Nothing rises over your panels."
+small = "yes"
+
+[[feature]]
+id = "onedesk"
+since = "1.70.0"
+title = "Home with one desk"
+line = "With a single desk, Home is that desk: where it stands, its agent's next step, and Carry on, which opens the desk and brings its last conversation back. Another project…, in the desk's menu, on Home or in Ctrl K, is one sheet: its folder, its one sentence, and Open its desk."
+small = "yes"
+
+[[feature]]
+id = "voice"
+since = "1.70.0"
+title = "Say where to go"
+line = "On Linux, hold Ctrl Alt M or the microphone button, say a command, let go: a desk by its name, panel two, Board, back, anything in the command list. Hold it a second in silence and it shows what you can say. It only takes you places, and the sound never leaves your machine. Turn it on in Ctrl K, Voice…; it fetches about 200 MB once."
+
+[[feature]]
 id = "rest"
 since = "1.69.0"
 title = "Rest the desk"

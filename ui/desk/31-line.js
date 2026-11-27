@@ -71,7 +71,7 @@ function lineRow(d, l, r, i, by, esc) {
 
 /** The section, over Notes; nothing while there is no goal, no queue, and
  *  no goal being written. */
-function lineSec(d) {
+function lineSec(d, quiet) {
   const { esc } = ctx;
   const l = lineOf(d), notes = notesAt === d.id ? noteList : [];
   if (!l.queue.length && !l.goal && !(lineEdit && lineEdit.goal)) return "";
@@ -79,7 +79,7 @@ function lineSec(d) {
   const done = l.queue.filter(r => r.done).length, all = l.queue.length;
   const goal = lineEdit && lineEdit.goal
     ? `<input class="dk-ln-in" data-k="goal" maxlength="120" placeholder="What is this desk for, in one line?" aria-label="This desk's goal" spellcheck="false" autocomplete="off">`
-    : `<button type="button" class="dk-ln-goal" data-a="line-goal" data-tip="The goal" data-tip-sub="one line of yours; click to change it">${l.goal ? `<b>Goal:</b> ${esc(l.goal)}` : "Set a goal"}</button>`;
+    : `<button type="button" class="dk-ln-goal" data-a="line-goal" data-tip="The goal" data-tip-sub="one line of yours; click to change it">${l.goal ? `${quiet ? "" : "<b>Goal:</b> "}${esc(l.goal)}` : "Set a goal"}</button>`;
   const bar = all ? `<span class="dk-ln-n">${done} of ${all} done</span><span class="dk-ln-bar" aria-hidden="true"><i style="width:${Math.round(done / all * 100)}%"></i></span>` : "";
   const free = notes.filter(x => !x.done && !x.gone && !x.suggested_by && !l.queue.some(r => r.id === x.id));
   // The row is there whenever a note could be added, and its menu lies
@@ -90,7 +90,8 @@ function lineSec(d) {
       (open ? `<span class="dk-due-pop dk-ln-pop" role="menu" aria-label="Add a note to Next up">${free.map(x => `<button type="button" role="menuitem" data-a="line-put" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-overflow>#${x.id} ${esc(x.text)}</button>`).join("")}</span>` : "") + `</div>` : "";
   const rows = l.queue.map((r, i) => lineRow(d, l, r, i, by, esc)).join("");
   const left = all - done;
-  return sec("line", "rail.line", "Next up", {
+  // The quiet first desk (20-first.js) has only the goal in it, and says so.
+  return sec("line", "rail.line", quiet ? "Goal" : "Next up", {
     cls: "dk-line", part: "rail.line.head", empty: !all && !l.goal,
     tip: "Next up", sub: "This desk's goal and your notes in the order to do them. Start next opens a panel for the first one that is free; agents take the next, never reorder.",
     count: left || "", countTip: left ? `${left} to go` : "",
