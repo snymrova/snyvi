@@ -276,7 +276,7 @@ const FIRST_CSS = `
 :root[data-quiet] .dk-head { padding-left: 14px; padding-right: 14px; }
 .dk-quiet .dk-ln-goal { white-space: normal; font-size: var(--fs-ui); font-style: italic; color: var(--fg); line-height: 1.45; }
 /* Where the first page lands: one box, the same size before the press and
-   through every stage after it. Not `.dk-stage`: that is every note and
+   through every stage after it. Not .dk-stage: that is every note and
    thread chip's class (06-rail.js, 22-change.js), and in 1.70.0 these rules
    drew each chip as a 132px bordered box over the rail. */
 .dk-land, .dk-firstpage { box-sizing: border-box; min-height: 132px; margin: 2px 8px 0; padding: 12px; border-radius: var(--r-md); }
