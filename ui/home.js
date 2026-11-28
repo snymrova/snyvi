@@ -87,6 +87,10 @@ const CSS = `
 .hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
 .hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
 .hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
+/* The columns' own one track, as wide as the column and no wider: an auto
+   track grows to its widest child's least width (the desks card, ~645px),
+   and below ~1250px the floor ran under the Claude column (1.70.0). */
+.hm-main, .hm-side { grid-template-columns: minmax(0, 1fr); }
 @container (max-width: 760px) {
   /* One column, and what arrived under the bar rather than under the week:
      the columns step aside so their sections share one order. After the
