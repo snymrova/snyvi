@@ -134,7 +134,7 @@ function stageCard(d, vs, since) {
     el.textContent = mmss(Date.now() - since);
   }, 1000);
   const took = working || done;
-  return `<div class="dk-wait dk-stage"><ol class="dk-sts" aria-label="Your first page">` +
+  return `<div class="dk-wait dk-firstpage"><ol class="dk-sts" aria-label="Your first page">` +
     st(took ? "ok" : "now", took ? `${agentName()} has your question` : `Starting ${agentName()}`) +
     st(working ? "now" : done ? "ok" : "no", `Working on your first page${working ? ` · <span class="dk-st-t fact">${mmss(Date.now() - since)}</span>` : ""}`) +
     st(done ? "now" : "no", done ? `${agentName()} stopped without a page. Ask it in the panel to send one to snyvi` : "It lands here") + `</ol>` +
@@ -276,17 +276,19 @@ const FIRST_CSS = `
 :root[data-quiet] .dk-head { padding-left: 14px; padding-right: 14px; }
 .dk-quiet .dk-ln-goal { white-space: normal; font-size: var(--fs-ui); font-style: italic; color: var(--fg); line-height: 1.45; }
 /* Where the first page lands: one box, the same size before the press and
-   through every stage after it. */
-.dk-land, .dk-stage { box-sizing: border-box; min-height: 132px; margin: 2px 8px 0; padding: 12px; border-radius: var(--r-md); }
+   through every stage after it. Not .dk-stage: that is every note and
+   thread chip's class (06-rail.js, 22-change.js), and in 1.70.0 these rules
+   drew each chip as a 132px bordered box over the rail. */
+.dk-land, .dk-firstpage { box-sizing: border-box; min-height: 132px; margin: 2px 8px 0; padding: 12px; border-radius: var(--r-md); }
 .dk-land { display: flex; flex-direction: column; justify-content: center; gap: 2px; border: 1.5px dashed var(--rule-2); text-align: center; color: var(--fg-3); font-size: var(--fs-small); }
 .dk-land p { margin: 0; }
-.dk-stage { border: 1px solid var(--rule); background: var(--bg-raise); }
+.dk-firstpage { border: 1px solid var(--rule); background: var(--bg-raise); }
 .dk-sts { list-style: none; margin: 0 0 8px; padding: 0; }
 .dk-st { display: flex; gap: 8px; padding: 3px 0; font-size: var(--fs-small); color: var(--fg); }
 .dk-st b { flex: none; width: 14px; text-align: center; color: var(--ok); }
 .dk-st.now b { color: var(--accent); }
 .dk-st.no, .dk-st.no b { color: var(--fg-3); }
-#toc .dk-stage .dk-empty { margin: 0; }
+#toc .dk-firstpage .dk-empty { margin: 0; }
 .dk-q-foot { margin: 18px 8px 0; font-size: var(--fs-small); line-height: 1.5; color: var(--fg-3); }
 .dk-q-say { display: flex; gap: 8px; align-items: flex-start; margin: 14px 8px 2px; font-size: var(--fs-small); line-height: 1.45; color: var(--fg-2); }
 .dk-q-face { flex: none; }
